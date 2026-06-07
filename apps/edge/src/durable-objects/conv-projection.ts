@@ -20,32 +20,75 @@ export const N_KEEP = 1000;
 /** getTail 默认返回条数;对齐现状 MessagesFetch.latest()(~200)。 */
 const DEFAULT_TAIL_LIMIT = 200;
 
-/** 投影里一条消息行(对外 JSON 形状)。 */
+/**
+ * 2MB 行护栏(§6 硬约束):DO SQLite 单行上限 2MB。富列(尤其 metadata /
+ * log_payload JSON,可能挟带巨大 tool-trace)逼近上限时,写入前把最重的 JSON
+ * 字段替换成截断标记,让客户端按需回 Supabase 懒取该条。阈值压到 ~1.5MB 留
+ * 出其它列 + SQLite 行开销的余量。
+ */
+const ROW_SIZE_LIMIT_BYTES = 1_500_000;
+/** 富列被裁掉时落的标记值(客户端识别 → 回 Supabase 懒取该条整行)。 */
+export const TRUNCATED_MARKER = { __truncated: true } as const;
+
+const TEXT_ENCODER = new TextEncoder();
+/** UTF-8 字节长度(行大小估算用,JSON 含多字节字符时比 .length 准)。 */
+function utf8Bytes(s: string): number {
+  return TEXT_ENCODER.encode(s).length;
+}
+
+/** 投影里一条消息行(对外 JSON 形状,= MessagesFetch.latest 的全部消息自有列)。 */
 export interface ConvMessageRow {
   id: string;
+  client_message_id: string | null;
   created_at: string;
+  message_seq: number | null;
   role: string;
   status: string;
   content: string;
+  log_kind: string | null;
+  /** 解析后的 log_payload JSON;被 2MB 护栏裁掉时为 { __truncated:true }。 */
+  log_payload: unknown;
   bubble_group_id: string | null;
+  parent_message_id: string | null;
+  model_slug: string | null;
   sender_user_id: string | null;
   sender_bot_id: string | null;
+  /** 解析后的 attachments JSON({ ids:[...] })。 */
   attachments: unknown;
+  /** 解析后的 citations JSON 数组;被 2MB 护栏裁掉时为 { __truncated:true }。 */
+  citations: unknown;
+  /** 解析后的 metadata JSON;被 2MB 护栏裁掉时为 { __truncated:true }。 */
+  metadata: unknown;
   rev: number;
 }
 
-/** ingestMessage 的入参(content/attachments 由调用方序列化前的原值)。 */
+/**
+ * ingestMessage 的入参(= MessagesFetch.latest select 的全部消息自有列)。
+ * JSON 列(attachments/citations/metadata/log_payload)传未序列化的原值,
+ * DO 内 JSON.stringify 落进 *_json 文本列。
+ */
 export interface IngestMessageInput {
   id: string;
+  client_message_id?: string | null;
   created_at: string;
+  message_seq?: number | null;
   role: string;
   status: string;
   content: string;
+  log_kind?: string | null;
   bubble_group_id?: string | null;
+  parent_message_id?: string | null;
+  model_slug?: string | null;
   sender_user_id?: string | null;
   sender_bot_id?: string | null;
   /** 结构化 attachments(会 JSON.stringify 存进 attachments_json)。 */
   attachments?: unknown;
+  /** web-search 引用数组(会 JSON.stringify 存进 citations_json)。 */
+  citations?: unknown;
+  /** 消息 metadata JSON(可能含大 tool-trace,过 2MB 护栏)。 */
+  metadata?: unknown;
+  /** log 行 payload JSON(recall / crew_proposal 等,过 2MB 护栏)。 */
+  log_payload?: unknown;
 }
 
 /** meta 表已知键的 patch 形状。未列出的键也允许(自由 KV)。 */
@@ -68,14 +111,22 @@ export interface ConvTailResult {
 
 interface MessageDbRow {
   id: string;
+  client_message_id: string | null;
   created_at: string;
+  message_seq: number | null;
   role: string;
   status: string;
   content: string;
+  log_kind: string | null;
+  log_payload_json: string | null;
   bubble_group_id: string | null;
+  parent_message_id: string | null;
+  model_slug: string | null;
   sender_user_id: string | null;
   sender_bot_id: string | null;
   attachments_json: string | null;
+  citations_json: string | null;
+  metadata_json: string | null;
   deleted: number;
   rev: number;
 }
@@ -91,14 +142,22 @@ export class ConvProjectionDO {
       this.state.storage.sql.exec(`
         CREATE TABLE IF NOT EXISTS messages (
           id TEXT PRIMARY KEY,
+          client_message_id TEXT,
           created_at TEXT NOT NULL,
+          message_seq INTEGER,
           role TEXT NOT NULL,
           status TEXT NOT NULL,
           content TEXT NOT NULL,
+          log_kind TEXT,
+          log_payload_json TEXT,
           bubble_group_id TEXT,
+          parent_message_id TEXT,
+          model_slug TEXT,
           sender_user_id TEXT,
           sender_bot_id TEXT,
           attachments_json TEXT,
+          citations_json TEXT,
+          metadata_json TEXT,
           deleted INTEGER NOT NULL DEFAULT 0,
           rev INTEGER NOT NULL
         );
@@ -159,39 +218,108 @@ export class ConvProjectionDO {
   /**
    * 幂等 upsert 一条消息(按 id)。每次写 ++cur_rev 并盖到该行 rev,使
    * delta-sync 能用 rev 追增量。写后 trim 到最近 N_KEEP 条(按 created_at,id)。
+   *
+   * 2MB 行护栏(§6):富列(content + 4 个 JSON 列)合起来可能逼近 DO 单行 2MB
+   * 上限。写入前估算总字节,超阈值就把最重的 JSON 列(metadata / log_payload /
+   * citations 里最大的那个,按字节降序)逐个替换成 TRUNCATED_MARKER,直到落到
+   * 阈值下;客户端见到 {__truncated:true} 即回 Supabase 懒取该条整行。content
+   * 是渲染主体不裁(超大 content 极罕见,真碰到也只能整条懒取,留给后续)。
    */
   ingestMessage(row: IngestMessageInput): void {
     const rev = this.bumpRev();
-    const attachmentsJson =
-      row.attachments === undefined ? null : JSON.stringify(row.attachments);
+    const guarded = this.applyRowSizeGuard(row);
     this.state.storage.sql.exec(
       `INSERT INTO messages
-         (id, created_at, role, status, content, bubble_group_id,
-          sender_user_id, sender_bot_id, attachments_json, deleted, rev)
-       VALUES (?,?,?,?,?,?,?,?,?,0,?)
+         (id, client_message_id, created_at, message_seq, role, status, content,
+          log_kind, log_payload_json, bubble_group_id, parent_message_id,
+          model_slug, sender_user_id, sender_bot_id, attachments_json,
+          citations_json, metadata_json, deleted, rev)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?)
        ON CONFLICT(id) DO UPDATE SET
+         client_message_id = excluded.client_message_id,
          created_at = excluded.created_at,
+         message_seq = excluded.message_seq,
          role = excluded.role,
          status = excluded.status,
          content = excluded.content,
+         log_kind = excluded.log_kind,
+         log_payload_json = excluded.log_payload_json,
          bubble_group_id = excluded.bubble_group_id,
+         parent_message_id = excluded.parent_message_id,
+         model_slug = excluded.model_slug,
          sender_user_id = excluded.sender_user_id,
          sender_bot_id = excluded.sender_bot_id,
          attachments_json = excluded.attachments_json,
+         citations_json = excluded.citations_json,
+         metadata_json = excluded.metadata_json,
          deleted = 0,
          rev = excluded.rev`,
       row.id,
+      row.client_message_id ?? null,
       row.created_at,
+      row.message_seq ?? null,
       row.role,
       row.status,
       row.content,
+      row.log_kind ?? null,
+      guarded.logPayloadJson,
       row.bubble_group_id ?? null,
+      row.parent_message_id ?? null,
+      row.model_slug ?? null,
       row.sender_user_id ?? null,
       row.sender_bot_id ?? null,
-      attachmentsJson,
+      guarded.attachmentsJson,
+      guarded.citationsJson,
+      guarded.metadataJson,
       rev,
     );
     this.trim();
+  }
+
+  /**
+   * 2MB 行护栏:序列化 4 个 JSON 列,若 content + 各 JSON 列总字节超
+   * ROW_SIZE_LIMIT_BYTES,按字节降序把可裁字段(metadata / log_payload /
+   * citations,不含 attachments —— ids 数组本就小、客户端解析附件元数据要它)
+   * 逐个替换成 TRUNCATED_MARKER,直到落到阈值下。返回各列最终的 JSON 文本。
+   */
+  private applyRowSizeGuard(row: IngestMessageInput): {
+    attachmentsJson: string | null;
+    citationsJson: string | null;
+    metadataJson: string | null;
+    logPayloadJson: string | null;
+  } {
+    const truncated = JSON.stringify(TRUNCATED_MARKER);
+    const ser = (v: unknown): string | null => (v === undefined ? null : JSON.stringify(v));
+
+    const attachmentsJson = ser(row.attachments);
+    let citationsJson = ser(row.citations);
+    let metadataJson = ser(row.metadata);
+    let logPayloadJson = ser(row.log_payload);
+
+    const byteLen = (s: string | null): number => (s == null ? 0 : utf8Bytes(s));
+    const total = (): number =>
+      utf8Bytes(row.content) +
+      byteLen(attachmentsJson) +
+      byteLen(citationsJson) +
+      byteLen(metadataJson) +
+      byteLen(logPayloadJson);
+
+    if (total() <= ROW_SIZE_LIMIT_BYTES) {
+      return { attachmentsJson, citationsJson, metadataJson, logPayloadJson };
+    }
+
+    // 可裁字段按当前字节降序,先裁最重的,直到落到阈值下。
+    const slots: Array<{ get: () => string | null; truncate: () => void }> = [
+      { get: () => metadataJson, truncate: () => (metadataJson = truncated) },
+      { get: () => logPayloadJson, truncate: () => (logPayloadJson = truncated) },
+      { get: () => citationsJson, truncate: () => (citationsJson = truncated) },
+    ].sort((a, b) => byteLen(b.get()) - byteLen(a.get()));
+    for (const slot of slots) {
+      if (total() <= ROW_SIZE_LIMIT_BYTES) break;
+      if (slot.get() == null || slot.get() === truncated) continue;
+      slot.truncate();
+    }
+    return { attachmentsJson, citationsJson, metadataJson, logPayloadJson };
   }
 
   /** 撤回/删除 → tombstone:deleted=1, rev=++cur_rev(delta 能同步到删除)。 */
@@ -368,7 +496,7 @@ export class ConvProjectionDO {
     const { data: msgsDesc, error: msgErr } = await supa
       .from('messages')
       .select(
-        'id, created_at, role, status, content, bubble_group_id, user_id, sender_bot_id, attachments',
+        'id, client_message_id, created_at, message_seq, role, status, content, log_kind, log_payload, bubble_group_id, parent_message_id, model_slug, user_id, sender_bot_id, attachments, citations, metadata',
       )
       .eq('conversation_id', conversationId)
       .neq('status', 'deleted')
@@ -389,15 +517,23 @@ export class ConvProjectionDO {
     for (const m of msgsAsc) {
       this.ingestMessage({
         id: m.id,
+        client_message_id: m.client_message_id,
         created_at: m.created_at,
+        message_seq: m.message_seq,
         role: m.role,
         status: m.status,
         content: m.content ?? '',
+        log_kind: m.log_kind,
+        log_payload: m.log_payload ?? null,
         bubble_group_id: m.bubble_group_id,
+        parent_message_id: m.parent_message_id,
+        model_slug: m.model_slug,
         // messages.user_id 是人类发送者(与 webhook 写穿映射一致)。
         sender_user_id: m.user_id,
         sender_bot_id: m.sender_bot_id,
         attachments: m.attachments ?? null,
+        citations: m.citations ?? null,
+        metadata: m.metadata ?? null,
       });
     }
 
@@ -422,16 +558,25 @@ export class ConvProjectionDO {
   }
 
   private toMessageRow(r: MessageDbRow): ConvMessageRow {
+    const parse = (j: string | null): unknown => (j == null ? null : JSON.parse(j));
     return {
       id: r.id,
+      client_message_id: r.client_message_id,
       created_at: r.created_at,
+      message_seq: r.message_seq,
       role: r.role,
       status: r.status,
       content: r.content,
+      log_kind: r.log_kind,
+      log_payload: parse(r.log_payload_json),
       bubble_group_id: r.bubble_group_id,
+      parent_message_id: r.parent_message_id,
+      model_slug: r.model_slug,
       sender_user_id: r.sender_user_id,
       sender_bot_id: r.sender_bot_id,
-      attachments: r.attachments_json == null ? null : JSON.parse(r.attachments_json),
+      attachments: parse(r.attachments_json),
+      citations: parse(r.citations_json),
+      metadata: parse(r.metadata_json),
       rev: r.rev,
     };
   }

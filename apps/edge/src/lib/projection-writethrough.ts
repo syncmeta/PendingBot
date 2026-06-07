@@ -37,6 +37,26 @@ function str(row: Record<string, unknown>, key: string): string | null {
 }
 
 /**
+ * 整数列读取(webhook JSON 数字 / 数字字符串 → number,缺省/非法 → null)。
+ * round_count / message_seq 走这里。
+ */
+function int(row: Record<string, unknown>, key: string): number | null {
+  const v = row[key];
+  if (v == null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.trunc(n) : null;
+}
+
+/**
+ * JSON 列原值透传(citations / metadata / log_payload):webhook 已把 jsonb 解成
+ * JS 值,直接交给 DO(DO 内 JSON.stringify 落 *_json 文本列,并过 2MB 护栏)。
+ * 缺省键 → null。
+ */
+function jsonCol(row: Record<string, unknown>, key: string): unknown {
+  return key in row ? (row[key] ?? null) : null;
+}
+
+/**
  * §7.2 RLS 隐式过滤复刻:`metadata.source = 'voice_call_summary'` 的语音通话
  * 回顾行被 migration 20260520034417 的 SELECT policy 对用户 JWT 隐藏(只
  * service-role 的记忆管线读得到)。投影行不带 metadata,读端点无从在读时复刻
@@ -121,19 +141,30 @@ async function projectMessage(
   // (读投影无 metadata,读时无从复刻这条 RLS 过滤)。
   if (isVoiceCallSummary(row)) return;
 
+  // 全字段交给 ingestMessage —— 2MB 行护栏在 DO 内统一兜(citations/metadata/
+  // log_payload 可能大),writethrough 层不重复实现护栏。富列即 messages 表
+  // 自有列(非关系数据),整套搬进投影(= iOS MessagesFetch.latest select 列)。
   return rpc(stub, 'conv-projection.do', '/ingest-message', {
     row: {
       id,
+      client_message_id: str(row, 'client_message_id'),
       created_at: str(row, 'created_at') ?? new Date().toISOString(),
+      message_seq: int(row, 'message_seq'),
       role: str(row, 'role') ?? 'assistant',
       status: status ?? 'done',
       content: str(row, 'content') ?? '',
+      log_kind: str(row, 'log_kind'),
+      log_payload: jsonCol(row, 'log_payload'),
       bubble_group_id: str(row, 'bubble_group_id'),
+      parent_message_id: str(row, 'parent_message_id'),
+      model_slug: str(row, 'model_slug'),
       // messages.user_id 是人类发送者(bot 走 sender_bot_id),投影里叫
       // sender_user_id 以和 sender_bot_id 对称。
       sender_user_id: str(row, 'user_id'),
       sender_bot_id: str(row, 'sender_bot_id'),
-      attachments: row.attachments ?? null,
+      attachments: jsonCol(row, 'attachments'),
+      citations: jsonCol(row, 'citations'),
+      metadata: jsonCol(row, 'metadata'),
     },
   });
 }
@@ -183,6 +214,12 @@ async function projectConversation(env: Env, row: Record<string, unknown>): Prom
   const ownerUserId = str(row, 'user_id');
   const title = str(row, 'title');
   const updatedAt = str(row, 'updated_at') ?? new Date().toISOString();
+  // 标量会话列(ConversationFetch.list select 的标量列)。bot/peer embed
+  // (bots!fkey 的 display_name/model_id…)不反范式化进投影 —— bot 改名要刷
+  // 所有会话行,改由客户端本地缓存 hydration(见 UserConversationRow 文档)。
+  const botId = str(row, 'bot_id');
+  const feature = str(row, 'feature');
+  const roundCount = int(row, 'round_count');
 
   const stub = convStub(env, conversationId);
   await rpc(stub, 'conv-projection.do', '/set-meta', {
@@ -200,6 +237,12 @@ async function projectConversation(env: Env, row: Record<string, unknown>): Prom
         row: {
           conv_id: conversationId,
           type: convType,
+          // owner_user_id(conversations.user_id)= 会话所属人,投影列也叫
+          // user_id,对齐 ConversationFetch.list。
+          user_id: ownerUserId,
+          bot_id: botId,
+          feature,
+          round_count: roundCount,
           title,
           updated_at: updatedAt,
         },

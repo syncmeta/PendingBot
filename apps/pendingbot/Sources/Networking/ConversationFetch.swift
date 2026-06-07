@@ -103,7 +103,28 @@ enum ConversationFetch {
     /// - subagent child conversations are excluded — they open from the parent
     ///   tool trace, never as top-level list rows.
     static func list() async throws -> [ConvListRow] {
-        try await SupabaseStack.shared
+        // ── Edge-first (T2.1 read-offload) ──────────────────────────────
+        // Try the CF edge projection (GET /v1/conversations) and map its
+        // scalar rows back into ConvListRow (bot/peer embed re-hydrated from
+        // the local cache by EdgeReadSource.mapConversationRows). On ANY
+        // error — or a suspicious-empty full fetch (rows == []) — fall through
+        // to the canonical Supabase query below. Worst case = today's
+        // behaviour; the app never regresses on an edge hiccup.
+        do {
+            let edge = try await APIClient().fetchConversationsFromEdge()
+            let mapped = await EdgeReadSource.mapConversationRows(edge.rows)
+            if !mapped.isEmpty {
+                return mapped
+            }
+            // Empty full fetch is suspicious (a logged-in user normally has at
+            // least one conv); fall back to Supabase to confirm rather than
+            // paint a blank list on a cold/partial projection.
+        } catch {
+            log.warning("edge conversations fetch failed, falling back to Supabase: \(error.localizedDescription, privacy: .public)")
+        }
+
+        // ── Supabase fallback (canonical, unchanged) ────────────────────
+        return try await SupabaseStack.shared
             .from("conversations")
             .select("""
                 id, bot_id, user_id, title, conversation_type, feature, round_count, updated_at,

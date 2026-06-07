@@ -52,6 +52,14 @@
 
 ## 🟡 拆东墙补西墙
 
+### 🟡 T2 边缘读 cutover 只 build 验、runtime 从未跑过 + 两处边缘 vs Supabase 精度差
+- **发现**: 2026-06-07 · feat/edge-read-cutover（T2 Phase3b）
+- **位置**: `apps/pendingbot/Sources/Networking/EdgeReadSource.swift`、`ConversationFetch.list`、`MessagesFetch.latest`；edge 端 `routes/projections.ts` + 两个投影 DO
+- **问题**: 会话列表 + 消息尾的读已切成 **edge-first（`/v1/conversations` & `/v1/messages/tail`）+ Supabase fallback**,但**这套边缘端点从未在 runtime 真跑过**——只有 vitest + 双端 build 绿,没有 `wrangler dev` 冒烟、没有真机/真账号验(用户当时定"直接切、build 验证、runtime 留后")。fallback 兜底(任何 error/可疑空 → 回落 Supabase)是唯一的运行期安全网。另有两处边缘行相对 Supabase 的**精度差**:① 边缘列表行无 `last_message_id`(UnreadJoin 该字段 nil;`last_activity_at` 改用 `updated_at` 不丢时间戳);② `user_user` 对端在会话 `user_id==myId` 时,合成 participant 被 `!=myId` 滤掉 → 该行本次刷新无 peer 名(本地缓存旧值或下次 Supabase 刷新补)。
+- **影响**: pre-launch、无人用、有 fallback,所以不会崩;但**最终使用路径(iOS/Mac 真机 + 真 Supabase 边缘端点)未验证**——投影/delta/回填/2MB 护栏的 runtime 正确性、列表 hydration 的视觉效果都还是纸面。user_user 人类私聊的列表 peer 名可能短暂空(主要是 user-bot,影响面小)。
+- **建议**: ① **runtime 冒烟**:部署 edge(或配 `.dev.vars` 跑 `wrangler dev`)+ 真 JWT 打两个端点,验投影命中/冷回填/授权门/2MB 护栏;② 真机/真账号验首屏(列表 + 开会话)走边缘路径渲染正确、fallback 触发正确;③ user_user peer:客户端映射时**保留本地缓存已有 embed**(别用边缘空值覆盖),或边缘端点解析对端;④ 押后优化:delta cursor(现 full-fetch since=0)、`{__truncated:true}` 富列懒取(现当 nil)。
+- **状态**: 待办（build 绿,runtime 未验 —— task #262 保持 open）
+
 ### 🟡 Langfuse prompt 分发的已知取舍（真源切 Langfuse + KV，弃用 bundled .md）
 - **发现**: 2026-06-06 · chore/prompt-langfuse-kv
 - **位置**: `apps/edge/src/llm/prompt-loader.ts` · `routes/langfuse-prompts.ts`（webhook）· `PROMPTS_KV`
