@@ -362,6 +362,9 @@ export class ConvProjectionDO {
       throw new Error(`ConvProjectionDO.backfill participants: ${partsErr.message}`);
 
     // 最近 N_KEEP 条活消息(排除 deleted)。DESC 取尾,稍后翻升序逐条摄入。
+    // §7.2:语音通话回顾行(metadata.source='voice_call_summary')被 migration
+    // 20260520034417 对用户 JWT 隐藏 → 冷重建也排除,与写穿喂养边界一致(投影行
+    // 不带 metadata,读端点无从在读时复刻这条 RLS 过滤)。
     const { data: msgsDesc, error: msgErr } = await supa
       .from('messages')
       .select(
@@ -369,6 +372,7 @@ export class ConvProjectionDO {
       )
       .eq('conversation_id', conversationId)
       .neq('status', 'deleted')
+      .or('metadata->>source.is.null,metadata->>source.neq.voice_call_summary')
       .order('message_seq', { ascending: false })
       .order('created_at', { ascending: false })
       .limit(N_KEEP);

@@ -36,6 +36,19 @@ function str(row: Record<string, unknown>, key: string): string | null {
   return typeof v === 'string' ? v : null;
 }
 
+/**
+ * §7.2 RLS 隐式过滤复刻:`metadata.source = 'voice_call_summary'` 的语音通话
+ * 回顾行被 migration 20260520034417 的 SELECT policy 对用户 JWT 隐藏(只
+ * service-role 的记忆管线读得到)。投影行不带 metadata,读端点无从在读时复刻
+ * 这条过滤,所以必须在喂养边界把这类行挡在投影外 —— 与 status='deleted' 同理。
+ * 冷路径(读端点 miss 回落 Supabase+RLS)本就自动滤掉,只有热投影需要这道闸。
+ */
+function isVoiceCallSummary(row: Record<string, unknown>): boolean {
+  const meta = row.metadata;
+  if (!meta || typeof meta !== 'object') return false;
+  return (meta as Record<string, unknown>).source === 'voice_call_summary';
+}
+
 function convStub(env: Env, conversationId: string): DurableObjectStub {
   return env.CONV_PROJECTION.get(env.CONV_PROJECTION.idFromName(conversationId));
 }
@@ -103,6 +116,10 @@ async function projectMessage(
   if (op === 'delete' || status === 'deleted') {
     return rpc(stub, 'conv-projection.do', '/mark-deleted', { id });
   }
+
+  // §7.2:语音通话回顾行对用户 JWT 不可见 → 永不进投影。挡在喂养边界
+  // (读投影无 metadata,读时无从复刻这条 RLS 过滤)。
+  if (isVoiceCallSummary(row)) return;
 
   return rpc(stub, 'conv-projection.do', '/ingest-message', {
     row: {
