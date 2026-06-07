@@ -1,6 +1,12 @@
 # PendingBot / PendingCrew 进度账本 (Progress Ledger)
 
-**最近对账：2026-06-06**（对照实际代码 / 迁移 / git，不是看 task 标记）
+**最近对账：2026-06-07**（对照实际代码 / 迁移 / git，不是看 task 标记）
+
+> **2026-06-07 T2 边缘读卸载(Supabase 单区 → CF 边缘投影)全链路落地(已合 main `e161a6a6`,#260/#261/#262)**
+> - 背景:Supabase 单点法兰克福,US/Asia 首屏吃跨洋 RTT。把**热读路径**从客户端直连法兰克福改成 CF 边缘投影,Supabase 退为最终一致真源/事件源/重建源。spec:`docs/superpowers/plans/2026-06-07-edge-read-offload.md`(四桶分类 + 7 规则 + 授权门两层 + 决策)。
+> - **3 个 dynamic workflow 串完,合并方(我)每轮自跑 typecheck/vitest/双端 build 坐实**:① edge 投影(#260):ConvProjectionDO/UserProjectionDO(SQLite,DO-local revision cursor)+ webhook 写穿 + 冷回填 + `/v1/conversations`&`/v1/messages/tail` **fail-closed 授权门**(RLS 可见性复刻 + 冷路径 RLS 兜底;E6 对抗审查无可越权洞)。② client Repository 统一(#261):`CacheRepository` 跨平台写回门面收口 bots/contacts/group + `ProfileDataSource`;**补 Mac-only 缓存填不满的根**(MacFriendsView 现写回)。③ cutover(#262):投影扩到完整 UI 列(消息 8 富列 + 会话 4 标量,2MB 行护栏)→ `ConversationFetch.list`+`MessagesFetch.latest` 切 **edge-first + Supabase fallback**(活兜底绝不删,#145/#146 cmid 写回未动),列表 bot/peer 从本地缓存 hydration。Mac 经 ChatDataSource 自动继承。
+> - **验证状态(关键)**:edge 536 vitest + typecheck 绿;iOS+macOS 双端 build 绿。**但边缘端点从未 runtime 真跑**(用户定"直接切、build 验、runtime 留后")→ tech-debt 🟡 + **#262 保持 open**、#265 = runtime 冒烟 + 真机首屏验证门。押后优化:delta cursor(现 full-fetch since=0)、富列 `{__truncated}` 懒取。
+> - **未做(T2 次要)**:#263 config→KV、#264 头像/注销收口。顺手核出:surf/scroll 死表(🟢)、handle 枚举经核**非债**(早走 worker+限流)、auth 代理**不进 T2**(延后 #252)。
 
 > **2026-06-05（续）Mac 对齐 iOS 收尾：markdown/公式/图片查看器/发送态/好友 IA（`feat/mac-login-align`，未合，#212）**
 > - 用户连问带做几轮。全部 iOS+macOS 双端 BUILD SUCCEEDED（合并方每拍自跑 xcodegen+双端构建坐实）。**核心思路一以贯之：iOS 的渲染器/查看器多数本就跨平台，被无谓 `#if os(iOS)` 圈住 → 放开复用，而非给 Mac 另写。**
