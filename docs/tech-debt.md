@@ -421,6 +421,14 @@
 
 ## 🟢 不规范
 
+### 🟢 surf_runs / scroll_runs 是 envelope 取代后的遗留死表(仍挂在 realtime publication 上)
+- **发现**: 2026-06-07 · chore/edge-read-offload-spec(T2 读卸载梳理)
+- **位置**: `supabase/migrations/*`(`surf_runs` / `scroll_runs` 建表 + realtime publication)、`apps/edge/src/db/schema.ts`
+- **问题**: surf / scroll 两个 feature 早已被 envelope(来信)取代,edge + iOS 活代码对 `surf_runs` / `scroll_runs` / `surfRun` / `scrollRun` **零引用**,仅 schema 残留。且 `surf_runs` 还挂在 `supabase_realtime` publication 里,白占一个 webhook/复制通道。
+- **影响**: 纯死表噪音——拉大 schema、误导后来者以为是活 feature(本次 T2 梳理就一度把它们当 live 列进矩阵)、realtime publication 多一张无用表。无功能危害。
+- **建议**: 确认无线上数据依赖后,迁移 drop 两表 + 从 realtime publication 摘除;`db push` 后 regen schema.ts。低优先,可与下次清理迁移合并。
+- **状态**: 待办
+
 ### 🟢 iOS FriendsTabView 群邀请兜底文案仍是旧分摊口径
 - **发现**: 2026-06-04 · fix/billing-tails-email-norm（#226 解耦）
 - **位置**: `apps/pendingbot/Sources/Features/Friends/FriendsTabView.swift:827`
