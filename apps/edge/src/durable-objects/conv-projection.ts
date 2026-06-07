@@ -338,4 +338,55 @@ export class ConvProjectionDO {
       rev: r.rev,
     };
   }
+
+  // ── fetch RPC 入口 ──────────────────────────────────────────────
+  // 仓库 DO 约定走 fetch(参照 wallet.ts / hub.ts):跨 DO 调用方
+  // POST 一个 { op, ... } JSON 到这里,内部 switch 到上面的方法。写穿点
+  // (routes/realtime-internal.ts)只 fire-and-forget 调写类 op,读 op
+  // (tail/meta/roster/member)留给 E2 读端点。
+
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+
+    switch (url.pathname) {
+      case '/ingest-message': {
+        this.ingestMessage(body.row as IngestMessageInput);
+        return Response.json({ ok: true });
+      }
+      case '/mark-deleted': {
+        this.markDeleted(String(body.id ?? ''));
+        return Response.json({ ok: true });
+      }
+      case '/ingest-roster': {
+        const op = body.op === 'remove' ? 'remove' : 'add';
+        this.ingestRoster(op, String(body.userId ?? ''));
+        return Response.json({ ok: true });
+      }
+      case '/set-meta': {
+        this.setMeta((body.patch as ConvMetaPatch) ?? {});
+        return Response.json({ ok: true });
+      }
+      case '/roster': {
+        return Response.json({ roster: this.getRoster() });
+      }
+      case '/meta': {
+        return Response.json({ meta: this.getMeta() });
+      }
+      case '/is-member': {
+        return Response.json({ member: this.isMember(String(body.userId ?? '')) });
+      }
+      case '/tail': {
+        return Response.json(
+          this.getTail({
+            sinceRev: typeof body.sinceRev === 'number' ? body.sinceRev : undefined,
+            limit: typeof body.limit === 'number' ? body.limit : undefined,
+            epoch: typeof body.epoch === 'string' ? body.epoch : undefined,
+          }),
+        );
+      }
+      default:
+        return Response.json({ error: 'not found' }, { status: 404 });
+    }
+  }
 }

@@ -275,4 +275,50 @@ export class UserProjectionDO {
       rev: r.rev,
     };
   }
+
+  // ── fetch RPC 入口 ──────────────────────────────────────────────
+  // 仓库 DO 约定走 fetch(参照 wallet.ts / hub.ts)。写穿点
+  // (routes/realtime-internal.ts)fire-and-forget 调写类 op;读 op(list/
+  // meta)留给 E2 读端点。
+
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+
+    switch (url.pathname) {
+      case '/ingest-conversation': {
+        this.ingestConversation(body.row as IngestConversationInput);
+        return Response.json({ ok: true });
+      }
+      case '/ingest-unread': {
+        this.ingestUnread(
+          String(body.convId ?? ''),
+          Math.trunc(Number(body.count ?? 0)),
+          body.preview === undefined ? undefined : (body.preview as string | null),
+        );
+        return Response.json({ ok: true });
+      }
+      case '/remove-conversation': {
+        this.removeConversation(String(body.convId ?? ''));
+        return Response.json({ ok: true });
+      }
+      case '/set-meta': {
+        this.setMeta((body.patch as UserMetaPatch) ?? {});
+        return Response.json({ ok: true });
+      }
+      case '/list': {
+        return Response.json(
+          this.getList({
+            sinceRev: typeof body.sinceRev === 'number' ? body.sinceRev : undefined,
+            epoch: typeof body.epoch === 'string' ? body.epoch : undefined,
+          }),
+        );
+      }
+      case '/meta': {
+        return Response.json({ meta: this.getMeta() });
+      }
+      default:
+        return Response.json({ error: 'not found' }, { status: 404 });
+    }
+  }
 }

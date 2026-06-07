@@ -15,10 +15,27 @@
 
 import { Hono } from 'hono';
 import { jsonError } from '../lib/http-error';
+import { projectWebhookRow, type ProjectionTable } from '../lib/projection-writethrough';
 import { publishToHub, type RealtimeChange, type RealtimeTable } from '../lib/realtime-publish';
 import type { AppBindings } from '../types';
 
 export const realtimeInternalRoutes = new Hono<AppBindings>();
+
+// Tables whose webhook rows are also materialized into the T2 read
+// projection DOs (in addition to the realtime fan-out below). Note this
+// is a different set than the realtime fan-out tables — `conversations`
+// feeds the projection but is not fanned out. See
+// lib/projection-writethrough.ts for the table → DO-method mapping.
+const PROJECTION_TABLES = new Set<ProjectionTable>([
+  'messages',
+  'conversation_participants',
+  'conversations',
+  'user_unread_counts',
+]);
+
+function isProjectionTable(table: string): table is ProjectionTable {
+  return (PROJECTION_TABLES as Set<string>).has(table);
+}
 
 // Tables routed to a per-conversation hub vs a per-user hub.
 const CONV_TABLES = new Set<RealtimeTable>([
@@ -55,16 +72,27 @@ realtimeInternalRoutes.post('/notify', async (c) => {
   }
 
   const table = body.table as RealtimeTable;
+
+  const op =
+    body.type === 'INSERT' ? 'insert' : body.type === 'UPDATE' ? 'update' : 'delete';
+  // DELETE carries the row in old_record; INSERT/UPDATE in record.
+  const row = body.record ?? body.old_record;
+
+  // T2 read-projection write-through. Runs in ADDITION to the realtime
+  // fan-out below, fire-and-forget (idempotent, failures logged not
+  // raised). Must happen before the fan-out skips: `conversations` is a
+  // projection table but NOT a fan-out table, and it keys on `id` (no
+  // hub routing key), so both early-returns below would otherwise drop it.
+  if (row && isProjectionTable(table)) {
+    c.executionCtx.waitUntil(projectWebhookRow(c.env, table, op, row));
+  }
+
   if (!CONV_TABLES.has(table) && !USER_TABLES.has(table) && !CREW_CONV_TABLES.has(table)) {
     // A webhook on a table we don't fan out — accept so the trigger
     // doesn't see an error, but do nothing.
     return c.json({ ok: true, skipped: 'table not fanned out' });
   }
 
-  const op =
-    body.type === 'INSERT' ? 'insert' : body.type === 'UPDATE' ? 'update' : 'delete';
-  // DELETE carries the row in old_record; INSERT/UPDATE in record.
-  const row = body.record ?? body.old_record;
   if (!row) return c.json({ ok: true, skipped: 'no row payload' });
 
   let hubKey: string | null = null;
