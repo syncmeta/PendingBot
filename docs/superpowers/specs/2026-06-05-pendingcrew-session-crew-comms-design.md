@@ -142,7 +142,8 @@ session 是**长跑**的，会撞上几个 claude code 机制，提前接：
 **「自动审批模式」= 两个 CLI 的原生 auto mode**（claude `autoMode` 分类器 / codex `auto_review` 复核 agent），**不是 bypass、也不是"检测弹框+注入"**。auto mode 本身就是"自动接管阻碍"。两层：
 
 ### Layer 1 — 原生 auto mode（默认自动审批，自动接管 boundary）
-- **claude**：`auto` 权限模式 + `autoMode` settings。每个工具调用过一个**分类器**（在 `permissions` 之后的第二道闸）：**自动放行 routine、自动拦 irreversible/destructive/出环境(exfil)**，**不弹框、不挂起、自动裁**。配 `autoMode.environment`（信任 repo/bucket/域，带 `$defaults`）+ `soft_deny`/`hard_deny`/`allow`（自然语言规则）编码 crew 策略；`permissions.deny`(managed) 是分类器**之前**的硬闸；分类器也读 CLAUDE.md。`claude auto-mode config/defaults/critique` 可查有效规则。
+- **claude**：`--permission-mode auto` + `autoMode` settings。每个工具调用过一个**分类器**（在 `permissions` 之后的第二道闸）：**自动放行 routine、自动拦 irreversible/destructive/出环境(exfil)**，**不弹框、不挂起、自动裁**。配 `autoMode.environment`（信任 repo/bucket/域，带 `$defaults`）+ `soft_deny`/`hard_deny`/`allow`（自然语言规则）编码 crew 策略；`permissions.deny`(managed) 是分类器**之前**的硬闸；分类器也读 CLAUDE.md。`claude auto-mode config/defaults/critique` 可查有效规则。
+  - **✅ 本机实证（订阅登录，本 session）**：`--permission-mode auto` 是 `--help` 合法选项、`claude auto-mode config` 返回完整规则集（auto mode **订阅可用**，解了"仅 API?"的疑虑）。**默认 `soft_deny` 已覆盖** `rm -rf` 预存文件 / force-push / push 默认分支 / 生产部署+迁移 / `curl|bash` / 削安全 / 甚至"创建 `--dangerously-skip-permissions` 子 agent" → **误删/放权风险默认就拦，v1 不用自写 deny-list**（按需才加 crew 专属 `soft_deny`/`environment`）。
 - **codex**：`approval_policy="on-request"` + `approvals_reviewer="auto_review"` + `sandbox_mode="workspace-write"`。跨沙箱边界（网络/越界写/MCP/computer-use）时一个**复核 agent** 按 policy（`[auto_review] policy`）自动裁，拒了给主 agent 理由让它找更安全替代或问人；circuit breaker：连拒 3 / 50 内 10。
 - 这层 = 自动接管**绝大多数**工具/权限/边界审批 + 安全复核，**无人、不挂、非 bypass**。computer-use / MCP 权限也走这层自动裁。
 
@@ -166,7 +167,7 @@ auto mode 裁不了 / 需人判断的才上人：
 7. **compaction 韧性**：`PreCompact` hook 能否经 `additionalContext` 把动态白板塞进 compact 后上下文？`--append-system-prompt`/skill 是否真"自动重载"扛过 compact？（§8，调研信心不足，真机核）。
 8. **plugin / settings 精确键**：`--plugin-dir` 非交互加载、`permissions.deny`/`PreToolUse` deny 语法、settings 各键名 —— 调研给的 JSON 样例当方向，落地前逐个核实键名（别凭样例写死）。
 
-9. **auto mode（§9）—— 计费可用性是关键探针**：① **claude auto mode 在订阅(Pro/Max OAuth)能用吗** —— 文档只说 "available on the Anthropic API"，没明说订阅，**真机核**（若仅 API 计费 → 与订阅铁律冲突，要么找启用开关 `CLAUDE_CODE_ENABLE_AUTO_MODE`/admin、要么这条退回 codex 先行）；② codex `auto_review` 在 ChatGPT 订阅可用 + reviewer agent 计费走哪；③ `autoMode.environment`/`soft_deny` 等 crew 策略默认集 + soft_deny→agent 转 `ask_human`→人批→retry 回路（`PermissionDenied` hook）的接法。
+9. **auto mode（§9）**：① ~~claude auto mode 订阅可用?~~ **✅ 已本机解（订阅可用，`--permission-mode auto` + `auto-mode config` 通）**；② **codex `auto_review` 在 ChatGPT 订阅可用 + reviewer agent 计费**走哪（未验）；③ soft_deny→agent 转 `ask_human`→人批→retry 回路（`PermissionDenied` hook）的接法 + crew 专属 `autoMode.environment` 该填什么（PendingBot 自己的 repo/域/edge）。
 
 ## 验证门
 
