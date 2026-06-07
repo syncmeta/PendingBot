@@ -57,6 +57,26 @@ enum MessagesFetch {
     /// Latest `limit` messages for a conversation, returned chronological
     /// (oldest→newest). RLS gates participation.
     static func latest(conversationId: String, limit: Int = 200) async throws -> [MessageRow] {
+        // ── Edge-first (T2.1 read-offload) ──────────────────────────────
+        // Try the CF conv-projection tail (GET /v1/messages/tail). The DO
+        // already returns rows oldest→newest (it `.reverse()`s its DESC page),
+        // so `mapMessageRows` yields the same chronological order this function
+        // contracts. On ANY error — or a suspicious-empty full fetch — fall
+        // through to the canonical Supabase query (worst case = today's read).
+        do {
+            let edge = try await APIClient().fetchMessageTailFromEdge(conversationId: conversationId, limit: limit)
+            let mapped = EdgeReadSource.mapMessageRows(edge.rows, conversationId: conversationId)
+            if !mapped.isEmpty {
+                return mapped
+            }
+            // An empty tail is possible for a brand-new empty conversation, but
+            // it's also what a cold/partial projection returns — fall back to
+            // Supabase to disambiguate rather than render a blank thread.
+        } catch {
+            // Best-effort log; the Supabase path below is the safety net.
+        }
+
+        // ── Supabase fallback (canonical, unchanged) ────────────────────
         let rowsDesc: [MessageRow] = try await SupabaseStack.shared
             .from("messages")
             .select(columns)
