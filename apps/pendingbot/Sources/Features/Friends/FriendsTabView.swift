@@ -505,8 +505,8 @@ struct FriendsTabView: View {
         // flight. Pending friend requests aren't cached: the state changes
         // too quickly to be worth showing stale.
         if bots.isEmpty && humans.isEmpty {
-            let cachedBots = LocalDatabase.shared.loadBots()
-            let cachedContacts = LocalDatabase.shared.loadContacts()
+            let cachedBots = CacheRepository.cachedBots()
+            let cachedContacts = CacheRepository.cachedContacts()
             if !cachedBots.isEmpty {
                 self.bots = cachedBots.map {
                     BotPick(id: $0.id, display_name: $0.display_name,
@@ -584,7 +584,7 @@ struct FriendsTabView: View {
                 }
             // Persist bots wholesale on success — server is the source of
             // truth for which ones are still active / visible to us.
-            LocalDatabase.shared.replaceBots(self.bots.map {
+            CacheRepository.persistBots(self.bots.map {
                 LocalDatabase.BotRow(
                     id: $0.id, display_name: $0.display_name,
                     model_id: $0.model_id, visibility: $0.visibility,
@@ -599,7 +599,7 @@ struct FriendsTabView: View {
             // persisted so the next tab entry can hydrate from it.
             if let contacts = try? await contactsResp {
                 self.humans = contacts
-                LocalDatabase.shared.replaceContacts(contacts.map {
+                CacheRepository.persistContacts(contacts.map {
                     LocalDatabase.ContactRow(
                         id: $0.id, alias: $0.alias,
                         display_name: $0.displayName,
