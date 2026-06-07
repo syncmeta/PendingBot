@@ -15,8 +15,8 @@
 import type { Env } from '../types';
 import { serviceClient } from '../lib/supabase';
 
-/** DO 留存的消息条数上限(按 created_at,id 排序,删最旧)。 */
-const N_KEEP = 1000;
+/** DO 留存的消息条数上限(按 created_at,id 排序,删最旧)。导出供测试断言 trim 边界。 */
+export const N_KEEP = 1000;
 /** getTail 默认返回条数;对齐现状 MessagesFetch.latest()(~200)。 */
 const DEFAULT_TAIL_LIMIT = 200;
 
