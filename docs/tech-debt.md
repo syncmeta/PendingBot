@@ -33,6 +33,14 @@
 
 ## 🔴 根基级
 
+### 🔴 边缘读投影授权门 ↔ Supabase RLS 对齐是隐式不变量,无测试守护
+- **发现**: 2026-06-07 · feat/edge-read-offload(E6 对抗式审查 E4 授权门)
+- **位置**: `apps/edge/src/routes/projections.ts`(`/messages/tail` 授权门)+ `apps/edge/src/lib/conv-cache.ts:resolveConv` + `supabase/migrations/*`(`conversations` / `messages` SELECT policies)
+- **问题**: 热路径(命中投影 DO)读消息尾完全靠 worker 授权门(`resolveConv` → `conversations` SELECT RLS 可见性)决定放不放行;投影 DO 的内容是 service-client 回填的(绕 RLS),所以**门是热路径唯一权威**。当前是安全的,因为 `conversations` 的两条 SELECT policy(`conversations_participant_read`=is_participant、`conversations_temporary_group_view`=can_view_temporary_group)与 `messages` 的两条 SELECT policy(`messages_participant_read`=is_participant+排除 voice_call_summary、`messages_temporary_group_read`=can_view_temporary_group)**逐条对齐** —— 能看见 conversation 行的人正好能看见它的 messages。但这个对齐是**隐式的、靠人记**:E6 审查时是手工逐条比对 migration 才确认的,没有任何测试/断言守护。
+- **影响**: 谁要是以后给 `conversations` 加一条**更宽**的 SELECT policy(让某类用户能看见会话行)却忘了给 `messages` 加对应 policy(或反过来),授权门会基于"能看见 conversation"放行,而热投影把**全量消息尾**喂给一个 RLS 本不允许读消息的用户 → **静默 IDOR**,且冷回落(`tailFromSupabase` 带 user JWT 走 RLS)只在投影 RPC 失败/空时才触发,正常热命中根本不经 RLS,这个洞不会被冷路径兜住。属安全/一致性根基隐患。
+- **建议**: ① 在 spec §7.2 的"RLS 可见性规则对照表"里把"`conversations` SELECT 可见性必须 ⊆ `messages` SELECT 可见性"列为显式不变量,且任何动这两表 RLS 的 migration 必须同时复核对侧。② 更硬的做法:加一个 live-DB introspection 测试(或 CI 检查)断言"对每种 conversation_type,能 SELECT conversation 的角色集 == 能 SELECT 其 messages 的角色集",把隐式不变量变成会失败的红灯。③ 或者干脆让热路径授权门改判 `is_participant`/`can_view_temporary_group` 的**成员语义**(而非"能否 SELECT conversation 行"),与 messages 可见性同源,消除两表 policy 漂移的耦合面。
+- **状态**: 待办(当前实现已验证安全,这是防回归/防未来漂移的护栏)
+
 ### 🔴 welcome bonus 可被 email `+` 别名薅羊毛 — 注册无 email 规范化
 - **发现**: 2026-06-04 · feat/managed-config（讨论测试账号怎么收 OTP 时逼出来的）
 - **位置**: signup 链路（`auth.users` 唯一性按 email **原文**）+ `apps/edge/src/lib/billing-grant.ts:grantSignupBonus`（welcome 35 PNC ≈ $1.30）
