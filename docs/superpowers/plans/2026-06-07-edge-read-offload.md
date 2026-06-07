@@ -206,11 +206,18 @@ webhook 至少一次、可能乱序/丢。投影喂养必须:
 - **T2.4 配置 → KV**:/models、pricing、i18n、place_names、task_routing、公共 bots 目录;写时 purge。(prompt 那条已由 Langfuse session 闭环。)
 - **T2.5 头像收口** + **T2.6 注销账号收进 worker**(细碎,可并)。
 
-## 14. 待决策
+## 14. 决策(2026-06-07 已定)
 
-1. **深翻历史(L3)**:留客户端直连 Supabase+RLS(省事、RLS 白嫖)还是全走 worker(单一 auth 面、客户端可拔 supabase-swift,消除 silent-anon footgun)?倾向:热路径走 worker,L3 暂留直连,终局收 worker。
-2. **吊销即时性**:webhook 喂 roster(简单,几秒延迟)还是踢人 RPC 同步 evict DO(强,多写一处)?倾向 webhook,除非产品要求即时。
-3. **投影粒度**:envelope/群 roster 是否也上 DO 投影,还是只 Repository+worker?倾向先只做消息尾 + 会话列表两个 DO,其余观察。
+1. **深翻历史(L3)**:热路径走 worker+投影;**深翻暂留客户端直连 Supabase+RLS**(省事、RLS 白嫖),终局再收 worker。
+2. **吊销即时性**:**A — webhook 喂 roster**(最终一致,几秒窗口可接受;被踢者本地本有旧消息)。不做同步 evict。
+3. **投影粒度**:**只做 2 个 DO 投影 = 消息尾(per-conv)+ 会话列表/未读(per-user)**;envelope/roster/contacts 不单独投影(roster 作为授权数据存进 conv DO,但不当独立 UI 读投影)。
+4. **Auth 代理**:**不进 T2**,延后与 #252 反滥用合并(无延迟收益 + 新实现风险;footgun 在移除数据 `.from()` 时已治)。
+
+### 实现决策(scout 后定,均无需迁移)
+
+- **delta 序列号:不加 Postgres 列、无迁移。** 用**投影 DO 自己的单调 revision 计数器**(webhook 摄入时 ++,每行盖最后改动 revision,含 tombstone)。客户端 cursor = `DO revision`;DO 重建→换 baseline epoch,cursor 过期则客户端全量重取。`messages` 现有 `idx_messages_conv_time (conversation_id, created_at DESC)` 供回填查询。
+- **独立投影 DO,不扩 REALTIME_HUB。** 新增 `ConvProjectionDO`(per conv:消息尾 + roster + revision)+ `UserProjectionDO`(per user:会话列表 + 未读 + revision),SQLite-backed,wrangler 加新 migration tag;不动正在工作的 realtime 扇出。写穿点 = `routes/realtime-internal.ts`(同一 webhook payload 顺手写穿)。
+- **pre-launch 放手做**:无人使用,不保证可用性,不做灰度/兼容垫片;直接干净实现。
 
 ## 15. 非目标
 
