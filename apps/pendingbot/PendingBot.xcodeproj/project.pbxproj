@@ -72,6 +72,7 @@
 		6715ECF7C0A8F33235E8B564 /* FriendsDataSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = C82D486B7EBB27D5882B5844 /* FriendsDataSource.swift */; };
 		677726B63A7F47E39943D767 /* EnvelopeDataSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = C385DAFA1E0BFEEC5520467A /* EnvelopeDataSource.swift */; };
 		67B0E4F2A2C4FE0ACCE07550 /* EnvelopeFeedRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56BFB3EBF959D378BC6BC313 /* EnvelopeFeedRow.swift */; };
+		68647D14BF681211208CE4BB /* CacheRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 737CD8E06DD8AAE4ACE169EB /* CacheRepository.swift */; };
 		68CC7CE5D41AC8BE5940E886 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = 58587B83E149045A770D0833 /* GoogleSignIn */; };
 		6E4DD70ABC53852AB56FCFED /* EnvelopeArticleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F18FB9C392174C32131512F /* EnvelopeArticleView.swift */; };
 		709467D9E6B366E16CAE1B43 /* VoiceCallAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FA08FADEA9A413F05BD5BF4 /* VoiceCallAPI.swift */; };
@@ -257,6 +258,7 @@
 		70EAEDCC6E5ABCC5261A43E3 /* MyQRBusinessCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyQRBusinessCard.swift; sourceTree = "<group>"; };
 		7114A9AF0BBDF033ADE65E67 /* ConversationView+Realtime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConversationView+Realtime.swift"; sourceTree = "<group>"; };
 		72CE91B5FAEED2B40DF223A1 /* EnvelopeAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvelopeAPI.swift; sourceTree = "<group>"; };
+		737CD8E06DD8AAE4ACE169EB /* CacheRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CacheRepository.swift; sourceTree = "<group>"; };
 		7389F31567A5B0D72BC29CC1 /* Account.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Account.swift; sourceTree = "<group>"; };
 		79ED6E895CA98C76570E0C51 /* LetterSenderAvatar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LetterSenderAvatar.swift; sourceTree = "<group>"; };
 		7B48A6EDBF639ED658DB2493 /* GroupQRCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupQRCard.swift; sourceTree = "<group>"; };
@@ -390,6 +392,7 @@
 				847B06C1CE436AE865AD9AAE /* BillingService.swift */,
 				AC6DBF492E7DD84630FAE567 /* BotContactsFetch.swift */,
 				6A5442547F63F7CF41B54C46 /* BotInviteAPI.swift */,
+				737CD8E06DD8AAE4ACE169EB /* CacheRepository.swift */,
 				CD69E5388537288F5E14D3D1 /* ChatDataSource.swift */,
 				A0DF072DCFB0786FA83D70F3 /* ChatStream.swift */,
 				8B8E7132DEAB8AA2580E7DDF /* ContactsAPI.swift */,
@@ -801,6 +804,7 @@
 				ACB7DE5BB4722BC475D80C54 /* BrandAvatar.swift in Sources */,
 				C6F7A651FC9842DE3C2D32A7 /* BubbleSplitter.swift in Sources */,
 				0D14B87E36E28B1C76B152E6 /* BubbleView.swift in Sources */,
+				68647D14BF681211208CE4BB /* CacheRepository.swift in Sources */,
 				583836D442830F875F8C55F2 /* CallCenter.swift in Sources */,
 				C388351781EFDB16D477FE8A /* CallDiagnostics.swift in Sources */,
 				83CDD45BF74B5724F75FC0AD /* CallDiagnosticsLogic.swift in Sources */,
