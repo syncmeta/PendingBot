@@ -12,6 +12,7 @@
 // - removeConversation 直接删行(列表投影无需 tombstone:整行消失即"移出列表")。
 // - SQLite-backed,写法参照 wallet.ts(ctx.storage.sql.exec)。
 import type { Env } from '../types';
+import { serviceClient } from '../lib/supabase';
 
 /** 投影里一条会话列表行(对外 JSON 形状)。 */
 export interface UserConversationRow {
@@ -257,11 +258,67 @@ export class UserProjectionDO {
   }
 
   /**
-   * 冷启动 / 驱逐回填:从 Supabase 拉一次重建会话列表 + 未读,换 epoch。
-   * E3 实现。留空壳,调用方在 backfilled=0 时触发。
+   * 冷启动 / 驱逐回填:从 Supabase(service client,绕 RLS)一次重建会话列表 +
+   * 未读,然后 backfilled=1、换新 epoch。懒触发:fetch 的 /list 在
+   * backfilled!=1 时先 await 本方法再服务。
+   *
+   * 回填查询(`pendingbot` schema,对齐 iOS ConversationFetch.list 的列与过滤):
+   *   FROM user_unread_counts WHERE user_id = <id>
+   *     SELECT conversation_id, unread_count, last_message_preview,
+   *            conv:conversations!inner(conversation_type, title, updated_at)
+   *   —— user_unread_counts!inner 等价:只回该用户有未读行的会话(空会话过滤,
+   *      与 iOS 的 `!inner` 一致);conversation_type='subagent' 的子会话排除
+   *      (子代理对话从父级 tool trace 打开,不作顶层列表行)。
+   *
+   * updated_at 取会话的 updated_at(列表排序键,与 webhook 写穿一致);unread
+   * 取 unread_count;预览取 last_message_preview。
+   *
+   * 幂等性:rebuild 前清空 conversations 并把 cur_rev 归零;失败保持
+   * backfilled!=1,下次读再试(best-effort,冷路径由 Supabase+RLS 兜底)。
    */
   async backfill(): Promise<void> {
-    throw new Error('UserProjectionDO.backfill: TODO E3');
+    const userId = this.state.id.name;
+    if (!userId) {
+      throw new Error('UserProjectionDO.backfill: missing id name (must be idFromName)');
+    }
+    const supa = serviceClient(this.env);
+
+    const { data, error } = await supa
+      .from('user_unread_counts')
+      .select(
+        'conversation_id, unread_count, last_message_preview, conv:conversations!inner(conversation_type, title, updated_at)',
+      )
+      .eq('user_id', userId)
+      .neq('conv.conversation_type', 'subagent');
+    if (error) throw new Error(`UserProjectionDO.backfill: ${error.message}`);
+
+    // 读成功后才动本地(失败上面已 throw,backfilled 保持未置位)。
+    this.state.storage.sql.exec('DELETE FROM conversations');
+    this.writeMeta('cur_rev', '0');
+
+    for (const r of data ?? []) {
+      // PostgREST 的 !inner 内嵌 to-one 关系返回单对象;防御性兼容数组形态。
+      const conv = Array.isArray(r.conv) ? r.conv[0] : r.conv;
+      if (!conv) continue;
+      this.ingestConversation({
+        conv_id: r.conversation_id,
+        type: conv.conversation_type ?? 'unknown',
+        title: conv.title,
+        last_msg_preview: r.last_message_preview,
+        updated_at: conv.updated_at,
+        unread: Math.max(0, Math.trunc(Number(r.unread_count ?? 0))),
+      });
+    }
+
+    // 换 epoch(让重建前的 cursor 失效 → 客户端 full 重取)+ 标记已回填。
+    this.writeMeta('epoch', crypto.randomUUID());
+    this.setMeta({ backfilled: true });
+  }
+
+  /** backfilled!=1 时先回填一次(懒触发);已回填则直接返回。 */
+  private async ensureBackfilled(): Promise<void> {
+    if (this.readMeta('backfilled') === '1') return;
+    await this.backfill();
   }
 
   private toConversationRow(r: ConversationDbRow): UserConversationRow {
@@ -307,6 +364,8 @@ export class UserProjectionDO {
         return Response.json({ ok: true });
       }
       case '/list': {
+        // 会话列表读:冷启动 / 被驱逐后先从 Supabase 重建一次。
+        await this.ensureBackfilled();
         return Response.json(
           this.getList({
             sinceRev: typeof body.sinceRev === 'number' ? body.sinceRev : undefined,

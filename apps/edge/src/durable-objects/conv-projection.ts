@@ -13,6 +13,7 @@
 // - 留存 N_keep≈1000 条;深翻历史走 Supabase(②),不靠 DO。
 // - SQLite-backed,写法参照 wallet.ts(ctx.storage.sql.exec)。
 import type { Env } from '../types';
+import { serviceClient } from '../lib/supabase';
 
 /** DO 留存的消息条数上限(按 created_at,id 排序,删最旧)。 */
 const N_KEEP = 1000;
@@ -317,11 +318,103 @@ export class ConvProjectionDO {
   }
 
   /**
-   * 冷启动 / 驱逐回填:从 Supabase 拉一次重建消息尾 + roster + meta,换 epoch。
-   * E3 实现。留空壳,调用方在 backfilled=0 时触发。
+   * 冷启动 / 驱逐回填:从 Supabase(service client,绕 RLS)一次重建消息尾 +
+   * roster + conv meta,然后 backfilled=1、换新 epoch。懒触发:fetch 的读 op
+   * (tail/is-member/roster)在 backfilled!=1 时先 await 本方法再服务。
+   *
+   * 回填查询(均在 `pendingbot` schema):
+   *   - messages:WHERE conversation_id = <id> AND status != 'deleted'
+   *     ORDER BY message_seq DESC, created_at DESC LIMIT N_KEEP。走
+   *     idx_messages_conv_time;status='deleted' 是 §7.2 RLS 隐式滤掉的行,
+   *     这里直接排除(只回填活行,tombstone 不参与冷重建)。逐条按 created_at
+   *     升序 ingestMessage,使 rev 连续递增、最旧的 rev 最小。
+   *   - conversation_participants:WHERE conversation_id = <id> AND
+   *     participant_type = 'user'(只投影人类成员,与 webhook 写穿一致)。
+   *   - conversations:单行(id),取 conversation_type → conv_type、
+   *     user_id → owner_user_id 写 meta。
+   *
+   * 幂等性:rebuild 前清空 messages/roster 并把 cur_rev 归零,避免与残留行/旧
+   * rev 串味;失败则保持 backfilled!=1,下次读再试(best-effort,冷路径仍由
+   * Supabase+RLS 兜底)。
    */
   async backfill(): Promise<void> {
-    throw new Error('ConvProjectionDO.backfill: TODO E3');
+    const conversationId = this.state.id.name;
+    if (!conversationId) {
+      throw new Error('ConvProjectionDO.backfill: missing id name (must be idFromName)');
+    }
+    const supa = serviceClient(this.env);
+
+    // conv 元数据(conv_type / owner)。
+    const { data: conv, error: convErr } = await supa
+      .from('conversations')
+      .select('conversation_type, user_id')
+      .eq('id', conversationId)
+      .maybeSingle();
+    if (convErr) throw new Error(`ConvProjectionDO.backfill conversations: ${convErr.message}`);
+
+    // 人类 roster。
+    const { data: parts, error: partsErr } = await supa
+      .from('conversation_participants')
+      .select('participant_id')
+      .eq('conversation_id', conversationId)
+      .eq('participant_type', 'user');
+    if (partsErr)
+      throw new Error(`ConvProjectionDO.backfill participants: ${partsErr.message}`);
+
+    // 最近 N_KEEP 条活消息(排除 deleted)。DESC 取尾,稍后翻升序逐条摄入。
+    const { data: msgsDesc, error: msgErr } = await supa
+      .from('messages')
+      .select(
+        'id, created_at, role, status, content, bubble_group_id, user_id, sender_bot_id, attachments',
+      )
+      .eq('conversation_id', conversationId)
+      .neq('status', 'deleted')
+      .order('message_seq', { ascending: false })
+      .order('created_at', { ascending: false })
+      .limit(N_KEEP);
+    if (msgErr) throw new Error(`ConvProjectionDO.backfill messages: ${msgErr.message}`);
+
+    // 全部读成功后才动本地状态(失败上面已 throw,backfilled 保持未置位)。
+    // 清空 + 归零 rev,确保 rebuild 是干净的(避免残留行/旧 rev 串味)。
+    this.state.storage.sql.exec('DELETE FROM messages');
+    this.state.storage.sql.exec('DELETE FROM roster');
+    this.writeMeta('cur_rev', '0');
+
+    // 时间升序摄入,使最旧的 rev 最小、最新的 rev 最大(与增量写穿同序)。
+    const msgsAsc = (msgsDesc ?? []).slice().reverse();
+    for (const m of msgsAsc) {
+      this.ingestMessage({
+        id: m.id,
+        created_at: m.created_at,
+        role: m.role,
+        status: m.status,
+        content: m.content ?? '',
+        bubble_group_id: m.bubble_group_id,
+        // messages.user_id 是人类发送者(与 webhook 写穿映射一致)。
+        sender_user_id: m.user_id,
+        sender_bot_id: m.sender_bot_id,
+        attachments: m.attachments ?? null,
+      });
+    }
+
+    for (const p of parts ?? []) {
+      this.ingestRoster('add', p.participant_id);
+    }
+
+    this.setMeta({
+      conv_type: conv?.conversation_type ?? 'unknown',
+      owner_user_id: conv?.user_id ?? null,
+    });
+
+    // 换 epoch(让重建前签发的 cursor 失效 → 客户端 full 重取)+ 标记已回填。
+    this.writeMeta('epoch', crypto.randomUUID());
+    this.setMeta({ backfilled: true });
+  }
+
+  /** backfilled!=1 时先回填一次(懒触发);已回填则直接返回。 */
+  private async ensureBackfilled(): Promise<void> {
+    if (this.readMeta('backfilled') === '1') return;
+    await this.backfill();
   }
 
   private toMessageRow(r: MessageDbRow): ConvMessageRow {
@@ -368,15 +461,21 @@ export class ConvProjectionDO {
         return Response.json({ ok: true });
       }
       case '/roster': {
+        // 授权门读 roster:冷启动时先回填,保证踢人前的成员集可见。
+        await this.ensureBackfilled();
         return Response.json({ roster: this.getRoster() });
       }
       case '/meta': {
         return Response.json({ meta: this.getMeta() });
       }
       case '/is-member': {
+        // 授权门:冷启动时先回填 roster/owner,否则会误判非成员 → 误拒。
+        await this.ensureBackfilled();
         return Response.json({ member: this.isMember(String(body.userId ?? '')) });
       }
       case '/tail': {
+        // 读消息尾:冷启动 / 被驱逐后先从 Supabase 重建一次。
+        await this.ensureBackfilled();
         return Response.json(
           this.getTail({
             sinceRev: typeof body.sinceRev === 'number' ? body.sinceRev : undefined,
