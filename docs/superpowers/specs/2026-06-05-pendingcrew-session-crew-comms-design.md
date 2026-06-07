@@ -29,8 +29,8 @@
 
 两端都**启动即带首条指令**，且都**交互式/订阅计费**（不碰 Agent SDK / 不走 headless exec）。
 
-- **claude（PTY）**：positional `[prompt]`。`claude [--model m] "<指令>"`（help 实证：交互式默认，非 `--print` 限定）。**注意：不带 `--dangerously-skip-permissions`**——权限系统保持开（见 §9，敏感工具弹框=上报触发；routine 走 allow-list）。改 `AgentTerminalSession.argv` 加 `initialPrompt:` 作末位 positional；删掉 `CrewSessionWindowView` 的 0.6s sleep + 事后 `send`。
-- **codex（app-server）**：起 app-server 后,首条 user message 即 `<指令>`（你构造协议消息，天然带）。审批策略**非 `-a never`**——用会上报的模式（敏感动作出 approval 协议事件，见 §9）；`--sandbox workspace-write` 仍保留作containment。
+- **claude（PTY）**：positional `[prompt]`。`claude [--model m] "<指令>"`（help 实证：交互式默认，非 `--print` 限定）。**权限走 auto mode**（`auto` 模式 + `autoMode` 分类器自动裁，**非 `--dangerously-skip-permissions`/bypass**，见 §9）。改 `AgentTerminalSession.argv` 加 `initialPrompt:` 作末位 positional；删掉 `CrewSessionWindowView` 的 0.6s sleep + 事后 `send`。
+- **codex（app-server）**：起 app-server 后,首条 user message 即 `<指令>`（你构造协议消息，天然带）。**权限走 auto-review**（`approval_policy=on-request` + `approvals_reviewer=auto_review`，复核 agent 自动裁，**非 `-a never`**，见 §9）；`--sandbox workspace-write` 作 containment。
 - **探针**：claude `--resume <id> "<prompt>"` 大概率 OK；positional 是自动提交还是只填框 → 真机确认。codex app-server resume/初始消息协议形状 → 实接确认。
 
 ---
@@ -137,25 +137,22 @@ session 是**长跑**的，会撞上几个 claude code 机制，提前接：
 - **打包形态**：可把 hooks（SessionStart/PreCompact/PreToolUse/Stop）+ crew-comms MCP + 世界观 + 安全闸 settings 收成**一个 plugin**（`--plugin-dir` 非交互加载），而非 --settings/--mcp-config/--append-system-prompt 散一地。维护性好，留作落地容器形态（不阻塞，先散装跑通再收）。
 - **MCP resources（pull 备选）**：深查类（`look_at_session` 等）可建成 MCP **resource**（agent 按需 live-fetch、天然扛 compact），而非纯 tool。白板主路仍走 push（你定的）；resource 给"按需深查"。
 
-## 9. 权限/审批 = 组织架构式逐级上报（员工→机长→老板）
+## 9. 权限/审批 = 原生 auto mode（自动审批）+ 人类升级（组织架构）
 
-**纠正草稿"自动审批=bypass"的错判**：目标不是让 session 无阻碍跑，是**把阻碍方便地路由给该批的人**。权限系统全程开，**绝不 bypass 所有权限请求**。
+**「自动审批模式」= 两个 CLI 的原生 auto mode**（claude `autoMode` 分类器 / codex `auto_review` 复核 agent），**不是 bypass、也不是"检测弹框+注入"**。auto mode 本身就是"自动接管阻碍"。两层：
 
-**模型 = 公司组织架构**：
-- **session = 员工**：自主干活；撞到要签字的（computer-use / MCP 工具权限、风险动作、要问的问题、方向确认）→ 不静默自决、不死在没人看的弹框 → **上报（请示）**。
-- **captain = 主管**：收上报，**自动接管能定的一小撮**——明显能答的问题、它理解错初衷而提的不该提的问题（纠正"你理解错了，实际是 X"）、机长权限内的安全审批；**其余往上递**。
-- **人类 = 老板**：拿到真审批 / 方向确认 / 判断题 → **等人类确认**（请示领导，不催、可慢）。
-- **"自动审批模式"** = 机长把能自动定的自动处理、定不了的逐级递到人；**不是 bypass**。
+### Layer 1 — 原生 auto mode（默认自动审批，自动接管 boundary）
+- **claude**：`auto` 权限模式 + `autoMode` settings。每个工具调用过一个**分类器**（在 `permissions` 之后的第二道闸）：**自动放行 routine、自动拦 irreversible/destructive/出环境(exfil)**，**不弹框、不挂起、自动裁**。配 `autoMode.environment`（信任 repo/bucket/域，带 `$defaults`）+ `soft_deny`/`hard_deny`/`allow`（自然语言规则）编码 crew 策略；`permissions.deny`(managed) 是分类器**之前**的硬闸；分类器也读 CLAUDE.md。`claude auto-mode config/defaults/critique` 可查有效规则。
+- **codex**：`approval_policy="on-request"` + `approvals_reviewer="auto_review"` + `sandbox_mode="workspace-write"`。跨沙箱边界（网络/越界写/MCP/computer-use）时一个**复核 agent** 按 policy（`[auto_review] policy`）自动裁，拒了给主 agent 理由让它找更安全替代或问人；circuit breaker：连拒 3 / 50 内 10。
+- 这层 = 自动接管**绝大多数**工具/权限/边界审批 + 安全复核，**无人、不挂、非 bypass**。computer-use / MCP 权限也走这层自动裁。
 
-**两条上报通道，汇同一条 captain→人 链**：
-1. **问题 / 方向确认** → `ask_human` MCP（阻塞 long-poll，T4.3 已有）→ captain triage → 人。
-2. **工具权限审批**（少数敏感场景，"弹框仅限少数"）：
-   - **claude(PTY)**：非 bypass，保留原生弹框 = 上报触发。orchestrator 检测"在等批"（Notification hook / transcript / 终端）→ 路由 captain→人 → 决定回来**注入应答**（原生弹框无限等，天然扛人类慢批）。
-   - **codex(app-server)**：审批是**协议一等事件** → 直接路由 captain→人 → 协议回应（比 claude 干净）。
-   - captain triage：能自动批的秒回；要人的递 PendingBot 审批卡（T4.3 permission-request UI）等人。
-- **routine 安全动作**（读 / workspace 编辑 / 白名单 bash）：不上报、直接走（allow-list / acceptEdits 模式）。
+### Layer 2 — 人类升级（请示上级，仅判断题）
+auto mode 裁不了 / 需人判断的才上人：
+- **问题（ask_human）**：agent 问问题 → **captain triage**：自动答**明显能答的 / 它理解错初衷提的不该提的**（"你理解错了，实际是 X"），**真问题升级到人**（= 你说的"自动接管仅限很明显/理解错的问题"）。
+- **真审批 / 方向确认**：auto mode `soft_deny` 拦下但 agent 确实要的、或方向性判断 → agent `ask_human` → captain → **人类确认**（请示领导，不催、可慢）。
+- 通道复用 `ask_human`（T4.3 long-poll）+ `permission_requests`（T4.3）+ captain 编排（J/K）；是 spec §10.3-10.5「机长三角判断 + DAG 溯源到真人」的落地。captain 角色从"起/停 session"**扩成"主管：问题/升级 triage"**。
 
-**合流既有件**：这套 = spec §10.3-10.5「机长三角判断 + 沿 DAG 溯源到真人」的落地；复用 `ask_human`（T4.3）+ `permission_requests` 表/RPC（T4.3）+ captain 编排（J/K）。captain 角色从"起/停 session"**扩成"主管：审批/问题 triage"**。
+**关键简化**：Layer 1 原生自动裁 → **废掉"检测 claude 弹框 + PTY 注入应答"那套脆机制**（上一版我编的）。到人的只有 Layer 2 的 `ask_human`（已是干净 long-poll）。**与沙箱（§8）正交**：auto mode/复核 = 谁批；沙箱 = 炸不炸得到。
 
 ## 待探针（实现期验，非设计阻塞）
 
@@ -169,7 +166,7 @@ session 是**长跑**的，会撞上几个 claude code 机制，提前接：
 7. **compaction 韧性**：`PreCompact` hook 能否经 `additionalContext` 把动态白板塞进 compact 后上下文？`--append-system-prompt`/skill 是否真"自动重载"扛过 compact？（§8，调研信心不足，真机核）。
 8. **plugin / settings 精确键**：`--plugin-dir` 非交互加载、`permissions.deny`/`PreToolUse` deny 语法、settings 各键名 —— 调研给的 JSON 样例当方向，落地前逐个核实键名（别凭样例写死）。
 
-9. **权限上报机制（§9）**：claude 弹框能否被 orchestrator 可靠**检测 + 解析"在批什么"**（Notification hook payload 带不带请求详情 / 从 transcript 读）+ **可靠注入应答**（选项键，brittle?）；"原生弹框无限等"对人类慢批是否真成立；codex app-server approval 事件 + 回应协议形状；claude 非 bypass 下哪个 mode + allow-list 让 routine 不弹、只敏感弹。
+9. **auto mode（§9）—— 计费可用性是关键探针**：① **claude auto mode 在订阅(Pro/Max OAuth)能用吗** —— 文档只说 "available on the Anthropic API"，没明说订阅，**真机核**（若仅 API 计费 → 与订阅铁律冲突，要么找启用开关 `CLAUDE_CODE_ENABLE_AUTO_MODE`/admin、要么这条退回 codex 先行）；② codex `auto_review` 在 ChatGPT 订阅可用 + reviewer agent 计费走哪；③ `autoMode.environment`/`soft_deny` 等 crew 策略默认集 + soft_deny→agent 转 `ask_human`→人批→retry 回路（`PermissionDenied` hook）的接法。
 
 ## 验证门
 
