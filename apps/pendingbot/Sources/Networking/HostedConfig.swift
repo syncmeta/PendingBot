@@ -88,6 +88,52 @@ enum HostedConfig {
             case .remote: return URL(string: "https://bot.pendingname.com")!
             }
         }
+
+        // ── Telemetry / billing-identity SDK keys ──────────────────────
+        // All three are public/client keys by design (PostHog project
+        // token, Sentry DSN, RevenueCat public SDK key — none are secrets,
+        // they're meant to ship in the binary). An EMPTY string means
+        // "feature off": Telemetry.configure() skips that SDK entirely, so
+        // `.dev` builds (and any env with a key not yet provisioned) stay
+        // silent rather than spraying junk data. The user identifier sent
+        // to all three is `subject_id` (= auth.users.id), matching the edge
+        // side (distinctId=subjectId) — never email/PII.
+
+        /// PostHog project API key (`phc_…`). Same project as the edge
+        /// `POSTHOG_KEY`; the token is write-only ingest, safe in-binary.
+        var posthogKey: String {
+            switch self {
+            case .dev:    return ""
+            case .remote: return "phc_nKLCnaLAKNMzMdZLVhvjxkvVUzi5AC5Aa2ENTDMv8gT5"
+            }
+        }
+
+        /// PostHog ingest host. The project lives in PostHog's EU region.
+        var posthogHost: String {
+            switch self {
+            case .dev:    return "https://eu.i.posthog.com"
+            case .remote: return "https://eu.i.posthog.com"
+            }
+        }
+
+        /// Sentry DSN for the **Apple/iOS** project (distinct from the edge
+        /// worker's JS DSN — different platform project in the same org).
+        var sentryDSN: String {
+            switch self {
+            case .dev:    return ""
+            case .remote: return "https://0b8b942c3f67dcf696ca0e57bbfd9f1e@o4511505418027008.ingest.de.sentry.io/4511529880911952"
+            }
+        }
+
+        /// RevenueCat public SDK key for the Apple app (`appl_…`). Empty
+        /// until the RevenueCat account is provisioned — identity wiring is
+        /// in place but dormant (no IAP products yet). See tech-debt.
+        var revenueCatKey: String {
+            switch self {
+            case .dev:    return ""
+            case .remote: return ""
+            }
+        }
     }
 
     /// Active environment. Default = remote; flip to `.dev` when running
