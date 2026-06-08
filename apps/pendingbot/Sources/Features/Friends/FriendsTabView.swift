@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 import Supabase
 
@@ -83,7 +82,7 @@ struct FriendsTabView: View {
         } message: { Text(error ?? "") }
         .sheet(isPresented: $addingFriend) {
             AddFriendSheet { Task { await load() } }
-                .presentationDragIndicator(.visible)
+                .platformDragIndicator()
         }
         .sheet(isPresented: $addingBot, onDismiss: { addBotPrefill = "" }) {
             AddBotSheet(
@@ -104,7 +103,7 @@ struct FriendsTabView: View {
                 },
                 prefilledToken: addBotPrefill
             )
-            .presentationDragIndicator(.visible)
+            .platformDragIndicator()
         }
         .sheet(isPresented: $creatingBot) {
             CreateBotSheet { newBot in
@@ -114,7 +113,7 @@ struct FriendsTabView: View {
                 self.bots.insert(newBot, at: 0)
                 Task { await load() }
             }
-            .presentationDragIndicator(.visible)
+            .platformDragIndicator()
         }
         .sheet(item: $managingBot) { pick in
             ManageBotSheet(
@@ -124,16 +123,16 @@ struct FriendsTabView: View {
                 },
                 initial: pick
             )
-            .presentationDragIndicator(.visible)
+            .platformDragIndicator()
         }
         .sheet(isPresented: $showingQR) {
             MyQRSheet()
-                .presentationDetents([.fraction(0.72), .large])
-                .presentationDragIndicator(.visible)
+                .platformDetents([.fraction(0.72), .large])
+                .platformDragIndicator()
         }
         .sheet(item: $aliasEditTarget) { contact in
             ContactAliasSheet(contact: contact) { Task { await load() } }
-                .presentationDragIndicator(.visible)
+                .platformDragIndicator()
         }
     }
 
@@ -320,7 +319,7 @@ struct FriendsTabView: View {
                         }
                     }
                 }
-                .listStyle(.insetGrouped)
+                .platformListStyle()
                 .scrollContentBackground(.hidden)
                 .contentMargins(.top, 0, for: .scrollContent)
                 .refreshable { await load() }
@@ -1482,7 +1481,7 @@ struct AddFriendSheet: View {
                 Section {
                     HStack(spacing: 8) {
                         TextField("号码 / 隐私号", text: $handleValue)
-                            .textInputAutocapitalization(.never)
+                            .platformAutocapitalization()
                             .autocorrectionDisabled()
                             .onSubmit { pushPreview() }
                         Button("查找") { pushPreview() }
@@ -1498,7 +1497,7 @@ struct AddFriendSheet: View {
                 }
             }
             .navigationTitle("加好友")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavTitle()
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("取消") { dismiss() }
@@ -1571,7 +1570,7 @@ private struct AddFriendPreviewPage: View {
             }
             Section("验证信息（可选）") {
                 TextField("给对方留个话,会和申请一起送达", text: $verifyMessage, axis: .vertical)
-                    .textInputAutocapitalization(.sentences)
+                    .platformAutocapitalization(false)
                     .autocorrectionDisabled()
                     .lineLimit(1...3)
             }
@@ -1587,7 +1586,7 @@ private struct AddFriendPreviewPage: View {
             }
         }
         .navigationTitle("加好友")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavTitle()
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("发送申请") { Task { await submit() } }
@@ -1750,7 +1749,7 @@ struct AddBotSheet: View {
                 }
             }
             .navigationTitle("加机器人")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavTitle()
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("取消") { dismiss() }
@@ -1822,7 +1821,7 @@ private struct AddBotPreviewPage: View {
             }
         }
         .navigationTitle("加机器人")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavTitle()
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("添加") { Task { await submit() } }
@@ -1934,7 +1933,7 @@ struct ContactAliasSheet: View {
                 Section {
                     TextField(contact.displayName.isEmpty ? "起个备注" : "默认显示「\(contact.displayName)」",
                               text: $alias)
-                        .textInputAutocapitalization(.sentences)
+                        .platformAutocapitalization(false)
                         .autocorrectionDisabled()
                 } header: {
                     Text("备注")
@@ -1946,7 +1945,7 @@ struct ContactAliasSheet: View {
                 }
             }
             .navigationTitle("设置备注")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavTitle()
             .onAppear { alias = contact.alias ?? "" }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -2020,7 +2019,7 @@ struct MyQRSheet: View {
                     Button("关闭") { dismiss() }
                 }
             }
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavTitle()
         }
     }
 }
@@ -2050,4 +2049,3 @@ private struct BotRowOwnerActions: ViewModifier {
         }
     }
 }
-#endif
