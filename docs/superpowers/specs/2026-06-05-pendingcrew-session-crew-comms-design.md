@@ -166,6 +166,24 @@ session 是**长跑**的，会撞上几个 claude code 机制，提前接：
 - **经验积累**：有了身份标签，captain / 系统能**总结各 kind 擅长什么**（"cc 擅长 A、codex 擅长 B"），派活时挑合适的 runner。**v1 先把身份标签 + 跨读打通（数据先在）**；strength 总结当 captain emergent 行为，后续可加 crew 级记忆存储沉淀。
 - 注：互通**不抹掉** §1 的后端差异（claude=PTY、codex=app-server）——差异在底层 backend，对上**归一**成统一成员视图。
 
+## 11. per-session 配置（模型 / 思考 effort / worktree 隔离 / …）= crew 默认 + 单 session 覆盖
+
+一组 per-session 旋钮，两层：**crew 默认**（建 crew 时设，常驻 session 与 captain 起的 session 都继承）+ **单 session 覆盖**。归一成一个 `SessionConfig`，由 `RunnerBackend` 映射到各 CLI。
+
+| 旋钮 | claude(PTY) | codex(app-server) |
+|---|---|---|
+| **runner kind** | — | — （crew 默认 / 起时选 cc\|codex） |
+| **模型** | `--model <alias/full>`（实证） | `-m <model>` / `-c model=`（实证） |
+| **思考 effort** | `--effort <level>`（实证有此 flag） | `-c model_reasoning_effort=<minimal/low/medium/high/xhigh>`（用户 config 已用 `xhigh`） |
+| **fallback 模型** | `--fallback-model`（实证） | （走 codex profile/config） |
+| **沙箱** | 无原生 → §8 worktree/OS sandbox | `-s/--sandbox workspace-write`（§9 护栏，实证） |
+| **权限** | `--permission-mode auto`（§9） | `approval_policy=on-request`（§9） |
+| **worktree 隔离** | PendingCrew 编排（下） | 同左 |
+
+- **worktree 不是 CLI flag**，是 PendingCrew **起 session 前**的编排：开 = `git worktree add` 隔离目录 → 设为 `workingDirectory`（隔离 + 多 session 并行不打架，且是 claude 的 containment 边界 §8）；关 = 直接用 crew 工作目录。session 结束按策略保留/清。
+- **入口三处**：① crew 设置页（默认）；② 右栏起 session 的配置（覆盖）；③ captain `start_session(brief, runner?, model?, effort?, isolation?)` 工具参数（captain 编排时挑——配合 §10 的"知道各 kind 擅长什么"派合适的 runner+档位）。
+- **落地**：`SessionConfig { kind, model?, effort?, fallbackModel?, isolation, sandbox?, permission=auto }` 归一结构 → `RunnerBackend.launch(config)` 各自映射 argv/`-c`/worktree。现有 `CrewSessionRunner.start` 已有 `model` / `permissionModeOverride` 形参，**扩成完整 `SessionConfig`**。codex `--profile` 可作预设档承载 model+effort+sandbox 组合，简化 UI。
+
 ## 待探针（实现期验，非设计阻塞）
 
 1. **codex app-server**：仍走订阅(非单独计费)？协议形状(initial message / resume / 工具 / 中断 / rate_limits 透出)——`generate-ts`/`generate-json-schema` 出绑定后实接。
@@ -179,6 +197,8 @@ session 是**长跑**的，会撞上几个 claude code 机制，提前接：
 8. **plugin / settings 精确键**：`--plugin-dir` 非交互加载、`permissions.deny`/`PreToolUse` deny 语法、settings 各键名 —— 调研给的 JSON 样例当方向，落地前逐个核实键名（别凭样例写死）。
 
 9. **权限/审批（§9）+ 统一（§10）**：① ~~claude auto mode 订阅可用?~~ **✅ 已本机解**；② codex `on-request` 边界审批的**协议事件 + 回应形状**（路由 captain，**不走 auto_review**）；③ claude 护栏拦下 → `ask_human` / `PermissionDenied` hook → captain 的接法 + crew 专属 `autoMode.environment` 填什么（PendingBot repo/域/edge）；④ codex rollout JSONL ↔ claude transcript JSONL **归一成同一 event 视图**的字段映射（§10 跨读）。
+
+10. **per-session 配置（§11）**：claude `--effort` 的合法 level 枚举（low/medium/high?）+ 与 `alwaysThinkingEnabled` 关系；codex `model_reasoning_effort` 全集 + `-c` per-session 覆盖实测；`--model` 别名集（sonnet/opus/…）映射到 crew 模型目录。
 
 ## 验证门
 
