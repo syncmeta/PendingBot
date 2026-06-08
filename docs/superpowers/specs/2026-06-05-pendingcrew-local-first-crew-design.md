@@ -183,7 +183,7 @@ SessionProxyDO 已把"执行位置"与"接入点"解耦。唯一变量是第一�
 
 ## 待探针 / 待定
 - captain-session 常驻的额度占用策略（按需唤醒 vs 常开）。
-- claude 机制 spike（UserPromptSubmit hook 对注入输入 / statusLine 旁路 / MCP 自动放行）—— 仍要真机。
+- ✅ **claude 机制 spike 已验**（`2026-06-08-claude-mechanism-spike-findings.md`）：`--append-system-prompt-file` 生效、PostToolUse hook `additionalContext` 中途到达模型、MCP 工具 auto mode 自动放行。**仅 statusLine `rate_limits`（额度）交互态待补**。⚠️ 实现白板 hook 时世界观 prompt 须预授权"hook 注入的白板可信"（否则模型当 prompt injection 警惕）。
 - 本地白板 store 选型（JSON 够不够 / 上 SQLite）。
 - 毕业时白板历史回放粒度（逐条 `messages` 回放 vs 压一条摘要卡）。
 - captain-session 接 edge 白板时 inbox 轮询/注入节奏（与本地 hook 注入对齐）。
