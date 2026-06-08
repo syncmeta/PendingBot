@@ -1,7 +1,8 @@
-#if os(iOS)
 import SwiftUI
 import PhotosUI
+#if os(iOS)
 import UIKit
+#endif
 import Combine
 import OSLog
 import Supabase
@@ -53,7 +54,7 @@ struct ConversationView: View {
     /// that lags the send tap still lands on the outgoing message.
     @State var uploadTasks: [Task<Void, Never>] = []
     @State var photoPickerItems: [PhotosPickerItem] = []
-    @State var cameraImage: UIImage?
+    @State var cameraImage: PlatformImage?
     /// Set true to present the system document picker (any file type).
     @State var showFileImporter = false
     /// Set true to present the photo library picker / camera. Driven by the
@@ -177,8 +178,11 @@ struct ConversationView: View {
     /// `CallCenter.shared`, so the user can minimize the call surface,
     /// navigate to other tabs, and the transport keeps running. The
     /// full-screen cover and the floating pill are presented by
-    /// `TabRoot`, not here.
+    /// `TabRoot`, not here. Call slice is iOS-only — on macOS the
+    /// conversation works fully minus the voice-call entry.
+    #if os(iOS)
     @Environment(CallCenter.self) var callCenter
+    #endif
 
     // Jump-to-latest pill state. `isAtBottom` is recomputed from a
     // geometry preference on the bottom marker; while it's false, new
@@ -416,7 +420,9 @@ struct ConversationView: View {
     var body: some View {
         VStack(spacing: 0) {
             chatHeader
+            #if os(iOS)
             activeCallBanner
+            #endif
 
             ScrollViewReader { proxy in
                 ScrollView {
@@ -509,7 +515,7 @@ struct ConversationView: View {
                                        streamPaused: revealTargetId == msg.id && streamPaused,
                                        onRetry: { retryFailedMessage(msg) }) {
                                     Button {
-                                        UIPasteboard.general.string = msg.content
+                                        Clipboard.copy(msg.content)
                                         Haptics.tap()
                                     } label: { Label("复制", systemImage: "doc.on.doc") }
                                     Button {
@@ -672,7 +678,7 @@ struct ConversationView: View {
                     }
                     if atBottom && unreadCount != 0 { unreadCount = 0 }
                 }
-                .scrollDismissesKeyboard(.interactively)
+                .platformScrollKeyboardDismiss()
                 .onChange(of: messages.count) { oldCount, newCount in
                     // The user's own send always scrolls into view; incoming
                     // messages only auto-scroll when already at the bottom.
@@ -709,6 +715,9 @@ struct ConversationView: View {
             }
         }
         .background(Theme.Palette.canvas.ignoresSafeArea())
+        #if os(iOS)
+        // System nav bar stays hidden — this view paints its own `chatHeader`.
+        // Only valid on iOS; macOS NavigationStack detail has no nav bar to hide.
         .toolbar(.hidden, for: .navigationBar)
         // Mount the composer (plus its banners) as a UIKit inputAccessoryView
         // rather than a SwiftUI bottom safe-area inset. The accessory is
@@ -719,12 +728,19 @@ struct ConversationView: View {
         // of the keyboard frame, so the list insets correctly whether the bar
         // is docked or riding the keyboard. See ChatComposerAccessory.swift.
         .background { composerAccessory }
+        #else
+        // macOS has no UIKit inputAccessoryView / keyboard-frame tracking, so
+        // the cross-platform ComposerView is hosted in a normal bottom
+        // safe-area inset instead. Same bindings the iOS accessory passes.
+        .safeAreaInset(edge: .bottom, spacing: 0) { macComposer }
+        #endif
         .photosPicker(
             isPresented: $showPhotoPicker,
             selection: $photoPickerItems,
             matching: .images,
             preferredItemEncoding: .compatible
         )
+        #if os(iOS)
         .fullScreenCover(isPresented: $showCamera) {
             CameraPicker { image in
                 showCamera = false
@@ -758,6 +774,7 @@ struct ConversationView: View {
             let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
             withAnimation(.easeOut(duration: duration)) { keyboardVisible = false }
         }
+        #endif
         .onAppear {
             // Set synchronously so a push arriving in the first few ms
             // after view-appear sees the right id. .task below is async-
@@ -805,8 +822,11 @@ struct ConversationView: View {
             // (required for GroupCallSession's roster labels), open
             // GroupCallView so the user doesn't have to tap "join"
             // after already accepting on the system call surface.
+            #if os(iOS)
             consumePendingAutoJoinIfMatches()
+            #endif
         }
+        #if os(iOS)
         .onChange(of: IncomingCallStore.shared.pendingAutoJoinConversationId) { _, _ in
             // Warm-launch path: app was already open in this conv when
             // the push landed and the user accepted via CallKit; the
@@ -814,6 +834,7 @@ struct ConversationView: View {
             // late arrival of the auto-join signal.
             consumePendingAutoJoinIfMatches()
         }
+        #endif
         .onDisappear {
             if PushService.shared.activeConversationId == conversation.id {
                 PushService.shared.activeConversationId = nil
@@ -871,7 +892,7 @@ struct ConversationView: View {
                 Task { await loadSkills() }
             }
             .tint(Theme.Palette.accent)
-            .presentationDragIndicator(.visible)
+            .platformDragIndicator()
         }
         .sheet(item: Binding(
             get: { selectableTextBody.map { SelectableTextBody(body: $0) } },
@@ -879,8 +900,8 @@ struct ConversationView: View {
         )) { body in
             SelectableTextSheet(text: body.body)
                 .tint(Theme.Palette.accent)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
+                .platformDetents([.medium, .large])
+                .platformDragIndicator()
         }
         .onChange(of: photoPickerItems) { _, items in
             guard !items.isEmpty else { return }
@@ -907,6 +928,7 @@ struct ConversationView: View {
         } message: { Text(error ?? "") }
     }
 
+    #if os(iOS)
     /// The composer + its banners (freeze / continue / @-mention picker),
     /// mounted as a UIKit inputAccessoryView so it tracks the keyboard
     /// frame-by-frame. Extracted from `body` so the large initializer doesn't
@@ -954,6 +976,38 @@ struct ConversationView: View {
             keyboardVisible: keyboardVisible
         )
     }
+    #else
+    /// macOS composer host. The iOS path mounts the composer in a UIKit
+    /// inputAccessoryView (ChatComposerAccessory, iOS-only) so it rides the
+    /// keyboard; macOS has no such surface, so the cross-platform
+    /// `ComposerView` is rendered directly in a bottom safe-area inset
+    /// (see `body`). The iOS accessory also stacks the freeze / continue /
+    /// @-mention banners above the input row — those are NOT yet ported to
+    /// the macOS host (tracked as tech-debt), so the bare input row is shown.
+    private var macComposer: some View {
+        ComposerView(
+            input: $input,
+            pending: $pendingAttachments,
+            photoItems: $photoPickerItems,
+            cameraImage: $cameraImage,
+            showFileImporter: $showFileImporter,
+            showPhotoPicker: $showPhotoPicker,
+            showCamera: $showCamera,
+            canSend: canSend,
+            onSend: { Task { await send() } },
+            isStreaming: chatTurnTask != nil,
+            onStop: {
+                chatTurnTask?.cancel()
+                flushRevealImmediately()
+            },
+            onLookback: (conversation.conversation_type == "user_bot"
+                         || conversation.conversation_type == "self")
+                ? { Task { await triggerManualLookback() } }
+                : nil
+        )
+        .background(Theme.Palette.canvas)
+    }
+    #endif
 
     private var canSend: Bool {
         guard !iAmFrozen else { return false }
@@ -1135,9 +1189,13 @@ struct ConversationView: View {
                 ) { Task { await requestBotLetter() } }
                 .disabled(triggeringLetter)
 
+                // 致电 (voice call) is iOS-only — the Call slice doesn't
+                // build on macOS.
+                #if os(iOS)
                 PreChatActionButton(title: "致电", systemImage: "phone.fill") {
                     Task { await startPreChatCall() }
                 }
+                #endif
 
                 PreChatActionButton(title: "设置", systemImage: "gearshape") {
                     Haptics.tap()
@@ -1175,7 +1233,9 @@ struct ConversationView: View {
 
     /// Voice-call entry from the pre-chat bar. Voice is an opt-in per-bot
     /// gate, so a bot that hasn't enabled it sends the user to 设置
-    /// instead of failing silently.
+    /// instead of failing silently. iOS-only — the Call slice (startVoiceCall)
+    /// doesn't build on macOS.
+    #if os(iOS)
     private func startPreChatCall() async {
         guard bot?.voice_call_enabled == true else {
             self.error = "这个机器人还没开启语音通话,可以在「设置」里打开。"
@@ -1185,12 +1245,14 @@ struct ConversationView: View {
         Haptics.tap()
         startVoiceCall()
     }
+    #endif
 
     /// Slim in-conv banner shown when a group voice call is live in this
     /// conversation. Tapping it rejoins the call. From left to right:
     ///   phone-icon · MM:SS elapsed · "N 人"
     /// Driven by ActiveVoiceCallStore which mirrors the conv-channel's
-    /// voice_call frames.
+    /// voice_call frames. Call slice is iOS-only.
+    #if os(iOS)
     @ViewBuilder
     private var activeCallBanner: some View {
         if let snap = ActiveVoiceCallStore.shared.calls[conversation.id] {
@@ -1202,6 +1264,7 @@ struct ConversationView: View {
             }
         }
     }
+    #endif
 
     /// Custom in-body chat header — replaces the system nav bar so we have
     /// full control. From left to right:
@@ -1252,6 +1315,9 @@ struct ConversationView: View {
                 }
             }
             Spacer(minLength: 0)
+            // Voice-call entries are iOS-only (the Call slice doesn't build
+            // on macOS). On macOS the conversation works fully minus these.
+            #if os(iOS)
             if canStartVoiceCall {
                 Button {
                     Haptics.tap()
@@ -1278,6 +1344,7 @@ struct ConversationView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("群语音")
             }
+            #endif
             if canStartNewBotConv {
                 Button {
                     Haptics.tap()
@@ -2249,6 +2316,7 @@ private struct SelectableTextBody: Identifiable {
 /// selection handles, so partial copy silently fails. A `UITextView`
 /// with `isEditable = false`, `isSelectable = true` gets the real
 /// UIKit selection + "Copy" / "Look Up" menu, and scrolls itself.
+#if os(iOS)
 private struct SelectableTextUIView: UIViewRepresentable {
     let text: String
 
@@ -2271,6 +2339,26 @@ private struct SelectableTextUIView: UIViewRepresentable {
         if uiView.text != text { uiView.text = text }
     }
 }
+#else
+/// macOS twin — the UIKit gesture conflict that makes SwiftUI text
+/// selection unreliable on iOS doesn't apply on macOS, so a plain
+/// selectable `Text` in a `ScrollView` gives native selection + the
+/// system Copy / Look Up menu without an NSViewRepresentable.
+private struct SelectableTextUIView: View {
+    let text: String
+
+    var body: some View {
+        ScrollView {
+            Text(text)
+                .font(.system(size: Theme.Fonts.scaled(16)))
+                .foregroundStyle(Theme.Palette.ink)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(EdgeInsets(top: 16, leading: 20, bottom: 16, trailing: 20))
+        }
+    }
+}
+#endif
 
 /// Standalone selectable-text presentation. The bubble itself has
 /// `.contextMenu`, which on iOS pre-empts the long-press selection
@@ -2287,15 +2375,15 @@ private struct SelectableTextSheet: View {
             SelectableTextUIView(text: text)
                 .background(Theme.Palette.canvas)
                 .navigationTitle("复制部分文字")
-                .navigationBarTitleDisplayMode(.inline)
+                .inlineNavTitle()
                 .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) {
+                    ToolbarItem(placement: .confirmationAction) {
                         Button("完成") { dismiss() }
                             .tint(Theme.Palette.accent)
                     }
-                    ToolbarItem(placement: .topBarLeading) {
+                    ToolbarItem(placement: .cancellationAction) {
                         Button {
-                            UIPasteboard.general.string = text
+                            Clipboard.copy(text)
                             Haptics.tap()
                         } label: { Label("全部复制", systemImage: "doc.on.doc") }
                             .tint(Theme.Palette.accent)
@@ -2741,4 +2829,3 @@ struct ArenaCompareCard: View {
         }
     }
 }
-#endif
