@@ -112,7 +112,11 @@ meRoutes.patch('/profile', async (c) => {
 // POST /v1/me/account-deletion — 请求注销账号。SOT 写收进 worker(原客户端直连
 // SupabaseStack.rpc),安全模型不变:request_account_deletion 内的 auth.uid() 守,
 // userClient 带 user JWT → RLS/definer 上下文与原直连一致。(T2 #264)
-const RequestDeletionBody = z.object({ sentiment: z.string().default('') });
+// sentiment 必须是 request_account_deletion 函数白名单的两个值之一 —— 在边缘 zod
+// 层挡住非法值返 400,而不是让 DB 函数 raise exception 冒成 500(runtime 验证发现)。
+const RequestDeletionBody = z.object({
+  sentiment: z.enum(['see_you_again', 'farewell_forever']),
+});
 meRoutes.post('/account-deletion', async (c) => {
   const userJwt = c.var.userJwt!;
   let body: z.infer<typeof RequestDeletionBody>;
