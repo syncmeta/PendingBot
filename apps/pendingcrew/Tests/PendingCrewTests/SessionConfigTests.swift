@@ -41,4 +41,24 @@ final class SessionConfigTests: XCTestCase {
         XCTAssertEqual(cfg.argv(),
                        ["--sandbox", "workspace-write", "--model", "gpt-5.5", "ship it"])
     }
+
+    func testClaudeArgvAppendsSystemPromptFile() {
+        // 世界观注入：--append-system-prompt-file（append，不 replace；flag 已核实）。
+        let cfg = SessionConfig(kind: .claudeCode, initialPrompt: "go",
+                                appendSystemPromptFile: "/tmp/world.md")
+        XCTAssertEqual(cfg.argv(),
+                       ["--permission-mode", "auto",
+                        "--append-system-prompt-file", "/tmp/world.md", "go"])
+    }
+
+    func testClaudeArgvOmitsEmptyAppendFile() {
+        let cfg = SessionConfig(kind: .claudeCode, initialPrompt: "go", appendSystemPromptFile: "")
+        XCTAssertEqual(cfg.argv(), ["--permission-mode", "auto", "go"])
+    }
+
+    func testCodexIgnoresAppendSystemPromptFile() {
+        // codex 不接 --append-system-prompt-file（世界观走 app-server additionalContext）。
+        let cfg = SessionConfig(kind: .codex, initialPrompt: "go", appendSystemPromptFile: "/tmp/w.md")
+        XCTAssertEqual(cfg.argv(), ["--sandbox", "workspace-write", "go"])
+    }
 }
