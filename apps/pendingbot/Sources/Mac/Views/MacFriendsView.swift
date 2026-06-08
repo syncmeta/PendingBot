@@ -733,32 +733,6 @@ private struct MacInboxActions: View {
 
 // MARK: - Filter pills (对齐 iOS FriendFilter / FilterPillBar / FilterPill)
 
-/// 五档筛选 —— 逐字 / 逐色对齐 iOS `FriendFilter`。
-enum FriendFilter: Hashable, CaseIterable {
-    case all, humans, privateBots, publicBots, groups
-
-    var label: String {
-        switch self {
-        case .all:         return "全部"
-        case .humans:      return "人类"
-        case .privateBots: return "私有机器人"
-        case .publicBots:  return "公有机器人"
-        case .groups:      return "群聊"
-        }
-    }
-
-    /// 选中时的前景色(也用于选中描边)。全部 留 ink。
-    var fg: Color {
-        switch self {
-        case .all:         return Theme.Palette.ink
-        case .humans:      return Theme.Palette.accent
-        case .privateBots: return Theme.Palette.plum
-        case .publicBots:  return Theme.Palette.amber
-        case .groups:      return Theme.Palette.ink
-        }
-    }
-}
-
 private struct MacFilterPillBar: View {
     @Binding var filter: FriendFilter
 
@@ -833,47 +807,6 @@ private struct MacFilterPill: View {
                     endPoint: .trailing
                 )
             )
-        }
-    }
-}
-
-// MARK: - Sort (对齐 iOS FriendSortField)
-
-/// 合并好友列表的排序字段 —— 逐字对齐 iOS `FriendSortField`。方向(A→Z / Z→A、
-/// 旧→新 / 新→旧)由独立 `sortAscending` flag 翻转。
-enum FriendSortField: String, CaseIterable {
-    case name        // 名称 (pinyin-aware)
-    case recentChat  // 最近聊天
-    case addedTime   // 加好友时间
-
-    var label: String {
-        switch self {
-        case .name:       return "名称"
-        case .recentChat: return "最近聊天"
-        case .addedTime:  return "加好友时间"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .name:       return "textformat"
-        case .recentChat: return "bubble.left.and.bubble.right"
-        case .addedTime:  return "person.badge.clock"
-        }
-    }
-
-    var defaultAscending: Bool {
-        switch self {
-        case .name:                  return true
-        case .recentChat, .addedTime: return false
-        }
-    }
-
-    func directionLabel(ascending: Bool) -> String {
-        switch self {
-        case .name:       return ascending ? "A→Z" : "Z→A"
-        case .recentChat: return ascending ? "最早优先" : "最近优先"
-        case .addedTime:  return ascending ? "最早添加" : "最近添加"
         }
     }
 }
