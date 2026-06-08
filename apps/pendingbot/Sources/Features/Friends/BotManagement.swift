@@ -1,5 +1,6 @@
 import SwiftUI
 import Supabase
+import CoreImage
 
 // User-facing bot CRUD lives behind RLS — INSERT / UPDATE / DELETE all
 // gate on creator_id = auth.uid() so the iOS client can talk to PostgREST
@@ -2370,11 +2371,15 @@ struct BotQRCard: View {
         }
     }
 
-    // QR bitmap now goes through the cross-platform `QRCode` shim
-    // (CoreImage → PlatformImage). The shim drops the deep-green recolour
-    // + manual quiet-zone padding the iOS-only copy used to do; for the
-    // bot share QR a plain black/white code scans identically.
+    // QR bitmap goes through the cross-platform `QRCode` shim
+    // (CoreImage → PlatformImage). The shim now reproduces the original
+    // iOS share-card styling: deep-green modules on off-white with a
+    // 4-module quiet-zone border, all in CoreImage so it runs on macOS too.
     private func qrImage(for payload: String) -> PlatformImage? {
-        QRCode.image(payload)
+        QRCode.image(payload,
+                     correctionLevel: "H",
+                     dark: CIColor(red: 4 / 255.0, green: 71 / 255.0, blue: 53 / 255.0),
+                     light: CIColor(red: 253 / 255.0, green: 252 / 255.0, blue: 250 / 255.0),
+                     quietModules: 4)
     }
 }
