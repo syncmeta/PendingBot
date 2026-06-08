@@ -148,8 +148,15 @@ struct CrewSessionWindowView: View {
             // BYOK: 渲染本地世界观 → 临时 .md → claude --append-system-prompt-file
             // (spec local-first chunk 4)。logged 模式 edge 自己注入世界观,这里跳过；
             // best-effort,失败 nil 不挡 session 启动。
+            // BYOK 本地 session 的合成 id —— 世界观 / mcp-config / hook settings 三处一致。
+            let localSessionId = serverLink?.sessionId ?? UUID().uuidString.lowercased()
             cfg.appendSystemPromptFile = await renderWorldModelFile(
-                detail: detail, taskBrief: firstPrompt, workdir: workdir)
+                detail: detail, taskBrief: firstPrompt, workdir: workdir, sessionId: localSessionId)
+            // 本地 crew-comms 接线（BYOK）：MCP(post_to_crew/read_whiteboard) + hook(注入
+            // 未读白板)。logged 模式 prepareLocalCommsConfig 返回 (nil,nil)（edge 管 comms）。
+            let comms = prepareLocalCommsConfig(crewId: detail.crew.id, sessionId: localSessionId)
+            cfg.settingsFile = comms.settings
+            cfg.mcpConfigFile = comms.mcp
             try await sessionRunner.start(
                 crewId: detail.crew.id,
                 config: cfg,
@@ -167,7 +174,7 @@ struct CrewSessionWindowView: View {
     /// BYOK: 渲染本地世界观 system prompt → 临时 `.md` → 返回路径供
     /// `--append-system-prompt-file`。logged 模式返回 nil（edge 注入）。
     /// best-effort：任一步失败返 nil，session 仍照常启动（只是没世界观）。
-    private func renderWorldModelFile(detail: CrewDetail, taskBrief: String, workdir: URL) async -> String? {
+    private func renderWorldModelFile(detail: CrewDetail, taskBrief: String, workdir: URL, sessionId: String) async -> String? {
         guard appModel.mode == .byok, let backend = appModel.backend else { return nil }
         let members = (try? await backend.listCrewMembers(crewId: detail.crew.id))?.members ?? []
         let humans = members
@@ -177,6 +184,7 @@ struct CrewSessionWindowView: View {
         let ctx = LocalSessionWorldModel.Context(
             sessionTaskBrief: taskBrief,
             runnerKind: selectedKind == .claudeCode ? "claude_code" : "codex",
+            sessionId: sessionId,
             crewId: detail.crew.id,
             crewTitle: detail.crew.title,
             workingDirectory: workdir.path,
@@ -192,6 +200,45 @@ struct CrewSessionWindowView: View {
         } catch {
             return nil
         }
+    }
+
+    /// BYOK: 生成 per-session 的 settings.json（PostToolUse hook = 自身二进制 `--mcp-hook`，
+    /// 每轮注入未读白板）+ mcp-config.json（自身二进制 `--mcp-serve`，post_to_crew/read_whiteboard）。
+    /// helper = `Bundle.main.executablePath`（re-exec self：app 二进制兼当 helper，最自包含、
+    /// 免 embed）；白板 dir = `LocalWhiteboardStore.defaultDirectory`（与 app/store 同一份）。
+    /// logged 模式 / 任一步失败 → 对应 nil（session 仍启动，少 comms）。
+    private func prepareLocalCommsConfig(crewId: String, sessionId: String) -> (settings: String?, mcp: String?) {
+        guard appModel.mode == .byok, let helper = Bundle.main.executablePath
+        else { return (nil, nil) }
+        let dir = LocalWhiteboardStore.defaultDirectory.path
+        let tmp = FileManager.default.temporaryDirectory
+
+        // mcp-config：command + args 是 exec 形式（claude 直接 spawn，不过 shell）→ 不引号。
+        let mcp: [String: Any] = ["mcpServers": ["crew": [
+            "command": helper,
+            "args": ["--mcp-serve", "--crew", crewId, "--dir", dir, "--session", sessionId],
+        ]]]
+        // settings：PostToolUse hook 的 command 是 shell 字符串（claude 过 sh -c）→ 引号每段。
+        let hookCmd = [helper, "--mcp-hook", "--crew", crewId, "--dir", dir, "--session", sessionId]
+            .map(shellQuote).joined(separator: " ")
+        let settings: [String: Any] = ["hooks": ["PostToolUse": [[
+            "hooks": [["type": "command", "command": hookCmd]],
+        ]]]]
+
+        return (
+            settings: writeJSON(settings, to: tmp.appendingPathComponent("pendingcrew-settings-\(sessionId).json")),
+            mcp: writeJSON(mcp, to: tmp.appendingPathComponent("pendingcrew-mcp-\(sessionId).json"))
+        )
+    }
+
+    private func writeJSON(_ obj: [String: Any], to url: URL) -> String? {
+        guard let data = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted]),
+              (try? data.write(to: url, options: .atomic)) != nil else { return nil }
+        return url.path
+    }
+
+    private func shellQuote(_ s: String) -> String {
+        "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     // MARK: - auto-claim (K: captain-created queued sessions)

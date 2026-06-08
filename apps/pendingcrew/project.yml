@@ -28,11 +28,9 @@ targets:
     type: application
     supportedDestinations: [iOS, macOS]
     sources:
+      # Sources/Mcp（McpServer/HookEmitter/McpHelperMain）编进 app：re-exec self ——
+      # app 二进制带 --mcp-serve/--mcp-hook argv 时当 crew-comms helper 跑（PendingCrewEntry）。
       - path: Sources
-        excludes:
-          # pendingcrew-mcp helper 的 main.swift 是顶层代码（executable），不能进
-          # app module（会与 PendingCrewApp 的 @main 冲突）。它走独立 tool target。
-          - Mcp/**
       - path: Resources
     scheme:
       testTargets:
@@ -92,16 +90,3 @@ targets:
         # standalone test bundle —— 不挂 host app
         TEST_HOST: ""
         BUNDLE_LOADER: ""
-  # pendingcrew-mcp —— 本地 crew-comms helper（spec local-first chunk 4）：claude 子进程
-  # serve(MCP stdio: post_to_crew/read_whiteboard) / hook(注入未读白板)。自包含 Swift
-  # executable，无外部 runtime 依赖，编进 app bundle（Task 5 embed）。
-  pendingcrew-mcp:
-    type: tool
-    supportedDestinations: [macOS]
-    sources:
-      - path: Sources/Mcp
-      - path: Sources/Stores/LocalWhiteboardStore.swift   # 共享白板文件格式
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.pendingname.pendingcrew.mcp
-        PRODUCT_NAME: pendingcrew-mcp

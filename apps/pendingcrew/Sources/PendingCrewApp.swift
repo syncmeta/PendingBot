@@ -1,6 +1,8 @@
 import SwiftUI
 
-@main
+/// GUI 入口。`@main` 挪到 `PendingCrewEntry` —— 它先看 argv：带 `--mcp-serve` /
+/// `--mcp-hook` 时本进程当 crew-comms helper 跑（re-exec self，spec local-first
+/// chunk 4：app 二进制兼当 MCP server/hook，最自包含、免 embed），否则起 GUI。
 struct PendingCrewApp: App {
     @StateObject private var model: AppModel
     @StateObject private var crewStore: CrewStore
