@@ -10,7 +10,9 @@
 >   - **bot 管理片 B1–B3.1**：解锁叶子组件 + `ModelPicker`（**含 arena 竞技场**）+ `BotManagement` + `EnvelopeAPI` 跨平台；恢复 bot 分享卡绿色 QR 样式。**用户最初问的"Mac 选模型"现已能编进 macOS**。
 >   - **消息slice迁移 Phase 1**：抽 8 个共享数据类型到 `Sources/Models`（PendingPeer/UserUserPeer/BotPick/CrewProposalPayload/PermissionRequestPayload/ToolTraceEvent/DeepLinkStore）+ 去重 FriendFilter/FriendSortField。
 > - **关键结构发现（见 tech-debt）**：好友列表（FriendsTabView）**焊死消息/会话slice**——详情列就是 ConversationView，导航用 PendingPeer。所以"共享好友列表"必须连消息slice一起迁（24 文件/~10k 行，welded Call[iOS-only]/相机[iOS-only]/键盘 inputAccessoryView[iOS-only]）。用户拍：连消息slice一起正经迁，不省力、不急。
-> - **当前分支态**：**iOS build 绿**；**macOS 暂 red**（消息slice UI 文件仍 fenced，Phase 5 摘锁后转绿）——这是迁移中间态，feature 分支可接受。**剩 Phase 2–7**：补垫片→Call/相机/键盘内部围栏→摘锁 macOS转绿→拆 FeatureSurface 接两端壳删 Mac 平行→三端实跑验证。**iPad 视觉收敛成桌面三列放最后一片**（防迁移期 iPad 半残）。
+> - **当前分支态（更新）**：**iOS + macOS 双端 BUILD SUCCEEDED** ✅ —— 里程碑达成。消息slice Phase 1–5 全做完:整个 `Features/Message/*`(ConversationView 2770行+9扩展+SubConversationView+附件+composer+叶子视图)、FriendsTabView、附带连带文件(ContactsAPI/GroupAvatar/RelativeMessageTime/SkillsView/BotCapabilitiesView)全部跨平台。Call/相机/键盘 inputAccessoryView 走内部 `#if` 围栏,Mac 干净降级。附件:相册+文件正经跨平台(PhotosPicker macOS-13+),仅相机 iOS-only。
+> - **Mac 已知降级(已记 tech-debt 🟡,各自后续整片补)**:无语音通话入口;composer 缺 freeze/continue/@-mention 三横幅(裸输入行);Crew/Permission decide 在 Mac no-op(Crew slice 未迁);MyQRBusinessCard/GroupSettingsView/PushService active-conv 在 Mac 占位;composer 简化文本孪生(无硬件回车发送)。
+> - **剩(纯代码,不需用户)**：① Cluster 3 解锁 MessageTabView(让 Mac 消息列表用共享版而非 Mac 平行列）；② Phase 6 = FriendsTabView/MessageTabView conform FeatureSurface + WideRootView(Mac)/PendingBotRegularRootView(iPad) 接共享 surface + 删 `Sources/Mac/` 平行实现(MacFriendsView/MacMessagesView/MacBotManagement/MacRootView 列）。**剩(需用户/真机)**：③ Phase 7 三端实跑截图验证(Mac GUI 构建 + iPad/iPhone 模拟器;登录态 CAPTCHA 需真账号)。**iPad 视觉收敛成桌面三列放最后一片**。
 
 > **2026-06-07 T2 边缘读卸载(Supabase 单区 → CF 边缘投影)全链路落地(已合 main `e161a6a6`,#260/#261/#262)**
 > - 背景:Supabase 单点法兰克福,US/Asia 首屏吃跨洋 RTT。把**热读路径**从客户端直连法兰克福改成 CF 边缘投影,Supabase 退为最终一致真源/事件源/重建源。spec:`docs/superpowers/plans/2026-06-07-edge-read-offload.md`(四桶分类 + 7 规则 + 授权门两层 + 决策)。
