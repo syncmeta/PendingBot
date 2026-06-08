@@ -282,6 +282,32 @@ enum ChatDataSource {
         return viewRows
     }
 
+    // MARK: - 共享写穿门面(T2 — 三端缓存写路径统一)
+    //
+    // 视图层的实时/流式/列表增量缓存写,原本各自直接 `LocalDatabase.shared.*`
+    // (iOS Features/Message/ 5 处)。收口成这道共享缝,让 iOS/iPad 与 Mac 都经
+    // 同一门面(对齐 `CacheRepository` 对 bots/contacts/group 的做法)。
+    // **语义不变**:cmid-aware 单事务(#145)+ upsert(#146)逻辑都在
+    // `LocalDatabase` 方法里,这里只是薄委托;调用方构造的正典 Row 一字不动。
+    //   - persistMessages = 整会话原子替换(delete-then-insert in one txn)。
+    //   - mergeMessages   = 增量 cmid-aware upsert(实时/流式回合)。
+    //   - mergeConversations = 会话列表增量 upsert。
+
+    @MainActor
+    static func persistMessages(conversationId: String, _ rows: [LocalDatabase.MessageRow]) {
+        LocalDatabase.shared.replaceMessages(conversationId: conversationId, rows)
+    }
+
+    @MainActor
+    static func mergeMessages(_ rows: [LocalDatabase.MessageRow]) {
+        LocalDatabase.shared.upsertMessages(rows)
+    }
+
+    @MainActor
+    static func mergeConversations(_ rows: [LocalDatabase.ConversationRow]) {
+        LocalDatabase.shared.upsertConversations(rows)
+    }
+
     // MARK: conversation type
 
     /// Resolve a single conversation's `conversation_type` (`user_bot` / `self`

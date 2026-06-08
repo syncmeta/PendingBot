@@ -216,7 +216,7 @@ extension ConversationView {
             ))
         }
         guard !rows.isEmpty else { return }
-        LocalDatabase.shared.upsertMessages(rows)
+        ChatDataSource.mergeMessages(rows)
         // Keep the conv-list preview + ordering fresh from the same data so
         // the message list's first paint on next launch isn't a turn behind
         // either (the list has no realtime; it only refreshes on appear).

@@ -544,7 +544,7 @@ extension ConversationView {
             // where the cache is empty or partial. Replaces the old
             // prune-then-upsert split (two transactions, conflict-resolved
             // on `id` rather than the cmid dedup key).
-            LocalDatabase.shared.replaceMessages(
+            ChatDataSource.persistMessages(
                 conversationId: conversation.id, cacheRows)
         } catch {
             // Network down + we have a cache: stay quiet (cached msgs still

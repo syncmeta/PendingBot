@@ -329,7 +329,7 @@ extension ConversationView {
         // no-op for our own outgoing rows (sender starts at 0 server-side).
         UnreadStore.shared.markRead(conversation.id, throughLastMessageId: id)
         // Mirror to local cache.
-        LocalDatabase.shared.upsertMessages([
+        ChatDataSource.mergeMessages([
             LocalDatabase.MessageRow(
                 id: id,
                 client_message_id: r["client_message_id"]?.stringValue,

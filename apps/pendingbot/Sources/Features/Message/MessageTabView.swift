@@ -721,7 +721,7 @@ struct MessageTabView: View {
                 cached.map { ($0.id, $0.last_activity_at) },
                 uniquingKeysWith: { first, _ in first }
             )
-            LocalDatabase.shared.upsertConversations(fresh.map { c in
+            ChatDataSource.mergeConversations(fresh.map { c in
                 LocalDatabase.ConversationRow(
                     id: c.id,
                     bot_id: c.bot_id.isEmpty ? nil : c.bot_id,
@@ -828,7 +828,7 @@ struct MessageTabView: View {
                 }
             }
             for await rows in group where !rows.isEmpty {
-                LocalDatabase.shared.upsertMessages(rows)
+                ChatDataSource.mergeMessages(rows)
             }
         }
     }
