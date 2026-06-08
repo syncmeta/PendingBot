@@ -22,7 +22,8 @@ enum McpHelperMain {
 
         if serve {
             // newline-delimited JSON-RPC over stdin/stdout（MCP stdio）。
-            let server = McpServer(store: store, crewId: crewId, sessionId: sessionId)
+            let server = McpServer(store: store, approvals: LocalApprovalStore(directory: dir),
+                                   crewId: crewId, sessionId: sessionId)
             while let line = readLine(strippingNewline: true) {
                 if let out = server.handleLine(line) {
                     print(out)

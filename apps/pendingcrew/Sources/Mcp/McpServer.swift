@@ -10,11 +10,13 @@ import Foundation
 /// 在 `main.swift`。用 `JSONSerialization`（不给每个 RPC 形状写 Codable）。
 final class McpServer {
     let store: LocalWhiteboardStore
+    let approvals: LocalApprovalStore
     let crewId: String
     let sessionId: String
 
-    init(store: LocalWhiteboardStore, crewId: String, sessionId: String) {
+    init(store: LocalWhiteboardStore, approvals: LocalApprovalStore, crewId: String, sessionId: String) {
         self.store = store
+        self.approvals = approvals
         self.crewId = crewId
         self.sessionId = sessionId
     }
@@ -58,6 +60,15 @@ final class McpServer {
                     "description": "读取 crew 群聊白板的当前全部消息（按时间序）。",
                     "inputSchema": ["type": "object", "properties": [String: Any]()],
                 ],
+                [
+                    "name": "ask",
+                    "description": "向负责人提问并拿到答复（先 captain，再人类）。任何需要人 / captain 判断、决策、方向选择、澄清、授权的，都走这个 —— 不要在纯文本里问。会阻塞直到有人答。",
+                    "inputSchema": [
+                        "type": "object",
+                        "properties": ["question": ["type": "string"]],
+                        "required": ["question"],
+                    ],
+                ],
             ]])
         case "tools/call":
             let params = obj["params"] as? [String: Any]
@@ -83,8 +94,31 @@ final class McpServer {
         case "read_whiteboard":
             let rows = store.list(crewId: crewId).map(renderRow)
             return toolResult(id: id, text: rows.isEmpty ? "（白板为空）" : rows.joined(separator: "\n"))
+        case "ask":
+            let question = (args["question"] as? String) ?? ""
+            guard !question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return toolResult(id: id, text: "ERROR: question 不能为空")
+            }
+            // 直达人类退化路径（captain-first triage 等 chunk 2）：raise 一条待决策 →
+            // 阻塞 long-poll 人类/captain 答复（spec ask-approval §3/§5）。
+            let reqId = approvals.raise(crewId: crewId, kind: "decision", sessionId: sessionId, summary: question)
+            return toolResult(id: id, text: awaitReply(reqId: reqId))
         default:
             return toolResult(id: id, text: "ERROR: 未知工具 \(name ?? "nil")")
+        }
+    }
+
+    /// 阻塞 long-poll 直到待决策被答复，返回答复文本。v1 不设硬超时（一直等；记 tech-debt）。
+    /// `maxWaits` 仅给单测（到点返回占位）。`pollInterval` 单测可调小避免久等。
+    func awaitReply(reqId: String, pollInterval: TimeInterval = 0.5, maxWaits: Int? = nil) -> String {
+        var waits = 0
+        while true {
+            if let it = approvals.item(crewId: crewId, id: reqId), it.status == "answered" {
+                return it.reply ?? "（已答复，无文本）"
+            }
+            if let maxWaits, waits >= maxWaits { return "（暂无人响应 —— 请自行判断后继续）" }
+            waits += 1
+            Thread.sleep(forTimeInterval: pollInterval)
         }
     }
 
