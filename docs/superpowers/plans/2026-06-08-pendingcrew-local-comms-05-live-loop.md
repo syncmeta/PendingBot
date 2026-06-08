@@ -1,5 +1,8 @@
 # Plan 05 — chunk 4 实装：本地 crew-comms live loop（Swift MCP helper）
 
+> **✅ 已实施 2026-06-08**（commits `54f472ee` store / `e27d55d4` McpServer / `fcc2b547` hook / `61b042ed` SessionConfig argv / `85f3ac0d` re-exec packaging+接线 / `41c75d20` 世界观 trust）。**packaging 改 re-exec self**（用户定 C 全迁 Swift：app 二进制带 `--mcp-serve`/`--mcp-hook` 兼当 helper，免 embed；不是计划原写的独立 tool target embed）。78 测试 + iOS build 绿 + **真 app 二进制端到端实跑**（post_to_crew→白板→另 session hook 读未读）。
+> **C 收尾 follow-on（不在本计划，单独做）**：ask_human 迁 Swift（McpServer 加 ask_human 工具：本地白板交互 + edge POST/long-poll）+ 删 `ask-human-mcp.cjs` + 答复 UI。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development / executing-plans。逐 task TDD + 小单元 commit（新文件带 pbxproj 再生）。
 
 **Goal:** BYOK 本地 session 能**主动 post 到本地白板**、**每轮自动读到未读白板**（hook 注入）。= spec local-first §2 的 session↔crew 接线（除 ask_human 阻塞 + captain 唤醒，那是 chunk 2）。
