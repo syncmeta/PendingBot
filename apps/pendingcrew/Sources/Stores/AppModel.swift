@@ -83,9 +83,17 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// 是否已选定一种模式(登录 grant 或本机模式)。
     /// `RootView` 用它决定显 WelcomeView 还是直接进主界面。
-    var isConfigured: Bool { credential != nil || localModeSelected }
+    /// **Mac 默认进本机模式**（驱动本机已登录的 claude/codex），不开屏让人选模式 ——
+    /// 登录是可选附加功能（侧栏入口）。iOS 仍需先登录（无本机后端）。
+    var isConfigured: Bool {
+        if credential != nil { return true }
+        #if os(macOS)
+        return true
+        #else
+        return localModeSelected
+        #endif
+    }
 
     /// 兼容老代码 —— `isAuthenticated` 现在仅指"登录态(device grant)",
     /// **不**包含 BYOK。BYOK 态判定用 `mode == .byok` 或 `byokConfig?.hasAnyKey`。
@@ -94,8 +102,11 @@ final class AppModel: ObservableObject {
     /// 当前 backend mode。两种凭据都没有时返回 nil(WelcomeView 时态)。
     var mode: BackendMode? {
         if credential != nil { return .logged }
-        if localModeSelected { return .local }
-        return nil
+        #if os(macOS)
+        return .local   // Mac 默认本机模式（无需开屏选），登录是可选升级。
+        #else
+        return localModeSelected ? .local : nil
+        #endif
     }
 
     func saveAPIBaseURL(_ url: String) {
