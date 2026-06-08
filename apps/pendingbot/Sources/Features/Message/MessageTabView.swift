@@ -1,7 +1,9 @@
-#if os(iOS)
 import SwiftUI
 import Supabase
 import OSLog
+// PhotosUI + CoreImage are cross-platform (PhotosPicker is macOS-13+,
+// CIImage/CIDetector are CoreImage). The "扫相册里的码" path works on both;
+// only the live-camera `QRScannerView` below is iOS-only.
 import PhotosUI
 import CoreImage
 
@@ -34,13 +36,15 @@ struct MessageTabView: View {
     @Environment(\.api) private var api
     @Environment(\.useSidebarLayout) private var sidebarLayout
     @Environment(\.topTabSelection) private var topTabSelection
-    @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var unread: UnreadStore
     /// Store fed by CallKitManager when the user accepts an incoming
     /// voice call. The .onChange below drives the navigation step;
     /// ConversationView reads `pendingAutoJoinConversationId` on appear
     /// to auto-open GroupCallView (no second tap to enter the call).
+    /// Call slice is iOS-only — macOS has no CallKit / incoming-call nav.
+    #if os(iOS)
     @State private var incomingCall = IncomingCallStore.shared
+    #endif
     @State private var conversations: [Conversation] = []
     @State private var bots: [Bot] = []
     /// Peer profile keyed by user_user conv id. Populated alongside the
@@ -93,8 +97,10 @@ struct MessageTabView: View {
             // Pull the active-voice-calls snapshot so the row-level phone
             // icon paints right away. The store also self-updates from
             // conv-channel voice_call frames whenever the user opens a
-            // conversation that's live.
+            // conversation that's live. iOS-only — macOS shows no call indicators.
+            #if os(iOS)
             await ActiveVoiceCallStore.shared.refresh()
+            #endif
             // Subscribe to user-level Realtime — every unread-counts row
             // change (new bot/cron message anywhere) triggers a reload so
             // last_activity_at + preview + ordering refresh without a pull.
@@ -106,38 +112,12 @@ struct MessageTabView: View {
                 }
             }
         }
-        .onChange(of: scenePhase) { _, new in
-            if new == .active {
-                Task { await ActiveVoiceCallStore.shared.refresh() }
-            }
-        }
-        // React to a CallKit-accepted incoming call — navigate to the
-        // conversation so ConversationView mounts and its onAppear
-        // consumes `pendingAutoJoinConversationId` to open the call view
-        // directly. Two separate slots: this one is the navigation
-        // trigger, the auto-join slot is read by ConversationView.
-        .onChange(of: incomingCall.pendingNavConversationId) { _, convId in
-            guard let convId, !convId.isEmpty else { return }
-            incomingCall.pendingNavConversationId = nil
-            let userId = AccountStore.shared.current?.id ?? ""
-            let stub = Conversation(
-                id: convId, bot_id: "", user_id: userId,
-                title: nil, feature_type: "message",
-                conversation_type: "group",
-                last_activity_at: Int(Date().timeIntervalSince1970),
-                round_count: 0, bot_name: nil,
-                last_message_content: nil, last_message_sender_type: nil
-            )
-            if sidebarLayout {
-                selected = .existing(stub)
-            } else {
-                path.append(.existing(stub))
-            }
-        }
+        .modifier(IncomingCallNav(sidebarLayout: sidebarLayout, selected: $selected, path: $path))
         .alert("出错了", isPresented: .constant(error != nil), actions: {
             Button("好") { error = nil }
         }, message: { Text(error ?? "") })
         .sheet(isPresented: $joiningGroup, onDismiss: { groupJoinPrefill = "" }) {
+            #if os(iOS)
             GroupJoinView(prefilledToken: groupJoinPrefill) { convId in
                 // After successful join, refresh the conv list and
                 // navigate into the new group conv.
@@ -161,6 +141,9 @@ struct MessageTabView: View {
             }
             .presentationDetents([.medium])
             .presentationDragIndicator(.visible)
+            #else
+            EmptyView()
+            #endif
         }
         .onAppear { consumeGroupDeepLink() }
         .onChange(of: deepLink.pendingJoinGroupToken) { _, _ in consumeGroupDeepLink() }
@@ -169,9 +152,12 @@ struct MessageTabView: View {
                 onAdded: { Task { await load() } },
                 prefilledHandle: addFriendPrefill
             )
-            .presentationDetents([.medium])
-            .presentationDragIndicator(.visible)
+            .platformDetents([.medium])
+            .platformDragIndicator()
         }
+        // 扫码 (camera QR) is iOS-only — depends on AVFoundation camera +
+        // PhotosUI; macOS keeps the manual 加好友 / 加群 paths instead.
+        #if os(iOS)
         .sheet(isPresented: $scanning, onDismiss: {
             if let token = pendingScannedFriendHandle {
                 pendingScannedFriendHandle = nil
@@ -200,12 +186,13 @@ struct MessageTabView: View {
                 }
             )
         }
+        #endif
         .sheet(isPresented: $addingBot, onDismiss: { addBotPrefill = "" }) {
             AddBotSheet(
                 onAdded: { _ in Task { await load() } },
                 prefilledToken: addBotPrefill
             )
-            .presentationDragIndicator(.visible)
+            .platformDragIndicator()
         }
         .sheet(isPresented: $addFriendChooser) {
             AddFriendChooserSheet(
@@ -222,8 +209,8 @@ struct MessageTabView: View {
                     }
                 }
             )
-            .presentationDetents([.fraction(0.32)])
-            .presentationDragIndicator(.visible)
+            .platformDetents([.fraction(0.32)])
+            .platformDragIndicator()
         }
     }
 
@@ -233,12 +220,14 @@ struct MessageTabView: View {
         NavigationStack(path: $path) {
             sidebarBody
                 .background(Theme.Palette.canvas.ignoresSafeArea())
+                #if os(iOS)
                 .toolbar(.hidden, for: .navigationBar)
+                #endif
                 .navigationDestination(for: ChatDest.self) { dest in
                     destinationView(for: dest)
                 }
         }
-        .toolbar(path.isEmpty ? .visible : .hidden, for: .tabBar)
+        .platformTabBarVisibility(path.isEmpty)
     }
 
     // ── Regular (iPad landscape, Mac Catalyst) ──────────────────────────────
@@ -252,7 +241,9 @@ struct MessageTabView: View {
                 }
             }
             .background(Theme.Palette.canvas.ignoresSafeArea())
+            #if os(iOS)
             .toolbar(.hidden, for: .navigationBar)
+            #endif
             .sidebarColumnWidth()
         } detail: {
             if let dest = selected {
@@ -332,6 +323,30 @@ struct MessageTabView: View {
 
     // ── Sidebar (shared) ────────────────────────────────────────────────────
 
+    /// "+" menu actions. 扫码 (camera QR) is iOS-only; macOS keeps the
+    /// manual 加好友 / 拉群 / 加群 paths.
+    private var plusActionItems: [PlusActionItem] {
+        var items: [PlusActionItem] = [
+            PlusActionItem(title: "加好友", systemImage: "person.badge.plus") {
+                addFriendChooser = true
+            },
+        ]
+        #if os(iOS)
+        items.append(PlusActionItem(title: "扫码", systemImage: "qrcode.viewfinder") {
+            scanning = true
+        })
+        #endif
+        items.append(contentsOf: [
+            PlusActionItem(title: "拉群", systemImage: "person.3") {
+                openCreateGroup()
+            },
+            PlusActionItem(title: "加群", systemImage: "person.3.sequence") {
+                joiningGroup = true
+            },
+        ])
+        return items
+    }
+
     private var sidebarBody: some View {
         VStack(spacing: 0) {
             TabHeaderBar(
@@ -357,20 +372,7 @@ struct MessageTabView: View {
                             CircleComposeButton()
                         }
                     } trailing: {
-                        PlusActionPopover(items: [
-                            PlusActionItem(title: "加好友", systemImage: "person.badge.plus") {
-                                addFriendChooser = true
-                            },
-                            PlusActionItem(title: "扫码", systemImage: "qrcode.viewfinder") {
-                                scanning = true
-                            },
-                            PlusActionItem(title: "拉群", systemImage: "person.3") {
-                                openCreateGroup()
-                            },
-                            PlusActionItem(title: "加群", systemImage: "person.3.sequence") {
-                                joiningGroup = true
-                            },
-                        ])
+                        PlusActionPopover(items: plusActionItems)
                     }
                 }
             )
@@ -891,6 +893,69 @@ struct MessageTabView: View {
 }
 
 
+/// Call slice is iOS-only. This bundles the scenePhase-driven
+/// active-voice-call refresh plus the CallKit-accepted incoming-call
+/// navigation into one fenced modifier so the cross-platform `body`
+/// above stays clean. On macOS it's a pass-through (no CallKit, no
+/// incoming-call nav).
+private struct IncomingCallNav: ViewModifier {
+    let sidebarLayout: Bool
+    @Binding var selected: ChatDest?
+    @Binding var path: [ChatDest]
+
+    func body(content: Content) -> some View {
+        #if os(iOS)
+        content
+            .modifier(IncomingCallNavBody(sidebarLayout: sidebarLayout,
+                                          selected: $selected, path: $path))
+        #else
+        content
+        #endif
+    }
+}
+
+#if os(iOS)
+private struct IncomingCallNavBody: ViewModifier {
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var incomingCall = IncomingCallStore.shared
+    let sidebarLayout: Bool
+    @Binding var selected: ChatDest?
+    @Binding var path: [ChatDest]
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: scenePhase) { _, new in
+                if new == .active {
+                    Task { await ActiveVoiceCallStore.shared.refresh() }
+                }
+            }
+            // React to a CallKit-accepted incoming call — navigate to the
+            // conversation so ConversationView mounts and its onAppear
+            // consumes `pendingAutoJoinConversationId` to open the call view
+            // directly. Two separate slots: this one is the navigation
+            // trigger, the auto-join slot is read by ConversationView.
+            .onChange(of: incomingCall.pendingNavConversationId) { _, convId in
+                guard let convId, !convId.isEmpty else { return }
+                incomingCall.pendingNavConversationId = nil
+                let userId = AccountStore.shared.current?.id ?? ""
+                let stub = Conversation(
+                    id: convId, bot_id: "", user_id: userId,
+                    title: nil, feature_type: "message",
+                    conversation_type: "group",
+                    last_activity_at: Int(Date().timeIntervalSince1970),
+                    round_count: 0, bot_name: nil,
+                    last_message_content: nil, last_message_sender_type: nil
+                )
+                if sidebarLayout {
+                    selected = .existing(stub)
+                } else {
+                    path.append(.existing(stub))
+                }
+            }
+    }
+}
+#endif
+
 private struct ConversationListRow: View {
     let conv: Conversation
     let bot: Bot?
@@ -978,12 +1043,15 @@ private struct ConversationListRow: View {
                             rowTitleIsPlaceholder ? Theme.Palette.inkMuted : Theme.Palette.ink
                         )
                         .lineLimit(1)
+                    // Live-call indicator — iOS-only (macOS has no call slice).
+                    #if os(iOS)
                     if ActiveVoiceCallStore.shared.calls[conv.id] != nil {
                         Image(systemName: "phone.fill")
                             .font(Theme.Fonts.glyph(size: 12, weight: .semibold))
                             .foregroundStyle(.green)
                             .accessibilityLabel("通话中")
                     }
+                    #endif
                     Spacer(minLength: 8)
                     if conv.last_activity_at > 0 {
                         // Preset preseeded conversations are stamped with a
@@ -1085,6 +1153,7 @@ private struct ConversationListRow: View {
 /// fans out the same way as the camera path.
 private struct ScanQRSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
     var onAdded: () -> Void = {}
     /// Called with the bare token when the scanned QR points at a user
     /// handle (resolved via /v1/friend-requests/lookup). Caller dismisses
@@ -1116,6 +1185,7 @@ private struct ScanQRSheet: View {
                         .padding(.vertical, 32)
                         .textSelection(.enabled)
                 } else if scannedValue == nil {
+                    #if os(iOS)
                     QRScannerView { value in
                         scannedValue = value
                         Haptics.tap()
@@ -1124,6 +1194,16 @@ private struct ScanQRSheet: View {
                         error = err.localizedDescription
                     }
                     .ignoresSafeArea()
+                    #else
+                    // macOS: 无摄像头实时扫码 —— 引导走「扫相册里的码」(下方按钮)。
+                    VStack(spacing: 12) {
+                        Image(systemName: "qrcode.viewfinder")
+                            .font(Theme.Fonts.glyph(size: 44))
+                            .foregroundStyle(.white.opacity(0.7))
+                        Text("从相册选择二维码图片")
+                            .foregroundStyle(.white.opacity(0.8))
+                    }
+                    #endif
                 } else if submitting {
                     VStack(spacing: 12) {
                         ProgressView().tint(.white).controlSize(.large)
@@ -1169,10 +1249,10 @@ private struct ScanQRSheet: View {
                 }
             }
             .navigationTitle("扫码")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarColorScheme(.dark, for: .navigationBar)
+            .inlineNavTitle()
+            .platformToolbarColorScheme(.dark)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .platformTrailing) {
                     Button("取消") { dismiss() }
                         .foregroundStyle(.white)
                 }
@@ -1210,6 +1290,10 @@ private struct ScanQRSheet: View {
             onScannedBotToken(BotShareLink.token(fromScanned: trimmed))
             return
         }
+        #if os(iOS)
+        // PendingBotQR lives in the iOS-only QRScannerView slice; the
+        // contact-share QR decode path is only reachable from the camera,
+        // which macOS doesn't build.
         if PendingBotQR.isPendingBotQR(trimmed) {
             submitting = true
             defer { submitting = false }
@@ -1220,11 +1304,12 @@ private struct ScanQRSheet: View {
             onScannedUserHandle(token)
             return
         }
+        #endif
         if let url = URL(string: trimmed),
            let scheme = url.scheme?.lowercased(),
            scheme == "http" || scheme == "https",
            url.host?.isEmpty == false {
-            await UIApplication.shared.open(url)
+            openURL(url)
             dismiss()
             return
         }
@@ -1283,9 +1368,9 @@ private struct AddFriendChooserSheet: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .background(Theme.Palette.canvas.ignoresSafeArea())
             .navigationTitle("加好友")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavTitle()
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .platformTrailing) {
                     Button("取消") { dismiss() }
                 }
             }
@@ -1327,8 +1412,7 @@ private struct AddFriendChooserSheet: View {
 /// iOS 16+ only, which matches the app's deployment target.
 private func decodeQRFromPhoto(_ item: PhotosPickerItem) async -> String? {
     guard let data = try? await item.loadTransferable(type: Data.self),
-          let uiImage = UIImage(data: data),
-          let ciImage = CIImage(image: uiImage) else { return nil }
+          let ciImage = CIImage(data: data) else { return nil }
     let detector = CIDetector(
         ofType: CIDetectorTypeQRCode,
         context: nil,
@@ -1403,7 +1487,7 @@ private struct CreateGroupView: View {
             Section("群名") {
                 HStack(spacing: 8) {
                     TextField("起个名字", text: $title)
-                        .textInputAutocapitalization(.never)
+                        .platformAutocapitalization()
                     Button {
                         Task { await regenerateTitle() }
                     } label: {
@@ -1433,9 +1517,9 @@ private struct CreateGroupView: View {
             }
         }
         .navigationTitle("发起群聊")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavTitle()
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .platformTrailing) {
                 Button("创建") { Task { await create() } }
                     .disabled(creating
                               || title.trimmingCharacters(in: .whitespaces).isEmpty
@@ -1610,4 +1694,3 @@ private struct CreateGroupView: View {
         }
     }
 }
-#endif
