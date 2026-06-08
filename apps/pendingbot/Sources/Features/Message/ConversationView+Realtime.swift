@@ -1,4 +1,3 @@
-#if os(iOS)
 import Foundation
 import Supabase
 import SwiftUI
@@ -61,7 +60,12 @@ extension ConversationView {
             },
             onVoiceCall: { frame in
                 Task { @MainActor in
+                    // ActiveVoiceCallStore is part of the iOS-only Call slice.
+                    #if os(iOS)
                     ActiveVoiceCallStore.shared.apply(frame)
+                    #else
+                    _ = frame
+                    #endif
                 }
             }
         )
@@ -368,6 +372,12 @@ extension ConversationView {
         return groupSenders.values.contains { $0.kind == .bot }
     }
 
+    // ── Voice-call entry — iOS-only Call slice ──────────────────────────────
+    // CallCenter / GroupCallSession / CallSession / IncomingCallStore are all
+    // part of the iOS-only Call slice. On macOS the conversation works fully
+    // minus the voice-call entry, so these members don't exist there.
+    #if os(iOS)
+
     /// Spin up a GroupCallSession and hand it to `CallCenter`. The
     /// app-level center owns the session past this view's lifetime, so
     /// the call survives the user navigating away (minimize → other
@@ -430,6 +440,7 @@ extension ConversationView {
         )
         callCenter.startVoiceCall(session)
     }
+    #endif
 }
 
 private func decodeIntValue(_ any: AnyJSON?) -> Int? {
@@ -443,4 +454,3 @@ private func decodeIntValue(_ any: AnyJSON?) -> Int? {
     }
     return nil
 }
-#endif
