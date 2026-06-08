@@ -367,7 +367,7 @@ meRoutes.post('/redeem', async (c) => {
   }
   // 计费 kill-switch 关时(默认)不受理兑换 —— 否则会消耗掉码但无法入账(码白废)。
   // 先拒绝、绝不调 redeemCode(后者会原子标记 used)。
-  if (!billingEnabled(c.env)) {
+  if (!(await billingEnabled(c.env))) {
     return jsonError(c, 503, 'billing_disabled', { message: '兑换暂未开放' });
   }
 
