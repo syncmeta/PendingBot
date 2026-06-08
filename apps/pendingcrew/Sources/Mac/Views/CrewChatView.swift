@@ -51,8 +51,12 @@ struct CrewChatView: View {
 
     // 登录用户 id(auth.users.id) —— AppModel 在 subject 解析时回填。
     // CrewSenderResolver 用它把 senderUserId 等于本值的 user 消息识别成
-    // "自己"(右对齐、无头像);nil(尚未解析 / BYOK)时退化为旧行为。
-    private var localUserId: String? { appModel.currentUserId }
+    // "自己"(右对齐、无头像)。BYOK 用本地哨兵(本地白板消息都标这个),让
+    // 自己的消息右对齐;登录态 nil(尚未解析)时退化为旧行为。
+    private var localUserId: String? {
+        if appModel.mode == .byok { return LocalWhiteboardStore.localUserId }
+        return appModel.currentUserId
+    }
 
     private var timeline: some View {
         ScrollViewReader { proxy in
@@ -115,18 +119,19 @@ struct CrewChatView: View {
     }
 
     private func refresh() async {
-        guard let api = try? appModel.loggedAPIClient() else {
-            loadError = "未登录"
+        // 走 backend(双轨):登录态 → edge;BYOK → 本地白板 store。
+        guard let backend = appModel.backend else {
+            loadError = "未配置 backend"
             return
         }
         do {
-            entries = try await api.listCrewWhiteboard(crewId: crewId)
+            entries = try await backend.listCrewWhiteboard(crewId: crewId)
             loadError = nil
         } catch {
             loadError = error.localizedDescription
         }
         // Roster is best-effort decoration — a failure leaves the prior strip.
-        if let roster = try? await api.listCrewMembers(crewId: crewId) {
+        if let roster = try? await backend.listCrewMembers(crewId: crewId) {
             members = roster.members
             captainBotId = roster.captainBotId
         }
@@ -137,20 +142,25 @@ struct CrewChatView: View {
         let toUpload = pendingAttachments
         // Allow attachment-only sends (no text) as long as something is present.
         guard !text.isEmpty || !toUpload.isEmpty,
-              let api = try? appModel.loggedAPIClient() else { return }
+              let backend = appModel.backend else { return }
         sending = true
         defer { sending = false }
         do {
-            // Upload each picked file first → collect the attachment ids. Any
-            // failure aborts the send and leaves the tray intact so the user can
-            // retry without re-picking.
+            // 附件只 edge 支持:BYOK 下有附件 → 软报错、不发(spec local-first §8.4)。
+            // 上传走 loggedAPIClient(edge 专属),拿到 ids 再交给 backend 发文。
             var attachmentIds: [String] = []
-            for att in toUpload {
-                let id = try await api.uploadAttachment(
-                    data: att.data, filename: att.filename, mime: att.mime)
-                attachmentIds.append(id)
+            if !toUpload.isEmpty {
+                guard appModel.mode == .logged, let api = try? appModel.loggedAPIClient() else {
+                    loadError = "BYOK 模式暂不支持群聊附件"
+                    return
+                }
+                for att in toUpload {
+                    let id = try await api.uploadAttachment(
+                        data: att.data, filename: att.filename, mime: att.mime)
+                    attachmentIds.append(id)
+                }
             }
-            try await api.postCrewMessage(
+            try await backend.postCrewMessage(
                 crewId: crewId, text: text, mentions: [], attachmentIds: attachmentIds)
             draft = ""
             pendingAttachments = []
