@@ -83,15 +83,50 @@ struct MessageTabView: View {
     @State private var path: [ChatDest] = []
     // Selection-driven detail for regular size class.
     @State private var selected: ChatDest?
+    /// External selection sink, only set when the Mac three-column shell
+    /// reuses our list via `FeatureSurface.listColumn(selection:)`. When
+    /// non-nil, the selection-driven nav + row highlight read/write THIS
+    /// binding instead of the internal `selected` @State, so the shell's own
+    /// detail column (a separate `NavigationSplitView` column) updates. nil
+    /// for every iOS code path — the normal `body` never sets it, so iOS
+    /// behavior is byte-identical to before.
+    var externalSelection: Binding<ChatDest?>? = nil
+
+    /// The selection the row highlight reads + the regular-layout nav writes:
+    /// the shell's binding when our list is hosted by the Mac shell, otherwise
+    /// the internal @State. This is the single seam that lets the shared
+    /// `sidebarBody` serve both the iOS `regularBody` (internal state) and the
+    /// Mac `listColumn` (external binding). When `externalSelection` is nil
+    /// (every iOS path) this is exactly `selected`.
+    private var effectiveSelected: ChatDest? {
+        externalSelection?.wrappedValue ?? selected
+    }
 
     var body: some View {
-        Group {
-            if sidebarLayout {
-                regularBody
-            } else {
-                compactBody
+        chrome(
+            Group {
+                if sidebarLayout {
+                    regularBody
+                } else {
+                    compactBody
+                }
             }
-        }
+        )
+    }
+
+    /// Wraps a root view with the tab's shared chrome — the `.task` (load +
+    /// voice-call refresh + user-channel subscribe), the incoming-call nav
+    /// modifier, the group deep-link consumer, the error alert, and the full
+    /// sheet stack (join-group / add-friend / scan-QR / add-bot / chooser).
+    /// Pulled out of `body` so the Mac three-column shell's `listColumn` and
+    /// the `compactRoot` can each be self-contained: every entry point that
+    /// hosts the conversation list carries the same actions + loading,
+    /// regardless of which SwiftUI container it's planted in. The iOS `body`
+    /// calls this with the exact same content it used to inline, so its
+    /// behavior is unchanged.
+    @ViewBuilder
+    private func chrome(_ content: some View) -> some View {
+        content
         .task {
             await load()
             // Pull the active-voice-calls snapshot so the row-level phone
@@ -112,7 +147,9 @@ struct MessageTabView: View {
                 }
             }
         }
-        .modifier(IncomingCallNav(sidebarLayout: sidebarLayout, selected: $selected, path: $path))
+        .modifier(IncomingCallNav(sidebarLayout: sidebarLayout,
+                                  externalSelection: externalSelection,
+                                  selected: $selected, path: $path))
         .alert("出错了", isPresented: .constant(error != nil), actions: {
             Button("好") { error = nil }
         }, message: { Text(error ?? "") })
@@ -133,11 +170,7 @@ struct MessageTabView: View {
                     round_count: 0, bot_name: nil,
                     last_message_content: nil, last_message_sender_type: nil
                 )
-                if sidebarLayout {
-                    selected = .existing(stub)
-                } else {
-                    path.append(.existing(stub))
-                }
+                route(.existing(stub))
             }
             .presentationDetents([.medium])
             .presentationDragIndicator(.visible)
@@ -211,6 +244,23 @@ struct MessageTabView: View {
             )
             .platformDetents([.fraction(0.32)])
             .platformDragIndicator()
+        }
+    }
+
+    /// Route a destination to the right surface: the Mac shell's detail
+    /// column via the external binding (when hosted there), the regular-size
+    /// detail pane via the internal `selected` @State (iPad-landscape / Mac
+    /// Catalyst), or a compact nav-stack push (iPhone). The `externalSelection`
+    /// branch is only reachable when the Mac three-column shell built this
+    /// instance — the iOS `body` leaves it nil, so iPhone/iPad take exactly
+    /// the same `sidebarLayout ? selected = : path.append` path as before.
+    private func route(_ dest: ChatDest) {
+        if let externalSelection {
+            externalSelection.wrappedValue = dest
+        } else if sidebarLayout {
+            selected = dest
+        } else {
+            path.append(dest)
         }
     }
 
@@ -484,7 +534,7 @@ struct MessageTabView: View {
     /// NavigationLink/Button here, or a sideways swipe will trigger it.
     private func rowVisual(_ conv: Conversation) -> some View {
         let isSelected: Bool = {
-            guard sidebarLayout, case .existing(let s) = selected else { return false }
+            guard sidebarLayout, case .existing(let s) = effectiveSelected else { return false }
             return s.id == conv.id
         }()
         return ConversationListRow(
@@ -497,20 +547,12 @@ struct MessageTabView: View {
 
     private func openConversation(_ conv: Conversation) {
         Haptics.tap()
-        if sidebarLayout {
-            selected = .existing(conv)
-        } else {
-            path.append(.existing(conv))
-        }
+        route(.existing(conv))
     }
 
     private func openCreateGroup() {
         Haptics.tap()
-        if sidebarLayout {
-            selected = .composeGroup
-        } else {
-            path.append(.composeGroup)
-        }
+        route(.composeGroup)
     }
 
     /// Build a [participantId: rank] map so the create-group picker can
@@ -551,7 +593,11 @@ struct MessageTabView: View {
             last_message_content: nil, last_message_sender_type: nil
         )
         Task { await load() }
-        if sidebarLayout {
+        if let externalSelection {
+            // Mac shell owns the detail column — just point it at the new
+            // group conv (the compose page lived in that same column).
+            externalSelection.wrappedValue = .existing(stub)
+        } else if sidebarLayout {
             selected = .existing(stub)
         } else {
             if !path.isEmpty, case .composeGroup = path.last {
@@ -866,11 +912,7 @@ struct MessageTabView: View {
         let peer = PendingPeer(kind: "bot",
                                peerId: bot.id,
                                displayName: bot.display_name)
-        if sidebarLayout {
-            selected = .pending(peer)
-        } else {
-            path.append(.pending(peer))
-        }
+        route(.pending(peer))
         Haptics.tap()
     }
 
@@ -892,6 +934,64 @@ struct MessageTabView: View {
     }
 }
 
+// MARK: - FeatureSurface (Mac three-column shell)
+
+/// Exposes the conversation LIST and the chat DETAIL as separate columns so
+/// the macOS `WideRootView` can drop them into one shared
+/// `NavigationSplitView` (list = middle column, detail = right column) — no
+/// nested split views. The iOS `body` above is untouched; these methods are
+/// additive and only the Mac shell calls them.
+///
+/// Selection plumbing: the shell owns the `Binding<ChatDest?>` and passes it
+/// into `listColumn`. We build a `MessageTabView` instance with its
+/// `externalSelection` set to that binding, so the (otherwise unchanged)
+/// `sidebarBody` routes row taps + highlight through the shell's selection
+/// instead of the internal `@State selected`. `detailColumn` renders the same
+/// `destinationView` the iOS `regularBody` shows for a selected destination.
+extension MessageTabView: FeatureSurface {
+    typealias Selection = ChatDest
+
+    func listColumn(selection: Binding<ChatDest?>) -> some View {
+        // A fresh instance bound to the shell's selection. Its body is the
+        // conversation list alone (no SidebarTabBar — on Mac the tab strip is
+        // the shell's own first column), carrying the shared chrome so the
+        // +/add-friend/scan/join-group actions and `load()` all work from it.
+        var view = self
+        view.externalSelection = selection
+        return view.macListColumn
+    }
+
+    func detailColumn(selection: ChatDest?) -> some View {
+        Group {
+            if let dest = selection {
+                destinationView(for: dest)
+                    .id(destinationKey(dest))
+            } else {
+                EmptyDetailHint(text: "选择一个会话开始",
+                                systemImage: "bubble.left.and.bubble.right")
+            }
+        }
+    }
+
+    func compactRoot() -> some View {
+        // The iPhone NavigationStack, made self-contained by wrapping it in
+        // the same chrome the iOS `body` applies (sheets + `.task` load).
+        chrome(compactBody)
+    }
+}
+
+private extension MessageTabView {
+    /// The conversation list as a standalone column for the Mac shell: the
+    /// shared `sidebarBody` (no SidebarTabBar) on canvas, carrying the full
+    /// chrome so its actions + loading work from this column.
+    var macListColumn: some View {
+        chrome(
+            sidebarBody
+                .background(Theme.Palette.canvas.ignoresSafeArea())
+        )
+    }
+}
+
 
 /// Call slice is iOS-only. This bundles the scenePhase-driven
 /// active-voice-call refresh plus the CallKit-accepted incoming-call
@@ -900,6 +1000,9 @@ struct MessageTabView: View {
 /// incoming-call nav).
 private struct IncomingCallNav: ViewModifier {
     let sidebarLayout: Bool
+    /// Mac shell's detail-column selection sink; nil on every iOS path (the
+    /// CallKit nav is iOS-only, so this is always nil where the body runs).
+    let externalSelection: Binding<ChatDest?>?
     @Binding var selected: ChatDest?
     @Binding var path: [ChatDest]
 
@@ -907,6 +1010,7 @@ private struct IncomingCallNav: ViewModifier {
         #if os(iOS)
         content
             .modifier(IncomingCallNavBody(sidebarLayout: sidebarLayout,
+                                          externalSelection: externalSelection,
                                           selected: $selected, path: $path))
         #else
         content
@@ -919,6 +1023,7 @@ private struct IncomingCallNavBody: ViewModifier {
     @Environment(\.scenePhase) private var scenePhase
     @State private var incomingCall = IncomingCallStore.shared
     let sidebarLayout: Bool
+    let externalSelection: Binding<ChatDest?>?
     @Binding var selected: ChatDest?
     @Binding var path: [ChatDest]
 
@@ -946,7 +1051,9 @@ private struct IncomingCallNavBody: ViewModifier {
                     round_count: 0, bot_name: nil,
                     last_message_content: nil, last_message_sender_type: nil
                 )
-                if sidebarLayout {
+                if let externalSelection {
+                    externalSelection.wrappedValue = .existing(stub)
+                } else if sidebarLayout {
                     selected = .existing(stub)
                 } else {
                     path.append(.existing(stub))
