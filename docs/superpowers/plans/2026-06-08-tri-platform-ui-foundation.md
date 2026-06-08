@@ -324,6 +324,20 @@ git add apps/pendingbot/Sources/PendingBotApp.swift
 git commit -m "mac: @main 接 WideRootView + Settings/commands(取代 MacRootGate→MacRootView)"
 ```
 
+### Task A9: 地基补缺(B2 cascade 暴露)— platformListStyle 垫片 + api/account 环境键跨平台化
+
+> B2 解锁 ModelPicker 时撞到两个 iOS-fenced 依赖,补进地基:`.listStyle(.insetGrouped)` 无跨平台垫片;`\.api`/`\.account` 环境键定义在 iOS-fenced 的 TabRoot.swift 里。
+
+**Files:**
+- Modify: `apps/pendingbot/Sources/Components/PlatformModifiers.swift`(加 `platformListStyle()`)
+- Create: `apps/pendingbot/Sources/Features/Root/AppEnvironment.swift`(承接 api/account 环境键)
+- Modify: `apps/pendingbot/Sources/Features/Root/TabRoot.swift`(移出键定义,保留注入)
+
+- [ ] **Step 1: platformListStyle 垫片** — `func platformListStyle() -> some View`:iOS `.listStyle(.insetGrouped)`,macOS `.listStyle(.inset)`(分组样式在 Mac 上最接近)。
+- [ ] **Step 2: 抽 api/account 键** — 把 `AccountKey`/`APIKey`(EnvironmentKey)+ `EnvironmentValues.account`/`.api` 扩展从 `TabRoot.swift`(行 179–190 一带)移到新建跨平台 `AppEnvironment.swift`;TabRoot 仍保留 `.environment(\.api, ...)` / `.environment(\.account, ...)` 注入(iOS 注入点不动)。
+- [ ] **Step 3: 编译两端** — 注意此刻 `ModelPicker.swift` 有 B2 的未提交改动,A9 修完 cascade 后整树(含未提交 ModelPicker)应过 macOS。只 `git add` A9 自己的三个文件,不碰 ModelPicker。
+- [ ] **Step 4: Commit** — `ios+mac: platformListStyle 垫片 + api/account 环境键跨平台化`。改了文件集若 xcodegen 动了 pbxproj,一并提交。
+
 ---
 
 ## Phase B — 好友/Bot 管理/选模型(Slice 1 样板)
@@ -348,7 +362,7 @@ git commit -m "ios+mac: 解锁好友片叶子组件跨平台(摘 #if + 换 Hapti
 **Files:**
 - Modify: `apps/pendingbot/Sources/Components/ModelPicker.swift`
 
-- [ ] **Step 1: 摘锁 + 换垫片** — 删首尾 `#if os(iOS)`/`#endif`;`.navigationBarTitleDisplayMode(.inline)` ×2 → `.inlineNavTitle()`;`.textInputAutocapitalization` ×2 → `.platformAutocapitalization()`;`presentationDragIndicator` ×1 → `.platformDragIndicator()`;`Haptics.*` 保留。`ArenaModelPickerSheet` / `ArenaModelPoolEditor` / `PriceRangeSlider`(自定义 DragGesture 滑块,跨平台)随文件一起解锁。
+- [ ] **Step 1: 摘锁 + 换垫片** — 删首尾 `#if os(iOS)`/`#endif`;`.navigationBarTitleDisplayMode(.inline)` ×2 → `.inlineNavTitle()`;`.textInputAutocapitalization` ×2 → `.platformAutocapitalization()`;`presentationDragIndicator` ×1 → `.platformDragIndicator()`;`.listStyle(.insetGrouped)` ×2(行 353/991)→ `.platformListStyle()`(A9 垫片);`Haptics.*` 保留。`ArenaModelPickerSheet` / `ArenaModelPoolEditor` / `PriceRangeSlider`(自定义 DragGesture 滑块,跨平台)随文件一起解锁。依赖 A9 已把 `\.api`/`\.account` 键跨平台化。
 
 - [ ] **Step 2: 编译两端** — Expected PASS。
 - [ ] **Step 3: Commit**
