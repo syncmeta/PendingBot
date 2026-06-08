@@ -215,9 +215,20 @@ struct PendingBotApp: App {
         // 去掉窗口标题栏那条「大绿豆」标题条,让内容(尤其登录页)成一整片
         // full-bleed 画布;红绿灯交通灯按钮仍浮在左上角内容之上。
         .windowStyle(.hiddenTitleBar)
-        // 窗口大小跟内容走:登录页是紧凑小窗,登录后 MacRootView 自己声明
+        // 窗口大小跟内容走:登录页是紧凑小窗,登录后 WideRootView 自己声明
         // minWidth 1100/minHeight 700 → 窗口长到主 app 尺寸(且仍可自由缩放)。
         .windowResizability(.contentSize)
+        // A8:原生菜单栏命令(新建机器人 ⌘N / 新建会话 ⇧⌘N / 搜索 ⌘F)。
+        .commands { AppCommands() }
+
+        // A8:macOS 系统设置场景。用 SwiftUI 的 `Settings` 场景把 ⌘, 绑到
+        // SettingsRootView;Settings 场景是独立窗口,environmentObject 不会从
+        // WindowGroup 继承过来,所以这里单独注入 accountStore / modelCatalog。
+        Settings {
+            SettingsRootView()
+                .environmentObject(accountStore)
+                .environmentObject(modelCatalog)
+        }
     }
 }
 
