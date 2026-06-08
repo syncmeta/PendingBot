@@ -102,6 +102,12 @@ final class McpServer {
             // 直达人类退化路径（captain-first triage 等 chunk 2）：raise 一条待决策 →
             // 阻塞 long-poll 人类/captain 答复（spec ask-approval §3/§5）。
             let reqId = approvals.raise(crewId: crewId, kind: "decision", sessionId: sessionId, summary: question)
+            // 通知半边（spec §6「PendingCrew 只做通知+列表+答复」）：把问题贴到本地群聊白板，
+            // 人类/captain 在 crew chat 就看得见有个待决策（v1 降级 reporter；真正的「专门
+            // reporter session 思考后 @人类」属 chunk 2）。答复仍走待办列表（approvals）。
+            store.appendSessionMessage(crewId: crewId, sessionId: sessionId,
+                                       text: "🔔 待决策：\(question)\n（请在 PendingCrew 待办列表里答复）",
+                                       category: "question")
             return toolResult(id: id, text: awaitReply(reqId: reqId))
         default:
             return toolResult(id: id, text: "ERROR: 未知工具 \(name ?? "nil")")

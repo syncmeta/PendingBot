@@ -65,4 +65,25 @@ final class McpPermissionHookTests: XCTestCase {
         XCTAssertNil(h.handle("not json"))
         XCTAssertNil(h.handle(#"{"no_tool_name":true}"#))
     }
+
+    func testGatedToolPostsWhiteboardNotification() {
+        let dir = tempDir()
+        let board = LocalWhiteboardStore(directory: dir)
+        let h = McpPermissionHook(approvals: LocalApprovalStore(directory: dir), crewId: "c",
+                                  gates: ["computer-use"], board: board)
+        _ = h.handle(#"{"tool_name":"mcp__computer-use__left_click","tool_input":{"command":"click"},"session_id":"s"}"#,
+                     pollInterval: 0.01, maxWaits: 0)
+        let msgs = board.list(crewId: "c")
+        XCTAssertTrue(msgs.contains { $0.text.contains("🔔 待审批") && $0.text.contains("mcp__computer-use__left_click") },
+                      "gate 命中应往白板贴一条待审批通知")
+    }
+
+    func testNonGatedToolPostsNoNotification() {
+        let dir = tempDir()
+        let board = LocalWhiteboardStore(directory: dir)
+        let h = McpPermissionHook(approvals: LocalApprovalStore(directory: dir), crewId: "c",
+                                  gates: ["computer-use"], board: board)
+        _ = h.handle(#"{"tool_name":"Read","tool_input":{},"session_id":"s"}"#)
+        XCTAssertTrue(board.list(crewId: "c").isEmpty, "未 gate 工具不应产生通知")
+    }
 }

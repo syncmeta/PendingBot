@@ -19,11 +19,14 @@ final class McpPermissionHook {
     let crewId: String
     /// 命中任一（子串匹配 tool_name）即需人工授权。空 → 不 gate 任何工具。
     let gates: [String]
+    /// 可选：raise 待审批时往本地群聊白板贴一条通知（spec §6 通知半边，v1 降级 reporter）。
+    let board: LocalWhiteboardStore?
 
-    init(approvals: LocalApprovalStore, crewId: String, gates: [String]) {
+    init(approvals: LocalApprovalStore, crewId: String, gates: [String], board: LocalWhiteboardStore? = nil) {
         self.approvals = approvals
         self.crewId = crewId
         self.gates = gates
+        self.board = board
     }
 
     /// 处理一条 PreToolUse hook stdin JSON。
@@ -41,6 +44,10 @@ final class McpPermissionHook {
         let sessionId = obj["session_id"] as? String ?? ""
         let summary = permissionSummary(toolName: toolName, toolInput: obj["tool_input"])
         let reqId = approvals.raise(crewId: crewId, kind: "permission", sessionId: sessionId, summary: summary)
+        // 通知半边（spec §6）：贴到本地群聊白板，人类在 crew chat 看得见有新审批请求。
+        board?.appendSessionMessage(crewId: crewId, sessionId: sessionId,
+                                    text: "🔔 待审批：\(summary)\n（请在 PendingCrew 待审批列表里 allow / deny）",
+                                    category: "question")
         let decision = awaitDecision(reqId: reqId, pollInterval: pollInterval, maxWaits: maxWaits)
         return hookOutput(decision: decision, toolName: toolName)
     }

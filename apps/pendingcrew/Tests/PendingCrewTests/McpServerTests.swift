@@ -91,4 +91,21 @@ final class McpServerTests: XCTestCase {
         let id = s.approvals.raise(crewId: "c", kind: "decision", sessionId: "sess-1", summary: "q")
         XCTAssertTrue(s.awaitReply(reqId: id, pollInterval: 0.01, maxWaits: 2).contains("自行判断"))
     }
+
+    // ask 在 raise 后把问题贴到本地白板（spec §6 通知半边），答复仍走待办列表。
+    func testAskPostsWhiteboardNotificationAndReturnsReply() {
+        let s = server(tempDir())
+        DispatchQueue.global().async {   // 后台答复，解 ask 的阻塞 long-poll
+            for _ in 0..<500 {
+                if let it = s.approvals.pending(crewId: "c").first {
+                    s.approvals.answer(crewId: "c", id: it.id, reply: "选 A"); break
+                }
+                Thread.sleep(forTimeInterval: 0.01)
+            }
+        }
+        let r = s.handleLine(#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ask","arguments":{"question":"选 A 还是 B?"}}}"#)
+        XCTAssertTrue(r?.contains("选 A") ?? false, "ask 应拿到答复返回")
+        XCTAssertTrue(s.store.list(crewId: "c").contains { $0.text.contains("🔔 待决策") && $0.text.contains("选 A 还是 B?") },
+                      "ask 应往白板贴一条待决策通知")
+    }
 }
