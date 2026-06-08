@@ -33,7 +33,11 @@
 - **被唤醒**：本地 crew 白板来新消息（人发话 / session 上报 / 需审批）→ **本地 dispatch**（dispatchGroupTurn 的本地版）给 captain-session 一个回合。无 edge。
 - **生命周期**：captain-session 是 crew 的常驻成员（crew 开着就在），跟 work session 一样进 `CrewSessionRunner` 管理（但它常驻、不退）。
 
-**好处**：local / cloud(Fly) / edge 三态**统一**成"captain 是个 session" —— prompt 统一本地、工具统一、`RunnerBackend` 统一。edge 的 `.logged` 模式可选择**仍用 edge-bot captain**（保留现有）或**也换成 session-captain**（统一，推荐后续）。
+**captain 角色 = 一个接口，两种实现（按部署形态选，不是二选一废一）**：
+- **captain-session**（claude/codex 实例 + persona + 工具）—— 需要宿主机（Mac 或 Fly）。服务**本地核心 + 有宿主的 `.logged` crew**。是 BYOK 开源核心的主路径。
+- **edge-bot captain**（跑在 worker，`captain_bot_id` + `dispatchGroupTurn` + 编排工具，**已建好**）—— 无需宿主机。服务**纯云+手机、没开 Mac**的形态（否则没有进程能跑 captain）。
+
+对外都是"captain = 有编排工具 + 审批权的常驻成员"。这样保住"captain 作为 session"（本地核心），又不丢已建好、且云端唯一可行的 edge-bot captain。哪种实现由 crew 的托管位置 + 是否有宿主机决定（§8）。
 
 **待定/探针**：captain-session 用哪个默认 runner+model+effort（机长偏判断 → 高 effort）；常驻 session 的额度占用（captain 一直开着会吃订阅额度，要不要按需唤醒后 idle 降频）。
 
@@ -49,7 +53,7 @@
 - **ask_human** = 本地 MCP 工具 → **本地 captain-session triage**（auto-resolve 明显的 / 升级到本地人类）→ 阻塞 long-poll → 人在 PendingCrew UI 答 → 返回。无 edge。
 - **中栏群聊 UI** = 直接读本地白板 store（不走 `loggedAPIClient`）。
 
-**`.logged` 叠加**：登录时，本地白板**可选镜像到 edge messages**（让 PendingBot 移动端遥控看 + 社交 bot 参与）；但**本地是真源**，edge 是 sync 投影。session/captain 仍只跟本地白板交互，mirror 由 PendingCrew 后台做。
+**`.logged` 关系（单后端，**非**镜像）**：一个 crew 的通信面同时只托管在一处 —— byok crew 用本地白板，登录态 crew 用 edge 白板（现有完整路径）。**不做本地↔edge 双向 sync**（双主冲突的坑）。本地 byok crew 想要 bot 参与 / 手机群聊时，走一次性**毕业**到 edge（§8）。两边共用同一套 `CrewCommsBackend` 协议（延续现有 `PendingCrewBackend` 双轨模式），后端按托管位置选。
 
 ---
 
@@ -96,15 +100,75 @@
 
 ---
 
-## 7. edge 可选叠加层（`.logged` 模式）
+## 7 → 见 §8（接合并入下节）
 
-本地核心之上，登录后**可选**开：
-- **社交参与**：PendingBot bot/账号进 crew、subjects/钱包计费（现有 edge crew-comms 退成 sync 目标 + 社交层）。
-- **Fly 云执行**：session 跑 Fly 机器（现有 §8.2 unified runtime location 的云端臂）。
-- **移动遥控**：PendingBot iOS 经 SessionProxyDO 看&控（早先 T4.5；现有 edge SessionProxyDO 保留服务这条）。
-- 本地白板 ↔ edge messages **双向 sync**（本地真源，edge 投影）。
+---
 
-**edge captain（现有 edge-bot）**：`.logged` 模式可暂留（已落 main）；长期建议也换 session-captain 统一。
+## 8. PendingBot ⊗ PendingCrew 接合（怎么结合）
+
+接合**不是一件事，是两个独立的面**。实证现状（三路 Explore）：控制面已基本建好，唯一没定的是通信面托管 —— 已定为**单后端 + 单向毕业**。
+
+### 8.1 两个面
+
+**控制面（driving a session）—— 已建好，location-agnostic。**
+`SessionProxyDO`（`apps/edge/src/durable-objects/session-proxy.ts`）= per-session 的 WebSocket hub：
+- Mac 以 `role=runner` **持久外连**（Mac 不当服务器），上报 `session.state`/`permission.request`，收 `session.command`/`permission.decision`；
+- 手机/iPad 以 `role=viewer` 连入，看状态、发指令、批权限；
+- 落库：命令→`session_mailbox_items`，权限→`permission_requests`，DO 带离线队列；3s HTTP 轮询兜底，字节级 transcript 隧道 = Phase 2。
+- **对"session 跑在哪"无所谓**：Mac runner 与 Fly machine 是同一个 runner 角色。
+→ **"Fly 云执行" + "手机遥控"本质同一套 SessionProxyDO，已 T4.5 在做**，无需新机制。
+
+**通信面（crew 白板/群聊/captain）—— 单后端托管。**
+edge 侧 `crew_announcements`（白板真源）+ 镜像进 `messages` + `temporary_group_members`（花名册）+ `session_mailbox_items`（每 session 收件箱）+ edge captain + 编排工具 = **`.logged` 完整路径已建好**。本地 `.byok` 侧是 stub（`CrewChatView` 只有 `loggedAPIClient` 一条路）。
+
+### 8.2 关键约束：edge bot 参与 → 通信面必须 edge 可达
+
+PendingBot bot 在 worker 上思考，要进 crew 发言就得读写 crew 白板。**白板纯在 Mac 本地，edge bot 够不着。** 所以：
+
+> 想要 PendingBot 角色/账号直接参与 → 该 crew 通信面必须 edge 托管。纯本地 crew 只能有本地 session + 本地 captain，无 edge bot。
+
+这把"结合"逼成干净模型：**一个 crew 的通信面同时只托管一处（本地 *或* edge），不双主同步。**
+
+### 8.3 三条正交轴（接合 = 这个矩阵）
+
+| 轴 | 选项 | 谁管 |
+|---|---|---|
+| **通信托管**（白板真源 + captain 在哪） | 本地 Mac / edge supabase | 单后端 per crew（本节） |
+| **执行位置**（agent 进程跑哪） | 本地 Mac / Fly | SessionProxyDO 已解耦 ✅ |
+| **接入点**（谁能看/控/聊） | Mac app / 手机 / edge bot | 控制面=SessionProxyDO ✅；群聊=通信托管决定 |
+
+SessionProxyDO 已把"执行位置"与"接入点"解耦。唯一变量是第一行：通信托管。
+
+### 8.4 托管模型 = 单后端 per crew + 单向毕业（已定）
+
+- **byok crew → 本地白板**（本地核心，§2）；**登录态 crew → edge 白板**（现有完整路径）。一个 crew 不同时挂两套，**无双向 sync**。
+- 两边共用 `CrewCommsBackend` 协议（延续 `PendingCrewBackend` 双轨）。session/captain 只跟"当前后端"交互，不感知是本地还是 edge。
+- **单向毕业**（publish local → edge）：本地 byok crew 想要 bot 参与 / 手机群聊时，一次性迁移到 edge：
+  1. `POST /v1/crews` 建 edge crew；
+  2. 建 `temporary_group_members`（人/captain/各 session，身份标签 §3 带过去）；
+  3. 回放本地白板历史（作为 `messages`，或压一条摘要卡）；
+  4. 本地 session id ↔ edge `code_session_id` 映射；之后该 crew = **edge 托管**，本地白板停用。
+  - 毕业是**一次性、单向**，不是持续同步。降级（edge→本地）暂不做（YAGNI）。
+
+### 8.5 captain 实现按托管位置选（呼应 §1）
+
+| crew 形态 | 通信托管 | captain 实现 | 备注 |
+|---|---|---|---|
+| 纯本地 byok | 本地 | **captain-session**（Mac 宿主） | 开源核心主路径 |
+| 登录 + 开着 Mac/Fly | edge | captain-session（宿主在 Mac/Fly），经 `/v1/sessions/:id/inbox`+`post-to-crew` 读写 edge 白板 | 统一路径，推荐 |
+| 纯云 + 手机（无宿主机） | edge | **edge-bot captain**（worker，已建好） | 没进程能跑 session-captain 时唯一可行 |
+
+### 8.6 身份桥接
+
+本地 id（`local-byok` / `local-<uuid>` / `local-bot-<uuid>`）↔ edge id（subject_id / conversation_id / bot_id / code_session_id）仅在**毕业**那一刻映射一次。身份标签 `{kind, name}`（§3/§10）跨本地/edge 稳定不变 —— 一个成员"是 cc 还是 codex、叫什么"与托管在哪无关。
+
+### 8.7 接合现状盘点（哪些已建、哪些要做）
+
+- ✅ **控制面**：SessionProxyDO + 协议 + iOS viewer + Mac runner client + 3s 轮询兜底（T4.5 收尾即可）。
+- ✅ **edge 托管通信面**：`.logged` 全套已建（白板/花名册/收件箱/edge captain/编排工具）。
+- ⬜ **本地托管通信面**：本地白板 + 本地 captain-session + 本地 comms（§2，本 spec 主要新建物）。
+- ⬜ **毕业**（local→edge 一次性迁移，§8.4）。
+- ⬜ **captain-session 接 edge 白板**（§8.5 中间一行：宿主在 Mac，读写经 inbox/post-to-crew 而非本地 store）。
 
 ---
 
@@ -115,13 +179,14 @@
 4. **session ↔ 本地 crew 接线**：world-view append-prompt + 白板 hook + crew-comms MCP 工具（local）。需 claude 机制 spike（hook/statusLine/MCP）。
 5. **审批本地化**：ask_human/approval → 本地 captain triage → 本地人。
 6. **codex backend**（app-server，参考已就绪）。
-7. **edge 叠加**（social / Fly / 遥控 sync）—— 最后，可选。
+7. **接合收尾**（§8，多数已建）：T4.5 控制面收尾 → **毕业**（local→edge 一次性迁移）→ captain-session 接 edge 白板（inbox/post-to-crew）。**无 sync 工程**。
 
 ## 待探针 / 待定
 - captain-session 常驻的额度占用策略（按需唤醒 vs 常开）。
 - claude 机制 spike（UserPromptSubmit hook 对注入输入 / statusLine 旁路 / MCP 自动放行）—— 仍要真机。
 - 本地白板 store 选型（JSON 够不够 / 上 SQLite）。
-- 本地 ↔ edge sync 的冲突/真源策略（`.logged` 时）。
+- 毕业时白板历史回放粒度（逐条 `messages` 回放 vs 压一条摘要卡）。
+- captain-session 接 edge 白板时 inbox 轮询/注入节奏（与本地 hook 注入对齐）。
 - 本地 captain-session 怎么"被唤醒"（文件 watch / 进程内事件 / 给它的终端注入）。
 
 ## 暂不做 / YAGNI
