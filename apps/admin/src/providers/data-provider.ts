@@ -18,7 +18,7 @@ import type {
 } from '@refinedev/core';
 import { EDGE_API_URL } from '../env';
 import { edgeFetch } from './http';
-import { routeFor, ADMIN_ACTION_ENDPOINTS } from './resource-map';
+import { routeFor } from './resource-map';
 
 // ─────────────────────────────────────────────────────────────────────────
 // Custom Refine v5 dataProvider — points at the EDGE REST API, never at
@@ -127,9 +127,9 @@ export const dataProvider: DataProvider = {
     return { data: results };
   },
 
-  // create — used by the admin-action pages (wallet grant/clawback, ledger
-  // adjust, account op) via resource names that the page wires to the
-  // ADMIN_ACTION_ENDPOINTS. For plain resources there is no create surface.
+  // create — POST <basePath> for board resources (e.g. preset_bots). The edge
+  // returns `{ data }`; we unwrap it. Resources without a create surface simply
+  // never reach this path.
   create: async <TData extends BaseRecord = BaseRecord, TVariables = object>(
     params: CreateParams<TVariables>,
   ): Promise<CreateResponse<TData>> => {
@@ -210,7 +210,3 @@ export const dataProvider: DataProvider = {
     return { data: payload as TData };
   },
 };
-
-// Re-export the intended admin write endpoints so action pages import one
-// source of truth (and so the PENDING markers live in exactly one place).
-export { ADMIN_ACTION_ENDPOINTS };
