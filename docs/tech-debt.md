@@ -33,6 +33,16 @@
 
 ## 🔴 根基级
 
+### 🔴 客户端多账号本地隔离只靠"登出时擦库"一条腿,无 account_id 维度过滤 + URLCache 登出不清
+- **发现**: 2026-06-08 · session(用户问"登一个号再登另一个号数据会混吗")
+- **位置**: `apps/pendingbot/Sources/Storage/AccountStore.swift:226`(`signOut`)、`apps/pendingbot/Sources/Storage/LocalDatabase.swift:338`(`wipeForSignOut`)、`:378`(`loadConversations` 等读查询)、`apps/pendingbot/Sources/Storage/ProtectedURLCache.swift`、`apps/pendingbot/Sources/PendingBotApp.swift`(`onChange(of: accountStore.current)`)
+- **问题**: 本地 SQLite(会话/消息/好友/群)的账号隔离**完全依赖"登出时 `wipeForSignOut()` 物理删库 + 轮换 Keychain 密钥"**。表里虽有 `user_id`/`account_id` 列但**读查询一律 `fetchAll` 不带 WHERE 过滤**,DB 本身不区分账号。两个具体缺口:
+  - ① **URLCache(图片/HTTP 缓存)登出时不清**。`signOut()` 删了 DB 却没调 `URLCache.shared.removeAllCachedResponses()`,`~/Library/Caches/ProtectedURLCache/` 是全用户共用目录、非账号作用域。实害有限(缓存键是 `/v1/uploads/<id>` 级 URL,B 通常不会去请求 A 的 upload id),但"登出后磁盘仍残上一个账号的图片缓存"是事实,隐私/卫生缺口。
+  - ② **强制换号(不经过 `signOut`)会泄漏**。`observeAuth()` / 后台刷新拿到**另一个 user 的 session** 时直接 `current = makeAccount(session:)`,不比较 `old.id != new.id`、不触发擦库;`PendingBotApp` 的 `onChange` 只判 `old == nil && new != nil`(纯登入)。因为没有 account_id 过滤,A 的整库在 B 的会话里仍可读。日常无 UI 经路(换号必走 signOut→signIn),属 token 刷新返回异身/服务端 session swap/会话劫持等例外时的洞。
+- **影响**: 账号隔离是隐私/数据一致性根基。当前"擦库一条腿"在正常登出登入流程下是安全的,但①让登出后残留可缓存内容、②让任何"绕过 signOut 的 session 变更"直接串号。两者都随功能增长易被无声打破(谁加个直接切号入口或改刷新逻辑就踩)。
+- **建议**: ① `signOut()` 里补 `URLCache.shared.removeAllCachedResponses()`(顺手把 ProtectedURLCache 目录也清)。② `PendingBotApp.onChange` 加 `if let o=old?.id, let n=new?.id, o != n { LocalDatabase.shared.wipeForSignOut(); AvatarCache.shared.clear(); URLCache… }` 守护强制换号。③ 中长期:给本地表加 `account_id` 并让所有读查询带 `WHERE account_id = ?`,把隔离从"擦库"升级为"作用域过滤"(纵深防御,即使擦库漏了也不串)。
+- **状态**: 待办(仅记录,未修)。
+
 ### 🔴 pnc_ledger 计费账本曾对 anon 可读、对 authenticated 可改写(RLS 没开);宽 grant 习惯需审计
 - **发现**: 2026-06-08 · chore/security-advisor-hardening(Security Advisor 体检)
 - **位置**: `pendingbot.pnc_ledger`(整数事实源账本)+ 各表的 anon/authenticated grant
