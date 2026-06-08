@@ -49,4 +49,30 @@ final class LocalWhiteboardStoreTests: XCTestCase {
         XCTAssertEqual(store.list(crewId: "a").map(\.text), ["in-a"])
         XCTAssertEqual(store.list(crewId: "b").map(\.text), ["in-b"])
     }
+
+    func testAppendSessionMessage() {
+        let s = LocalWhiteboardStore(directory: tempDir())
+        s.appendSessionMessage(crewId: "c", sessionId: "sess-1", text: "started", category: "progress")
+        let m = s.list(crewId: "c")
+        XCTAssertEqual(m.count, 1)
+        XCTAssertEqual(m[0].senderKind, "session")
+        XCTAssertEqual(m[0].senderSessionId, "sess-1")
+        XCTAssertEqual(m[0].category, "progress")
+        XCTAssertEqual(m[0].text, "started")
+    }
+
+    func testEntriesAfterCursor() {
+        let s = LocalWhiteboardStore(directory: tempDir())
+        s.appendUserMessage(crewId: "c", text: "1")
+        s.appendUserMessage(crewId: "c", text: "2")
+        let all = s.list(crewId: "c")
+        XCTAssertEqual(s.entries(crewId: "c", afterId: all[0].id).map(\.text), ["2"])
+    }
+
+    func testEntriesAfterNilOrUnknownReturnsAll() {
+        let s = LocalWhiteboardStore(directory: tempDir())
+        s.appendUserMessage(crewId: "c", text: "x")
+        XCTAssertEqual(s.entries(crewId: "c", afterId: nil).map(\.text), ["x"])
+        XCTAssertEqual(s.entries(crewId: "c", afterId: "no-such-id").map(\.text), ["x"])
+    }
 }

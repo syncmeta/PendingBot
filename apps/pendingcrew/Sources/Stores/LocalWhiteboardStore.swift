@@ -7,13 +7,18 @@ import Foundation
 /// 单 crew 消息量可控，整文件 append-rewrite 足够（白板不是高频 IO）。
 ///
 /// **自包含**：只依赖 Foundation，**不引** edge 的 `CrewWhiteboardEntry`。
-/// 这样能单独编进 PendingCrewTests bundle（脚手架期 test 不链 app module，
-/// 见 project.yml 注释）。映射成 `CrewWhiteboardEntry` 的活由 `LocalBackend`
-/// 在 app 模块里做。
+/// 这样能单独编进 PendingCrewTests bundle **和 `pendingcrew-mcp` helper target**
+/// （chunk 4：claude 子进程的 MCP server / hook 读写同一份白板文件）。映射成
+/// `CrewWhiteboardEntry` 的活由 `LocalBackend` 在 app 模块里做。
+///
+/// **非 `@MainActor`**：helper CLI（非 main-actor）要用。app 侧只从 `@MainActor`
+/// 调（LocalBackend / CrewChatView），不跨 actor 传实例。`@unchecked Sendable`：
+/// 实例状态全 `let`（不可变），共享可变资源是磁盘文件 —— **app 与 helper 并发读写
+/// 同一 JSON 有 read-modify-write 竞态（last-write-wins 偶丢消息）**，v1 单用户低频
+/// 可接受，已记 tech-debt，后续上 append-only log / 文件锁。
 ///
 /// 不依赖 PendingBot/edge —— 是 PendingCrew 开源核心的一部分。
-@MainActor
-final class LocalWhiteboardStore {
+final class LocalWhiteboardStore: @unchecked Sendable {
     /// 本机 BYOK "人类成员" 的合成发言者 id —— 给 `CrewSenderResolver` 认
     /// "自己"（右对齐）。与 `LocalBackend.localSubjectId` 区分：那是责任主体，
     /// 这是发言者身份。
@@ -21,22 +26,22 @@ final class LocalWhiteboardStore {
 
     static let shared = LocalWhiteboardStore()
 
+    /// 默认白板目录（app 与 helper 共用同一路径）。
+    static let defaultDirectory: URL = {
+        let base = (try? FileManager.default.url(
+            for: .applicationSupportDirectory, in: .userDomainMask,
+            appropriateFor: nil, create: true))
+            ?? FileManager.default.temporaryDirectory
+        return base
+            .appendingPathComponent("PendingCrew", isDirectory: true)
+            .appendingPathComponent("whiteboards", isDirectory: true)
+    }()
+
     private let directory: URL
-    private let fm = FileManager.default
 
     init(directory: URL? = nil) {
-        if let directory {
-            self.directory = directory
-        } else {
-            let base = (try? FileManager.default.url(
-                for: .applicationSupportDirectory, in: .userDomainMask,
-                appropriateFor: nil, create: true))
-                ?? FileManager.default.temporaryDirectory
-            self.directory = base
-                .appendingPathComponent("PendingCrew", isDirectory: true)
-                .appendingPathComponent("whiteboards", isDirectory: true)
-        }
-        try? fm.createDirectory(at: self.directory, withIntermediateDirectories: true)
+        self.directory = directory ?? Self.defaultDirectory
+        try? FileManager.default.createDirectory(at: self.directory, withIntermediateDirectories: true)
     }
 
     // MARK: - Public
@@ -46,17 +51,35 @@ final class LocalWhiteboardStore {
         load(crewId: crewId)
     }
 
+    /// 该 `afterId` **之后**的消息（读未读用）。afterId=nil 或找不到 → 返回全部。
+    func entries(crewId: String, afterId: String?) -> [LocalWhiteboardMessage] {
+        let all = load(crewId: crewId)
+        guard let afterId, let idx = all.firstIndex(where: { $0.id == afterId }) else { return all }
+        return Array(all.suffix(from: all.index(after: idx)))
+    }
+
     /// 追加一条本机人类消息。
     func appendUserMessage(crewId: String, text: String) {
-        var rows = load(crewId: crewId)
-        rows.append(LocalWhiteboardMessage(
+        append(crewId: crewId, LocalWhiteboardMessage(
             id: UUID().uuidString.lowercased(),
             senderKind: "user",
             senderUserId: Self.localUserId,
+            senderSessionId: nil,
+            category: nil,
             text: text,
-            createdAt: ISO8601DateFormatter().string(from: Date())
-        ))
-        save(crewId: crewId, rows: rows)
+            createdAt: ISO8601DateFormatter().string(from: Date())))
+    }
+
+    /// 追加一条 session（编码 agent）消息（chunk 4：`post_to_crew`）。
+    func appendSessionMessage(crewId: String, sessionId: String, text: String, category: String? = nil) {
+        append(crewId: crewId, LocalWhiteboardMessage(
+            id: UUID().uuidString.lowercased(),
+            senderKind: "session",
+            senderUserId: nil,
+            senderSessionId: sessionId,
+            category: category,
+            text: text,
+            createdAt: ISO8601DateFormatter().string(from: Date())))
     }
 
     // MARK: - Persistence
@@ -71,7 +94,9 @@ final class LocalWhiteboardStore {
         return (try? JSONDecoder().decode([LocalWhiteboardMessage].self, from: data)) ?? []
     }
 
-    private func save(crewId: String, rows: [LocalWhiteboardMessage]) {
+    private func append(crewId: String, _ msg: LocalWhiteboardMessage) {
+        var rows = load(crewId: crewId)
+        rows.append(msg)
         guard let data = try? JSONEncoder().encode(rows) else { return }
         try? data.write(to: fileURL(crewId), options: .atomic)
     }
@@ -79,12 +104,16 @@ final class LocalWhiteboardStore {
 
 /// 本地白板的持久化行。与 edge wire 解耦（edge 的 `CrewWhiteboardEntry` 只有
 /// Decodable 且依赖 app 模块）。`LocalBackend` 把它映射成 `CrewWhiteboardEntry`
-/// 给中栏渲染。
+/// 给中栏渲染。新增可选字段向后兼容（旧 JSON 缺键 → nil）。
 struct LocalWhiteboardMessage: Codable, Equatable {
     let id: String
-    /// 'user' | 'session' | 'captain' | …（目前只有 user；session/captain 留后续 chunk）
+    /// 'user' | 'session' | 'captain' | …
     let senderKind: String
     let senderUserId: String?
+    /// session 作者的 id（senderKind == "session" 时）。
+    let senderSessionId: String?
+    /// post_to_crew 的 category（progress/question/milestone），可选。
+    let category: String?
     let text: String
     /// ISO8601 字符串，与 edge `created_at` 同形，便于 UI 复用时间分隔逻辑。
     let createdAt: String

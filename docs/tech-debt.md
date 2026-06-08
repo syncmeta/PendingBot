@@ -52,6 +52,14 @@
 
 ## 🟡 拆东墙补西墙
 
+### 🟡 本地白板 app↔helper 并发读写同一 JSON（无锁，last-write-wins 偶丢消息）
+- **发现**: 2026-06-08 · feat/session-crew-comms（chunk 4 实装 L7）
+- **位置**: `apps/pendingcrew/Sources/Stores/LocalWhiteboardStore.swift`（`append` = load→mutate→atomic write）
+- **问题**: chunk 4 把 `LocalWhiteboardStore` 去了 `@MainActor` 改 `@unchecked Sendable`，因为 `pendingcrew-mcp` helper（claude 子进程）要和 PendingCrew app **两个进程**读写同一份 `<dir>/<crewId>.json`。`append` 是 read-modify-write + 整文件 `atomic` 覆盖写，**无跨进程锁**。app（中栏 3s poll/发消息）与 helper（session `post_to_crew`）若几乎同时写，后写覆盖前写 → 丢一条消息。
+- **影响**: 单用户本地、写频率低（人打字 + session 偶尔 post），命中概率小；但"session 上报"和"人发指令"挤到一起时**理论可丢**，且无任何告警。属数据一致性隐患（非根基级，因为白板是通信缓冲不是事实源，丢一条不致命）。
+- **建议**: v1 接受。后续二选一：① 改 **append-only**（每条消息一个文件 / 一行 NDJSON 追加，避免整文件 RMW）；② 跨进程**文件锁**（`flock`）。append-only 更顺（读时合并排序）。
+- **状态**: 待办（v1 故意接受）
+
 ### 🟡 T2 边缘读 cutover 只 build 验、runtime 从未跑过 + 两处边缘 vs Supabase 精度差
 - **发现**: 2026-06-07 · feat/edge-read-cutover（T2 Phase3b）
 - **位置**: `apps/pendingbot/Sources/Networking/EdgeReadSource.swift`、`ConversationFetch.list`、`MessagesFetch.latest`；edge 端 `routes/projections.ts` + 两个投影 DO
