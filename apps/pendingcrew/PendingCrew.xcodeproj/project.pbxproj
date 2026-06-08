@@ -13,6 +13,7 @@
 		1145C1D461877987C934E9A8 /* AgentTerminalSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD0F5E7501DDF890EA04C5EA /* AgentTerminalSession.swift */; };
 		1146ACFD9CB88120EB1D7A84 /* PromptTemplateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76C210B9708141CE1293B918 /* PromptTemplateTests.swift */; };
 		158F52EEED3AA21F5E5C0B09 /* CrewChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F8AC2EF59379DA98FD38630 /* CrewChatView.swift */; };
+		15A3B6D60A00EBF836817DBC /* LocalWhiteboardStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E09E12D071816B5362AD7626 /* LocalWhiteboardStore.swift */; };
 		189C932299F51BD2E7CE8E6F /* WelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08C7D3AFEE8F6C3E6596F75D /* WelcomeView.swift */; };
 		1B589D3E34E44113BF5781F4 /* CrewBubbleRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9489F57858CE1A21C2ABB71E /* CrewBubbleRow.swift */; };
 		1DDF75A3BEC87A059F736366 /* CrewAvatar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 205020EC08904EEB811F2C56 /* CrewAvatar.swift */; };
@@ -38,6 +39,7 @@
 		5ACC0A7A8AA165B111990C18 /* LocalWhiteboardStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E09E12D071816B5362AD7626 /* LocalWhiteboardStore.swift */; };
 		5BBFB39FEFADFBC3E3A905C8 /* LocalCodingAgentSpec.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF8E8FC64275B7932540FB17 /* LocalCodingAgentSpec.swift */; };
 		64DFD174BA2ABA14F434358D /* GitInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60202465DF374BE31614C151 /* GitInspector.swift */; };
+		6763B5CA07EFB9CBB4AAB0AB /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = F97FA72B7996C2B397C98E7E /* main.swift */; };
 		6942FF0B2E3D04AF1005374B /* PendingCrewApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C09067E3C1637408FEED8F2 /* PendingCrewApp.swift */; };
 		69933D16E7836C959E8DD675 /* CrewRosterBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D4475F4F6F662461F71C1B9 /* CrewRosterBar.swift */; };
 		6ACBB093D8F44B8F81B6F5DB /* claude_stream.jsonl in Resources */ = {isa = PBXBuildFile; fileRef = DA26B3AE2AB22AA26494B7EB /* claude_stream.jsonl */; };
@@ -49,6 +51,7 @@
 		7A64F53E8D085D3A9ECE9879 /* AgentTerminationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF58B04620F9FAC4489B04BC /* AgentTerminationTests.swift */; };
 		7CF0B6C668567CC7BF21CEDC /* CaptainTemplateStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7CC1FEBE8F4A567B53B0BCF /* CaptainTemplateStore.swift */; };
 		81265797B89B31AC21E3DB4A /* CrewSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 051E45F99057FB8295F991DA /* CrewSummary.swift */; };
+		8215381F8A9561F8E55DAF74 /* McpServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E5A7C63B37740B3B978DBBA /* McpServer.swift */; };
 		827AE4A12634BCEFAD3456FB /* CaptainTemplateEditorSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CE071C18780F51F195B101C /* CaptainTemplateEditorSheet.swift */; };
 		82EDD2C32FDFE990D83C46F8 /* GitWorktreeServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A4D1C7DBA64FB676E8F61FF /* GitWorktreeServiceTests.swift */; };
 		8A23157D010EB9F45781BDE6 /* LocalPromptLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF6AF2AE2C93EB875D8DBFF8 /* LocalPromptLoader.swift */; };
@@ -61,6 +64,7 @@
 		9B81D3B2CDDF3ECF1488688D /* BYOKConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 197432C919C9626706255DDE /* BYOKConfig.swift */; };
 		9DC9AF0EDD6D37A556A534B6 /* LocalSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73BC806F682C0CE6E3EB26CA /* LocalSetupView.swift */; };
 		A4E099C910B5400D8A645F0C /* LocalCodingAgentExecutable.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DCD41EF4DF79F9A7C1794CD /* LocalCodingAgentExecutable.swift */; };
+		A67C0B2B38BE0BFB0B06E905 /* McpServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E5A7C63B37740B3B978DBBA /* McpServer.swift */; };
 		A6CB5E9580950D91CF149907 /* LocalCrewStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBB438AE76CF441D4A9A071F /* LocalCrewStore.swift */; };
 		A9B245CF14AC8C3B9C969D83 /* PendingCrewAuthCredential.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6388019E8C2DDFED3A85E99 /* PendingCrewAuthCredential.swift */; };
 		B0B76B7F63D1A2DA9028D41D /* GitWorktreeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF8FE15162B5E527F4765346 /* GitWorktreeService.swift */; };
@@ -76,6 +80,7 @@
 		CABF5E79969852F020AF8C97 /* GitInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60202465DF374BE31614C151 /* GitInspector.swift */; };
 		CCB8B7D58871E769BD2E1C07 /* LocalCodingAgentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68DED4864DF441E88BAC0A24 /* LocalCodingAgentTests.swift */; };
 		CCE5EFF3574B69F46BD28503 /* LocalWhiteboardStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7328186C8B9131242BB8C719 /* LocalWhiteboardStoreTests.swift */; };
+		CD745099DE66AF9B57A3886F /* McpServerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E3D5A6F8A84FAAF37EEC934 /* McpServerTests.swift */; };
 		CE06A7EA4B6D5EFE69AC833A /* SessionConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69B4AFC537A8402CC846122F /* SessionConfig.swift */; };
 		D24B6CB2DDE226254E98869D /* LocalSessionWorldModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F1C7822F4F8AFCC1F3AC147 /* LocalSessionWorldModel.swift */; };
 		D461676E477353731E35A493 /* CrewColorHash.swift in Sources */ = {isa = PBXBuildFile; fileRef = B35628BFE9FF1852C997981E /* CrewColorHash.swift */; };
@@ -107,6 +112,8 @@
 		051E45F99057FB8295F991DA /* CrewSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewSummary.swift; sourceTree = "<group>"; };
 		08C7D3AFEE8F6C3E6596F75D /* WelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeView.swift; sourceTree = "<group>"; };
 		0CE071C18780F51F195B101C /* CaptainTemplateEditorSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptainTemplateEditorSheet.swift; sourceTree = "<group>"; };
+		0E3D5A6F8A84FAAF37EEC934 /* McpServerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = McpServerTests.swift; sourceTree = "<group>"; };
+		0E5A7C63B37740B3B978DBBA /* McpServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = McpServer.swift; sourceTree = "<group>"; };
 		10CE71B99772AB7C3D2086DA /* AgentTerminalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentTerminalView.swift; sourceTree = "<group>"; };
 		197432C919C9626706255DDE /* BYOKConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BYOKConfig.swift; sourceTree = "<group>"; };
 		19B1A2BBA684270B0A2BE996 /* PendingCrewDeepLinkRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingCrewDeepLinkRoute.swift; sourceTree = "<group>"; };
@@ -148,6 +155,7 @@
 		8DCD41EF4DF79F9A7C1794CD /* LocalCodingAgentExecutable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalCodingAgentExecutable.swift; sourceTree = "<group>"; };
 		8F1C7822F4F8AFCC1F3AC147 /* LocalSessionWorldModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalSessionWorldModel.swift; sourceTree = "<group>"; };
 		9489F57858CE1A21C2ABB71E /* CrewBubbleRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewBubbleRow.swift; sourceTree = "<group>"; };
+		968E0278A1C5FFD7EC2FDE91 /* pendingcrew-mcp */ = {isa = PBXFileReference; includeInIndex = 0; path = "pendingcrew-mcp"; sourceTree = BUILT_PRODUCTS_DIR; };
 		9A3C8AAD5F35F08DAC72F931 /* CreateCrewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateCrewSheet.swift; sourceTree = "<group>"; };
 		9CE2E310981313F38FE79D46 /* LocalSessionWorldModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalSessionWorldModelTests.swift; sourceTree = "<group>"; };
 		A6A56B215C1A906E69116190 /* LocalPromptLoaderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalPromptLoaderTests.swift; sourceTree = "<group>"; };
@@ -177,6 +185,7 @@
 		EF2A5D7FFEA710FBD8771B72 /* CrewDetailInspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewDetailInspector.swift; sourceTree = "<group>"; };
 		EF430C4F70179E977D3A76E5 /* CrewSenderResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewSenderResolver.swift; sourceTree = "<group>"; };
 		F7CC1FEBE8F4A567B53B0BCF /* CaptainTemplateStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptainTemplateStore.swift; sourceTree = "<group>"; };
+		F97FA72B7996C2B397C98E7E /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		FAFFC9872C878A15507A237A /* CrewAttachmentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewAttachmentView.swift; sourceTree = "<group>"; };
 		FF58B04620F9FAC4489B04BC /* AgentTerminationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentTerminationTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -329,6 +338,7 @@
 		7C4CB926626D9A2080B13B09 /* Products */ = {
 			isa = PBXGroup;
 			children = (
+				968E0278A1C5FFD7EC2FDE91 /* pendingcrew-mcp */,
 				AF1050766B25F50A640A709F /* PendingCrew.app */,
 				3BAF2A68B9A8EB6894BB8AB8 /* PendingCrewTests.xctest */,
 			);
@@ -364,6 +374,7 @@
 			children = (
 				6C09067E3C1637408FEED8F2 /* PendingCrewApp.swift */,
 				1D025786AE531C92034DC69C /* Mac */,
+				CE08DF9ED40FF190A7D3E74B /* Mcp */,
 				D5952B3B33F1CC3DA2AE5947 /* Models */,
 				74CD4A35459628AAE9D32D6E /* Services */,
 				F58EA95FC813389D17A8448C /* Stores */,
@@ -382,12 +393,22 @@
 				A6A56B215C1A906E69116190 /* LocalPromptLoaderTests.swift */,
 				9CE2E310981313F38FE79D46 /* LocalSessionWorldModelTests.swift */,
 				7328186C8B9131242BB8C719 /* LocalWhiteboardStoreTests.swift */,
+				0E3D5A6F8A84FAAF37EEC934 /* McpServerTests.swift */,
 				76C210B9708141CE1293B918 /* PromptTemplateTests.swift */,
 				DF848E30878BD9A462B2ABD4 /* SessionConfigTests.swift */,
 				25C60304AA7A9C4591A0B591 /* SessionProxyProtocolTests.swift */,
 				5E4BBC3286F9E0957A1D0A0B /* Fixtures */,
 			);
 			path = PendingCrewTests;
+			sourceTree = "<group>";
+		};
+		CE08DF9ED40FF190A7D3E74B /* Mcp */ = {
+			isa = PBXGroup;
+			children = (
+				F97FA72B7996C2B397C98E7E /* main.swift */,
+				0E5A7C63B37740B3B978DBBA /* McpServer.swift */,
+			);
+			path = Mcp;
 			sourceTree = "<group>";
 		};
 		D5952B3B33F1CC3DA2AE5947 /* Models */ = {
@@ -478,6 +499,23 @@
 			productReference = AF1050766B25F50A640A709F /* PendingCrew.app */;
 			productType = "com.apple.product-type.application";
 		};
+		DAF7EA87B29AC8D5F682A8E4 /* pendingcrew-mcp */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = DC093F4CF3CF6CA062762CB1 /* Build configuration list for PBXNativeTarget "pendingcrew-mcp" */;
+			buildPhases = (
+				16257E17C9F20C027E4D639B /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "pendingcrew-mcp";
+			packageProductDependencies = (
+			);
+			productName = "pendingcrew-mcp";
+			productReference = 968E0278A1C5FFD7EC2FDE91 /* pendingcrew-mcp */;
+			productType = "com.apple.product-type.tool";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -492,6 +530,10 @@
 						ProvisioningStyle = Automatic;
 					};
 					638308E3A5DC58D720A92FEE = {
+						DevelopmentTeam = M42BKJN82S;
+						ProvisioningStyle = Automatic;
+					};
+					DAF7EA87B29AC8D5F682A8E4 = {
 						DevelopmentTeam = M42BKJN82S;
 						ProvisioningStyle = Automatic;
 					};
@@ -516,6 +558,7 @@
 			targets = (
 				638308E3A5DC58D720A92FEE /* PendingCrew */,
 				286CF038A4A874509A579C2F /* PendingCrewTests */,
+				DAF7EA87B29AC8D5F682A8E4 /* pendingcrew-mcp */,
 			);
 		};
 /* End PBXProject section */
@@ -548,6 +591,16 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		16257E17C9F20C027E4D639B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				15A3B6D60A00EBF836817DBC /* LocalWhiteboardStore.swift in Sources */,
+				8215381F8A9561F8E55DAF74 /* McpServer.swift in Sources */,
+				6763B5CA07EFB9CBB4AAB0AB /* main.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		BBCCC3B64E471289E68CB06C /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -632,6 +685,8 @@
 				2972982A1E1CCB1EFB30F5A5 /* LocalSessionWorldModelTests.swift in Sources */,
 				229AB9E4ED3AA7757C607159 /* LocalWhiteboardStore.swift in Sources */,
 				CCE5EFF3574B69F46BD28503 /* LocalWhiteboardStoreTests.swift in Sources */,
+				A67C0B2B38BE0BFB0B06E905 /* McpServer.swift in Sources */,
+				CD745099DE66AF9B57A3886F /* McpServerTests.swift in Sources */,
 				055DFE844FB3BA1547AEC159 /* PromptTemplate.swift in Sources */,
 				1146ACFD9CB88120EB1D7A84 /* PromptTemplateTests.swift in Sources */,
 				CE06A7EA4B6D5EFE69AC833A /* SessionConfig.swift in Sources */,
@@ -693,6 +748,24 @@
 				TARGETED_DEVICE_FAMILY = 2;
 			};
 			name = Debug;
+		};
+		8CF9547F5D1EEFD622827C4D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				COMBINE_HIDPI_IMAGES = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.pendingname.pendingcrew.mcp;
+				PRODUCT_NAME = "pendingcrew-mcp";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = macosx;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = "";
+			};
+			name = Release;
 		};
 		A86D65172FD75D0C60F216A6 /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -804,6 +877,24 @@
 			};
 			name = Release;
 		};
+		F34E16B2B29F11DC93AF25F8 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				COMBINE_HIDPI_IMAGES = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.pendingname.pendingcrew.mcp;
+				PRODUCT_NAME = "pendingcrew-mcp";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = macosx;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = "";
+			};
+			name = Debug;
+		};
 		F6427DD3B86962FA7125BF09 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -891,6 +982,15 @@
 			buildConfigurations = (
 				AF04179D342056CF1693A2E7 /* Debug */,
 				BF956BF94DD90F6B7B1D9616 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		DC093F4CF3CF6CA062762CB1 /* Build configuration list for PBXNativeTarget "pendingcrew-mcp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F34E16B2B29F11DC93AF25F8 /* Debug */,
+				8CF9547F5D1EEFD622827C4D /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
