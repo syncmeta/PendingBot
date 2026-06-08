@@ -43,6 +43,14 @@ statusLine 只在交互 TUI 渲染（`-p` 无；PTY 自动化也没抓到，需�
 ```
 `used_percentage`（真值，非 #52326 的 epoch-leak）+ `resets_at`（unix 秒）都在。statusLine JSON 顶层还有 `cost.total_cost_usd` / `context_window.*` / `model` 等。**→ 额度监控可经 statusLine 旁路读**（一个 statusLine command 落盘 rate_limits → app 轮询）。claude 2.1.168 实测。
 
+## ✅ Spike 5 — agent 改用我们的 `ask` MCP 工具（ask 重设计）
+
+提供一个 `ask` MCP 工具 + `--append-system-prompt` 指令"任何向人提问 / 决策 / 澄清都必须走 ask、不准纯文本问"。`claude --mcp-config <ask> --permission-mode auto -p "查我最喜欢的颜色…报告用的工具名"` → 模型用了 **`mcp__crewask__ask`** 拿到答案。→ **世界观指令就足以把"问人"路由到我们的 `ask` 工具**（不必硬关 claude 内置；`--disallowedTools <name>` 在，需要硬关时可加）。`ask` 的阻塞走 MCP 工具调用本身（CC 原生），我们的 server 内部 long-poll captain / 人类答复再返回。
+
+## ✅ Spike 6 — PreToolUse hook 拦权限审批 + 路由（权限直达待审批列表）
+
+`settings.json` 配 PreToolUse(Bash) hook → 返回 `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"…待审批…"}}`。`claude --settings <…> --permission-mode auto -p "用 Bash 跑 echo hello…"` → **Bash 被拦下没执行**，模型原样回报我们的 deny 理由。且 hook 的 stdin 拿到**完整工具调用详情**：`{tool_name:"Bash", tool_input:{command,description}, tool_use_id, session_id, permission_mode, effort, …}`。→ **PreToolUse hook 能按工具拦特定操作（computer-use / 某 MCP 工具）+ 路由到我们的待审批列表**；返回 allow/deny/ask 三态，hook 可阻塞（long-poll 人类决策再返回 allow/deny = 同步审批）。这就是"权限审批直达人类列表"那条路的机制。
+
 ## 对实施的影响（chunk 4 / chunk 2 解锁）
 
 - **世界观注入**：argv `--append-system-prompt-file` 已验，chunk 4c 可信。
