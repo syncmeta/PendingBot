@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 // Group-only surfaces of ConversationView. Three concerns live here:
@@ -133,4 +132,3 @@ extension ConversationView {
         }
     }
 }
-#endif
