@@ -62,78 +62,111 @@ struct FriendsTabView: View {
     // MessageTabView so tapping a friend on Mac / iPad-landscape opens
     // the chat in the right pane instead of pushing inside the sidebar.
     @State private var selectedPeer: PendingPeer?
+    /// External selection sink, only set when the Mac three-column shell
+    /// reuses our list via `FeatureSurface.listColumn(selection:)`. When
+    /// non-nil, row taps + highlight read/write THIS binding instead of the
+    /// internal `selectedPeer` @State, so the shell's own detail column (a
+    /// separate `NavigationSplitView` column) updates. nil for every iOS
+    /// code path — the normal `body` never sets it, so iOS behavior is
+    /// byte-identical to before.
+    var externalSelection: Binding<PendingPeer?>? = nil
+
+    /// The selection the sidebar reads for row highlight: the shell's
+    /// binding when the list is hosted by the Mac shell, otherwise the
+    /// internal @State. This is the single seam that lets one `sidebarBody`
+    /// serve both the iOS `regularBody` (internal state) and the Mac
+    /// `listColumn` (external binding). When `externalSelection` is nil
+    /// (every iOS path) this is exactly `selectedPeer`.
+    private var effectiveSelection: PendingPeer? {
+        externalSelection?.wrappedValue ?? selectedPeer
+    }
 
     var body: some View {
-        Group {
-            if sidebarLayout {
-                regularBody
-            } else {
-                compactBody
+        chrome(
+            Group {
+                if sidebarLayout {
+                    regularBody
+                } else {
+                    compactBody
+                }
             }
-        }
-        .task { await load() }
-        // Consume a /b/<slug> deep link both when it arrives while we're
-        // already on screen (onChange) and when TabRoot has just switched
-        // us in to handle it (onAppear).
-        .onAppear { consumeDeepLink() }
-        .onChange(of: deepLink.pendingAddBotToken) { _, _ in consumeDeepLink() }
-        .alert("出错", isPresented: .constant(error != nil)) {
-            Button("好") { error = nil }
-        } message: { Text(error ?? "") }
-        .sheet(isPresented: $addingFriend) {
-            AddFriendSheet { Task { await load() } }
-                .platformDragIndicator()
-        }
-        .sheet(isPresented: $addingBot, onDismiss: { addBotPrefill = "" }) {
-            AddBotSheet(
-                onAdded: { addedBot in
-                    // Optimistic prepend so the row shows up immediately,
-                    // even before the network refresh resolves. Refresh
-                    // follows to pick up server-derived fields.
-                    if !self.bots.contains(where: { $0.id == addedBot.id }) {
-                        self.bots.insert(addedBot, at: 0)
-                    }
-                    Task {
-                        await load()
-                        // Drop straight into the new bot's chat — matches
-                        // the "accept friend request → open chat"
-                        // affordance for humans.
-                        await tapBot(addedBot)
-                    }
-                },
-                prefilledToken: addBotPrefill
-            )
-            .platformDragIndicator()
-        }
-        .sheet(isPresented: $creatingBot) {
-            CreateBotSheet { newBot in
-                // Prepend so the user sees the new bot immediately,
-                // then refresh from server to get any RLS-derived
-                // ordering right.
-                self.bots.insert(newBot, at: 0)
-                Task { await load() }
+        )
+    }
+
+    /// Wraps a root view with the tab's shared chrome — the `.task { load() }`,
+    /// the deep-link consumer, the error alert, and the full sheet stack
+    /// (add-friend / add-bot / create-bot / manage-bot / QR / alias). Pulled
+    /// out of `body` so the Mac three-column shell's `listColumn` and the
+    /// `compactRoot` can each be self-contained: every entry point that hosts
+    /// the friend list carries the same actions + loading, regardless of which
+    /// SwiftUI container it's planted in. The iOS `body` calls this with the
+    /// exact same content it used to inline, so its behavior is unchanged.
+    @ViewBuilder
+    private func chrome(_ content: some View) -> some View {
+        content
+            .task { await load() }
+            // Consume a /b/<slug> deep link both when it arrives while we're
+            // already on screen (onChange) and when TabRoot has just switched
+            // us in to handle it (onAppear).
+            .onAppear { consumeDeepLink() }
+            .onChange(of: deepLink.pendingAddBotToken) { _, _ in consumeDeepLink() }
+            .alert("出错", isPresented: .constant(error != nil)) {
+                Button("好") { error = nil }
+            } message: { Text(error ?? "") }
+            .sheet(isPresented: $addingFriend) {
+                AddFriendSheet { Task { await load() } }
+                    .platformDragIndicator()
             }
-            .platformDragIndicator()
-        }
-        .sheet(item: $managingBot) { pick in
-            ManageBotSheet(
-                onChanged: { Task { await load() } },
-                onDeleted: { id in
-                    self.bots.removeAll { $0.id == id }
-                },
-                initial: pick
-            )
-            .platformDragIndicator()
-        }
-        .sheet(isPresented: $showingQR) {
-            MyQRSheet()
-                .platformDetents([.fraction(0.72), .large])
+            .sheet(isPresented: $addingBot, onDismiss: { addBotPrefill = "" }) {
+                AddBotSheet(
+                    onAdded: { addedBot in
+                        // Optimistic prepend so the row shows up immediately,
+                        // even before the network refresh resolves. Refresh
+                        // follows to pick up server-derived fields.
+                        if !self.bots.contains(where: { $0.id == addedBot.id }) {
+                            self.bots.insert(addedBot, at: 0)
+                        }
+                        Task {
+                            await load()
+                            // Drop straight into the new bot's chat — matches
+                            // the "accept friend request → open chat"
+                            // affordance for humans.
+                            await tapBot(addedBot)
+                        }
+                    },
+                    prefilledToken: addBotPrefill
+                )
                 .platformDragIndicator()
-        }
-        .sheet(item: $aliasEditTarget) { contact in
-            ContactAliasSheet(contact: contact) { Task { await load() } }
+            }
+            .sheet(isPresented: $creatingBot) {
+                CreateBotSheet { newBot in
+                    // Prepend so the user sees the new bot immediately,
+                    // then refresh from server to get any RLS-derived
+                    // ordering right.
+                    self.bots.insert(newBot, at: 0)
+                    Task { await load() }
+                }
                 .platformDragIndicator()
-        }
+            }
+            .sheet(item: $managingBot) { pick in
+                ManageBotSheet(
+                    onChanged: { Task { await load() } },
+                    onDeleted: { id in
+                        self.bots.removeAll { $0.id == id }
+                    },
+                    initial: pick
+                )
+                .platformDragIndicator()
+            }
+            .sheet(isPresented: $showingQR) {
+                MyQRSheet()
+                    .platformDetents([.fraction(0.72), .large])
+                    .platformDragIndicator()
+            }
+            .sheet(item: $aliasEditTarget) { contact in
+                ContactAliasSheet(contact: contact) { Task { await load() } }
+                    .platformDragIndicator()
+            }
     }
 
     // ── Compact (iPhone) ────────────────────────────────────────────────────
@@ -221,7 +254,7 @@ struct FriendsTabView: View {
                     // the user's name card; tapping the rest of the row
                     // pushes a chat with self.
                     Section {
-                        let selfSelected = sidebarLayout && selectedPeer?.kind == "self"
+                        let selfSelected = sidebarLayout && effectiveSelection?.kind == "self"
                         SelfRow(
                             avatarSeed: AccountStore.shared.avatarSeed
                                 ?? AccountStore.shared.current?.id ?? "?",
@@ -335,7 +368,7 @@ struct FriendsTabView: View {
     /// regular-size detail pane. Used to tint the row so the user can
     /// see what's open on the right.
     private func isSelected(kind: String, id: String) -> Bool {
-        guard let peer = selectedPeer else { return false }
+        guard let peer = effectiveSelection else { return false }
         return peer.kind == kind && peer.peerId == id
     }
 
@@ -1023,7 +1056,13 @@ struct FriendsTabView: View {
     /// iPad-landscape) shows the chat in the right detail pane via a
     /// selection binding; compact (iPhone) pushes onto the nav stack.
     private func open(_ peer: PendingPeer) {
-        if sidebarLayout {
+        if let externalSelection {
+            // Mac shell hosts our list as one column and owns the detail
+            // column separately — write the shell's binding so its detail
+            // updates. This branch is only reachable from `listColumn`,
+            // never from the iOS `body` (which leaves externalSelection nil).
+            externalSelection.wrappedValue = peer
+        } else if sidebarLayout {
             selectedPeer = peer
         } else {
             path.append(peer)
@@ -1049,6 +1088,67 @@ struct FriendsTabView: View {
             bot_name: peer.kind == "bot" ? peer.displayName : nil,
             last_message_content: nil,
             last_message_sender_type: nil
+        )
+    }
+}
+
+// MARK: - FeatureSurface (Mac three-column shell)
+
+/// Exposes the friend LIST and the conversation DETAIL as separate columns
+/// so the macOS `WideRootView` can drop them into one shared
+/// `NavigationSplitView` (list = middle column, detail = right column) —
+/// no nested split views. The iOS `body` above is untouched; these methods
+/// are additive and only the Mac shell calls them.
+///
+/// Selection plumbing: the shell owns the `Binding<PendingPeer?>` and passes
+/// it into `listColumn`. We build a `FriendsTabView` instance with its
+/// `externalSelection` set to that binding, so the (otherwise unchanged)
+/// `sidebarBody` routes row taps + highlight through the shell's selection
+/// instead of the internal `@State selectedPeer`. `detailColumn` renders the
+/// same `ConversationView` the iOS `regularBody` shows for a selected peer.
+extension FriendsTabView: FeatureSurface {
+    typealias Selection = PendingPeer
+
+    func listColumn(selection: Binding<PendingPeer?>) -> some View {
+        // A fresh instance bound to the shell's selection. Its body is the
+        // sidebar list alone (no SidebarTabBar — on Mac the tab strip is the
+        // shell's own first column), carrying the shared chrome so the
+        // +/create/manage/QR actions and `load()` all work from this column.
+        var view = self
+        view.externalSelection = selection
+        return view.macListColumn
+    }
+
+    func detailColumn(selection: PendingPeer?) -> some View {
+        Group {
+            if let peer = selection {
+                ConversationView(
+                    conversation: pendingConversation(for: peer),
+                    bot: bot(for: peer),
+                    pendingPeer: peer
+                )
+                .id(peer)
+            } else {
+                EmptyDetailHint(text: "选择一位好友或机器人开始聊天",
+                                systemImage: "person.2")
+            }
+        }
+    }
+
+    func compactRoot() -> some View {
+        // The iPhone NavigationStack, made self-contained by wrapping it in
+        // the same chrome the iOS `body` applies (sheets + `load()` task).
+        chrome(compactBody)
+    }
+}
+
+private extension FriendsTabView {
+    /// The friend list as a standalone column for the Mac shell: the shared
+    /// `sidebarBody` (no SidebarTabBar) on canvas, carrying the full chrome.
+    var macListColumn: some View {
+        chrome(
+            sidebarBody
+                .background(Theme.Palette.canvas.ignoresSafeArea())
         )
     }
 }
