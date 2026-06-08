@@ -61,6 +61,9 @@ final class CrewSessionRunner: ObservableObject {
     /// `current` 切到新 run 并 return；agent 在内嵌终端里交互式跑。
     func start(
         crewId: String,
+        /// 本 session 的合成 id（BYOK localSessionId / logged 服务端 id）—— 存到 run 上，
+        /// 右栏内联待办卡片靠它从 `LocalApprovalStore` 过滤出本 session 的待决策/待审批。
+        sessionId: String,
         /// 完整的 per-session 启动配置（kind / model / effort / initialPrompt /
         /// permissionMode）—— argv 由 `config.argv()` 构建（spec §1/§11）。
         config: SessionConfig,
@@ -88,6 +91,7 @@ final class CrewSessionRunner: ObservableObject {
         // 4. 包成 view model
         let run = CrewSessionRun(
             crewId: crewId,
+            sessionId: sessionId,
             kind: config.kind,
             taskBrief: taskBrief,
             workingDirectory: workingDirectory,
@@ -130,6 +134,10 @@ final class CrewSessionRun: ObservableObject, Identifiable {
 
     let runID = UUID()
     let crewId: String
+    /// 本 session 的合成 id（BYOK = startSession 生成的 localSessionId；logged =
+    /// 服务端 session id）。与 MCP `--session` / 世界观 / `LocalApprovalStore` 条目
+    /// 的 sessionId 三处一致 —— 右栏内联待办卡片靠它过滤出本 session 的待决策/待审批。
+    let sessionId: String
     let kind: LocalCodingAgentKind
     let taskBrief: String
     let workingDirectory: URL
@@ -157,6 +165,7 @@ final class CrewSessionRun: ObservableObject, Identifiable {
 
     init(
         crewId: String,
+        sessionId: String,
         kind: LocalCodingAgentKind,
         taskBrief: String,
         workingDirectory: URL,
@@ -166,6 +175,7 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         serverLink: CrewSessionServerLink? = nil
     ) {
         self.crewId = crewId
+        self.sessionId = sessionId
         self.kind = kind
         self.taskBrief = taskBrief
         self.workingDirectory = workingDirectory

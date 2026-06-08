@@ -30,6 +30,11 @@ struct CrewSessionWindowView: View {
         VStack(spacing: 0) {
             if let run = sessionRunner.current {
                 SessionRunContentView(run: run)
+                // 内联待办卡片：本 session 调 ask / 撞权限被拦时，就地答（写 LocalApprovalStore
+                // 解 helper 的 long-poll）。BYOK 本地路径；logged 走 edge interactions。
+                if appModel.mode == .byok {
+                    SessionApprovalCardsView(crewId: run.crewId, sessionId: run.sessionId)
+                }
             } else {
                 idleState
             }
@@ -159,6 +164,7 @@ struct CrewSessionWindowView: View {
             cfg.mcpConfigFile = comms.mcp
             try await sessionRunner.start(
                 crewId: detail.crew.id,
+                sessionId: localSessionId,
                 config: cfg,
                 workingDirectory: workdir,
                 taskBrief: firstPrompt,
@@ -292,6 +298,7 @@ struct CrewSessionWindowView: View {
             let kind: LocalCodingAgentKind = s.runnerKind.contains("codex") ? .codex : .claudeCode
             try await sessionRunner.start(
                 crewId: detail.crew.id,
+                sessionId: s.id,
                 config: SessionConfig(kind: kind, initialPrompt: s.taskBrief),
                 workingDirectory: dir,
                 taskBrief: s.taskBrief,
