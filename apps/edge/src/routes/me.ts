@@ -25,6 +25,7 @@ meRoutes.use('/redeem', requireSession());
 meRoutes.use('/billing/*', requireSession());
 meRoutes.use('/subjects', requireSession());
 meRoutes.use('/wallet/*', requireSession());
+meRoutes.use('/account-deletion', requireSession());
 
 function billingCategory(taskType: string, metadata: unknown): { key: string; label: string } {
   const source = metadata && typeof metadata === 'object'
@@ -106,6 +107,40 @@ meRoutes.patch('/profile', async (c) => {
     return jsonError(c, 500, 'internal_error');
   }
   return c.json({ ok: true, notification_preview_mode: body.notification_preview_mode });
+});
+
+// POST /v1/me/account-deletion — 请求注销账号。SOT 写收进 worker(原客户端直连
+// SupabaseStack.rpc),安全模型不变:request_account_deletion 内的 auth.uid() 守,
+// userClient 带 user JWT → RLS/definer 上下文与原直连一致。(T2 #264)
+const RequestDeletionBody = z.object({ sentiment: z.string().default('') });
+meRoutes.post('/account-deletion', async (c) => {
+  const userJwt = c.var.userJwt!;
+  let body: z.infer<typeof RequestDeletionBody>;
+  try {
+    body = RequestDeletionBody.parse(await c.req.json().catch(() => ({})));
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+  const supa = userClient(c.env, userJwt);
+  const { error } = await supa.rpc('request_account_deletion', { p_sentiment: body.sentiment });
+  if (error) {
+    console.error('[me/account-deletion] request failed', error);
+    return jsonError(c, 500, 'internal_error');
+  }
+  return c.json({ ok: true });
+});
+
+// DELETE /v1/me/account-deletion — 取消待注销(登录时调,清 tombstone)。
+// 返回是否清掉了待删标记,客户端据此决定弹"已恢复账号"。
+meRoutes.delete('/account-deletion', async (c) => {
+  const userJwt = c.var.userJwt!;
+  const supa = userClient(c.env, userJwt);
+  const { data, error } = await supa.rpc('cancel_account_deletion');
+  if (error) {
+    console.error('[me/account-deletion] cancel failed', error);
+    return jsonError(c, 500, 'internal_error');
+  }
+  return c.json({ cleared: data === true });
 });
 
 // GET /v1/me/memory — transparency UI: "what bots see in me".

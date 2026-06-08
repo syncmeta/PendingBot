@@ -268,11 +268,9 @@ struct MeTabView: View {
         guard !deleting else { return }
         deleting = true; defer { deleting = false }
         do {
-            struct Args: Encodable { let p_sentiment: String }
-            try await SupabaseStack.shared
-                .rpc("request_account_deletion",
-                     params: Args(p_sentiment: sentiment.rawValue))
-                .execute()
+            struct Body: Encodable { let sentiment: String }
+            try await APIClient().postVoid("v1/me/account-deletion",
+                                           body: Body(sentiment: sentiment.rawValue))
             await store.signOut()
             Haptics.success()
         } catch {
