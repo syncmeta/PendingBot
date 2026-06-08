@@ -59,4 +59,52 @@ extension View {
         self.listStyle(.inset)
         #endif
     }
+
+    @ViewBuilder func platformTabBarVisibility(_ visible: Bool) -> some View {
+        #if os(iOS)
+        self.toolbar(visible ? .visible : .hidden, for: .tabBar)
+        #else
+        self
+        #endif
+    }
+
+    @ViewBuilder func platformScrollKeyboardDismiss() -> some View {
+        #if os(iOS)
+        self.scrollDismissesKeyboard(.interactively)
+        #else
+        self
+        #endif
+    }
+
+    @ViewBuilder func platformToolbarColorScheme(_ scheme: ColorScheme) -> some View {
+        #if os(iOS)
+        self.toolbarColorScheme(scheme, for: .navigationBar)
+        #else
+        self
+        #endif
+    }
+
+    @ViewBuilder func platformFullScreenCover<Content: View>(
+        isPresented: Binding<Bool>,
+        onDismiss: (() -> Void)? = nil,
+        @ViewBuilder content: @escaping () -> Content
+    ) -> some View {
+        #if os(iOS)
+        self.fullScreenCover(isPresented: isPresented, onDismiss: onDismiss, content: content)
+        #else
+        self.sheet(isPresented: isPresented, onDismiss: onDismiss, content: content)
+        #endif
+    }
+
+    @ViewBuilder func platformFullScreenCover<Item: Identifiable, Content: View>(
+        item: Binding<Item?>,
+        onDismiss: (() -> Void)? = nil,
+        @ViewBuilder content: @escaping (Item) -> Content
+    ) -> some View {
+        #if os(iOS)
+        self.fullScreenCover(item: item, onDismiss: onDismiss, content: content)
+        #else
+        self.sheet(item: item, onDismiss: onDismiss, content: content)
+        #endif
+    }
 }
