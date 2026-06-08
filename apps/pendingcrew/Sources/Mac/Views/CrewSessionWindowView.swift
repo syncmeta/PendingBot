@@ -143,19 +143,12 @@ struct CrewSessionWindowView: View {
         do {
             try await sessionRunner.start(
                 crewId: detail.crew.id,
-                kind: selectedKind,
+                config: SessionConfig(kind: selectedKind, initialPrompt: firstPrompt),
                 workingDirectory: dir,
-                taskBrief: "",
+                taskBrief: firstPrompt,
                 serverLink: serverLink
             )
-            // First instruction → inject into the freshly-spawned REPL. A short
-            // delay lets the agent finish booting before the prompt lands.
-            if let run = sessionRunner.current {
-                Task {
-                    try? await Task.sleep(nanoseconds: 600_000_000) // 0.6s
-                    run.send(firstPrompt)
-                }
-            }
+            // 指令已在 argv 里(positional prompt)—— 不再等 REPL 就绪 sleep + 事后注入。
             draft = ""
         } catch {
             localError = error.localizedDescription
@@ -205,18 +198,12 @@ struct CrewSessionWindowView: View {
             let kind: LocalCodingAgentKind = s.runnerKind.contains("codex") ? .codex : .claudeCode
             try await sessionRunner.start(
                 crewId: detail.crew.id,
-                kind: kind,
+                config: SessionConfig(kind: kind, initialPrompt: s.taskBrief),
                 workingDirectory: dir,
                 taskBrief: s.taskBrief,
                 serverLink: link
             )
-            if let run = sessionRunner.current {
-                let brief = s.taskBrief
-                Task {
-                    try? await Task.sleep(nanoseconds: 600_000_000)
-                    run.send(brief)
-                }
-            }
+            // taskBrief 已在 argv —— 不再 0.6s sleep + send(brief)。
         } catch {
             localError = "自动认领 session 失败: \(error.localizedDescription)"
             handledSessionIds.remove(s.id) // allow a retry next poll
