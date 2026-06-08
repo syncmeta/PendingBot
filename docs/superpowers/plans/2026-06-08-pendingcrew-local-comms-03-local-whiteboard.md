@@ -1,5 +1,7 @@
 # Plan 03 — 本地 crew-comms 核心（本地白板 + BYOK 群聊跑起来）
 
+> **✅ 已实施 2026-06-08**（commits `4774843c` L1 / `01ce8b79` L2 / `bc55a581` L3）。PendingCrewTests 39 绿 + macOS/iOS 双端 build 绿。**待人工尾巴**：BYOK 群聊 GUI 视觉确认（建 BYOK crew→打字→看留存）。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development 或 executing-plans 逐 task 执行。Steps 用 checkbox。
 
 **Goal:** 让 `.byok` 模式的 crew 中栏群聊跑在**本地白板**上（无 edge 依赖）：人能在中栏打字、看到消息本地持久化、看到 captain+本机花名册。
