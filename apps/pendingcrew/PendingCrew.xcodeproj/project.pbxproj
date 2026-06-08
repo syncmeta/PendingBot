@@ -109,7 +109,6 @@
 		F3F8C5F8C2BDE5D5DDFD7788 /* CrewComposer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25D842DC2A5B89B482EDF888 /* CrewComposer.swift */; };
 		F406C388A44A3EBBA538E929 /* LocalRunnerPlaceholder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CC4D38A8ADADF050411F604 /* LocalRunnerPlaceholder.swift */; };
 		F5FB1B5F727AF7F8838D05F6 /* PendingCrewDeepLinkRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19B1A2BBA684270B0A2BE996 /* PendingCrewDeepLinkRoute.swift */; };
-		F6C9FB681CBEFA144B87117E /* ask-human-mcp.cjs in Resources */ = {isa = PBXBuildFile; fileRef = C9F99B4F33889915CDD44633 /* ask-human-mcp.cjs */; };
 		FB3DCCB044D79D45575CBE76 /* PendingCrewAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4452E801174262B66265E9B7 /* PendingCrewAPI.swift */; };
 		FD3A65C3F88F90ECF6D5BD86 /* HookEmitterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C90E34205163859EFCB0446F /* HookEmitterTests.swift */; };
 		FD41EE4466A2F71A970227BF /* CrewDetail.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB97F9F0E2E939FEA9FEFE63 /* CrewDetail.swift */; };
@@ -183,7 +182,6 @@
 		C19AB68BF7E4D689CEAF0A0F /* CrewSessionRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewSessionRunner.swift; sourceTree = "<group>"; };
 		C6388019E8C2DDFED3A85E99 /* PendingCrewAuthCredential.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingCrewAuthCredential.swift; sourceTree = "<group>"; };
 		C90E34205163859EFCB0446F /* HookEmitterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HookEmitterTests.swift; sourceTree = "<group>"; };
-		C9F99B4F33889915CDD44633 /* ask-human-mcp.cjs */ = {isa = PBXFileReference; path = "ask-human-mcp.cjs"; sourceTree = "<group>"; };
 		CD0F5E7501DDF890EA04C5EA /* AgentTerminalSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentTerminalSession.swift; sourceTree = "<group>"; };
 		D1A9FCA930C6487C96B9A211 /* MacRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacRootView.swift; sourceTree = "<group>"; };
 		D36E53A3EEA55369A75ADB82 /* McpPermissionHookTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = McpPermissionHookTests.swift; sourceTree = "<group>"; };
@@ -314,7 +312,6 @@
 		4AD1CC10B8B6DC828B1B6894 /* Resources */ = {
 			isa = PBXGroup;
 			children = (
-				C9F99B4F33889915CDD44633 /* ask-human-mcp.cjs */,
 				476A276CBDA4640936A8B817 /* Assets.xcassets */,
 				4DF58D7679507FB67097F1EC /* PendingCrew.entitlements */,
 				4582D3CE1CE5FD5283FD5319 /* Prompts */,
@@ -568,7 +565,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				4AC6269E4A657341E5773089 /* Assets.xcassets in Resources */,
-				F6C9FB681CBEFA144B87117E /* ask-human-mcp.cjs in Resources */,
 				762062D45355B2DC8F789559 /* crew-captain.zh.md in Resources */,
 				B4A500C63F56A660FBC9D415 /* session-world-model.en.md in Resources */,
 				B18FDA6222492107773A78B4 /* session-world-model.zh.md in Resources */,
