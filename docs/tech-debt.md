@@ -465,6 +465,18 @@
 - **建议**: 要分"我 vs 别人"需要读侧返回 `sender_user_id` 或在 members 里把 `me` 的 member_id 标出来再比对；附件等 crew upload 通道就绪后把 ComposerView 的 picker 接活。
 - **状态**: 部分修复 —— ① live push + ② inline 权限卡已于 T4.5 落地；③ 附件、④ 自我高亮仍未修（待读侧补字段 / crew upload 通道）
 
+### 🟡 客户端(iOS/Mac)从不把用户身份同步给 RevenueCat / PostHog / Sentry — 三个外部服务的 client 侧 identity 全缺
+
+- **发现**: 2026-06-08 · session(查"iOS 注册后 Polar 没对应用户")
+- **位置**: `apps/pendingbot/`(整个客户端;grep `revenuecat`/`Purchases`/`posthog`/`sentry` 零命中)、对照 edge 侧已就绪的 `apps/edge/src/routes/billing-webhooks.ts:185`(`ev.app_user_id`)、`apps/edge/src/lib/analytics.ts`(distinctId=subjectId)
+- **问题**: 所有外部服务都约定用 `subject_id`(= `auth.users.id`)当外部主键,edge 侧已按此接好;但 **客户端从没把这个 id 告诉这三个服务**:
+  1. **RevenueCat** —— iOS 完全没集成 SDK,从不调 `Purchases.configure` / `logIn(subjectId)`。后端 `/v1/billing/revenuecat/webhook` 已经在等 `app_user_id`,可一旦真走 IAP,RevenueCat 不知道这笔购买属于哪个 `subject_id` → **入账对不上人**(直接影响计费正确性)。
+  2. **PostHog** —— 客户端无 SDK、无 `identify(subjectId)`;目前只有 edge 侧 `topup_succeeded` 一个事件带 distinctId。注册、会话、产品行为在 client 侧全无埋点。
+  3. **Sentry** —— 任何地方(client + edge)都没 `setUser()`;报错事件挂不到具体用户,只有 trace/时间戳。
+- **影响**: RevenueCat 这条是 🟡 偏 🔴 的——IAP 上线前不补会导致购买无法归户、对账困难。PostHog/Sentry 两条是观测盲区(无用户维度归因),非阻断。注意这与 kill-switch(`BILLING_ENABLED`/`POSTHOG_ENABLED` 默认关,wrangler.jsonc)是两回事:开关只管 edge 发不发,**客户端 identity 缺失是开关打开也补不上的独立洞**。
+- **建议**: ① IAP 上线前必做:iOS 集 RevenueCat SDK,登录成功后 `Purchases.shared.logIn(subjectId)`,登出 `logOut()`;② PostHog iOS SDK + 登录后 `identify(subjectId)`、登出 `reset()`;③ Sentry(client 用 sentry-cocoa,edge 在 worker 入口)登录后 `setUser(id: subjectId)`。三者共用"拿到 session 后取 `auth.users.id` 调一次 identify"的同一时机,可一并接。
+- **状态**: 待办(RevenueCat 随 IAP 上线一并做;PostHog/Sentry 可独立补)
+
 ## 🟢 不规范
 
 ### 🟢 surf_runs / scroll_runs 是 envelope 取代后的遗留死表(仍挂在 realtime publication 上)
