@@ -1,6 +1,16 @@
 # PendingBot / PendingCrew 进度账本 (Progress Ledger)
 
-**最近对账：2026-06-07**（对照实际代码 / 迁移 / git，不是看 task 标记）
+**最近对账：2026-06-08**（对照实际代码 / 迁移 / git，不是看 task 标记）
+
+> **2026-06-08 三端共享 UI 地基 + bot 管理片解锁 + 消息slice迁移启动（`feat/tri-platform-ui`，未合，关联 #212）**
+> - **缘起**：用户问"Mac 新建机器人选模型为何跟 iOS 不一样"。根因——`Features/*` 当年图省事整体 `#if os(iOS)` 一刀切，Mac 被迫在 `Sources/Mac/` 平行重写（阉割版：建 bot 只能单模型，无 arena）。用户定调：**不计成本一次打好地基，默认全三端共享含 UI，只 Mac 硬件真没有的（语音/相机/推送）才留 iOS-only**。spec：`docs/superpowers/specs/2026-06-08-tri-platform-ui-share-design.md`；plan：`docs/superpowers/plans/2026-06-08-tri-platform-ui-foundation.md` + `2026-06-08-message-slice-migration.md`。
+> - **与 #212/`feat/mac-login-align` 的关系**：那条分支同哲学但**逐屏给 Mac 另画对齐版**（MacChatView/MacFriendsView 视觉贴 iOS）；本条是**彻底版**——直接共享 iOS 那份视图，最终**取代**那些 Mac 平行实现。两条分支需择一收口（建议以本条为准，平行 Mac 文件随各 slice 删）。
+> - **已完成（subagent-driven，每步两端编译坐实，iOS 全程绿）**：
+>   - **地基 A1–A9**：跨平台垫片层（PlatformModifiers `inlineNavTitle/platformAutocapitalization/platformKeyboard/platformDetents/platformDragIndicator/platformListStyle`、`Clipboard`、`QRCode` 含 tint+quiet-zone、`PlatformImage.decode`）；`WideRootView` 三列宽屏壳（升级自 MacRootView，跨平台）；`FeatureSurface` 壳↔feature 契约；Mac 原生菜单栏 commands + ⌘, 设置场景（@main 已接 WideRootView 取代 MacRootView）；`TopTab` + `\.api`/`\.account` 环境键抽成跨平台。
+>   - **bot 管理片 B1–B3.1**：解锁叶子组件 + `ModelPicker`（**含 arena 竞技场**）+ `BotManagement` + `EnvelopeAPI` 跨平台；恢复 bot 分享卡绿色 QR 样式。**用户最初问的"Mac 选模型"现已能编进 macOS**。
+>   - **消息slice迁移 Phase 1**：抽 8 个共享数据类型到 `Sources/Models`（PendingPeer/UserUserPeer/BotPick/CrewProposalPayload/PermissionRequestPayload/ToolTraceEvent/DeepLinkStore）+ 去重 FriendFilter/FriendSortField。
+> - **关键结构发现（见 tech-debt）**：好友列表（FriendsTabView）**焊死消息/会话slice**——详情列就是 ConversationView，导航用 PendingPeer。所以"共享好友列表"必须连消息slice一起迁（24 文件/~10k 行，welded Call[iOS-only]/相机[iOS-only]/键盘 inputAccessoryView[iOS-only]）。用户拍：连消息slice一起正经迁，不省力、不急。
+> - **当前分支态**：**iOS build 绿**；**macOS 暂 red**（消息slice UI 文件仍 fenced，Phase 5 摘锁后转绿）——这是迁移中间态，feature 分支可接受。**剩 Phase 2–7**：补垫片→Call/相机/键盘内部围栏→摘锁 macOS转绿→拆 FeatureSurface 接两端壳删 Mac 平行→三端实跑验证。**iPad 视觉收敛成桌面三列放最后一片**（防迁移期 iPad 半残）。
 
 > **2026-06-07 T2 边缘读卸载(Supabase 单区 → CF 边缘投影)全链路落地(已合 main `e161a6a6`,#260/#261/#262)**
 > - 背景:Supabase 单点法兰克福,US/Asia 首屏吃跨洋 RTT。把**热读路径**从客户端直连法兰克福改成 CF 边缘投影,Supabase 退为最终一致真源/事件源/重建源。spec:`docs/superpowers/plans/2026-06-07-edge-read-offload.md`(四桶分类 + 7 规则 + 授权门两层 + 决策)。

@@ -33,7 +33,18 @@
 
 ## 🔴 根基级
 
-### 🔴 pnc_ledger 计费账本曾对 anon 可读、对 authenticated 可改写(RLS 没开);宽 grant 习惯需审计
+### 🔴 `Features/*` UI 整体被无谓 `#if os(iOS)` 一刀切 → Mac 被迫平行重写,两套 UI 长期漂移
+- **发现**: 2026-06-08 · `feat/tri-platform-ui`
+- **位置**: `apps/pendingbot/Sources/Features/*`、`apps/pendingbot/Sources/Mac/*`
+- **病根**: 当年图省事把整个 `Features/*` 包进 `#if os(iOS)`,并非真有 iOS-only 依赖(实测只一小撮薄 shim:haptics/导航标题/剪贴板/二维码/键盘类型)。Mac 因此在 `Sources/Mac/` 整套平行重写,功能恒为 iOS 子集(典型:建 bot 只能单模型,无 arena)。两套 UI 靠人维持一致 → 必然漂移(#212 / `feat/mac-login-align` 就是在逐屏补这个漂移)。
+- **影响**: 三端体验不一致;每个新功能要写两遍;Mac 永远慢一拍。
+- **正在修**: `feat/tri-platform-ui` 彻底版——补跨平台垫片层后逐 slice 摘锁、共享同一份 iOS 视图、删 `Sources/Mac/` 平行实现。地基 + bot 管理片(含 arena 选模型)已落,消息slice迁移进行中(plan: `docs/superpowers/plans/2026-06-08-message-slice-migration.md`)。**两条分支(本条 vs #212)需择一收口,建议以本条彻底版为准。**
+
+### 🔴 好友列表(FriendsTabView)与消息/会话slice焊死 — 跨模块隐性耦合
+- **发现**: 2026-06-08 · `feat/tri-platform-ui`
+- **位置**: `Features/Friends/FriendsTabView.swift` ↔ `Features/Message/ConversationView.swift`(+9 扩展)
+- **耦合**: FriendsTabView 宽屏详情列**就是** `ConversationView`,导航栈用 `PendingPeer`(消息slice类型)。想共享好友列表必须连消息slice(24 文件/~10k 行)一起跨平台化,而消息slice又焊死 Call(iOS-only 语音)/相机相册(iOS-only)/键盘 inputAccessoryView(iOS-only UIKit)。
+- **处置**: 已测绘全部 iOS-only 面,plan 用**内部 `#if os(iOS)` 围栏**(非整文件锁)隔离 Call/相机/键盘,Mac 干净降级(无语音按钮、相册→文件选择、composer 用 safeAreaInset 代 inputAccessoryView)。这些 Mac 降级在 Phase 4 实装时各记一条 🟡。
 - **发现**: 2026-06-08 · chore/security-advisor-hardening(Security Advisor 体检)
 - **位置**: `pendingbot.pnc_ledger`(整数事实源账本)+ 各表的 anon/authenticated grant
 - **问题**: pnc_ledger 是计费的整数事实源,但**RLS 一直没开**,且 `anon` 有 SELECT、`authenticated` 有 INSERT/SELECT/UPDATE/DELETE —— 任何登录用户能读/篡改**全量**账本、未登录用户能读全量。`me.ts /wallet/v2` 用**用户态 client** 读它,注释还写着"RLS 仅本人",但那道保护从来不存在(RLS 没开,只靠应用层 `.eq('subject_id', …)` 过滤,绕过即泄)。根因是**给表发 grant 时习惯性放宽**(连 anon 都给了 SELECT),而 RLS 没跟上。已修(`20260608083813`:开 RLS + subject 维度 SELECT policy + 收 anon/写权限)。
