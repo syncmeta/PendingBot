@@ -28,6 +28,13 @@ final class SessionConfigTests: XCTestCase {
                        ["--resume", "abc123", "--permission-mode", "auto", "go"])
     }
 
+    func testIsolationDoesNotLeakIntoArgv() {
+        let isolated = SessionConfig(kind: .claudeCode, initialPrompt: "go", isolation: true)
+        let shared = SessionConfig(kind: .claudeCode, initialPrompt: "go", isolation: false)
+        XCTAssertEqual(isolated.argv(), shared.argv(), "isolation 是编排参数,不是 CLI flag")
+        XCTAssertEqual(isolated.argv(), ["--permission-mode", "auto", "go"])
+    }
+
     func testCodexArgvUnchangedPlaceholder() {
         // codex PTY argv is a placeholder until the app-server plan; keep sandbox, carry prompt.
         let cfg = SessionConfig(kind: .codex, model: "gpt-5.5", initialPrompt: "ship it")

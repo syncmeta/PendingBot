@@ -17,19 +17,24 @@ public struct SessionConfig: Sendable, Equatable {
     public var resumeSessionId: String?
     /// claude permission mode. **Default "auto" = auto mode classifier (spec §9); never bypass.**
     public var permissionMode: String
+    /// 隔离:on → session 跑在独立 git worktree（并行不打架 + claude containment §8）；
+    /// off → 用 crew 共享目录。**编排参数,不进 argv。**
+    public var isolation: Bool
 
     public init(kind: LocalCodingAgentKind,
                 model: String? = nil,
                 effort: String? = nil,
                 initialPrompt: String? = nil,
                 resumeSessionId: String? = nil,
-                permissionMode: String = "auto") {
+                permissionMode: String = "auto",
+                isolation: Bool = false) {
         self.kind = kind
         self.model = model
         self.effort = effort
         self.initialPrompt = initialPrompt
         self.resumeSessionId = resumeSessionId
         self.permissionMode = permissionMode
+        self.isolation = isolation
     }
 
     /// Build the interactive-CLI argv. The session's instruction is the trailing
