@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Card, Switch, Typography, Space, Button, App as AntdApp, Spin, Tooltip } from 'antd';
-import { edgeFetch } from '../providers/http';
+import { edgeFetch, EdgeApiError } from '../providers/http';
+
+// 把 edge 错误渲染成干净的中文 message(EdgeApiError 已带 http.ts 备好的 message),
+// 不要 String(e) —— 那会带上 "EdgeApiError:" 类名前缀。
+function errMsg(e: unknown): string {
+  return e instanceof EdgeApiError ? e.message : String(e);
+}
 
 type FlagRow = { override: boolean | null; envDefault: boolean; effective: boolean; readonly?: boolean };
 type FlagsResp = { data: Record<'billing' | 'posthog' | 'langfuse' | 'sentry', FlagRow> };
@@ -22,7 +28,7 @@ export function FeatureFlagsPage() {
     setFlags(r.data);
   };
   useEffect(() => {
-    load().catch((e) => message.error(String(e)));
+    load().catch((e) => message.error(errMsg(e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
