@@ -61,44 +61,38 @@ final class CrewSessionRunner: ObservableObject {
     /// `current` 切到新 run 并 return；agent 在内嵌终端里交互式跑。
     func start(
         crewId: String,
-        kind: LocalCodingAgentKind,
+        /// 完整的 per-session 启动配置（kind / model / effort / initialPrompt /
+        /// permissionMode）—— argv 由 `config.argv()` 构建（spec §1/§11）。
+        config: SessionConfig,
         workingDirectory: URL,
         taskBrief: String,
-        /// 用户在 composer 选的 model slug。Claude Code / Codex 都会拼成
-        /// `--model <slug>`；nil = 让 CLI 用自己的默认。
-        model: String? = nil,
         additionalEnv: [String: String] = [:],
-        /// Spec v2 §10 — per-session override of the crew's permission mode.
-        /// `nil` = inherit crew default. Run-level metadata only; the embedded
-        /// terminal runs in auto-approve so this is currently informational.
-        permissionModeOverride: String? = nil,
         /// 当登录时，caller 备好 server-side session（register host → create →
         /// claim）并把 link 传进来，run 在结束时关掉 server row（让跨端列表能看到
         /// session 已结束）。`nil` = BYOK / local-only。
         serverLink: CrewSessionServerLink? = nil
     ) async throws {
         // 1. 校验工具可用 + resolve 可执行路径
-        guard let executable = LocalCodingAgentExecutable.resolve(kind) else {
-            throw RunnerError.toolNotInstalled(kind: kind)
+        guard let executable = LocalCodingAgentExecutable.resolve(config.kind) else {
+            throw RunnerError.toolNotInstalled(kind: config.kind)
         }
         // 2. env 白名单（spec v2 §8.4.2）—— 复用 spec 的纯函数构造。
         let env = LocalCodingAgentEnv.build(additionalEnv: additionalEnv)
         // 3. 起内嵌终端 session
         let terminalSession = AgentTerminalSession(
-            kind: kind,
+            config: config,
             executable: executable.path,
             workdir: workingDirectory.path,
-            model: model,
             env: env
         )
         // 4. 包成 view model
         let run = CrewSessionRun(
             crewId: crewId,
-            kind: kind,
+            kind: config.kind,
             taskBrief: taskBrief,
             workingDirectory: workingDirectory,
-            model: model,
-            permissionModeOverride: permissionModeOverride,
+            model: config.model,
+            permissionModeOverride: config.permissionMode,
             terminalSession: terminalSession,
             serverLink: serverLink
         )
