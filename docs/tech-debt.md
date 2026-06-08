@@ -33,6 +33,15 @@
 
 ## 🔴 根基级
 
+### 🔴 pnc_ledger 计费账本曾对 anon 可读、对 authenticated 可改写(RLS 没开);宽 grant 习惯需审计
+- **发现**: 2026-06-08 · chore/security-advisor-hardening(Security Advisor 体检)
+- **位置**: `pendingbot.pnc_ledger`(整数事实源账本)+ 各表的 anon/authenticated grant
+- **问题**: pnc_ledger 是计费的整数事实源,但**RLS 一直没开**,且 `anon` 有 SELECT、`authenticated` 有 INSERT/SELECT/UPDATE/DELETE —— 任何登录用户能读/篡改**全量**账本、未登录用户能读全量。`me.ts /wallet/v2` 用**用户态 client** 读它,注释还写着"RLS 仅本人",但那道保护从来不存在(RLS 没开,只靠应用层 `.eq('subject_id', …)` 过滤,绕过即泄)。根因是**给表发 grant 时习惯性放宽**(连 anon 都给了 SELECT),而 RLS 没跟上。已修(`20260608083813`:开 RLS + subject 维度 SELECT policy + 收 anon/写权限)。
+- **影响**: 计费账本是钱的事实源,世界可读可改 = 数据泄露 + 篡改面。同类风险:**只要某张敏感表 grant 给了 anon/authenticated 又忘了开 RLS(或 RLS policy 比 grant 宽),就是同样的洞**。Supabase Security Advisor 的 `rls_disabled_in_public` 只抓"RLS 没开"这一种,抓不到"RLS 开了但 policy 太宽"或"grant 给 anon 太多"。
+- **建议**: ① 上线前把 **Security Advisor 跑成准入门**(`get_advisors security` 必须无 ERROR)。② 审计所有表的 anon grant —— anon 默认应几乎什么都没有(只有少数公开资源如 disposable_email_domains 才需要);写个 CI 断言"anon 不持有任何 pendingbot 表的写权限、敏感表无 SELECT"。③ 约定:新表一律先 `ENABLE ROW LEVEL SECURITY`,再按需加 policy;grant 走最小权限,别习惯性给 anon/authenticated 全 CRUD。
+- **状态**: pnc_ledger 实例已解决(`20260608083813`,db push 已应用 prod;验证:RLS on、anon 无权限、authenticated 仅 SELECT 自己、policy 生效)。**全表 grant 最小化审计 + advisor 准入门(①②)待办**。
+- **已审计为有意保留(Security Advisor 余项,非洞)**: 6 个 `bi_*` SECURITY DEFINER 视图(Grafana BI 让 bi_ro 跨 RLS 读聚合,故意的)、16 个 `rls_enabled_no_policy`(service-role 专用表,开 RLS 无 policy = 锁死 = 安全)、71 个 `authenticated` SECURITY DEFINER 函数(`20260524175632` 显式授的 RPC 面,内部自带 authz)。两个配置项留用户:`auth_leaked_password_protection`(Dashboard Auth 开关)、`pg_net in public`(迁 schema 有风险,暂留)。
+
 ### 🔴 账号删除级联靠手维护,有两类静默杀手(NO ACTION 外键 + 收敛式 RI 交织);已第二次漂移
 - **发现**: 2026-06-08 · fix/account-deletion-cascade
 - **位置**: `supabase/migrations/0052_auth_delete_user_trigger.sql`(`_before_auth_user_delete` BEFORE DELETE 触发器)+ 全 schema 指向 `auth.users`/`pendingbot.users`/`pendingbot.subjects`/`conversations` 的外键 `ON DELETE` 动作
