@@ -4,8 +4,9 @@ import Foundation
 /// 由 `PendingCrewEntry.main()` 在 argv 带 helper flag 时调用，跑完即返回。
 ///
 /// 子命令（flag 形式，因为是同一 app 二进制的 argv，不是子进程参数）：
-///   `--mcp-serve --crew <id> --dir <path> --session <id>`  → MCP stdio server
-///   `--mcp-hook  --crew <id> --dir <path> --session <id>`  → 吐未读白板的 hook JSON
+///   `--mcp-serve --crew <id> --dir <path> --session <id>`           → MCP stdio server
+///   `--mcp-hook  --crew <id> --dir <path> --session <id>`           → 吐未读白板的 PostToolUse hook JSON
+///   `--mcp-permission-hook --crew <id> --dir <path> --gate <a,b>`   → 权限审批 PreToolUse hook
 enum McpHelperMain {
     /// argv 含 helper flag → 跑对应模式、返回 true（caller 应 return，不起 GUI）。
     /// 不含 → 返回 false（正常起 GUI）。
@@ -13,7 +14,8 @@ enum McpHelperMain {
     static func runIfHelper(_ args: [String]) -> Bool {
         let serve = args.contains("--mcp-serve")
         let hook = args.contains("--mcp-hook")
-        guard serve || hook else { return false }
+        let permHook = args.contains("--mcp-permission-hook")
+        guard serve || hook || permHook else { return false }
 
         let crewId = value("--crew", args) ?? ""
         let sessionId = value("--session", args) ?? ""
@@ -29,6 +31,19 @@ enum McpHelperMain {
                     print(out)
                     fflush(stdout)
                 }
+            }
+        } else if permHook {
+            // PreToolUse hook：gate 命中的工具 → raise 待审批 + 阻塞 long-poll allow/deny，
+            // 吐 permissionDecision 拦截/放行。不命中 → 无输出（走 claude 正常流程）。
+            // stdin 是单个 hook JSON 对象（一次读到 EOF）。
+            let gates = (value("--gate", args) ?? "").split(separator: ",").map(String.init).filter { !$0.isEmpty }
+            let permission = McpPermissionHook(approvals: LocalApprovalStore(directory: dir),
+                                               crewId: crewId, gates: gates)
+            let data = FileHandle.standardInput.readDataToEndOfFile()
+            let input = String(data: data, encoding: .utf8) ?? ""
+            if let out = permission.handle(input) {
+                print(out)
+                fflush(stdout)
             }
         } else {
             // PostToolUse hook：吐本 session 未读白板（带"可信"提示）。无未读 → 不输出。
