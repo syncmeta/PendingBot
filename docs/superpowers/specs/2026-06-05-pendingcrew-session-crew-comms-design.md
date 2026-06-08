@@ -219,7 +219,11 @@ SwiftUI 没有现成的"agent-event 时间线"组件（可展开的 tool-call/di
 7. **compaction 韧性**：`PreCompact` hook 能否经 `additionalContext` 把动态白板塞进 compact 后上下文？`--append-system-prompt`/skill 是否真"自动重载"扛过 compact？（§8，调研信心不足，真机核）。
 8. **plugin / settings 精确键**：`--plugin-dir` 非交互加载、`permissions.deny`/`PreToolUse` deny 语法、settings 各键名 —— 调研给的 JSON 样例当方向，落地前逐个核实键名（别凭样例写死）。
 
-9. **权限/审批（§9）+ 统一（§10）**：① ~~claude auto mode 订阅可用?~~ **✅ 已本机解**；② codex `on-request` 边界审批的**协议事件 + 回应形状**（路由 captain，**不走 auto_review**）；③ claude 护栏拦下 → `ask_human` / `PermissionDenied` hook → captain 的接法 + crew 专属 `autoMode.environment` 填什么（PendingBot repo/域/edge）；④ codex rollout JSONL ↔ claude transcript JSONL **归一成同一 event 视图**的字段映射（§10 跨读）。
+9. **权限/审批（§9）+ 统一（§10）+ codex 协议（→ `2026-06-05-codex-app-server-reference.md`，本机 0.137.0 实证）**：
+   - ✅ **codex app-server 走 ChatGPT 订阅计费**（`account/read.type==chatgpt` + 活配额；entrypoint 无关，credential 定 pool）—— **最大风险已消**。⚠️ 别把 `OPENAI_API_KEY` export 进 app-server 进程 env。
+   - ✅ **codex 审批 = `approvalsReviewer:"user"`**：`item/{commandExecution,fileChange,permissions}/requestApproval` 服务端请求，可无限挂 → captain→人 → stdio 异步回 `{decision}` → `serverRequest/resolved` 关 UI。**§9 Layer-2 codex 侧 native**。
+   - ✅ **codex 上下文注入** = `turn/steer`（回合中,`expectedTurnId` CAS）/ `additionalContext`(per-turn,`kind:untrusted`) / `thread/inject_items`。✅ **额度** = `account/rateLimits/{read,updated}`（§7）。✅ **跨读** = parse 对方 rollout JSONL（§10）。
+   - ⚠️ 仍待真跑：turn 级 effort 是否压过 config（thread 级被 config 压了 → 用 `-c model_reasoning_effort=` spawn）；claude 护栏拦下 → `ask_human`/`PermissionDenied` → captain 的接法 + crew `autoMode.environment` 填 PendingBot repo/域/edge。
 
 10. **per-session 配置（§11）**：claude `--effort` 的合法 level 枚举（low/medium/high?）+ 与 `alwaysThinkingEnabled` 关系；codex `model_reasoning_effort` 全集 + `-c` per-session 覆盖实测；`--model` 别名集（sonnet/opus/…）映射到 crew 模型目录。
 
