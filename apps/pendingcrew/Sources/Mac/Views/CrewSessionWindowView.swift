@@ -218,12 +218,20 @@ struct CrewSessionWindowView: View {
             "command": helper,
             "args": ["--mcp-serve", "--crew", crewId, "--dir", dir, "--session", sessionId],
         ]]]
-        // settings：PostToolUse hook 的 command 是 shell 字符串（claude 过 sh -c）→ 引号每段。
+        // settings：两个 hook 的 command 都是 shell 字符串（claude 过 sh -c）→ 引号每段。
+        // PostToolUse：每轮注入未读白板。
         let hookCmd = [helper, "--mcp-hook", "--crew", crewId, "--dir", dir, "--session", sessionId]
             .map(shellQuote).joined(separator: " ")
-        let settings: [String: Any] = ["hooks": ["PostToolUse": [[
-            "hooks": [["type": "command", "command": hookCmd]],
-        ]]]]
+        // PreToolUse：权限审批 gate（spec ask-approval §3「权限类直达人类」）。v1 默认只 gate
+        // computer-use（敏感的桌面控制）；**不** gate 自家 crew 工具（post_to_crew/read_whiteboard/
+        // ask 都 mcp__crew__ 前缀，子串不含 "computer-use"）。未来可做成 UI 可配 gate 列表。
+        let permGates = "computer-use"
+        let permCmd = [helper, "--mcp-permission-hook", "--crew", crewId, "--dir", dir, "--gate", permGates]
+            .map(shellQuote).joined(separator: " ")
+        let settings: [String: Any] = ["hooks": [
+            "PostToolUse": [["hooks": [["type": "command", "command": hookCmd]]]],
+            "PreToolUse": [["hooks": [["type": "command", "command": permCmd]]]],
+        ]]
 
         return (
             settings: writeJSON(settings, to: tmp.appendingPathComponent("pendingcrew-settings-\(sessionId).json")),
