@@ -141,10 +141,15 @@ struct CrewSessionWindowView: View {
         }
         if let sid = serverLink?.sessionId { handledSessionIds.insert(sid) }
         do {
-            let cfg = SessionConfig(kind: selectedKind, initialPrompt: firstPrompt)
+            var cfg = SessionConfig(kind: selectedKind, initialPrompt: firstPrompt)
             // isolation=on → 独立 worktree;off → crew 共享目录（spec §8/§11）。
             let workdir = SessionWorkspace.resolve(
                 crewDirectory: dir, isolation: cfg.isolation, hint: firstPrompt)
+            // BYOK: 渲染本地世界观 → 临时 .md → claude --append-system-prompt-file
+            // (spec local-first chunk 4)。logged 模式 edge 自己注入世界观,这里跳过；
+            // best-effort,失败 nil 不挡 session 启动。
+            cfg.appendSystemPromptFile = await renderWorldModelFile(
+                detail: detail, taskBrief: firstPrompt, workdir: workdir)
             try await sessionRunner.start(
                 crewId: detail.crew.id,
                 config: cfg,
@@ -156,6 +161,36 @@ struct CrewSessionWindowView: View {
             draft = ""
         } catch {
             localError = error.localizedDescription
+        }
+    }
+
+    /// BYOK: 渲染本地世界观 system prompt → 临时 `.md` → 返回路径供
+    /// `--append-system-prompt-file`。logged 模式返回 nil（edge 注入）。
+    /// best-effort：任一步失败返 nil，session 仍照常启动（只是没世界观）。
+    private func renderWorldModelFile(detail: CrewDetail, taskBrief: String, workdir: URL) async -> String? {
+        guard appModel.mode == .byok, let backend = appModel.backend else { return nil }
+        let members = (try? await backend.listCrewMembers(crewId: detail.crew.id))?.members ?? []
+        let humans = members
+            .filter { $0.memberKind == "human" }
+            .map { LocalSessionWorldModel.Human(
+                displayName: $0.displayName ?? "(无名)", role: $0.role ?? "member", userId: $0.userId) }
+        let ctx = LocalSessionWorldModel.Context(
+            sessionTaskBrief: taskBrief,
+            runnerKind: selectedKind == .claudeCode ? "claude_code" : "codex",
+            crewId: detail.crew.id,
+            crewTitle: detail.crew.title,
+            workingDirectory: workdir.path,
+            humans: humans,
+            captainName: detail.captain?.displayName,
+            captainBotId: detail.captain?.botId)
+        guard let md = try? LocalSessionWorldModel().render(ctx) else { return nil }
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pendingcrew-worldmodel-\(UUID().uuidString).md")
+        do {
+            try md.write(to: url, atomically: true, encoding: .utf8)
+            return url.path
+        } catch {
+            return nil
         }
     }
 
