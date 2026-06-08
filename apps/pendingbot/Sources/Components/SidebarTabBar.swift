@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 // `TopTab` 已抽到跨平台文件 `Features/Root/TopTab.swift`(A5),供宽屏壳与
@@ -89,4 +88,3 @@ struct SidebarTabBar: View {
         )
     }
 }
-#endif

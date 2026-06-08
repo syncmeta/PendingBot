@@ -1,6 +1,7 @@
-#if os(iOS)
 import SwiftUI
+#if os(iOS)
 import UIKit
+#endif
 
 /// Trailing swipe-to-reveal action buttons for a row.
 ///
@@ -187,7 +188,7 @@ struct SwipeRevealRow<Content: View>: View {
                        settled == 0,
                        rawOffset > 0,
                        (rawOffset >= leadingTriggerWidth || velocity > 600) {
-                        UINotificationFeedbackGenerator().notificationOccurred(.success)
+                        Haptics.success()
                         withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
                             dragDX = 0
                             settled = 0
@@ -203,8 +204,10 @@ struct SwipeRevealRow<Content: View>: View {
                     // *feels* like a rubber band releasing, not a silent
                     // glide back.
                     if leadingTrigger != nil, settled == 0, rawOffset > 0 {
+                        #if os(iOS)
                         UIImpactFeedbackGenerator(style: .soft)
                             .impactOccurred(intensity: 0.7)
+                        #endif
                     }
                     withAnimation(.spring(response: 0.34, dampingFraction: 0.72)) {
                         dragDX = 0
@@ -246,6 +249,7 @@ struct SwipeRevealRow<Content: View>: View {
     /// spring), then a single rigid "stop" the moment the trigger arms —
     /// the lamp-cord click that tells the user "let go now."
     private func emitLeadingHapticsIfNeeded() {
+        #if os(iOS)
         let dx = max(0, dragDX)
         // Ratcheting ticks while approaching the trigger.
         if dx < leadingTriggerWidth, dx - lastTickDX >= tickStride {
@@ -268,6 +272,7 @@ struct SwipeRevealRow<Content: View>: View {
             didArm = false
             lastTickDX = dx
         }
+        #endif
     }
 
     private var actionStack: some View {
@@ -322,7 +327,7 @@ struct SwipeRevealRow<Content: View>: View {
 private extension View {
     @ViewBuilder
     func glassDisc() -> some View {
-        if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, macOS 26.0, *) {
             self.glassEffect(.regular.interactive(), in: Circle())
         } else {
             self
@@ -331,4 +336,3 @@ private extension View {
         }
     }
 }
-#endif

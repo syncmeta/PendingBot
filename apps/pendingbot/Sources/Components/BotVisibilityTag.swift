@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 /// Tag pill that labels a bot as 私有机器人 (plum) or 公有机器人 (yellow).
@@ -74,4 +73,3 @@ struct GroupChatTag: View {
             }
     }
 }
-#endif
