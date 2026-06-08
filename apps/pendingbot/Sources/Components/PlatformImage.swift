@@ -21,3 +21,15 @@ extension Image {
         #endif
     }
 }
+
+extension PlatformImage {
+    /// Decode raw image bytes into a platform bitmap, hiding the
+    /// `UIImage(data:)` / `NSImage(data:)` split.
+    static func decode(_ data: Data) -> PlatformImage? {
+        #if os(iOS)
+        return UIImage(data: data)
+        #elseif os(macOS)
+        return NSImage(data: data)
+        #endif
+    }
+}

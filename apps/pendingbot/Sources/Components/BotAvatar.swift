@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 /// Soft pastel circle with an emoji glyph.
@@ -41,4 +40,3 @@ struct BotAvatar: View {
         )
     }
 }
-#endif
