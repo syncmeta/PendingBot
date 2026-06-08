@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { List, useTable, EditButton, DeleteButton, CreateButton, Create, Edit, useForm } from '@refinedev/antd';
 import { Table, Space, Form, Input, Switch, Select } from 'antd';
 
@@ -35,22 +36,73 @@ export function PresetBotList() {
   );
 }
 
-// system prompt 等放在 config(jsonb)。先用一个多行 JSON 文本域编辑整个 config。
+// system prompt 等放在 config(jsonb)。用一个多行 JSON 文本域编辑整个 config。
+//
+// 实现要点:文本框绑一个受控的「原始文本」state,用户输入永远原样显示,绝不中途转义。
+// - form 的 config 值是「对象」(edge createSchema = z.record(z.string(), z.unknown()))。
+// - Edit 模式下 form 初值异步到达,通过 Form.useWatch 监听 config,首次拿到对象时
+//   pretty-print 灌进 text state(只同步一次,之后用户编辑以 text state 为准)。
+// - Create 模式无初值,默认 '{}'。
+// - 每次按键把 text 解析回对象写回 form;非法 JSON 不写回(保留上次合法对象),
+//   并由 Form.Item 的 validator 在提交时报错,不静默提交坏值。
 function ConfigField() {
+  const form = Form.useFormInstance();
+  const watched = Form.useWatch('config', form);
+  const [text, setText] = useState('{}');
+  const seededRef = useRef(false);
+
+  // 首次拿到 form 初值(Edit 模式异步到达)时,把对象 pretty-print 进文本框。
+  useEffect(() => {
+    if (seededRef.current) return;
+    if (watched === undefined) return; // 还没到达,等下一拍
+    seededRef.current = true;
+    setText(
+      watched && typeof watched === 'object' ? JSON.stringify(watched, null, 2) : '{}',
+    );
+  }, [watched]);
+
+  const onChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const next = e.target.value;
+    setText(next);
+    try {
+      const parsed = JSON.parse(next);
+      // 只在解析成对象时写回 form;非对象/非法保持上次合法值,validator 兜底。
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        form.setFieldValue('config', parsed);
+      }
+    } catch {
+      // 非法 JSON 中间态:不写回,不报错,等提交时由 validator 统一拦。
+    }
+  };
+
   return (
     <Form.Item
       label="Config (JSON)"
       name="config"
-      getValueProps={(v) => ({ value: v ? JSON.stringify(v, null, 2) : '{}' })}
-      normalize={(v) => {
-        try {
-          return JSON.parse(v);
-        } catch {
-          return v; // 让校验在提交时由 edge 兜;此处不阻断输入
-        }
-      }}
+      // 文本框受控于本地 state,这里不让 Form 反向驱动 textarea 的 value。
+      getValueProps={() => ({ value: text })}
+      rules={[
+        {
+          validator: () => {
+            try {
+              const parsed = JSON.parse(text);
+              if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                return Promise.reject(new Error('Config 必须是 JSON 对象,如 { "system_prompt": "..." }'));
+              }
+              return Promise.resolve();
+            } catch {
+              return Promise.reject(new Error('Config 不是合法 JSON'));
+            }
+          },
+        },
+      ]}
     >
-      <Input.TextArea rows={10} style={{ fontFamily: 'monospace' }} />
+      <Input.TextArea
+        rows={10}
+        style={{ fontFamily: 'monospace' }}
+        value={text}
+        onChange={onChange}
+      />
     </Form.Item>
   );
 }
