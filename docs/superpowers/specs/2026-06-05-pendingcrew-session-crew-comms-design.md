@@ -184,6 +184,29 @@ session 是**长跑**的，会撞上几个 claude code 机制，提前接：
 - **入口三处**：① crew 设置页（默认）；② 右栏起 session 的配置（覆盖）；③ captain `start_session(brief, runner?, model?, effort?, isolation?)` 工具参数（captain 编排时挑——配合 §10 的"知道各 kind 擅长什么"派合适的 runner+档位）。
 - **落地**：`SessionConfig { kind, model?, effort?, fallbackModel?, isolation, sandbox?, permission=auto }` 归一结构 → `RunnerBackend.launch(config)` 各自映射 argv/`-c`/worktree。现有 `CrewSessionRunner.start` 已有 `model` / `permissionModeOverride` 形参，**扩成完整 `SessionConfig`**。codex `--profile` 可作预设档承载 model+effort+sandbox 组合，简化 UI。
 
+## 12. 第三方 UI / 参考实现（license 逐个核过；PendingCrew 可开源 → 只用 permissive）
+
+### ✅ 可直接 vendor（MIT/Apache/BSD/MPL，留 attribution）
+- **SwiftTerm**（MIT）— claude PTY 面，`LocalProcessTerminalView`（已选，确认）。
+- **`openai/codex`**（**Apache-2.0**）— **最高价值**：app-server 协议(JSON-RPC/stdio，Thread→Turn→Item)。`codex app-server generate-json-schema` → **codegen Swift `Codable`**（quicktype）钉死 codex 版本。证实"codex 走结构化非终端"路对。compliance：留 Apache notice/NOTICE(§4d)、标改动文件。
+- **markdown + 代码渲染**（codex 详情视图 + crew 群聊）：**swift-markdown-ui**(MIT，GFM 渲染；⚠️ 维护模式，继任 Textual 未成熟，先用着盯着) + **HighlightSwift**(MIT，50+ 语言，含 highlight.js BSD 子 notice) **或** **Splash**(MIT，纯 Swift 无 JS)。要自定义 AST(工具调用 chip 插在 md 块间)→ **swift-markdown**(Apache-2.0，仅解析)。
+- **ClaudeCodeSDK**（MIT）— claude stream-json 驱动/参考（**仅 macOS**，见下约束）。
+
+### 🟡 只参考 UX（permissive 但他栈，可抄布局/思路不抄码必要时也可）
+- **Nimbalyst**（MIT，ex-Crystal）— **最像的孪生**：并行跑多个 **Claude + Codex** session 于 git worktree、kanban session 板。**最值得抄的 UX 参考**。
+- **Composio agent-orchestrator**（MIT）— 审批队列 + 状态 kanban + "只在需判断时拉人"，对应 §9 captain/审批。
+- **Mission Control**（MIT）— 审批门 + 看板。
+- **ccmanager**（MIT）— 干净的 **Waiting/Busy/Idle** per-session 状态模型，抄进 crew 列表状态（§5）。
+
+### ⚠️ clean-room 只远观（copyleft/专有，绝不 vendor、不抄片段）
+- **opcode/Claudia**、**Claudiatron**、**claude-squad**（均 **AGPL-3.0**）；**GetStream AI**（专有 Stream License，且要其后端）——但它底层就是 Splash+swift-markdown-ui(MIT)，照那俩自己拼即可；**MeriaApp/Conductor**（README 称 MIT 但 1 star、无实 in-tree LICENSE 验证 → 不可信赖为依赖）。
+
+### ⚠️ 架构硬约束（研究顺带挖出，重要）
+**iPad 不能 spawn 本地 CLI**（iOS sandbox 禁子进程——ClaudeCodeSDK v2.0.0 因此砍了 iOS）。→ **iPad 只能当远程客户端**（claude/codex 跑在 Mac/host，iPad 看&控）。**现 codebase 已用 `#if os(macOS)` 把 runner 锁在 Mac**，所以这约束已隐式生效；但 spec 钉死：**iPad = T4.5 跨端 viewer/controller，不 host session**。plan 别让 iPad 跑 runner。
+
+### 自建（无现成）
+SwiftUI 没有现成的"agent-event 时间线"组件（可展开的 tool-call/diff 行）→ `DisclosureGroup`/`List` + markdown-ui + highlighter 自拼；3 栏 crew 壳 `NavigationSplitView` bespoke。
+
 ## 待探针（实现期验，非设计阻塞）
 
 1. **codex app-server**：仍走订阅(非单独计费)？协议形状(initial message / resume / 工具 / 中断 / rate_limits 透出)——`generate-ts`/`generate-json-schema` 出绑定后实接。
