@@ -17,14 +17,21 @@ import Foundation
 final class McpPermissionHook {
     let approvals: LocalApprovalStore
     let crewId: String
+    /// **本地** session id（= startSession 的 localSessionId，经 `--session` argv 传入）。
+    /// 待审批必须归档在这个 id 下，右栏内联卡片才按 `run.sessionId` 过滤得到 ——
+    /// **不能**用 PreToolUse hook stdin 里 claude 自己的 `session_id`（另一个 UUID 空间，
+    /// 卡片会过滤不到、压根不显示）。
+    let sessionId: String
     /// 命中任一（子串匹配 tool_name）即需人工授权。空 → 不 gate 任何工具。
     let gates: [String]
     /// 可选：raise 待审批时往本地群聊白板贴一条通知（spec §6 通知半边，v1 降级 reporter）。
     let board: LocalWhiteboardStore?
 
-    init(approvals: LocalApprovalStore, crewId: String, gates: [String], board: LocalWhiteboardStore? = nil) {
+    init(approvals: LocalApprovalStore, crewId: String, sessionId: String = "",
+         gates: [String], board: LocalWhiteboardStore? = nil) {
         self.approvals = approvals
         self.crewId = crewId
+        self.sessionId = sessionId
         self.gates = gates
         self.board = board
     }
@@ -41,7 +48,7 @@ final class McpPermissionHook {
 
         guard gates.contains(where: { !$0.isEmpty && toolName.contains($0) }) else { return nil }
 
-        let sessionId = obj["session_id"] as? String ?? ""
+        // 归档用**本地** sessionId（self.sessionId），不是 stdin 里 claude 的 session_id。
         let summary = permissionSummary(toolName: toolName, toolInput: obj["tool_input"])
         let reqId = approvals.raise(crewId: crewId, kind: "permission", sessionId: sessionId, summary: summary)
         // 通知半边（spec §6）：贴到本地群聊白板，人类在 crew chat 看得见有新审批请求。

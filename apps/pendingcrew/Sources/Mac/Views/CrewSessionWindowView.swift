@@ -232,7 +232,10 @@ struct CrewSessionWindowView: View {
         // computer-use（敏感的桌面控制）；**不** gate 自家 crew 工具（post_to_crew/read_whiteboard/
         // ask 都 mcp__crew__ 前缀，子串不含 "computer-use"）。未来可做成 UI 可配 gate 列表。
         let permGates = "computer-use"
-        let permCmd = [helper, "--mcp-permission-hook", "--crew", crewId, "--dir", dir, "--gate", permGates]
+        // --session 必带：权限待审批归档在**本地** sessionId 下，右栏内联卡片才过滤得到
+        // （不能用 PreToolUse hook stdin 里 claude 自己的 session_id）。
+        let permCmd = [helper, "--mcp-permission-hook", "--crew", crewId, "--dir", dir,
+                       "--session", sessionId, "--gate", permGates]
             .map(shellQuote).joined(separator: " ")
         let settings: [String: Any] = ["hooks": [
             "PostToolUse": [["hooks": [["type": "command", "command": hookCmd]]]],

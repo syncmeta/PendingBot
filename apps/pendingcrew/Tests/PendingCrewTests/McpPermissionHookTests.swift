@@ -18,7 +18,8 @@ final class McpPermissionHookTests: XCTestCase {
     func testGatedToolRaisesPermissionAndDeniesOnTimeout() {
         let dir = tempDir()
         let store = LocalApprovalStore(directory: dir)
-        let h = McpPermissionHook(approvals: store, crewId: "c", gates: ["computer-use"])
+        // 传入本地 sessionId "local-x"；stdin 里 claude 的 session_id 故意给 "s"（须忽略）。
+        let h = McpPermissionHook(approvals: store, crewId: "c", sessionId: "local-x", gates: ["computer-use"])
         let out = h.handle(
             #"{"tool_name":"mcp__computer-use__left_click","tool_input":{"command":"click 10 20"},"session_id":"s"}"#,
             pollInterval: 0.01, maxWaits: 1)!
@@ -28,6 +29,7 @@ final class McpPermissionHookTests: XCTestCase {
         let pend = store.pending(crewId: "c")
         XCTAssertEqual(pend.count, 1)
         XCTAssertEqual(pend[0].kind, "permission")
+        XCTAssertEqual(pend[0].sessionId, "local-x", "归档在本地 sessionId 而非 stdin 的 claude session_id")
         XCTAssertTrue(pend[0].summary.contains("mcp__computer-use__left_click"), "摘要含工具名")
         XCTAssertTrue(pend[0].summary.contains("click 10 20"), "摘要含 command 入参")
     }

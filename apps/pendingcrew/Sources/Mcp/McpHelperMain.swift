@@ -38,7 +38,8 @@ enum McpHelperMain {
             // stdin 是单个 hook JSON 对象（一次读到 EOF）。
             let gates = (value("--gate", args) ?? "").split(separator: ",").map(String.init).filter { !$0.isEmpty }
             let permission = McpPermissionHook(approvals: LocalApprovalStore(directory: dir),
-                                               crewId: crewId, gates: gates, board: store)
+                                               crewId: crewId, sessionId: sessionId,
+                                               gates: gates, board: store)
             let data = FileHandle.standardInput.readDataToEndOfFile()
             let input = String(data: data, encoding: .utf8) ?? ""
             if let out = permission.handle(input) {
