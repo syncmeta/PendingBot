@@ -373,18 +373,6 @@ struct FriendsTabView: View {
 
     // MARK: - Data
 
-    struct BotPick: Identifiable, Hashable {
-        let id: String
-        let display_name: String
-        let model_id: String?
-        let visibility: String?
-        let creator_id: String?
-        let voice_call_enabled: Bool?
-        /// When this bot was added (user_bot_contacts.added_at), epoch
-        /// seconds. Drives the "按加好友时间" sort; 0 when unknown (e.g. a
-        /// pre-v7 cached row before the network refresh lands).
-        var addedAt: Int = 0
-    }
     struct HumanPick: Identifiable, Hashable {
         let id: String
         /// Caller's local remark for this contact. Wins over `displayName`
@@ -1725,7 +1713,7 @@ struct AddBotSheet: View {
     /// Caller wants the picked BotPick so it can optimistically prepend
     /// to the list and route into the bot's chat without waiting for the
     /// reload to land.
-    var onAdded: (FriendsTabView.BotPick) -> Void = { _ in }
+    var onAdded: (BotPick) -> Void = { _ in }
     /// When non-empty, opens straight on the invite-preview page for this
     /// token (scan / universal-link flow). Empty => the invite-only info page.
     var prefilledToken: String = ""
@@ -1780,7 +1768,7 @@ struct AddBotSheet: View {
 
 private struct AddBotPreviewPage: View {
     let token: String
-    var onAdded: (FriendsTabView.BotPick) -> Void
+    var onAdded: (BotPick) -> Void
     var onFinished: () -> Void
 
     @Environment(\.dismiss) private var dismissPage
@@ -1788,7 +1776,7 @@ private struct AddBotPreviewPage: View {
 
     enum Preview: Equatable {
         case loading
-        case loaded(bot: FriendsTabView.BotPick, inviterName: String?)
+        case loaded(bot: BotPick, inviterName: String?)
         case notFound(message: String)
     }
 
@@ -1869,7 +1857,7 @@ private struct AddBotPreviewPage: View {
         do {
             let p = try await api.resolveBotInvite(token: token)
             if Task.isCancelled { return }
-            let pick = FriendsTabView.BotPick(
+            let pick = BotPick(
                 id: p.botId,
                 display_name: p.displayName,
                 model_id: p.modelId,
@@ -2030,7 +2018,7 @@ struct MyQRSheet: View {
 /// Preset bots and others' bots get no extra actions — the modifier
 /// returns the row unchanged.
 private struct BotRowOwnerActions: ViewModifier {
-    let bot: FriendsTabView.BotPick
+    let bot: BotPick
     let isMine: Bool
     let onManage: () -> Void
 

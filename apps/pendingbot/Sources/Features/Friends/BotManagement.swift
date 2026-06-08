@@ -49,7 +49,7 @@ struct CreateBotSheet: View {
     @EnvironmentObject private var catalog: ModelCatalog
     /// Called with the freshly-inserted bot so the parent can prepend it
     /// to its own list without a re-fetch.
-    var onCreated: (FriendsTabView.BotPick) -> Void
+    var onCreated: (BotPick) -> Void
 
     @State private var step: CreateStep = .models
     @State private var displayName: String = ""
@@ -333,7 +333,7 @@ struct CreateBotSheet: View {
                 .insert(ContactInsert(user_id: userId, bot_id: row.id, added_via: "manual"))
                 .execute()
 
-            let pick = FriendsTabView.BotPick(
+            let pick = BotPick(
                 id: row.id,
                 display_name: row.display_name,
                 model_id: row.model_id,
@@ -374,7 +374,7 @@ struct ManageBotSheet: View {
     var onChanged: () -> Void
     var onDeleted: (String) -> Void
 
-    let initial: FriendsTabView.BotPick
+    let initial: BotPick
 
     @State private var displayName: String = ""
     @State private var modelSlug: String = ""

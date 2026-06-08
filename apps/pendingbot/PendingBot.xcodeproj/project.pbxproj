@@ -171,6 +171,7 @@
 		D981A37D61DA1B2B0EDF9F14 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0689D829BCC97AF9D3099F61 /* AppEnvironment.swift */; };
 		D99058B289362510CB2EAB85 /* MessageTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D559B8D3970D7B444980F3C /* MessageTabView.swift */; };
 		DCB0C5E8010EA8DD74B37513 /* CrewChildSummaryCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 161466ECAC938388BC8F72E3 /* CrewChildSummaryCard.swift */; };
+		DD45B3485DD8B26E5CAC322F /* BotPick.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220B62863E705C1D1C1CB569 /* BotPick.swift */; };
 		DEEEA17C68F8489062C8985D /* UnreadStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B864C55A6D09538AA4E09FAD /* UnreadStore.swift */; };
 		E169F0C9CD13280A7A6C92D9 /* EmptyHint.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4343D979BB231F99434E6273 /* EmptyHint.swift */; };
 		E668154C26F72C7C4CD2CE01 /* ConversationView+ToolTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = C87A0A38056F5029C934F737 /* ConversationView+ToolTrace.swift */; };
@@ -229,6 +230,7 @@
 		1FEFDBE4DFE6AB93D06D2015 /* AppleSignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSignIn.swift; sourceTree = "<group>"; };
 		20EC68D4DC48DD48B412E35E /* RemoteSessionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteSessionsView.swift; sourceTree = "<group>"; };
 		213E09F2D1646151DC7BE1C6 /* CallView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallView.swift; sourceTree = "<group>"; };
+		220B62863E705C1D1C1CB569 /* BotPick.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotPick.swift; sourceTree = "<group>"; };
 		22B3BF0A069E8CE296ED306E /* CrewSessionPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewSessionPresentation.swift; sourceTree = "<group>"; };
 		24A22C8CB9CB37FC1E1EBC60 /* CrewChatModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewChatModels.swift; sourceTree = "<group>"; };
 		26815F4D8AE1B1CDF63042ED /* CallKitManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallKitManager.swift; sourceTree = "<group>"; };
@@ -709,6 +711,7 @@
 			children = (
 				7389F31567A5B0D72BC29CC1 /* Account.swift */,
 				F1D36E9865F8E358AD4A1B49 /* APIModels.swift */,
+				220B62863E705C1D1C1CB569 /* BotPick.swift */,
 				034B129C2ED5A4233C5D5031 /* CrewProposalPayload.swift */,
 				6591DA7D65BEAC057EACF2DF /* PendingPeer.swift */,
 				80A31D4A5547023C2B42E7DD /* PermissionRequestPayload.swift */,
@@ -853,6 +856,7 @@
 				0E612DF59F682B75DCDD2031 /* BotContactsFetch.swift in Sources */,
 				498EEE5486864027EDE888E7 /* BotInviteAPI.swift in Sources */,
 				BBE709B9F7E9D22EA452BDED /* BotManagement.swift in Sources */,
+				DD45B3485DD8B26E5CAC322F /* BotPick.swift in Sources */,
 				D7E54D526FC58DAACFDBA45C /* BotVisibilityTag.swift in Sources */,
 				ACB7DE5BB4722BC475D80C54 /* BrandAvatar.swift in Sources */,
 				C6F7A651FC9842DE3C2D32A7 /* BubbleSplitter.swift in Sources */,
