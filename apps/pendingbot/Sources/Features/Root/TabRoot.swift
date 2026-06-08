@@ -172,21 +172,6 @@ struct TabRoot: View {
 
 }
 
-// ── EnvironmentValues ───────────────────────────────────────────────────────
-// The TabRoot owns the active APIClient + Account; child views read them
-// via @Environment so we don't have to thread bindings through every layer.
-
-private struct AccountKey: EnvironmentKey { static let defaultValue: Account? = nil }
-private struct APIKey: EnvironmentKey { static let defaultValue: APIClient? = nil }
-
-extension EnvironmentValues {
-    var account: Account? {
-        get { self[AccountKey.self] }
-        set { self[AccountKey.self] = newValue }
-    }
-    var api: APIClient? {
-        get { self[APIKey.self] }
-        set { self[APIKey.self] = newValue }
-    }
-}
+// EnvironmentValues for \.api / \.account moved to AppEnvironment.swift
+// (cross-platform — the keys must exist on macOS too).
 #endif

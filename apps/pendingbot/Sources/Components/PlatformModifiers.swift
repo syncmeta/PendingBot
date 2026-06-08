@@ -51,4 +51,12 @@ extension View {
         self
         #endif
     }
+
+    @ViewBuilder func platformListStyle() -> some View {
+        #if os(iOS)
+        self.listStyle(.insetGrouped)
+        #else
+        self.listStyle(.inset)
+        #endif
+    }
 }

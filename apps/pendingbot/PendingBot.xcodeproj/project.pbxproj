@@ -162,6 +162,7 @@
 		D7E54D526FC58DAACFDBA45C /* BotVisibilityTag.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58C7852B0C9D1F1A7346DDCB /* BotVisibilityTag.swift */; };
 		D7F737DC5F1187C26D825274 /* ServerTimestamp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9E0A1F2EEFADA0D94998172 /* ServerTimestamp.swift */; };
 		D86D67B77E20704ED320D0F9 /* EmailSignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = 023C318B8EB2B3A4CC9F8594 /* EmailSignIn.swift */; };
+		D981A37D61DA1B2B0EDF9F14 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0689D829BCC97AF9D3099F61 /* AppEnvironment.swift */; };
 		D99058B289362510CB2EAB85 /* MessageTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D559B8D3970D7B444980F3C /* MessageTabView.swift */; };
 		DCB0C5E8010EA8DD74B37513 /* CrewChildSummaryCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 161466ECAC938388BC8F72E3 /* CrewChildSummaryCard.swift */; };
 		DEEEA17C68F8489062C8985D /* UnreadStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B864C55A6D09538AA4E09FAD /* UnreadStore.swift */; };
@@ -191,6 +192,7 @@
 		03D2467ADBD40F4F8755863A /* CrewSessionAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewSessionAPI.swift; sourceTree = "<group>"; };
 		0535C2EB32C3F6E1DFE0EA95 /* TabRoot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabRoot.swift; sourceTree = "<group>"; };
 		05749CCA7DC81C13CE7D3C84 /* EnvelopeThinkingTrace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvelopeThinkingTrace.swift; sourceTree = "<group>"; };
+		0689D829BCC97AF9D3099F61 /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
 		0767E4C8060BA86E1484AB2E /* SupabaseStack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseStack.swift; sourceTree = "<group>"; };
 		0952FBAFFA7B0819B8B70672 /* CallSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallSession.swift; sourceTree = "<group>"; };
 		0A39758A2179809248593753 /* ConversationSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationSettingsView.swift; sourceTree = "<group>"; };
@@ -514,6 +516,7 @@
 			isa = PBXGroup;
 			children = (
 				2D43D52E887A812E6C48AA8F /* AppCommands.swift */,
+				0689D829BCC97AF9D3099F61 /* AppEnvironment.swift */,
 				B1A7B2A2C127FA6D633617EC /* FeatureSurface.swift */,
 				C169F240D3B0FFEE51443992 /* PendingBotRegularRootView.swift */,
 				2EA1B13DB170E604F3CB03B8 /* SettingsScene.swift */,
@@ -823,6 +826,7 @@
 				81C3A1F5BC0BEEAC5D96DE66 /* ActiveVoiceCallStore.swift in Sources */,
 				8C5BA9B67A199694684F4D25 /* AddMeMethodsView.swift in Sources */,
 				1816ED8661FB6122D66EA671 /* AppCommands.swift in Sources */,
+				D981A37D61DA1B2B0EDF9F14 /* AppEnvironment.swift in Sources */,
 				3F6C2CE574F1B2E1D65677E9 /* AppleSignIn.swift in Sources */,
 				12A200D2EF7DE9FE9E8C436C /* BillingService.swift in Sources */,
 				B5B71DE9781BE668FF81DE91 /* BlinkingCursor.swift in Sources */,
