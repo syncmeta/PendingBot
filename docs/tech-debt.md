@@ -646,6 +646,7 @@
 - **状态**: 待办（前置依赖，需用户落库角色 + 配 datasource）
 
 ### 🟡 admin 控制台（apps/admin）依赖的 edge admin 端点尚不存在 —— dataProvider 指向"意图路径"，调用即 404
+> **2026-06-08 重定位（`feat/board-console`，spec `docs/superpowers/specs/2026-06-08-board-console-cms-design.md`）**：本条记的"补一整套 `/v1/admin/*` 运营端点"方向已**作废**。重新定调:控制台从「运营仪表盘」纠正为「**内容/预设/配置管理台**」(board CMS)。下面 11 条里的 1-3(用户/Bots/会话浏览)归 **PostHog**、4-9(计费/钱包/账号)归 **Polar/RevenueCat**、10-11(人工协助/权限审批)归 **PendingCrew**(独立开源应用),**都不在中央后台建**。已落地:`/v1/board/preset-bots` 全 CRUD(requireAdmin + admin_audit before/after,经通用 `boardResource` 工厂),前端换 Ant Design、退役 8 个旧运营页。**仍待做(各自后续计划)**:P2 预设会话/群+预设来信(需建 `preset_letters` 表)、P3 tool 管理、P4 KV 配置类(模型目录/pricing/i18n/place_names)。下方原始清单仅作历史留档。
 - **发现**: 2026-06-03 · feat/dashboard-wiring（dashboard stack block 4）
 - **位置**: `apps/admin/src/providers/resource-map.ts`（`RESOURCE_ROUTES` + `ADMIN_ACTION_ENDPOINTS`，逐条标了 `exists:false`）、`apps/admin/src/providers/data-provider.ts`、`apps/edge/src/index.ts`（v1 路由挂载处，**当前无任何 `/v1/admin/*`**）
 - **问题**: 新建的 Refine admin 控制台按 spec 要求"读写都过 edge、绝不直连 Postgres、前端不持 service-role key"，所以 dataProvider 把每个资源映射到 edge REST 路由。但**edge 目前没有 admin 路由面**：`users.is_admin` 字段在 DB 里存在，`@pendingbot/identity` 也导出了 `requireAdmin(...)`，但**全仓没有任何地方 mount 或使用它**。控制台为了不埋"假装能用"的 stub，把这些资源指向**意图中的** edge 路径并在代码里 `exists:false` 标注 + 页面渲染告警横条；调用当前会 404。
@@ -666,7 +667,7 @@
   10. `GET /v1/admin/permission-requests`（list）—— 权限审批**列表**（decide 动作已存在，但没有 admin 列表读）。
   11. `GET /v1/admin/human-help-requests`（list）—— **admin-wide** 人工协助队列（现有那条只看 caller 自己被点名的，不是全局队列）。
 - **建议**: 新建 `apps/edge/src/routes/admin.ts`，挂在 `/v1/admin`，第一道中间件 `requireSession()` 后接 `requireAdmin(c => SELECT is_admin FROM pendingbot.users WHERE id=c.var.userId)`，所有读用 `serviceClient` 跨用户查、所有写进 `admin_audit`（actor_id/before/after/ip/user_agent 已有列）。读端点返回 `{ items: [...] }`（控制台 dataProvider 已按此 normalize）。建端点时同步把 `resource-map.ts` 对应条目翻成 `exists:true`，并把本条状态推进。计费两个端点落地前先决定 `pnc_ledger` 视图建不建（spec 名 vs 实表名的口径要统一）。
-- **状态**: 待办（控制台前端已接好并可编译/构建；等 edge admin 路由面落地）
+- **状态**: 已重定位为 board CMS（见顶部 2026-06-08 note）。P0 框架 + P1 预设机器人已落地并双审/全量验证（edge 540 vitest + typecheck 绿、admin build 绿）；P2–P4 待后续计划。原始"补全 /v1/admin/* 运营面"方向作废。
 
 
 - 🟡 **旧 per-conversation 分摊模型"连根拔"未完(invite 流耦合 + 物理 drop 待协调)** — `feat/ios-wallet-group`(2026-06-03,基于 `chore/retire-billing-v2`)。群消费结算早已切到责任 subject 的实缴池+认缴(`settleGroupSpend`),用户拍板 iOS+edge 连根拔旧 per-conversation `group_member_billing` 分摊。**本拍已做**:删 `lib/group-billing.ts`+测试(死)、删 `groups.ts` 的 `/billing|/cap|/participates` 三路由。**未做(耦合群邀请流 + iOS,独立一摊)**:(a) `groups.ts:groupBillingInviteSnapshot` 仍读 `group_member_billing` 生成邀请预览"分摊"文案,两处调用(创建群邀请 / 邀请预览)嵌进 invite 响应,iOS `FriendsTabView` 消费 `mode_label/invitee_participates/payer_count_after` —— 新模型无 per-conversation "participates" 概念,该快照前提已不成立,需解耦/移除并改 iOS 邀请预览 UI;(b) 接受邀请 handler 仍写 `group_member_billing`(seeding)+ 用 `group_member_invitations.invitee_participates`;(c) 物理 drop 迁移:`group_member_billing` 表 + `group_set_billing/cap/participates` RPC + `group_member_invitations.billing_snapshot`/`invitee_participates` 列。**(c) 必须在 `chore/retire-billing-v2` 部署、且 (a)(b) 解耦后再 apply**(生产 main 当前仍 live 在旧模型上,提前 drop 会 500)。建议作为独立 task 整体收口,别塞进钱包 UI 这一拍。

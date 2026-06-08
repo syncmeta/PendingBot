@@ -1,6 +1,12 @@
 # PendingBot / PendingCrew 进度账本 (Progress Ledger)
 
-**最近对账：2026-06-07**（对照实际代码 / 迁移 / git，不是看 task 标记）
+**最近对账：2026-06-08**（对照实际代码 / 迁移 / git，不是看 task 标记）
+
+> **2026-06-08 admin 控制台重定位为 board CMS — P0 框架 + P1 预设机器人落地（`feat/board-console`，未合 main）**
+> - 用户质疑原 admin 控制台 8 个运营页的职责划分,全部成立 → 重定调:控制台从「运营仪表盘」纠正为「**内容/预设/配置管理台**」(board CMS)。用户/会话浏览→PostHog;计费/钱包/退款→Polar/RevenueCat;人工协助/权限审批→PendingCrew(独立开源应用)。命名一律用 **board**(旧 board 重生),保留 `is_admin`/`admin_audit`/`requireAdmin` 三个底层物件不重命名。spec:`docs/superpowers/specs/2026-06-08-board-console-cms-design.md`,计划:`docs/superpowers/plans/2026-06-08-board-console-p0-p1.md`。
+> - **subagent-driven 执行,合并方(我)每单元后双审(spec 合规 + 代码质量)+ 自跑全量坐实**:① edge 后端 — `boardResource` 通用 CRUD 工厂(五端点 + admin_audit before/after 内建,`fixedFields` 钉 creator_id=null 标记模板行)+ `/v1/board/preset-bots`(挂 requireSession+requireAdmin(isBoardAdmin))+ 4 vitest。② 前端 — 换 Ant Design(`@refinedev/antd@6`),预设机器人 List/Create/Edit,退役 resources/queues/admin-actions/common 旧页;修了 Config JSON 字段中途转义的编辑 bug。
+> - **验证状态**:edge typecheck 0 + vitest **540/540** 绿、admin `bun run build` 绿(均合并后自跑)。**未做(需用户在场)**:设 `is_admin=true` 账号(给一条 SQL)+ 本地登录端到端手验(列模板 6 bot/增删改/审计落 before-after)→ 这步过了 P1 才算"已验证可用"。**待后续计划**:P2 预设会话/群+预设来信(建 `preset_letters` 表+改 `seed_example_letter()` 读表)、P3 tool 管理、P4 KV 配置类。
+> - tech-debt 记两条 🟡(boardResource 把 DB 错误一律压 500 无法区分 409 conflict;list 硬编码 limit(500) 静默截断),P2 换表前处理。
 
 > **2026-06-07 T2 边缘读卸载(Supabase 单区 → CF 边缘投影)全链路落地(已合 main `e161a6a6`,#260/#261/#262)**
 > - 背景:Supabase 单点法兰克福,US/Asia 首屏吃跨洋 RTT。把**热读路径**从客户端直连法兰克福改成 CF 边缘投影,Supabase 退为最终一致真源/事件源/重建源。spec:`docs/superpowers/plans/2026-06-07-edge-read-offload.md`(四桶分类 + 7 规则 + 授权门两层 + 决策)。
