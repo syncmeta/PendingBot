@@ -63,6 +63,9 @@ targets:
       # LocalRunner 模块是纯 Foundation 代码（不依赖 SwiftUI / NSApplicationMain），
       # 重复编译进 test bundle 完全没问题。
       - path: Sources/Mac/LocalRunner
+      # LocalWhiteboardStore 同理：自包含 Foundation 代码（本地白板持久化，
+      # 不引 CrewWhiteboardEntry / app module），单独编进 bundle 单测。
+      - path: Sources/Stores/LocalWhiteboardStore.swift
     # AgentTerminalSession.swift（在 LocalRunner 里）import SwiftTerm，所以
     # test bundle 也要链 SwiftTerm，否则编不过。
     dependencies:
