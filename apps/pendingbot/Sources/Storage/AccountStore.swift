@@ -160,14 +160,12 @@ final class AccountStore: ObservableObject {
     /// RPC fails the tombstone stays put and tomorrow's cron sweep is the
     /// next chance for the user to log in and recover.
     private func cancelPendingDeletion() async {
-        struct EmptyArgs: Encodable {}
         do {
-            let res = try await SupabaseStack.shared
-                .rpc("cancel_account_deletion", params: EmptyArgs())
-                .execute()
-            // RPC returns boolean (true if a tombstone was cleared).
-            if let json = try? JSONSerialization.jsonObject(with: res.data),
-               let cleared = json as? Bool, cleared {
+            struct CancelResult: Decodable { let cleared: Bool }
+            // 注销取消收进 worker(DELETE /v1/me/account-deletion);cleared =
+            // 是否清掉了待删 tombstone,据此弹"已恢复账号"。(T2 #264)
+            let res: CancelResult = try await APIClient().delete("v1/me/account-deletion")
+            if res.cleared {
                 self.accountRecovered = true
             }
         } catch {

@@ -461,7 +461,11 @@ export async function fetchLMArenaRows(env: Env): Promise<LMArenaRowsBySubset> {
 export async function buildModelCatalog(
   lmarenaRowsBySubset: LMArenaRowsBySubset = {},
 ): Promise<OpenRouterModelOut[]> {
-  const res = await fetch('https://openrouter.ai/api/v1/models');
+  // CF 边缘缓存 OpenRouter 目录:成功响应缓 1h(catalog 变动稀疏,避免每次 /models
+  // 都回 OpenRouter),错误不缓(下次重试)。跨 isolate 复用,比 isolate 级缓存可靠。(T2 #263)
+  const res = await fetch('https://openrouter.ai/api/v1/models', {
+    cf: { cacheTtlByStatus: { '200-299': 3600, '400-599': 0 }, cacheEverything: true },
+  });
   if (!res.ok) {
     const body = (await res.text()).slice(0, 300);
     console.warn('[v1/models] upstream', res.status, body);
