@@ -14,14 +14,21 @@ import SwiftUI
 /// └──────────┴────────────────┴───────────────────────────┘
 /// ```
 ///
-/// 现阶段只在 macOS 接入(iPad 翻转留给后续 task)。**反退化约束**:已迁移的
-/// tab 继续渲染现有可用的 Mac 列(消息 / Crew / 来信 / 我),不退化成空 placeholder
-/// —— 否则 Mac 这些 tab 会空白数周。好友 tab 暂用占位文案,共享好友面会在后续
-/// task 接入。`#else`(iOS,此处暂未启用)各 tab 给跨平台占位 Text。
+/// 现阶段只在 macOS 接入(iPad 翻转留给后续 task)。已迁移的 tab(消息 / 好友)
+/// 中列 / 右栏直接取共享 `FeatureSurface` 的 `listColumn` / `detailColumn`;
+/// 未迁移的 tab(Crew / 来信 / 我)继续渲染现有可用的 Mac 平行列,不退化成
+/// 空 placeholder。`#else`(iOS,此处暂未启用)各 tab 给跨平台占位 Text。
 struct WideRootView: View {
     @State private var selectedTab: TopTab = .message
-    /// 中间列的选中项。骨架阶段用 `String?` 占位(会话 / 好友 / 来信 ID)。
+    /// 中间列的选中项。**未迁移**的 tab(crew / envelope)仍用 `String?` ID
+    /// 占位驱动它们的 Mac 平行列。已迁移的好友 / 消息 tab 改用下面各自的
+    /// 强类型 selection。
     @State private var selectedItemId: String? = nil
+    /// 好友 tab 的选中项 —— 直接持有共享 `FriendsTabView` 的 `Selection`
+    /// (`PendingPeer`),壳把同一个 binding 喂给 list 列(写)和 detail 列(读)。
+    @State private var friendsSelection: PendingPeer? = nil
+    /// 消息 tab 的选中项 —— 共享 `MessageTabView` 的 `Selection`(`ChatDest`)。
+    @State private var messagesSelection: ChatDest? = nil
     /// 跨 tab 跳转待定值(好友点 bot → 切到消息 tab 选中该会话)。切 tab 的
     /// onChange 会消费它,避免被「切 tab 清 selection」覆盖——确定性、无竞态。
     @State private var pendingConversationJump: String? = nil
@@ -71,13 +78,14 @@ struct WideRootView: View {
         #if os(macOS)
         switch selectedTab {
         case .message:
-            // 消息 tab 中列接入真实会话列表;选中一个会话后右栏是聊天。
-            MacConversationListColumn(selectedConversationId: $selectedItemId)
+            // 消息 tab 中列 = 共享 `MessageTabView` 的 list 列;选中一个会话
+            // (ChatDest)后右栏是聊天 detail。壳持有 selection,list 写、detail 读。
+            MessageTabView().listColumn(selection: $messagesSelection)
                 .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
         case .friends:
-            // 好友 tab 暂用占位 —— 共享好友面会在后续 task 接入。
-            WidePlaceholderColumn(message: "好友")
-                .navigationTitle("好友")
+            // 好友 tab 中列 = 共享 `FriendsTabView` 的 list 列;选中一位好友
+            // (PendingPeer)后右栏是会话 detail。
+            FriendsTabView().listColumn(selection: $friendsSelection)
                 .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
         case .envelope:
             // 来信 tab 中列:奏折/信件 feed;选中看正文。
@@ -110,12 +118,13 @@ struct WideRootView: View {
             // 因为「我」tab 没有可枚举的 list 内容。
             MacMeView()
         case .message:
-            if let convId = selectedItemId {
-                MacChatView(conversationId: convId)
-                    .id(convId)
-            } else {
-                WidePlaceholderColumn(message: "选中一条会话以查看消息", prominent: true)
-            }
+            // 消息 detail = 共享 surface 的 detail 列,纯从 selection(ChatDest)
+            // 解析。注意:这是与 list 列不同的 `MessageTabView()` 实例,二者
+            // @State 互相不可见 —— detail 的 `bot(for:)` 读不到 list 列加载的
+            // `bots`,会传 `bot: nil`;ConversationView 设计上能从
+            // `pendingPeer?.peerId ?? conversation.bot_id` 自行解析 botId,所以
+            // 仍可用(Phase 7 真机验证 bot 元信息渲染)。
+            MessageTabView().detailColumn(selection: messagesSelection)
         case .crew:
             if let crewId = selectedItemId {
                 MacRemoteSessionsView(crewId: crewId)
@@ -123,7 +132,9 @@ struct WideRootView: View {
                 WidePlaceholderColumn(message: "选中 Crew 频道查看详情", prominent: true)
             }
         case .friends:
-            WidePlaceholderColumn(message: "选中一位好友以查看资料", prominent: true)
+            // 好友 detail = 共享 surface 的 detail 列,纯从 selection(PendingPeer)
+            // 解析(同上 separate-@State 注意点:`bot: nil`,ConversationView 自解析)。
+            FriendsTabView().detailColumn(selection: friendsSelection)
         case .envelope:
             if let envelopeId = selectedItemId {
                 MacEnvelopeDetail(envelopeId: envelopeId)
