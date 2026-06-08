@@ -61,4 +61,29 @@ final class SessionConfigTests: XCTestCase {
         let cfg = SessionConfig(kind: .codex, initialPrompt: "go", appendSystemPromptFile: "/tmp/w.md")
         XCTAssertEqual(cfg.argv(), ["--sandbox", "workspace-write", "go"])
     }
+
+    func testClaudeArgvSettingsAndMcpConfig() {
+        // 本地 comms：--settings(hook 注入未读白板) + --mcp-config(post_to_crew/read)。
+        let cfg = SessionConfig(kind: .claudeCode, initialPrompt: "go",
+                                settingsFile: "/t/s.json", mcpConfigFile: "/t/m.json")
+        XCTAssertEqual(cfg.argv(),
+                       ["--permission-mode", "auto",
+                        "--settings", "/t/s.json", "--mcp-config", "/t/m.json", "go"])
+    }
+
+    func testClaudeArgvAllLocalCommsFlagsOrder() {
+        let cfg = SessionConfig(kind: .claudeCode, initialPrompt: "go",
+                                appendSystemPromptFile: "/t/w.md",
+                                settingsFile: "/t/s.json", mcpConfigFile: "/t/m.json")
+        XCTAssertEqual(cfg.argv(),
+                       ["--permission-mode", "auto",
+                        "--append-system-prompt-file", "/t/w.md",
+                        "--settings", "/t/s.json", "--mcp-config", "/t/m.json", "go"])
+    }
+
+    func testCodexIgnoresSettingsAndMcpConfig() {
+        let cfg = SessionConfig(kind: .codex, initialPrompt: "go",
+                                settingsFile: "/t/s.json", mcpConfigFile: "/t/m.json")
+        XCTAssertEqual(cfg.argv(), ["--sandbox", "workspace-write", "go"])
+    }
 }

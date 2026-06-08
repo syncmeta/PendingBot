@@ -26,6 +26,12 @@ public struct SessionConfig: Sendable, Equatable {
     /// (spec local-first chunk 4 session↔crew 接线)。codex 路径暂不接(走 app-server
     /// 的 additionalContext,见 codex 参考)。
     public var appendSystemPromptFile: String?
+    /// claude `--settings <file>`：per-session settings.json（含 PostToolUse hook =
+    /// `pendingcrew-mcp hook`，每轮注入未读白板）。nil = 不带。flag 经 spike 实测。
+    public var settingsFile: String?
+    /// claude `--mcp-config <file>`：per-session mcp-config.json（挂 `pendingcrew-mcp
+    /// serve`，提供 post_to_crew/read_whiteboard）。nil = 不带。flag 经 spike 实测。
+    public var mcpConfigFile: String?
 
     public init(kind: LocalCodingAgentKind,
                 model: String? = nil,
@@ -34,7 +40,9 @@ public struct SessionConfig: Sendable, Equatable {
                 resumeSessionId: String? = nil,
                 permissionMode: String = "auto",
                 isolation: Bool = false,
-                appendSystemPromptFile: String? = nil) {
+                appendSystemPromptFile: String? = nil,
+                settingsFile: String? = nil,
+                mcpConfigFile: String? = nil) {
         self.kind = kind
         self.model = model
         self.effort = effort
@@ -43,6 +51,8 @@ public struct SessionConfig: Sendable, Equatable {
         self.permissionMode = permissionMode
         self.isolation = isolation
         self.appendSystemPromptFile = appendSystemPromptFile
+        self.settingsFile = settingsFile
+        self.mcpConfigFile = mcpConfigFile
     }
 
     /// Build the interactive-CLI argv. The session's instruction is the trailing
@@ -55,6 +65,8 @@ public struct SessionConfig: Sendable, Equatable {
             if let id = resumeSessionId, !id.isEmpty { a += ["--resume", id] }
             a += ["--permission-mode", permissionMode] // "auto", NOT --dangerously-skip-permissions
             if let f = appendSystemPromptFile, !f.isEmpty { a += ["--append-system-prompt-file", f] }
+            if let s = settingsFile, !s.isEmpty { a += ["--settings", s] }
+            if let mc = mcpConfigFile, !mc.isEmpty { a += ["--mcp-config", mc] }
             if let m = model, !m.isEmpty { a += ["--model", m] }
             if let e = effort, !e.isEmpty { a += ["--effort", e] }
             if let p = initialPrompt, !p.isEmpty { a.append(p) } // positional prompt LAST
