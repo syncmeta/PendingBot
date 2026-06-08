@@ -781,7 +781,9 @@ struct ConversationView: View {
             // scheduled and leaves a tiny race window in which willPresent
             // reads nil and pops a foreground banner.
             if !conversation.id.isEmpty {
+                #if os(iOS)
                 PushService.shared.activeConversationId = conversation.id
+                #endif
                 // Pin this conv read while it's on screen — any message
                 // that arrives now stays read no matter which realtime
                 // path (or refetch) reports it.
@@ -836,9 +838,11 @@ struct ConversationView: View {
         }
         #endif
         .onDisappear {
+            #if os(iOS)
             if PushService.shared.activeConversationId == conversation.id {
                 PushService.shared.activeConversationId = nil
             }
+            #endif
             UnreadStore.shared.leaveConversation(
                 conversation.id,
                 throughLastMessageId: messages.last?.id ?? conversation.last_message_id
@@ -863,7 +867,15 @@ struct ConversationView: View {
             //   • user_user → ContactSettingsView (备注 / 免打扰 / 删除好友)
             //   • user_bot / self → BotConfigView (机器人本身的默认配置)
             if conversation.conversation_type == "group" {
+                #if os(iOS)
                 GroupSettingsView(conversationId: conversation.id)
+                #else
+                // GroupSettingsView is still iOS-only (UIPasteboard +
+                // not-yet-shimmed nav modifiers). macOS placeholder until
+                // the Group slice is ported.
+                Text("群设置暂不支持 Mac")
+                    .foregroundStyle(.secondary)
+                #endif
             } else if conversation.conversation_type == "user_user",
                       let peer = peerProfileForBubble {
                 ContactSettingsView(
@@ -907,10 +919,12 @@ struct ConversationView: View {
             guard !items.isEmpty else { return }
             uploadTasks.append(Task { await ingestPhotos(items) })
         }
+        #if os(iOS)
         .onChange(of: cameraImage) { _, image in
             guard let image else { return }
             uploadTasks.append(Task { await ingestCameraImage(image) })
         }
+        #endif
         .fileImporter(
             isPresented: $showFileImporter,
             allowedContentTypes: [.item],

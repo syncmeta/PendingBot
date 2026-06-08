@@ -1,4 +1,3 @@
-#if os(iOS)
 import Foundation
 import SwiftUI
 
@@ -127,4 +126,3 @@ struct TimeSeparatorPill: View {
             .accessibilityLabel("时间:\(RelativeMessageTime.format(date, style: .pill))")
     }
 }
-#endif

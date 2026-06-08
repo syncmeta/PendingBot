@@ -48,10 +48,10 @@ struct LetterComposeSheet: View {
             .navigationTitle("写信给「\(recipient.displayName)」")
             .inlineNavTitle()
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: .platformLeading) {
                     Button("取消") { dismiss() }.disabled(sending)
                 }
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .platformTrailing) {
                     Button {
                         Task { await trySend() }
                     } label: {

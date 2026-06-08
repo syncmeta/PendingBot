@@ -2354,7 +2354,7 @@ struct BotQRCard: View {
     @ViewBuilder
     private func background(size: CGFloat) -> some View {
         let shape = RoundedRectangle(cornerRadius: 28, style: .continuous)
-        if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, macOS 26.0, *) {
             Color.clear
                 .frame(width: size, height: size)
                 .glassEffect(.regular, in: shape)

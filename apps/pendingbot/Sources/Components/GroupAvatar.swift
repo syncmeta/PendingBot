@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 /// Default avatar for group conversations: white disc with a gray
@@ -75,4 +74,3 @@ struct GroupAvatar: View {
         return picked
     }
 }
-#endif

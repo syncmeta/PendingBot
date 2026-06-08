@@ -142,7 +142,9 @@ struct FriendsTabView: View {
         NavigationStack(path: $path) {
             sidebarBody
                 .background(Theme.Palette.canvas.ignoresSafeArea())
+                #if os(iOS)
                 .toolbar(.hidden, for: .navigationBar)
+                #endif
                 .navigationDestination(for: PendingPeer.self) { peer in
                     ConversationView(
                         conversation: pendingConversation(for: peer),
@@ -151,7 +153,7 @@ struct FriendsTabView: View {
                     )
                 }
         }
-        .toolbar(path.isEmpty ? .visible : .hidden, for: .tabBar)
+        .platformTabBarVisibility(path.isEmpty)
     }
 
     // ── Regular (iPad landscape, Mac Catalyst) ──────────────────────────────
@@ -165,7 +167,9 @@ struct FriendsTabView: View {
                 }
             }
             .background(Theme.Palette.canvas.ignoresSafeArea())
+            #if os(iOS)
             .toolbar(.hidden, for: .navigationBar)
+            #endif
             .sidebarColumnWidth()
         } detail: {
             if let peer = selectedPeer {
@@ -1410,7 +1414,7 @@ struct AddFriendSheet: View {
             .navigationTitle("加好友")
             .inlineNavTitle()
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: .platformLeading) {
                     Button("取消") { dismiss() }
                 }
             }
@@ -1499,7 +1503,7 @@ private struct AddFriendPreviewPage: View {
         .navigationTitle("加好友")
         .inlineNavTitle()
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .platformTrailing) {
                 Button("发送申请") { Task { await submit() } }
                     .disabled(!canSubmit)
             }
@@ -1662,7 +1666,7 @@ struct AddBotSheet: View {
             .navigationTitle("加机器人")
             .inlineNavTitle()
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: .platformLeading) {
                     Button("取消") { dismiss() }
                 }
             }
@@ -1734,7 +1738,7 @@ private struct AddBotPreviewPage: View {
         .navigationTitle("加机器人")
         .inlineNavTitle()
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .platformTrailing) {
                 Button("添加") { Task { await submit() } }
                     .disabled(!canSubmit)
             }
@@ -1859,10 +1863,10 @@ struct ContactAliasSheet: View {
             .inlineNavTitle()
             .onAppear { alias = contact.alias ?? "" }
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: .platformLeading) {
                     Button("取消") { dismiss() }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .platformTrailing) {
                     Button("保存") { Task { await save() } }
                         .disabled(saving)
                 }
@@ -1920,9 +1924,19 @@ struct MyQRSheet: View {
             ZStack {
                 Theme.Palette.canvas.ignoresSafeArea()
                 ScrollView {
+                    #if os(iOS)
                     MyQRBusinessCard()
                         .padding(.horizontal, 24)
                         .padding(.vertical, 12)
+                    #else
+                    // MyQRBusinessCard is iOS-only (UIKit image rendering,
+                    // PHPhotoLibrary save). macOS shows a placeholder until a
+                    // cross-platform QR card lands.
+                    Text("二维码名片暂不支持 Mac")
+                        .font(Theme.Fonts.footnote)
+                        .foregroundStyle(.secondary)
+                        .padding(40)
+                    #endif
                 }
             }
             .toolbar {

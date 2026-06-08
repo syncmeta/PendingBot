@@ -5,6 +5,25 @@ import SwiftUI
 /// extension that also adds methods referencing it.
 enum PlatformKeyboard { case url, `default` }
 
+extension ToolbarItemPlacement {
+    /// Leading nav-bar slot on iOS; cancellation slot on macOS.
+    static var platformLeading: ToolbarItemPlacement {
+        #if os(iOS)
+        .topBarLeading
+        #else
+        .cancellationAction
+        #endif
+    }
+    /// Trailing nav-bar slot on iOS; primary-action slot on macOS.
+    static var platformTrailing: ToolbarItemPlacement {
+        #if os(iOS)
+        .topBarTrailing
+        #else
+        .primaryAction
+        #endif
+    }
+}
+
 /// Cross-platform View modifier shims. On iOS each forwards to the real
 /// iOS-only modifier; on macOS it's a no-op so shared `Features/*` views
 /// compile on both platforms without `#if os` at every call site.
