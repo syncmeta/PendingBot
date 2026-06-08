@@ -9,6 +9,7 @@ import { dataProvider } from './providers/data-provider';
 import { authProvider } from './providers/auth-provider';
 import { LoginPage } from './pages/login';
 import { PresetBotList, PresetBotCreate, PresetBotEdit } from './pages/preset-bots';
+import { FeatureFlagsPage } from './pages/feature-flags';
 
 export default function App() {
   return (
@@ -29,6 +30,11 @@ export default function App() {
                 edit: '/preset-bots/edit/:id',
                 meta: { label: '预设机器人' },
               },
+              {
+                name: 'feature_flags',
+                list: '/feature-flags',
+                meta: { label: '功能开关' },
+              },
             ]}
           >
             <Routes>
@@ -46,6 +52,7 @@ export default function App() {
                 <Route path="/preset-bots" element={<PresetBotList />} />
                 <Route path="/preset-bots/create" element={<PresetBotCreate />} />
                 <Route path="/preset-bots/edit/:id" element={<PresetBotEdit />} />
+                <Route path="/feature-flags" element={<FeatureFlagsPage />} />
               </Route>
               <Route path="*" element={<CatchAllNavigate to="/login" />} />
             </Routes>
