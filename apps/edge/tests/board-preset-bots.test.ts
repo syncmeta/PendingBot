@@ -60,3 +60,58 @@ describe('board admin gate', () => {
     expect(res.status).toBe(403);
   });
 });
+
+describe('GET /v1/board/preset-bots', () => {
+  it('lists only template rows (creator_id NULL) under { items }', async () => {
+    const db = makeFakeDb({
+      users: [{ id: 'admin-1', is_admin: true }],
+      bots: [
+        { id: 'b-tpl', slug: 'amet', display_name: 'Amet', model_id: 'm1', output_mode: 'single', is_active: true, visibility: 'private', config: {}, creator_id: null, created_at: 't', updated_at: 't' },
+        { id: 'b-user', slug: 'amet', display_name: 'Clone', model_id: 'm1', output_mode: 'single', is_active: true, visibility: 'private', config: {}, creator_id: 'user-9', created_at: 't', updated_at: 't' },
+      ],
+    });
+    const res = await appFor(db).request('/v1/board/preset-bots', {
+      headers: { 'x-test-user-id': 'admin-1' },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { items: Array<Record<string, unknown>> };
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0].id).toBe('b-tpl');
+  });
+});
+
+describe('POST /v1/board/preset-bots', () => {
+  it('creates a template row and writes an admin_audit(create) row', async () => {
+    const db = adminDb();
+    const res = await appFor(db).request('/v1/board/preset-bots', {
+      method: 'POST',
+      headers: { 'x-test-user-id': 'admin-1', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        slug: 'novum',
+        display_name: 'Novum',
+        model_id: 'claude-opus-4.7',
+        output_mode: 'single',
+      }),
+    });
+    expect(res.status).toBe(200);
+    const inserted = db.inserts.filter((i) => i.table === 'bots');
+    expect(inserted).toHaveLength(1);
+    const audits = db.inserts.filter((i) => i.table === 'admin_audit');
+    expect(audits).toHaveLength(1);
+    expect(audits[0].row.action).toBe('create');
+    expect(audits[0].row.target_kind).toBe('preset_bot');
+    expect(audits[0].row.actor_id).toBe('admin-1');
+  });
+
+  it('rejects an invalid body with 400 invalid_body', async () => {
+    const db = adminDb();
+    const res = await appFor(db).request('/v1/board/preset-bots', {
+      method: 'POST',
+      headers: { 'x-test-user-id': 'admin-1', 'content-type': 'application/json' },
+      body: JSON.stringify({ display_name: 'no slug' }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe('invalid_body');
+  });
+});
