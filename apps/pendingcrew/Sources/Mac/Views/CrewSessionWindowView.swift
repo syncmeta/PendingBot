@@ -141,10 +141,14 @@ struct CrewSessionWindowView: View {
         }
         if let sid = serverLink?.sessionId { handledSessionIds.insert(sid) }
         do {
+            let cfg = SessionConfig(kind: selectedKind, initialPrompt: firstPrompt)
+            // isolation=on → 独立 worktree;off → crew 共享目录（spec §8/§11）。
+            let workdir = SessionWorkspace.resolve(
+                crewDirectory: dir, isolation: cfg.isolation, hint: firstPrompt)
             try await sessionRunner.start(
                 crewId: detail.crew.id,
-                config: SessionConfig(kind: selectedKind, initialPrompt: firstPrompt),
-                workingDirectory: dir,
+                config: cfg,
+                workingDirectory: workdir,
                 taskBrief: firstPrompt,
                 serverLink: serverLink
             )
