@@ -31,8 +31,14 @@ case "serve":
         }
     }
 case "hook":
-    // Task 3 接 HookEmitter；占位：暂不输出（无未读 → 不注入）。
-    break
+    // PostToolUse hook：吐本 session 未读白板（带"可信"提示）。无未读 → 不输出。
+    // cursorDir 跟 store 同目录（dirURL 缺省时都用 defaultDirectory，对齐）。
+    let emitter = HookEmitter(store: store, crewId: crewId, sessionId: sessionId,
+                              cursorDir: dirURL ?? LocalWhiteboardStore.defaultDirectory)
+    if let out = emitter.emitAndAdvance() {
+        print(out)
+        fflush(stdout)
+    }
 default:
     FileHandle.standardError.write(Data(
         "usage: pendingcrew-mcp serve|hook --crew <id> --dir <path> --session <id>\n".utf8))

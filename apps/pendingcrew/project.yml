@@ -76,8 +76,10 @@ targets:
       - path: Sources/Stores/PromptTemplate.swift
       - path: Sources/Stores/LocalPromptLoader.swift
       - path: Sources/Stores/LocalSessionWorldModel.swift
-      # McpServer.swift（纯 dispatch，不含 main.swift 顶层代码）编进 bundle 测 JSON-RPC。
+      # McpServer.swift / HookEmitter.swift（纯逻辑，不含 main.swift 顶层代码）编进
+      # bundle 测 JSON-RPC dispatch + hook 注入。
       - path: Sources/Mcp/McpServer.swift
+      - path: Sources/Mcp/HookEmitter.swift
       - path: Resources/Prompts
     # AgentTerminalSession.swift（在 LocalRunner 里）import SwiftTerm，所以
     # test bundle 也要链 SwiftTerm，否则编不过。
