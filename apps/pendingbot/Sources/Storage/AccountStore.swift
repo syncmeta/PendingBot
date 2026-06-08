@@ -55,48 +55,81 @@ final class AccountStore: ObservableObject {
     func bootstrap() async {
         guard !didBootstrap else { return }
         didBootstrap = true
-        // If a session is persisted on disk, let the SDK refresh it before
-        // we flip `sessionHydrated`. Without this await, an expired-but-
-        // refreshable session (access token's default lifetime is 1h, so
-        // any cold start past that hits this) takes the no-current branch,
-        // RootView paints WelcomeView for one tick, then authStateChanges
-        // fires with the refreshed token and we jump to TabRoot — exactly
-        // the "先进登录页再跳主页" symptom. Awaiting `auth.session` keeps
-        // SplashView up while the refresh is in flight.
+        // 秒进 + 后台刷新 —— 镜像主流 IM 的冷启动。
+        //
+        // 旧实现在启动路径上 `await auth.session`(会阻塞做一次 token 刷新),
+        // access token 默认只活 1h,所以任何隔了 1h 以上的冷启动都会卡在
+        // "加载中" 一个网络往返(EU 区从国内 RTT 更明显),刷新一旦真 hang
+        // 连登录页都进不去。
+        //
+        // 现在改成:有持久化会话就先用本地缓存的(可能已过期的)会话立刻渲染
+        // 已登录界面,不在首屏路径上等任何网络。token 刷新丢到后台 Task
+        // (见 refreshSessionInBackground)。所有 /v1 调用取 token 都走
+        // `auth.session`(按需自动刷新),所以即便此刻 access token 过期,
+        // 首屏后的第一个请求也会自愈。
         if SupabaseStack.shared.auth.currentSession != nil {
-            do {
-                let session = try await SupabaseStack.shared.auth.session
-                if !Self.isExpired(session) {
-                    current = Self.makeAccount(session: session)
-                    Task { await self.refreshProfileFlags() }
-                }
-            } catch {
-                // Refresh failed (network down, refresh token revoked, …).
-                // Fall through with current = nil — WelcomeView is correct.
-                log.error("session refresh failed: \(String(describing: error), privacy: .public)")
-            }
+            current = SupabaseStack.shared.auth.currentSession.map(Self.makeAccount)
+            Task { await self.refreshProfileFlags() }
+            Task { await self.refreshSessionInBackground() }
         }
         sessionHydrated = true
         observeAuth()
+    }
+
+    /// 后台刷新持久化会话的 token。三种结局:
+    ///   - 成功 → 用新会话更新 `current`(authStateChanges 的 .tokenRefreshed
+    ///     也会跟进,这里直接更一次免得多等一拍)。
+    ///   - server 明确拒绝 refresh token(失效 / 被吊销 / 已用过,统一是
+    ///     `AuthError`)→ 登录态确实没了,本地登出回退登录页。
+    ///   - 纯网络 / 传输错误(`URLError` 等,非 `AuthError`)→ 不是登录态失效,
+    ///     不把人踢出去:保留缓存会话留在 app 里,等 SDK autoRefresh / 下次
+    ///     冷启动 / 下个请求继续重试。跟"正常使用中途断网"一致。
+    private func refreshSessionInBackground() async {
+        do {
+            let session = try await SupabaseStack.shared.auth.session
+            current = Self.makeAccount(session: session)
+        } catch is AuthError {
+            log.error("session refresh rejected by server — signing out locally")
+            await signOutLocally()
+        } catch {
+            log.error("session refresh network error, keeping cached session: \(String(describing: error), privacy: .public)")
+        }
+    }
+
+    /// 仅清本地会话 + 我们派生的 profile 状态,把 RootView 推回登录页。
+    /// 用 `.local` scope:此时 refresh token 已被 server 判失效,没必要(也可能
+    /// 失败/挂起)再走一次网络 revoke。
+    private func signOutLocally() async {
+        current = nil
+        hasBootstrapped = nil
+        avatarSeed = nil
+        avatarAttachmentId = nil
+        profileDisplayName = nil
+        try? await SupabaseStack.shared.auth.signOut(scope: .local)
     }
 
     private func observeAuth() {
         stateTask = Task { [weak self] in
             for await (event, session) in SupabaseStack.shared.auth.authStateChanges {
                 await MainActor.run {
-                    // The "initial session" event in supabase-swift's
-                    // current major can fire with a stale session that
-                    // failed to refresh — guard explicitly so we don't
-                    // hand RootView a dead JWT.
-                    if let session, !Self.isExpired(session) {
-                        self?.current = Self.makeAccount(session: session)
-                        Task { await self?.refreshProfileFlags() }
-                    } else {
+                    switch event {
+                    case .signedOut:
+                        // 真·登出(用户主动登出 / server 判会话失效)。
                         self?.current = nil
                         self?.hasBootstrapped = nil
                         self?.avatarSeed = nil
+                    default:
+                        // .initialSession / .signedIn / .tokenRefreshed 等。
+                        // 只在拿到"没过期"的会话时才更新 current —— 一个有效的
+                        // 新 JWT。过期的 .initialSession(冷启动用 emitLocalSession-
+                        // AsInitialSession 立刻吐出来的本地旧会话)不清 current:
+                        // 首屏已 optimistic 设好,是否真失效交给
+                        // refreshSessionInBackground 判定,别在这里抢着踢人。
+                        if let session, !Self.isExpired(session) {
+                            self?.current = Self.makeAccount(session: session)
+                            Task { await self?.refreshProfileFlags() }
+                        }
                     }
-                    _ = event // reserved for finer-grained handling later
                 }
             }
         }
