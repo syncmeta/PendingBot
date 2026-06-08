@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 /// Inline, non-bubble trace of the bot's tool calls for one turn. Reads as
@@ -331,4 +330,3 @@ struct ToolTraceView: View {
         return out
     }
 }
-#endif

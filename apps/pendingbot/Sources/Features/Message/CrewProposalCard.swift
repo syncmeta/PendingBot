@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 // PendingBot rendering for a bot's `start_crew` proposal (spec v2 §6.4).
@@ -44,7 +43,7 @@ struct CrewProposalCardView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color(.secondarySystemBackground))
+                .fill(Theme.Palette.surfaceMuted)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -159,4 +158,3 @@ struct CrewProposalCardView: View {
         }
     }
 }
-#endif

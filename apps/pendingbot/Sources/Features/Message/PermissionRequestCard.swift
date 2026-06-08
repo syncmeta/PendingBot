@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 // PendingBot rendering for a session's `request_permission` card
@@ -25,12 +24,6 @@ import SwiftUI
 // paused when the agent calls request_permission — the prompt-side note
 // tells the model to wait, but the runner doesn't enforce it yet. That
 // enforcement lands with peer_device communication in T4.5.
-
-// Payload + enum types live outside `#if os(iOS)` so the
-// multiplatform target's emit-module pass on macOS still sees them when
-// ConversationView (iOS-only logic, but compiled into the shared
-// module) references them in its state-dict types. The card View itself
-// stays inside `#if os(iOS)` further below.
 
 /// Type-erased holder for `detail` — agents may pass arbitrary JSON,
 /// and we just want to surface a one-shot preview, not parse a schema.
@@ -95,7 +88,6 @@ enum JSONScalar: Decodable, Hashable {
     }
 }
 
-#if os(iOS)
 /// Centered card rendered inline in the timeline (or the crew
 /// announcement stream once T4.6 lands the unified renderer). Same
 /// surface area as `CrewProposalCardView` — same status badge, same
@@ -117,7 +109,7 @@ struct PermissionRequestCardView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color(.secondarySystemBackground))
+                .fill(Theme.Palette.surfaceMuted)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -287,5 +279,3 @@ struct PermissionRequestCardView: View {
         }
     }
 }
-#endif
-#endif
