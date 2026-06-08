@@ -35,6 +35,7 @@
 		198D6B25434CE200E4FD044A /* ProfileDataSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 134ADF0FFA224BE794083B54 /* ProfileDataSource.swift */; };
 		1BA6A36C5DBAB5340DE35AF5 /* Account.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7389F31567A5B0D72BC29CC1 /* Account.swift */; };
 		1D67444A38A55B99E0E21F76 /* EnvelopeTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AA1FB293BD301008D3819AD /* EnvelopeTabView.swift */; };
+		200B3559BF2D8C7D099031CD /* ShareLinks.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCF2947C27201853497DCE56 /* ShareLinks.swift */; };
 		20489485A894E69287ADEEFF /* APIModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1D36E9865F8E358AD4A1B49 /* APIModels.swift */; };
 		22DC73D9B52F654B9610BCB3 /* CrewSessionStatusCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4F92F6F520EC1E69BFB6426 /* CrewSessionStatusCard.swift */; };
 		24DE7D404DE3727CE2B2ABA7 /* PendingBotBigScreenApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 354501BAEAAACDD5E92D3C3F /* PendingBotBigScreenApp.swift */; };
@@ -357,6 +358,7 @@
 		D829BEA540B1FE3C5FACFC35 /* ModelCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelCatalog.swift; sourceTree = "<group>"; };
 		DA2C5A82ADBE3A378A292684 /* PermissionRequestCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionRequestCard.swift; sourceTree = "<group>"; };
 		DAF9F958E634C73E5136CC46 /* BubbleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BubbleView.swift; sourceTree = "<group>"; };
+		DCF2947C27201853497DCE56 /* ShareLinks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareLinks.swift; sourceTree = "<group>"; };
 		DD75C88413B35DD563C0DF45 /* GroupAvatar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupAvatar.swift; sourceTree = "<group>"; };
 		E01A9B714DA8D239306A6740 /* OpenAICallTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAICallTransport.swift; sourceTree = "<group>"; };
 		E2EDC1669F416D3C59723D25 /* GroupSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupSettingsView.swift; sourceTree = "<group>"; };
@@ -718,6 +720,7 @@
 				4DBC29A5C2D31677E274BAA7 /* FriendSort.swift */,
 				6591DA7D65BEAC057EACF2DF /* PendingPeer.swift */,
 				80A31D4A5547023C2B42E7DD /* PermissionRequestPayload.swift */,
+				DCF2947C27201853497DCE56 /* ShareLinks.swift */,
 				09C163D426D19FF2D59C580E /* ToolTraceEvent.swift */,
 				398ED7C99CCFD9735C8B9480 /* UserUserPeer.swift */,
 			);
@@ -993,6 +996,7 @@
 				B816543FB97C6795B2B6ECBC /* SessionProxyProtocol.swift in Sources */,
 				01B93B6CEB0333724ECF97CC /* SettingsScene.swift in Sources */,
 				EE863961CB326031C1287703 /* SettingsView.swift in Sources */,
+				200B3559BF2D8C7D099031CD /* ShareLinks.swift in Sources */,
 				5A76B2CB395294D7B493AE8D /* SidebarTabBar.swift in Sources */,
 				009C790D5513035CF7E9DD99 /* SkillsView.swift in Sources */,
 				4BB4C2FB26A507B0A0BCBBDA /* SplitNav.swift in Sources */,

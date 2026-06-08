@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 /// Streaming-output caret modeled on a terminal cursor / ChatGPT's tail
@@ -42,4 +41,3 @@ struct BlinkingCursor: View {
         .accessibilityHidden(true)
     }
 }
-#endif

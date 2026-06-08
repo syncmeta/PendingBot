@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 /// Markdown compose sheet for human-to-human letters. The send action
@@ -47,7 +46,7 @@ struct LetterComposeSheet: View {
                 }
             }
             .navigationTitle("写信给「\(recipient.displayName)」")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavTitle()
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("取消") { dismiss() }.disabled(sending)
@@ -243,4 +242,3 @@ struct LetterComposeSheet: View {
         }
     }
 }
-#endif

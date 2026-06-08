@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 /// Inline "正在输入..." indicator used in the chat header. Three dots
@@ -28,4 +27,3 @@ struct TypingDots: View {
         .onReceive(timer) { _ in phase = (phase + 1) % 3 }
     }
 }
-#endif
