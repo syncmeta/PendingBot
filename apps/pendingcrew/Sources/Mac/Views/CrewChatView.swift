@@ -54,7 +54,7 @@ struct CrewChatView: View {
     // "自己"(右对齐、无头像)。BYOK 用本地哨兵(本地白板消息都标这个),让
     // 自己的消息右对齐;登录态 nil(尚未解析)时退化为旧行为。
     private var localUserId: String? {
-        if appModel.mode == .byok { return LocalWhiteboardStore.localUserId }
+        if appModel.mode == .local { return LocalWhiteboardStore.localUserId }
         return appModel.currentUserId
     }
 

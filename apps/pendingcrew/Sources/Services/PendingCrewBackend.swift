@@ -135,7 +135,7 @@ final class EdgeBackend: PendingCrewBackend {
 /// 形状,不再分叉(Spec §5.3 双轨边界明确"BYOK 本地态依然有 subject 概念,
 /// 只是只有一个,代表 '本机/这台机器'")。
 final class LocalBackend: PendingCrewBackend {
-    var mode: BackendMode { .byok }
+    var mode: BackendMode { .local }
     var supportsCloudRuntime: Bool { false }
 
     /// 写死的"本机 BYOK"subject id —— LocalCrewStore 里 crew 都标这个

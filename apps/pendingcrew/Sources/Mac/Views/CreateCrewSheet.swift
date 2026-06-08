@@ -202,7 +202,7 @@ struct CreateCrewSheet: View {
                 .font(.callout.weight(.medium))
             // BYOK 模式:本机 captain 模板池 + 新建。
             // 登录模式:沿用旧的"自动新建 captain"路径(真 bot 库待接通)。
-            if crewStore.mode == .byok {
+            if crewStore.mode == .local {
                 captainPoolPicker
             } else {
                 Text("将自动创建一个新的 captain bot 代表本 crew。")

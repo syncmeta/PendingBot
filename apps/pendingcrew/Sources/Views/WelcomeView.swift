@@ -65,9 +65,9 @@ struct WelcomeView: View {
             }
             #if os(macOS)
             choiceButton(
-                icon: "key.fill",
-                title: "不登录直接用 (BYOK)",
-                subtitle: "填自己的 Anthropic / OpenAI / Gemini key,只在本机跑 crew"
+                icon: "laptopcomputer",
+                title: "用本机的 claude / codex",
+                subtitle: "驱动本机已登录的 claude code / codex，无需 key，只在本机跑 crew"
             ) {
                 onChoose(.localSetup)
             }

@@ -66,11 +66,11 @@ struct CrewSidebarView: View {
         .confirmationDialog(
             currentMode == .logged
                 ? "签出当前身份"
-                : "退出本机 BYOK 模式",
+                : "退出本机模式",
             isPresented: $confirmingSignOut,
             titleVisibility: .visible
         ) {
-            Button(currentMode == .logged ? "签出" : "退出 BYOK", role: .destructive) {
+            Button(currentMode == .logged ? "签出" : "退出本机模式", role: .destructive) {
                 signOut()
             }
             Button("取消", role: .cancel) {}
@@ -153,7 +153,7 @@ struct CrewSidebarView: View {
                     } label: {
                         Label("签出 / 切换身份", systemImage: "rectangle.portrait.and.arrow.right")
                     }
-                } else if currentMode == .byok {
+                } else if currentMode == .local {
                     Button {
                         confirmingSignOut = true
                     } label: {
@@ -184,8 +184,8 @@ struct CrewSidebarView: View {
                 return "person.3.fill"
             }
             return "person.crop.circle.fill"
-        case .byok:
-            return "key.fill"
+        case .local:
+            return "laptopcomputer"
         }
     }
 
@@ -194,8 +194,8 @@ struct CrewSidebarView: View {
         switch mode {
         case .logged:
             return crewStore.subjects.first?.displayName ?? "已登录"
-        case .byok:
-            return "本机 BYOK"
+        case .local:
+            return "本机 claude / codex"
         }
     }
 
@@ -207,8 +207,8 @@ struct CrewSidebarView: View {
                 return kind == .groupAccount ? "群账号 · unified billing" : "本人账号 · unified billing"
             }
             return "已登录 · unified billing"
-        case .byok:
-            return "本地 crew 直走 API key"
+        case .local:
+            return "本地 crew · 本机已登录的 claude / codex"
         }
     }
 
@@ -216,7 +216,7 @@ struct CrewSidebarView: View {
         switch currentMode {
         case .logged:
             model.clearAuth()
-        case .byok:
+        case .local:
             model.clearByokConfig()
         case .none:
             break

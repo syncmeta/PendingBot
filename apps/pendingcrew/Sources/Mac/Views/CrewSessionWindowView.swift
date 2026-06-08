@@ -32,7 +32,7 @@ struct CrewSessionWindowView: View {
                 SessionRunContentView(run: run)
                 // 内联待办卡片：本 session 调 ask / 撞权限被拦时，就地答（写 LocalApprovalStore
                 // 解 helper 的 long-poll）。BYOK 本地路径；logged 走 edge interactions。
-                if appModel.mode == .byok {
+                if appModel.mode == .local {
                     SessionApprovalCardsView(crewId: run.crewId, sessionId: run.sessionId)
                 }
             } else {
@@ -181,7 +181,7 @@ struct CrewSessionWindowView: View {
     /// `--append-system-prompt-file`。logged 模式返回 nil（edge 注入）。
     /// best-effort：任一步失败返 nil，session 仍照常启动（只是没世界观）。
     private func renderWorldModelFile(detail: CrewDetail, taskBrief: String, workdir: URL, sessionId: String) async -> String? {
-        guard appModel.mode == .byok, let backend = appModel.backend else { return nil }
+        guard appModel.mode == .local, let backend = appModel.backend else { return nil }
         let members = (try? await backend.listCrewMembers(crewId: detail.crew.id))?.members ?? []
         let humans = members
             .filter { $0.memberKind == "human" }
@@ -214,7 +214,7 @@ struct CrewSessionWindowView: View {
     /// 免 embed）；白板 dir = `LocalWhiteboardStore.defaultDirectory`（与 app/store 同一份）。
     /// logged 模式 / 任一步失败 → 对应 nil（session 仍启动，少 comms）。
     private func prepareLocalCommsConfig(crewId: String, sessionId: String) -> (settings: String?, mcp: String?) {
-        guard appModel.mode == .byok, let helper = Bundle.main.executablePath
+        guard appModel.mode == .local, let helper = Bundle.main.executablePath
         else { return (nil, nil) }
         let dir = LocalWhiteboardStore.defaultDirectory.path
         let tmp = FileManager.default.temporaryDirectory
