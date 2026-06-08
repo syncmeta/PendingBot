@@ -32,9 +32,16 @@ claude --permission-mode auto --mcp-config mcp-config.json -p "Call post_to_crew
 **auto mode 下自定义 MCP 工具直接跑** → `post_to_crew`/`ask_human` 作为本地 MCP server 的工具会被调用；`ask_human` 的"等 captain/人类"阻塞逻辑写在工具内部即可。
 > `-p` 无交互必须自动放行或失败 → 它放行了。交互 auto mode 对**破坏性**工具仍会按分类器拦（本 spike 的工具 benign，符合预期）。
 
-## ⏳ Spike 4 — statusLine `rate_limits`（额度）— 交互专属，待补
+## ✅ Spike 4 — statusLine `rate_limits`（额度）
 
-statusLine 只在交互 TUI 渲染（`-p` 无）。验法（**需用户跑一下**）：配一个 statusLine command 把收到的 JSON 落盘 → 启动交互 `claude`（立即渲染即写）→ Ctrl-C → 看落盘 JSON 有没有 `rate_limits.{five_hour,seven_day}.{used_percentage,resets_at}`。低优先级（额度监控，非核心通信）。
+statusLine 只在交互 TUI 渲染（`-p` 无；PTY 自动化也没抓到，需真 TTY）。用户跑了一次交互 `claude --settings <落盘 statusLine>`：发一句 → statusLine 把收到的 JSON 落盘 → 退出 → 检查。**`rate_limits` 字段存在且带真值**：
+```json
+"rate_limits": {
+  "five_hour": { "used_percentage": 35, "resets_at": 1780916400 },
+  "seven_day": { "used_percentage": 27, "resets_at": 1781406000 }
+}
+```
+`used_percentage`（真值，非 #52326 的 epoch-leak）+ `resets_at`（unix 秒）都在。statusLine JSON 顶层还有 `cost.total_cost_usd` / `context_window.*` / `model` 等。**→ 额度监控可经 statusLine 旁路读**（一个 statusLine command 落盘 rate_limits → app 轮询）。claude 2.1.168 实测。
 
 ## 对实施的影响（chunk 4 / chunk 2 解锁）
 
