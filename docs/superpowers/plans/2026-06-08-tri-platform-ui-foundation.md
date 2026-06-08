@@ -235,20 +235,22 @@ git add apps/pendingbot/Sources/Components/PlatformImage.swift apps/pendingbot/S
 git commit -m "ios+mac: PlatformImage.decode + UserAvatar 跨平台位图"
 ```
 
-### Task A5: 共享三列宽屏壳 WideRootView
+### Task A5: 共享三列宽屏壳 WideRootView(本片只在 Mac 接;iPad 末片再翻)
+
+> **防回归约束(重要):** 迁移期 WideRootView 的非好友 tab 必须保留**现有可用实现**,不能用空占位 —— 否则 Mac 现有的消息/Crew/来信 tab 会变成空白,回归数周直到各自 slice 落地。具体:未迁移的 tab 走现有 `Mac*Column`(MacConversationListColumn/MacFriendsColumn/MacCrewListColumn/MacChatView 等)作 `#if os(macOS)` 过渡 fallback;每片迁好就删对应 fallback。好友 tab 本片由 B5 接共享 surface。
 
 **Files:**
 - Create: `apps/pendingbot/Sources/Features/Root/WideRootView.swift`
-- Reference: `apps/pendingbot/Sources/Mac/MacRootView.swift`(把它的三列骨架 + `pendingConversationJump` selection 状态机抽出来,去掉 `#if os(macOS)` 改成跨平台)
+- Reference: `apps/pendingbot/Sources/Mac/MacRootView.swift`(把它的三列骨架 + `pendingConversationJump` selection 状态机抽出来升级成跨平台 `WideRootView`)
 
-- [ ] **Step 1: 写 WideRootView** — 跨平台(无 `os()` 守卫),`NavigationSplitView { 侧边栏 tab } content: { 当前 tab 列表列 } detail: { 当前 tab 详情列 }`。tab 用现有 `TopTab` 枚举(对齐 iOS,不再用 Mac 私有 `MacTab`)。selection 状态机沿用 MacRootView 的确定性 `pendingConversationJump` 写法(切 tab 清 selection,程序跳转例外)。此刻除好友外的 tab 先复用 MacRootView 现有 placeholder 列(`MacEmptyColumn` 抽成共享 `EmptyDetailHint`,已存在于 SplitNav.swift)。
+- [ ] **Step 1: 写 WideRootView** — 写成跨平台(无 `os()` 守卫,为末片 iPad 翻做准备),`NavigationSplitView { 侧边栏 tab } content: { 当前 tab 列表列 } detail: { 当前 tab 详情列 }`。tab 用现有 `TopTab` 枚举(对齐 iOS,不再用 Mac 私有 `MacTab`)。selection 状态机沿用 MacRootView 的确定性 `pendingConversationJump` 写法。**未迁移 tab 的列内容**:用 `#if os(macOS)` 过渡 fallback 渲染现有 `Mac*Column`(直接搬 MacRootView 现有 `middleColumn`/`detailColumn` 的 switch),好友 tab 先给占位(B5 替换)。这样 Mac 上接入后所有 tab 照常工作。
 
 - [ ] **Step 2: 编译两端**(WideRootView 暂未被接,纯加法)— Expected PASS。
 - [ ] **Step 3: Commit**
 
 ```bash
 git add apps/pendingbot/Sources/Features/Root/WideRootView.swift
-git commit -m "ios+mac: WideRootView 共享三列宽屏壳(抽自 MacRootView)"
+git commit -m "ios+mac: WideRootView 三列宽屏壳(升级自 MacRootView,未迁移 tab 暂留 Mac 列)"
 ```
 
 ### Task A6: 壳↔feature 接口契约 FeatureSurface
@@ -303,21 +305,23 @@ git add apps/pendingbot/Sources/Features/Root/AppCommands.swift apps/pendingbot/
 git commit -m "mac: 原生菜单栏 commands + ⌘, 设置场景骨架"
 ```
 
-### Task A8: 接线根视图
+### Task A8: 接线根视图(本片只动 Mac;iPad/iPhone 不变)
+
+> **防回归约束:** 本片**不动 iPad**。iPad 继续走现有 `PendingBotRegularRootView`(现有每-tab 分栏,能跑),只是好友 tab 在 B5 后消费共享 FriendsSurface。iPad 视觉收敛成桌面三列(切到 WideRootView)是**整个 effort 的最后一片**,等所有 feature surface 都迁好再翻 —— 避免 iPad 长期半残。iPhone compact 完全不动。
 
 **Files:**
 - Modify: `apps/pendingbot/Sources/PendingBotApp.swift`
 
 - [ ] **Step 1: macOS @main 改接 WideRootView + Settings + commands** — `MacRootGate` 登录后渲染 `WideRootView` 取代 `MacRootView`;`Scene` body 加 `Settings { ... }` 和 `.commands { AppCommands() }`。保留 `.windowStyle(.hiddenTitleBar)` / `.windowResizability(.contentSize)`。
 
-- [ ] **Step 2: iOS regular 分支指向 WideRootView** — `TabRoot` 的 `if sidebarLayout { PendingBotRegularRootView(...) }` 改为 `WideRootView(...)`;compact 分支 `TabView` 不动。`PendingBotRegularRootView` 暂留(下一步被 WideRootView 取代后删)。
+- [ ] **Step 2: iOS 不动** — `TabRoot` 的 regular 分支保持 `PendingBotRegularRootView`,compact 保持 `TabView`。本片 iOS 端只通过 B 系列任务获得共享好友/选模型代码,根视图结构不变。
 
-- [ ] **Step 3: 编译两端 + 实跑** — macOS GUI build 跑起来,确认登录后是三列壳(中右列暂 placeholder,好友 tab 待 B5);iPad 模拟器跑起来确认 regular 进三列;iPhone 模拟器确认 compact 底部 tab 不变。三端各截一张图。
+- [ ] **Step 3: 编译两端 + 实跑** — macOS GUI build 跑起来,确认登录后是三列壳、各 tab 照常(非好友 tab 走 Mac 列 fallback,好友 tab 待 B5);iPad 模拟器确认现有外观无回归;iPhone 模拟器确认 compact 不变。三端各截一张图。
 - [ ] **Step 4: Commit**
 
 ```bash
-git add apps/pendingbot/Sources/PendingBotApp.swift apps/pendingbot/Sources/Features/Root/TabRoot.swift
-git commit -m "ios+mac: 根视图接 WideRootView + Mac Settings/commands;iPad regular 收敛三列"
+git add apps/pendingbot/Sources/PendingBotApp.swift
+git commit -m "mac: @main 接 WideRootView + Settings/commands(取代 MacRootGate→MacRootView)"
 ```
 
 ---
@@ -387,28 +391,31 @@ git add apps/pendingbot/Sources/Features/Friends/
 git commit -m "ios+mac: FriendsTabView 拆 list/detail/compact 并 conform FeatureSurface"
 ```
 
-### Task B5: 好友片插进 WideRootView + 删 Mac 平行实现
+### Task B5: 好友片接两端壳 + 删 Mac 平行实现
+
+> 共享 `FriendsSurface`(B4 产出)被**两个壳同时消费**:Mac 的 `WideRootView`(三列)和 iPad 的 `PendingBotRegularRootView`(现有每-tab 分栏)。一份业务 UI,两种装配,这正是契约的意义。
 
 **Files:**
-- Modify: `apps/pendingbot/Sources/Features/Root/WideRootView.swift`
-- Modify: `apps/pendingbot/Sources/Mac/MacRootView.swift`(friends 分支移除,改走共享 surface;或整体被 WideRootView 取代后删)
+- Modify: `apps/pendingbot/Sources/Features/Root/WideRootView.swift`(friends tab fallback → 共享 surface)
+- Modify: `apps/pendingbot/Sources/Features/Root/PendingBotRegularRootView.swift`(iPad friends tab → 用 FriendsSurface 的 list+detail 组一个 per-tab `NavigationSplitView`,取代直接渲染 `FriendsTabView` 的旧路径;其余 tab 不动)
 - Delete: `apps/pendingbot/Sources/Mac/Views/MacBotManagement.swift`
 - Delete: `apps/pendingbot/Sources/Mac/Views/MacFriendsView.swift`
-- Modify: `apps/pendingbot/project.yml` 若有显式文件引用(一般 xcodegen 按目录 glob,删文件后跑 `xcodegen` 即可)
+- Modify: `apps/pendingbot/Sources/Mac/MacRootView.swift`(若 WideRootView 已自带 Mac 列 fallback 且 @main 已不引用 MacRootView,则删除整文件;否则只删其 friends 分支)
+- Modify: `apps/pendingbot/project.yml` 仅当有显式文件引用(一般 xcodegen 按目录 glob,删文件后跑 `xcodegen` 即可)
 
-- [ ] **Step 1: WideRootView 的 friends tab 接共享 surface** — content 列 = `FriendsSurface.listColumn(selection:)`,detail 列 = `FriendsSurface.detailColumn(selection:)`;⌘N(A7 的通知)在 friends tab 时触发建机器人 sheet(`CreateBotSheet`)。
+- [ ] **Step 1: 两端壳接共享 surface** — WideRootView 的 friends tab:content 列 = `FriendsSurface.listColumn(selection:)`,detail 列 = `FriendsSurface.detailColumn(selection:)`;⌘N(A7 的通知)在 friends tab 时触发建机器人 sheet(`CreateBotSheet`)。iPad `PendingBotRegularRootView` 的 friends case 改用同一 surface 的 list+detail 组成 per-tab split(compact 的 iPhone 仍走 `FriendsSurface.compactRoot()`,即原 `FriendsTabView` NavigationStack)。
 
-- [ ] **Step 2: 删平行实现** — 删 `MacBotManagement.swift`、`MacFriendsView.swift`;`MacRootView` 若已全被 `WideRootView` 取代则连同删除(确认无其他 tab 仍依赖它的 placeholder 列;若依赖,保留 MacRootView 仅作其余 tab 的临时壳直到它们各自 slice —— 但 friends 分支必须改指共享 surface)。跑 `xcodegen`。
+- [ ] **Step 2: 删平行实现** — 删 `MacBotManagement.swift`、`MacFriendsView.swift`;按上面 Files 的条件处理 `MacRootView.swift`。跑 `cd apps/pendingbot && xcodegen`(若改了文件集),再编译。
 
 - [ ] **Step 3: 编译两端 + 三端实跑** —
-  - macOS GUI build 跑起来:好友 tab → 看到真好友/bot 列表 → 建机器人 → **arena 竞技场选模型可用**(多模型池 + 价格/日期筛选),管理机器人、公开 slug、邀请链接/二维码都在。截图。
-  - iPad 模拟器:同样进到三列 + arena 选模型,与 Mac 一致。截图。
+  - macOS GUI build:好友 tab → 真好友/bot 列表 → 建机器人 → **arena 竞技场选模型可用**(多模型池 + 价格/日期筛选)、管理机器人、公开 slug、邀请链接/二维码都在。截图。
+  - iPad 模拟器:好友 tab 现有外观下,建机器人 → **arena 选模型可用**,与 Mac 同一份能力。截图。
   - iPhone 模拟器:compact 下建机器人/选模型/arena 不回归。截图。
 - [ ] **Step 4: Commit**
 
 ```bash
-git add -A apps/pendingbot/Sources/Mac/ apps/pendingbot/Sources/Features/Root/WideRootView.swift apps/pendingbot/project.yml
-git commit -m "ios+mac: 好友片接 WideRootView;删 Mac 单模型阉割版平行实现"
+git add -A apps/pendingbot/Sources/Mac/ apps/pendingbot/Sources/Features/Root/ apps/pendingbot/project.yml
+git commit -m "ios+mac: 好友片接两端壳(共享 FriendsSurface);删 Mac 单模型阉割版平行实现"
 ```
 
 ### Task B6: 三端验证总检 + 账本
@@ -431,7 +438,8 @@ git commit -m "docs: 三端共享地基 + 好友片对账(progress/tech-debt)"
 
 ## Self-review(已对 spec 核过)
 
-- **Spec 覆盖:** D1 真三列→A5/A6/B4;D2 宽屏统一+iPad 收敛→A8;D3 iOS-only 留单独→好友片不含 Call/扫码,QR 是"生成"(跨平台)非"扫描"(留 iOS);D4 Mac 设置窗口+「我」入口→A7;D5 菜单栏快捷键→A7;D6 Haptics 空操作→B1。垫片层覆盖勘查到的全部 iOS-only 计数(nav 标题/autocaps/键盘/detents/drag/剪贴板/QR/UIImage)。
+- **Spec 覆盖:** D1 真三列→A5/A6/B4;D2 宽屏统一→Mac 本片即三列(A5/A8),**iPad 视觉收敛成三列推迟到整个 effort 最后一片**(防回归:迁移期 iPad 保持现有壳、只共享业务代码);D3 iOS-only 留单独→好友片不含 Call/扫码,QR 是"生成"(跨平台)非"扫描"(留 iOS);D4 Mac 设置窗口+「我」入口→A7;D5 菜单栏快捷键→A7;D6 Haptics 空操作→B1。垫片层覆盖勘查到的全部 iOS-only 计数(nav 标题/autocaps/键盘/detents/drag/剪贴板/QR/UIImage)。
+- **防回归(本次修订重点):** WideRootView 未迁移 tab 用 `#if os(macOS)` fallback 渲染现有 Mac 列;iPad 全程不切壳;FriendsSurface 被 Mac 三列壳与 iPad 每-tab 壳同时消费。三端任何阶段都不出现空白 tab。
 - **占位扫描:** 无 TBD;每个换垫片步带了具体计数与目标符号。
 - **类型一致:** `PlatformImage`(已有)、`PlatformImage.decode`(A4 定义,UserAvatar/B3 用)、`Clipboard.copy`(A2 定义,B3 用)、`QRCode.image`(A3 定义,B3 用)、`.inlineNavTitle()/.platformAutocapitalization()/.platformKeyboard(.url)/.platformDetents()/.platformDragIndicator()`(A1 定义,B2/B3/B4 用)、`FeatureSurface`(A6 定义,B4 conform)、`WideRootView`(A5 定义,A8/B5 用)、`TopTab`(复用现有)— 前后名一致。
 - **顺序依赖:** A1–A4 垫片 → A5/A6 壳与契约 → A7/A8 接线 → B1 叶子 → B2/B3 解锁 → B4 拆分 → B5 接线删平行 → B6 验收。无前向引用未定义符号。
