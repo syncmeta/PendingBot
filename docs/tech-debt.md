@@ -33,6 +33,14 @@
 
 ## 🔴 根基级
 
+### 🔴 账号删除级联靠手维护,新表带 NO ACTION 外键会静默打破删除(已第二次漂移)
+- **发现**: 2026-06-08 · fix/account-deletion-cascade
+- **位置**: `supabase/migrations/0052_auth_delete_user_trigger.sql`(`_before_auth_user_delete` BEFORE DELETE 触发器)+ 全 schema 指向 `auth.users`/`pendingbot.users`/`pendingbot.subjects`/`conversations` 的外键 `ON DELETE` 动作
+- **问题**: `delete from auth.users` 能不能成功,取决于**两套手维护的东西**同时正确:① 0052 那个触发器里逐表写死的 cleanup(删 bots/messages/convs、置空 audit_log/invites/tools…)② 每张引用用户/subject 的表的 FK `ON DELETE` 动作。任何人新建一张表、给它一个指向 subject/user/conversation 的 `NO ACTION`(Postgres 默认!)外键,又没在触发器或 FK 动作里照顾到,就**静默地**让全站账号删除从此报 "Database error deleting user"——而且当前没有任何测试/CI 守护这个不变量。这次就是 2026-05-24 加的 subject 体系(`subjects.user_id → auth.users CASCADE` + 8 张 crew/runner 子表留 `NO ACTION` + device challenge 的 SET NULL↔CASCADE 交织)整套没纳入删除逻辑导致 23503。**这是第二次漂移**:0002→0052 已经补过一次同类账(那次是 redemption_codes / billing_ledger / conversation_group_meta)。
+- **影响**: 账号删除是合规面(用户数据删除权)+ 产品面(注销)的根基功能,却是**最容易被新表悄悄打破**的一类——破坏者离它很远(加个无关功能表),症状却是全站删号挂掉,且只有真正执行删除时才暴露(平时 CI/typecheck 完全发现不了)。属数据一致性 / 迁移账本漂移根基隐患,会随表数量增长**反复**复发。
+- **建议**: 把隐式不变量变成红灯。① **live-DB introspection 测试 / CI 检查**:断言"从 `auth.users` 出发的删除闭包里,不存在未被 0052 触发器覆盖的 `NO ACTION`/`RESTRICT` 外键"(就是本次修复时手跑的那条全 schema NO ACTION 审计 query,固化成测试)。② 约定层面:CLAUDE.md "写迁移前" 加一句——任何新表只要有指向 user/subject/conversation/bot 的外键,必须显式声明 `ON DELETE`(CASCADE=自有数据 / SET NULL=共享历史),不许吃 Postgres 的 `NO ACTION` 默认。③ 更彻底:把 0052 触发器里那些"能用 FK 动作表达"的 cleanup 也下沉成 FK 动作,缩小手维护触发器的面。
+- **状态**: 本次实例已解决(commit 68ce20b8,db push 已应用 prod;结构性验证:删除闭包零残留未处理 NO ACTION,真实卡住账号 617259ec 的阻塞数据全覆盖。真删本身受 prod 写门禁,留用户在 Studio 点一下作终确认);**防复发护栏(①②)待办**。
+
 ### 🔴 边缘读投影授权门 ↔ Supabase RLS 对齐是隐式不变量,无测试守护
 - **发现**: 2026-06-07 · feat/edge-read-offload(E6 对抗式审查 E4 授权门)
 - **位置**: `apps/edge/src/routes/projections.ts`(`/messages/tail` 授权门)+ `apps/edge/src/lib/conv-cache.ts:resolveConv` + `supabase/migrations/*`(`conversations` / `messages` SELECT policies)
