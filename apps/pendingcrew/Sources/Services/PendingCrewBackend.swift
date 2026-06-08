@@ -37,6 +37,20 @@ protocol PendingCrewBackend: AnyObject {
     /// `POST /v1/crews/:crewId/attach-parent`(edge);BYOK 抛 `notSupportedInByok`。
     func attachParent(crewId: String, parentCrewId: String, childKeepsBps: Int) async throws
 
+    // MARK: - Crew comms（白板/群聊，spec local-first §8.4 单后端）
+
+    /// crew 白板时间线。edge → `GET /v1/crews/:id/messages`;BYOK → 本地
+    /// `LocalWhiteboardStore`(映射成同形 `CrewWhiteboardEntry`)。
+    func listCrewWhiteboard(crewId: String) async throws -> [CrewWhiteboardEntry]
+
+    /// crew 花名册。edge → `GET /v1/crews/:id/members`;BYOK → 从本地 crew 派生
+    /// (captain + 本机人类)。
+    func listCrewMembers(crewId: String) async throws -> CrewRoster
+
+    /// 发一条群聊消息(默认广播)。`attachmentIds` 只 edge 支持;BYOK 非空即抛
+    /// `notSupportedInByok`。
+    func postCrewMessage(crewId: String, text: String, mentions: [CrewMention], attachmentIds: [String]) async throws
+
     // MARK: - Models
 
     /// 拉 model 目录给 CreateSessionSheet 用。
@@ -89,6 +103,19 @@ final class EdgeBackend: PendingCrewBackend {
         try await client().listModels()
     }
 
+    func listCrewWhiteboard(crewId: String) async throws -> [CrewWhiteboardEntry] {
+        try await client().listCrewWhiteboard(crewId: crewId)
+    }
+
+    func listCrewMembers(crewId: String) async throws -> CrewRoster {
+        try await client().listCrewMembers(crewId: crewId)
+    }
+
+    func postCrewMessage(crewId: String, text: String, mentions: [CrewMention], attachmentIds: [String]) async throws {
+        try await client().postCrewMessage(
+            crewId: crewId, text: text, mentions: mentions, attachmentIds: attachmentIds)
+    }
+
     private func client() throws -> PendingCrewAPI {
         guard let credential = appModel.credential else {
             throw PendingCrewBackendError.notAuthenticated
@@ -117,12 +144,14 @@ final class LocalBackend: PendingCrewBackend {
     static let localSubjectId = "local-byok"
 
     private let store: LocalCrewStore
+    private let whiteboard: LocalWhiteboardStore
 
-    /// store 必传 —— 不给默认值,避免 `LocalCrewStore.shared`(@MainActor 隔离)
-    /// 跟 init 的 nonisolated 默认参数 evaluation 冲突(Swift 6 mode 报错)。
-    /// 调用方在 `@MainActor` 环境里显式传 `.shared`。
-    init(store: LocalCrewStore) {
+    /// store / whiteboard 必传 —— 不给默认值,避免 @MainActor `.shared` 在 init
+    /// 的 nonisolated 默认参数 evaluation 里冲突(Swift 6 mode 报错)。调用方在
+    /// `@MainActor` 环境里显式传 `.shared`。
+    init(store: LocalCrewStore, whiteboard: LocalWhiteboardStore) {
         self.store = store
+        self.whiteboard = whiteboard
     }
 
     func listMySubjects() async throws -> [UserSubject] {
@@ -167,6 +196,54 @@ final class LocalBackend: PendingCrewBackend {
         // BYOK 没法走 edge 拿动态目录。CreateSessionSheet 看到空 array 时
         // 会自动 fallback 到手动输入框。
         []
+    }
+
+    func listCrewWhiteboard(crewId: String) async throws -> [CrewWhiteboardEntry] {
+        // 本地白板 message → edge 同形 entry。中栏两态渲染不分叉。
+        whiteboard.list(crewId: crewId).map { m in
+            CrewWhiteboardEntry(
+                id: m.id,
+                senderKind: m.senderKind,
+                senderSessionId: nil,
+                senderUserId: m.senderUserId,
+                senderBotId: nil,
+                messageKind: "instruction",
+                summary: m.text,
+                createdAt: m.createdAt,
+                payload: CrewWhiteboardEntry.Payload(
+                    text: m.text, kind: nil, question: nil, status: nil, permissionRequestId: nil),
+                attachments: nil
+            )
+        }
+    }
+
+    func listCrewMembers(crewId: String) async throws -> CrewRoster {
+        // 从本地 crew 派生:captain(若有)+ 本机人类。本地 session 成员留 chunk 4。
+        guard let detail = store.getCrew(crewId) else {
+            return CrewRoster(captainBotId: nil, members: [])
+        }
+        var members: [CrewMember] = []
+        if let cap = detail.captain {
+            members.append(CrewMember(
+                id: cap.botId, memberKind: "captain", userId: nil, botId: cap.botId,
+                codeSessionId: nil, displayName: cap.displayName, role: "captain",
+                status: "active", representsCrewId: crewId, sessionStatus: nil))
+        }
+        members.append(CrewMember(
+            id: LocalWhiteboardStore.localUserId, memberKind: "human",
+            userId: LocalWhiteboardStore.localUserId, botId: nil, codeSessionId: nil,
+            displayName: "我 (本机)", role: nil, status: "active",
+            representsCrewId: nil, sessionStatus: nil))
+        return CrewRoster(captainBotId: detail.captain?.botId, members: members)
+    }
+
+    func postCrewMessage(crewId: String, text: String, mentions: [CrewMention], attachmentIds: [String]) async throws {
+        guard attachmentIds.isEmpty else {
+            throw PendingCrewBackendError.notSupportedInByok("BYOK 模式暂不支持群聊附件")
+        }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        whiteboard.appendUserMessage(crewId: crewId, text: trimmed)
     }
 }
 

@@ -44,7 +44,7 @@ final class AppModel: ObservableObject {
     /// 不在 each-call 时 new (避免 EdgeBackend 内每次重新解析 credential
     /// 但 instance 不复用的浪费;LocalBackend.store 是 shared singleton)。
     private lazy var edgeBackend: EdgeBackend = EdgeBackend(appModel: self)
-    private lazy var localBackend: LocalBackend = LocalBackend(store: .shared)
+    private lazy var localBackend: LocalBackend = LocalBackend(store: .shared, whiteboard: .shared)
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
