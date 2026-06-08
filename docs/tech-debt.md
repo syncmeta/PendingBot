@@ -10,6 +10,15 @@
 
 **不记**：linter/typecheck 已经能抓的纯风格问题、个人口味、与项目健康无关的琐碎 TODO。
 
+---
+
+### 🟢 功能开关(board)运行时切的传播延迟 ≤60s + Sentry 仍 env-only
+- **发现**: 2026-06-08 · `feat/board-console`(计划 `docs/superpowers/plans/2026-06-08-board-feature-flags.md`)
+- **位置**: `apps/edge/src/lib/feature-flags.ts`(isolate 60s TTL 缓存)、`apps/edge/src/routes/board-feature-flags.ts`(PUT 写 `cfg:feature-flags` KV)
+- **取舍 1(传播延迟)**: board 切 Billing/PostHog/Langfuse 后,worker 端要 ≤60s(isolate-local TTL 缓存)+ KV 全球传播(秒级)才全节点生效。PUT 没做显式 cache-bust —— isolate 多、bust 不可靠。对 pre-launch 开关可接受;若将来要"切了即时全网生效",得改更短 TTL 或挪到一个单点 DO 读。
+- **取舍 2(Sentry 不上 board)**: Sentry 开关保持 env + 重部署,**故意不做运行时切**。原因:(a) `@sentry/cloudflare` 的 `withSentry` options 回调签名是同步 `(env)=>CloudflareOptions|undefined`,容不下异步 KV 读;(b) 错误捕获器的 kill-switch 必须零运行时依赖,不能让它依赖 KV/DB,否则一次边缘存储抽风会顺手静音它。board 页给 Sentry 一行只读展示。这不是债,是刻意设计,记此供将来回看"为什么 Sentry 不在 board"。
+- **状态**: 接受(pre-launch)。即时生效需求出现时再处理取舍 1。
+
 ## 使用约定
 
 - 发现就追加一条，**只记录、默认不顺手去修**——修一个根基问题往往是独立的一摊活，会冲散当前任务的焦点。除非用户当场要你修。
