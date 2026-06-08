@@ -71,6 +71,7 @@ targets:
       # test bundle 加载验证 bundling + lookup 端到端。
       - path: Sources/Stores/PromptTemplate.swift
       - path: Sources/Stores/LocalPromptLoader.swift
+      - path: Sources/Stores/LocalSessionWorldModel.swift
       - path: Resources/Prompts
     # AgentTerminalSession.swift（在 LocalRunner 里）import SwiftTerm，所以
     # test bundle 也要链 SwiftTerm，否则编不过。

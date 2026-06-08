@@ -21,6 +21,7 @@
 		229AB9E4ED3AA7757C607159 /* LocalWhiteboardStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E09E12D071816B5362AD7626 /* LocalWhiteboardStore.swift */; };
 		22A27AC631B26380BC3108D2 /* LocalCodingAgentExecutable.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DCD41EF4DF79F9A7C1794CD /* LocalCodingAgentExecutable.swift */; };
 		2616F98BBCE262F8ACBA9D1F /* session-world-model.en.md in Resources */ = {isa = PBXBuildFile; fileRef = 38F5E570088DE41977747A62 /* session-world-model.en.md */; };
+		2972982A1E1CCB1EFB30F5A5 /* LocalSessionWorldModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CE2E310981313F38FE79D46 /* LocalSessionWorldModelTests.swift */; };
 		2DFC3899F9816634824C1EFF /* CrewSessionWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FFA131E8A46E341E75F7A01 /* CrewSessionWindowView.swift */; };
 		2F4C8E9B74443BE19546AC44 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DFC0F15C2EF325530543B30 /* LoginView.swift */; };
 		37A084E5A00B2FFA3D718C47 /* crew-captain.zh.md in Resources */ = {isa = PBXBuildFile; fileRef = 776119CB43783D02F23AD06E /* crew-captain.zh.md */; };
@@ -29,6 +30,7 @@
 		405AD24AAB26662F93045B6E /* SessionProxyProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8659160BA978CA311E9673E2 /* SessionProxyProtocol.swift */; };
 		47D83B78734AEC171EAC5853 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4AB47EFABEEEDC3D1AA7F4D /* AppModel.swift */; };
 		4A6CD3FE34267E982D109A47 /* CrewImageLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A00A8F1ACE8B62458AB9300 /* CrewImageLoader.swift */; };
+		4AB17DC5C8411A562B83A090 /* LocalSessionWorldModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F1C7822F4F8AFCC1F3AC147 /* LocalSessionWorldModel.swift */; };
 		4AC6269E4A657341E5773089 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 476A276CBDA4640936A8B817 /* Assets.xcassets */; };
 		4F59538F204A70290C10B1C5 /* CrewTimeSeparator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 653E5262E263AED9996AF100 /* CrewTimeSeparator.swift */; };
 		50E92F718E5EC71E96ECD0F8 /* CrewCenterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 845C8C15B805012BF7FD6165 /* CrewCenterView.swift */; };
@@ -75,6 +77,7 @@
 		CCB8B7D58871E769BD2E1C07 /* LocalCodingAgentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68DED4864DF441E88BAC0A24 /* LocalCodingAgentTests.swift */; };
 		CCE5EFF3574B69F46BD28503 /* LocalWhiteboardStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7328186C8B9131242BB8C719 /* LocalWhiteboardStoreTests.swift */; };
 		CE06A7EA4B6D5EFE69AC833A /* SessionConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69B4AFC537A8402CC846122F /* SessionConfig.swift */; };
+		D24B6CB2DDE226254E98869D /* LocalSessionWorldModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F1C7822F4F8AFCC1F3AC147 /* LocalSessionWorldModel.swift */; };
 		D461676E477353731E35A493 /* CrewColorHash.swift in Sources */ = {isa = PBXBuildFile; fileRef = B35628BFE9FF1852C997981E /* CrewColorHash.swift */; };
 		D8DBE57ED52A2F8086158FC6 /* LocalPromptLoaderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6A56B215C1A906E69116190 /* LocalPromptLoaderTests.swift */; };
 		D9D094DE3C39F9662B62B800 /* SessionConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69B4AFC537A8402CC846122F /* SessionConfig.swift */; };
@@ -143,8 +146,10 @@
 		8659160BA978CA311E9673E2 /* SessionProxyProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionProxyProtocol.swift; sourceTree = "<group>"; };
 		87F000A18A5E886FA706EC9B /* session-world-model.zh.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "session-world-model.zh.md"; sourceTree = "<group>"; };
 		8DCD41EF4DF79F9A7C1794CD /* LocalCodingAgentExecutable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalCodingAgentExecutable.swift; sourceTree = "<group>"; };
+		8F1C7822F4F8AFCC1F3AC147 /* LocalSessionWorldModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalSessionWorldModel.swift; sourceTree = "<group>"; };
 		9489F57858CE1A21C2ABB71E /* CrewBubbleRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewBubbleRow.swift; sourceTree = "<group>"; };
 		9A3C8AAD5F35F08DAC72F931 /* CreateCrewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateCrewSheet.swift; sourceTree = "<group>"; };
+		9CE2E310981313F38FE79D46 /* LocalSessionWorldModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalSessionWorldModelTests.swift; sourceTree = "<group>"; };
 		A6A56B215C1A906E69116190 /* LocalPromptLoaderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalPromptLoaderTests.swift; sourceTree = "<group>"; };
 		AF1050766B25F50A640A709F /* PendingCrew.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = PendingCrew.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AF6AF2AE2C93EB875D8DBFF8 /* LocalPromptLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalPromptLoader.swift; sourceTree = "<group>"; };
@@ -375,6 +380,7 @@
 				1A4D1C7DBA64FB676E8F61FF /* GitWorktreeServiceTests.swift */,
 				68DED4864DF441E88BAC0A24 /* LocalCodingAgentTests.swift */,
 				A6A56B215C1A906E69116190 /* LocalPromptLoaderTests.swift */,
+				9CE2E310981313F38FE79D46 /* LocalSessionWorldModelTests.swift */,
 				7328186C8B9131242BB8C719 /* LocalWhiteboardStoreTests.swift */,
 				76C210B9708141CE1293B918 /* PromptTemplateTests.swift */,
 				DF848E30878BD9A462B2ABD4 /* SessionConfigTests.swift */,
@@ -422,6 +428,7 @@
 				486ABCF7EEB8DF24CA6EDF11 /* CrewStore.swift */,
 				EBB438AE76CF441D4A9A071F /* LocalCrewStore.swift */,
 				AF6AF2AE2C93EB875D8DBFF8 /* LocalPromptLoader.swift */,
+				8F1C7822F4F8AFCC1F3AC147 /* LocalSessionWorldModel.swift */,
 				E09E12D071816B5362AD7626 /* LocalWhiteboardStore.swift */,
 				5D74B1C537C235EFB0E69DCB /* PromptTemplate.swift */,
 			);
@@ -583,6 +590,7 @@
 				A6CB5E9580950D91CF149907 /* LocalCrewStore.swift in Sources */,
 				8A23157D010EB9F45781BDE6 /* LocalPromptLoader.swift in Sources */,
 				945CD4E64E68F0005D687FBC /* LocalRunnerPlaceholder.swift in Sources */,
+				4AB17DC5C8411A562B83A090 /* LocalSessionWorldModel.swift in Sources */,
 				9DC9AF0EDD6D37A556A534B6 /* LocalSetupView.swift in Sources */,
 				5ACC0A7A8AA165B111990C18 /* LocalWhiteboardStore.swift in Sources */,
 				2F4C8E9B74443BE19546AC44 /* LoginView.swift in Sources */,
@@ -620,6 +628,8 @@
 				E78F604D88C1BEAB7FB96C0C /* LocalPromptLoader.swift in Sources */,
 				D8DBE57ED52A2F8086158FC6 /* LocalPromptLoaderTests.swift in Sources */,
 				F406C388A44A3EBBA538E929 /* LocalRunnerPlaceholder.swift in Sources */,
+				D24B6CB2DDE226254E98869D /* LocalSessionWorldModel.swift in Sources */,
+				2972982A1E1CCB1EFB30F5A5 /* LocalSessionWorldModelTests.swift in Sources */,
 				229AB9E4ED3AA7757C607159 /* LocalWhiteboardStore.swift in Sources */,
 				CCE5EFF3574B69F46BD28503 /* LocalWhiteboardStoreTests.swift in Sources */,
 				055DFE844FB3BA1547AEC159 /* PromptTemplate.swift in Sources */,
