@@ -475,7 +475,7 @@
   3. **Sentry** —— 任何地方(client + edge)都没 `setUser()`;报错事件挂不到具体用户,只有 trace/时间戳。
 - **影响**: RevenueCat 这条是 🟡 偏 🔴 的——IAP 上线前不补会导致购买无法归户、对账困难。PostHog/Sentry 两条是观测盲区(无用户维度归因),非阻断。注意这与 kill-switch(`BILLING_ENABLED`/`POSTHOG_ENABLED` 默认关,wrangler.jsonc)是两回事:开关只管 edge 发不发,**客户端 identity 缺失是开关打开也补不上的独立洞**。
 - **建议**: ① IAP 上线前必做:iOS 集 RevenueCat SDK,登录成功后 `Purchases.shared.logIn(subjectId)`,登出 `logOut()`;② PostHog iOS SDK + 登录后 `identify(subjectId)`、登出 `reset()`;③ Sentry(client 用 sentry-cocoa,edge 在 worker 入口)登录后 `setUser(id: subjectId)`。三者共用"拿到 session 后取 `auth.users.id` 调一次 identify"的同一时机,可一并接。
-- **状态**: 待办(RevenueCat 随 IAP 上线一并做;PostHog/Sentry 可独立补)
+- **状态**: 大部分已解决 2026-06-08(feat/client-telemetry-sdks)。新增 `apps/pendingbot/Sources/Networking/Telemetry.swift` 协调器:`PendingBotApp`(iOS+macOS)init 调 `configure()`,`onChange(of: accountStore.current)` 登录 `identify(subjectId)` / 登出 `reset()`,三 SDK 统一用 `subject_id`、不传 PII。PostHog(3.59.3)/Sentry(9.16.1)填真 key(`.remote`),iOS+Mac 编译双绿 + 模拟器启动冒烟通过。**剩余两条尾巴**:(a) RevenueCat 走 `Purchases.isConfigured` gate、`revenueCatKey` 暂为空串占位 → SDK 休眠,待 RC 账号开通补 `appl_…` key + 真上 IAP(身份代码已就位);(b) PostHog/Sentry 事件真实投递到 dashboard 仅靠"启动不崩"验证,真机/真登录的端到端归因闭环未做。
 
 ## 🟢 不规范
 
