@@ -24,7 +24,8 @@ const presetBotCreate = z.object({
   is_active: z.boolean().default(true),
   visibility: z.enum(['private', 'public_invite']).default('private'),
   config: z.record(z.string(), z.unknown()).default({}),
-  // 模板行的标记 —— 强制 creator_id NULL,新建时由服务端钉死(下方 .extend 不暴露)。
+  // creator_id 不在 body 里:它是模板行的标记,由服务端在 create 时通过
+  // boardResource 的 fixedFields 显式钉成 null(见下方 route)。
 });
 const presetBotUpdate = presetBotCreate.partial();
 
@@ -38,6 +39,8 @@ boardRoutes.route(
     orderBy: { col: 'slug', ascending: true },
     // 只看/只改模板行(creator_id IS NULL),防止 board 误改用户克隆出的私有 bot。
     scope: <Q>(q: Q): Q => (q as { is: (c: string, v: null) => Q }).is('creator_id', null),
+    // 新建时显式把 creator_id 钉成 null,把行标记为模板 —— 不依赖「列恰好无 DEFAULT」。
+    fixedFields: { creator_id: null },
     createSchema: presetBotCreate,
     updateSchema: presetBotUpdate,
   }),

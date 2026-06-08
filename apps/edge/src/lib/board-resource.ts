@@ -42,6 +42,10 @@ export interface BoardResourceOpts {
   // 给列表/单条加固定过滤(如预设机器人只取 creator_id IS NULL 的模板)。
   // 传入 supabase query builder,返回加了过滤的同一个 builder。
   scope?: <Q>(q: Q) => Q;
+  // create 时强制钉进 insert payload 的固定列(覆盖 body)。用于把新行显式打成
+  // scope 能看见的形状 —— 如 preset-bot 传 { creator_id: null } 显式标记模板行,
+  // 而不是依赖「列恰好无 DEFAULT」这种隐式机制。
+  fixedFields?: Record<string, unknown>;
   // create body 校验(全字段)
   createSchema: z.ZodTypeAny;
   // update body 校验(通常 .partial())
@@ -83,8 +87,10 @@ export function boardResource(opts: BoardResourceOpts): Hono<AppBindings> {
       return jsonError(c, 400, 'invalid_body', { detail: parsed.error.flatten() });
     }
     const svc = serviceClient(c.env);
+    // 固定列后 merge,确保 body 无法覆盖服务端钉死的字段(如 creator_id)。
+    const insertPayload = { ...(parsed.data as Record<string, unknown>), ...opts.fixedFields };
     const { data, error } = await pbFrom(svc, opts.table)
-      .insert(parsed.data as never)
+      .insert(insertPayload as never)
       .select(opts.cols)
       .maybeSingle();
     if (error) return jsonError(c, 500, 'database_error', { detail: error.message });

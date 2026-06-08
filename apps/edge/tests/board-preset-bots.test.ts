@@ -96,6 +96,8 @@ describe('POST /v1/board/preset-bots', () => {
     expect(res.status).toBe(200);
     const inserted = db.inserts.filter((i) => i.table === 'bots');
     expect(inserted).toHaveLength(1);
+    // creator_id 由 fixedFields 显式钉成 null,把行标记为模板行(scope 可见)。
+    expect(inserted[0].row).toHaveProperty('creator_id', null);
     const audits = db.inserts.filter((i) => i.table === 'admin_audit');
     expect(audits).toHaveLength(1);
     expect(audits[0].row.action).toBe('create');
