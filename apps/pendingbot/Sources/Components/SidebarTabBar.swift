@@ -1,37 +1,8 @@
 #if os(iOS)
 import SwiftUI
 
-/// One of the top-level tabs. Used by TabRoot to drive its
-/// regular-size-class layout (where we replace the system bottom tab bar
-/// with a `SidebarTabBar` rendered at the bottom of each tab's left
-/// column — the WeChat / QQ iPad pattern).
-enum TopTab: String, Hashable, CaseIterable {
-    case message
-    case friends
-    case crew
-    case envelope
-    case me
-
-    var label: String {
-        switch self {
-        case .message:  return "消息"
-        case .friends:  return "好友"
-        case .crew:     return "机组"
-        case .envelope: return "来信"
-        case .me:       return "我"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .message:  return "bubble.left"
-        case .friends:  return "person.2"
-        case .crew:     return "command"
-        case .envelope: return "envelope.open"
-        case .me:       return "person.crop.circle"
-        }
-    }
-}
+// `TopTab` 已抽到跨平台文件 `Features/Root/TopTab.swift`(A5),供宽屏壳与
+// iOS 侧栏共享。下面的 SidebarTabBar / topTabSelection 仍是 iOS-only。
 
 /// Binding to the active top-level tab, threaded through environment so
 /// the `SidebarTabBar` rendered inside each tab's sidebar can change
