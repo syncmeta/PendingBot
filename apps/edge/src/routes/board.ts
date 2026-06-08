@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { requireSession, requireAdmin } from '@pendingbot/identity';
 import { isBoardAdmin } from '../lib/board-audit';
 import { boardResource } from '../lib/board-resource';
+import { boardFeatureFlagsRoutes } from './board-feature-flags';
 import type { AppBindings } from '../types';
 
 export const boardRoutes = new Hono<AppBindings>();
@@ -45,3 +46,6 @@ boardRoutes.route(
     updateSchema: presetBotUpdate,
   }),
 );
+
+// ── 功能开关(单例 KV blob,非表行) ──────────────────────────
+boardRoutes.route('/feature-flags', boardFeatureFlagsRoutes);
