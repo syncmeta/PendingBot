@@ -1,6 +1,12 @@
 # PendingBot / PendingCrew 进度账本 (Progress Ledger)
 
-**最近对账：2026-06-08**（对照实际代码 / 迁移 / git，不是看 task 标记）
+**最近对账：2026-06-09**（对照实际代码 / 迁移 / git，不是看 task 标记）
+
+> **2026-06-09 PendingCrew 登录 / 家族 SSO — spec+plan + edge L1（A1-A3）落地（`feat/session-crew-comms`，未合）**
+> - **背景**：用户审 PendingCrew 登录流，连串定调 ——（1）**默认进本机模式、不开屏选模式**，登录降级为可选（已落 `155f09e5`：AppModel.mode/isConfigured macOS 默认 `.local`）；（2）BYOK key 是死的（从不注入子进程，CLI 用本机已登录态）→ **本机模式与 key 解耦 + `BackendMode.byok`→`.local` 正名**（`1c9a39cf`，key 变选填留给未来 SDK/`-p` 额度池）；（3）登录想复用本机同公司 app 的登录态，但 PendingCrew **不该拿到 PendingBot 的全权 session**（过权）→ 用户提出 keychain 共享账号/分权 → 对齐 **MSAL/Google same-publisher SSO** 模式。
+> - **设计**：spec `docs/superpowers/specs/2026-06-08-pendingcrew-login-sso-design.md`。三层 fallback（家族凭据自助 mint → OAuth 浏览器 → 扫码）。核心 = 一个**只有 `family_sso` 能力的账号级凭据**（`pfa_`，放共享 keychain 组 `M42BKJN82S.com.pendingname.shared`），各 app 经 `POST /v1/device-grant/mint` 换自己 scoped 的 device-grant —— **共享账号、分开授权、换不出 session**。plan `docs/superpowers/plans/2026-06-08-pendingcrew-login-sso.md`。
+> - **edge L1 已落 + 全验（A1-A3，subagent-driven）**：① 迁移 `20260609135344_family_sso_credentials`（表 + `mint_device_grant_from_family`/`issue`/`revoke` RPC + consume RETURN 扩 user/device，复用 `subject_can_authorize_device_grant`）**已 db push 到 prod** + schema regen（`4a724f1a`，先 merge main 拿那 3 个 security 迁移解账本分叉）；② `POST /v1/device-grant/mint` 端点 + scope helpers 抽 `device-grant-scopes.ts`（`1f894cbe`）；③ 登录 consume 时签发家族凭据、poll 回传（`8828d5c9`）。**edge 全量 553 测试绿 + typecheck 0**。
+> - **剩**：Phase B（app：entitlement 共享组 + `FamilyCredentialStore` + `mintGrant` + 启动静默 L1）、Phase C（QR 存凭据 + 侧栏登录入口）—— **可编译验，但功能要 D4 provisioning（共享组进 Apple Developer，两 app 重签）才跑得通**；以及 deploy edge、PendingBot 侧对称改、L2 批准网页。**这些是人工/真机尾巴。** 未合 main。
 
 > **2026-06-08 PendingCrew local-first 重构 + 接合定调 + chunk 1/3 + claude 机制 spike 全验 + chunk 4 本地 crew-comms live loop 落地（`feat/session-crew-comms`，未合，#267-#273）**
 > - **背景**：用户要把 PendingCrew 拆成可独立开源的 local-first 产品（形如 Claude Code/Codex：本地 CLI + 可选云）。重构 spec：`docs/superpowers/specs/2026-06-05-pendingcrew-local-first-crew-design.md`（取代早先 session-crew-comms-design 的 edge-first 框架；session 级机制 §1/§5/§7/§8/§11 + codex-app-server-reference 按引用复用不变）。**captain = 本地 session**（claude/codex 实例 + 机长 persona + 编排工具，被本地白板唤醒），crew-comms/白板/prompts 全本地化，edge 退成 `.logged` 可选叠加。
