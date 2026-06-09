@@ -885,15 +885,7 @@ struct ConversationView: View {
             //   • user_user → ContactSettingsView (备注 / 免打扰 / 删除好友)
             //   • user_bot / self → BotConfigView (机器人本身的默认配置)
             if conversation.conversation_type == "group" {
-                #if os(iOS)
                 GroupSettingsView(conversationId: conversation.id)
-                #else
-                // GroupSettingsView is still iOS-only (UIPasteboard +
-                // not-yet-shimmed nav modifiers). macOS placeholder until
-                // the Group slice is ported.
-                Text("群设置暂不支持 Mac")
-                    .foregroundStyle(.secondary)
-                #endif
             } else if conversation.conversation_type == "user_user",
                       let peer = peerProfileForBubble {
                 ContactSettingsView(
