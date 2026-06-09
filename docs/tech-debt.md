@@ -39,6 +39,8 @@
 - **病根**: 当年图省事把整个 `Features/*` 包进 `#if os(iOS)`,并非真有 iOS-only 依赖(实测只一小撮薄 shim:haptics/导航标题/剪贴板/二维码/键盘类型)。Mac 因此在 `Sources/Mac/` 整套平行重写,功能恒为 iOS 子集(典型:建 bot 只能单模型,无 arena)。两套 UI 靠人维持一致 → 必然漂移(#212 / `feat/mac-login-align` 就是在逐屏补这个漂移)。
 - **影响**: 三端体验不一致;每个新功能要写两遍;Mac 永远慢一拍。
 - **正在修**: `feat/tri-platform-ui` 彻底版——补跨平台垫片层后逐 slice 摘锁、共享同一份 iOS 视图、删 `Sources/Mac/` 平行实现。地基 + bot 管理片(含 arena 选模型)已落,消息slice迁移进行中(plan: `docs/superpowers/plans/2026-06-08-message-slice-migration.md`)。**两条分支(本条 vs #212)需择一收口,建议以本条彻底版为准。**
+  - **(2026-06-09)WideRootView 接共享 FriendsTabView/MessageTabView surface + 删 4 个 Mac 平行文件(双端 BUILD SUCCEEDED)** — 好友/消息 tab 中列取 `listColumn(selection:)`、右栏取 `detailColumn(selection:)`(`db4d7d1c` 接线 + `92912e00` 删 `MacFriendsView`/`MacBotManagement`/`MacMessagesView`/`MacRootView`)。crew/envelope/me 仍走各自 Mac 平行列(`MacCrewListColumn`/`MacEnvelopeColumn`/`MacRemoteSessionsView`/`MacMeView`,留待后续 slice)。
+  - **🟡 已知尾巴(Phase 7 真机验证)**: `listColumn` 与 `detailColumn` 是**不同 `FriendsTabView()`/`MessageTabView()` 实例**,@State 互不可见 → detail 的 `bot(for:)` 读不到 list 的 `@State bots`,恒传 `bot: nil`。ConversationView 已能纯从 Selection 跑通**载荷路径**(名字 `conversation.bot_name`、头像 `conversation.bot_id`、user_user 头像 `pendingPeer`、发送/物化 `pendingPeer?.peerId ?? conversation.bot_id`、existingConvId 跟在 `PendingPeer` 上不依赖 list @State),但 `bot: nil` 下 ConversationView **不自取完整 Bot 记录**,故两处**装饰性降级**:① 聊天头部少 `· <模型>` 后缀(`botName` 第 308 行需 `bot?.model`);② 进 `BotConfigView` 的入口被 `if let bot` 拦掉(第 889/896 行)。补全需给 `detailColumn`/`ConversationView` 加一次 bot 自取(异步 fetch + 新 @State + decode shape,且触到 iOS 热路径),非一行,故留作尾巴;Mac 真机验渲染时一并补。
 
 ### 🔴 好友列表(FriendsTabView)与消息/会话slice焊死 — 跨模块隐性耦合
 - **发现**: 2026-06-08 · `feat/tri-platform-ui`
