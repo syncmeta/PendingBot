@@ -1238,7 +1238,7 @@ export type Database = {
           final_result_message_id: string | null
           finished_at: string | null
           id: string
-          initiating_member_id: string
+          initiating_member_id: string | null
           last_context_cursor: string | null
           permission_mode_override: string | null
           progress_summary: string | null
@@ -1257,7 +1257,7 @@ export type Database = {
           final_result_message_id?: string | null
           finished_at?: string | null
           id?: string
-          initiating_member_id: string
+          initiating_member_id?: string | null
           last_context_cursor?: string | null
           permission_mode_override?: string | null
           progress_summary?: string | null
@@ -1276,7 +1276,7 @@ export type Database = {
           final_result_message_id?: string | null
           finished_at?: string | null
           id?: string
-          initiating_member_id?: string
+          initiating_member_id?: string | null
           last_context_cursor?: string | null
           permission_mode_override?: string | null
           progress_summary?: string | null
@@ -3503,7 +3503,7 @@ export type Database = {
           peer_device_id: string | null
           permission_mode: string
           responsibility_mode: string
-          responsible_subject_id: string
+          responsible_subject_id: string | null
           root_temporary_group_id: string | null
           runtime_kind: string
           runtime_location: string
@@ -3532,7 +3532,7 @@ export type Database = {
           peer_device_id?: string | null
           permission_mode?: string
           responsibility_mode?: string
-          responsible_subject_id: string
+          responsible_subject_id?: string | null
           root_temporary_group_id?: string | null
           runtime_kind?: string
           runtime_location?: string
@@ -3561,7 +3561,7 @@ export type Database = {
           peer_device_id?: string | null
           permission_mode?: string
           responsibility_mode?: string
-          responsible_subject_id?: string
+          responsible_subject_id?: string | null
           root_temporary_group_id?: string | null
           runtime_kind?: string
           runtime_location?: string

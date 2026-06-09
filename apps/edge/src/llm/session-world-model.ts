@@ -105,6 +105,11 @@ export async function renderSessionWorldModel(
       .select('conversation_id, title, responsible_subject_id')
       .in('conversation_id', linkedCrewIds);
     for (const row of rows ?? []) {
+      // responsible_subject_id is nullable since the account-deletion
+      // cascade SET-NULLs it when the responsible user deletes their
+      // account (the temp group survives, disowned). Skip those — there's
+      // no responsible subject to surface in the lineage context.
+      if (!row.responsible_subject_id) continue;
       lineageMeta.set(row.conversation_id, {
         title: row.title ?? '(untitled crew)',
         responsibleSubjectId: row.responsible_subject_id,

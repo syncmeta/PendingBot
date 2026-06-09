@@ -10,6 +10,24 @@
 
 **不记**：linter/typecheck 已经能抓的纯风格问题、个人口味、与项目健康无关的琐碎 TODO。
 
+---
+
+### 🟡 board 管理台无可用浏览器登录路径(EU Supabase CAPTCHA 挡客户端登录)
+- **发现**: 2026-06-09 · `feat/board-console` e2e 验证时
+- **现象**: `apps/admin` 登录页走 `supabase.auth.signInWithPassword`,EU 项目(zafhoiwwpanpuashtnxy)Auth 开了 CAPTCHA 保护 → 客户端登录返回 `captcha protection: request disallowed (no captcha_token found)`。客户端 OTP(`signInWithOtp`)同样会被 captcha 挡。**只有 service_role 的 admin API(generate_link+verify)能绕过 captcha** —— 这正是本次 e2e 用来 mint JWT 验证后端的方式。
+- **影响**: board 后端已端到端验证可用(requireAdmin/CRUD/audit 全通),但**没有真人能从浏览器登进去** —— 部署后前门仍是锁的。
+- **修法(择一,属"board auth 加固"未来工作)**: (a) 给登录页接 Cloudflare Turnstile 控件,`signInWithPassword({options:{captchaToken}})` 带 token;(b) 直接做用户定的 passkey+TOTP+密码栈(passkey 需先核 Supabase 原生支持,见下条相关);(c) 仅临时:Supabase 后台关 CAPTCHA 验完再开(不作为长期方案,削弱真 app 注册防护)。
+- **状态**: 待办。后端不阻塞;board 真正"可登录可用"前必须解决其一。
+
+---
+
+### 🟢 功能开关(board)运行时切的传播延迟 ≤60s + Sentry 仍 env-only
+- **发现**: 2026-06-08 · `feat/board-console`(计划 `docs/superpowers/plans/2026-06-08-board-feature-flags.md`)
+- **位置**: `apps/edge/src/lib/feature-flags.ts`(isolate 60s TTL 缓存)、`apps/edge/src/routes/board-feature-flags.ts`(PUT 写 `cfg:feature-flags` KV)
+- **取舍 1(传播延迟)**: board 切 Billing/PostHog/Langfuse 后,worker 端要 ≤60s(isolate-local TTL 缓存)+ KV 全球传播(秒级)才全节点生效。PUT 没做显式 cache-bust —— isolate 多、bust 不可靠。对 pre-launch 开关可接受;若将来要"切了即时全网生效",得改更短 TTL 或挪到一个单点 DO 读。
+- **取舍 2(Sentry 不上 board)**: Sentry 开关保持 env + 重部署,**故意不做运行时切**。原因:(a) `@sentry/cloudflare` 的 `withSentry` options 回调签名是同步 `(env)=>CloudflareOptions|undefined`,容不下异步 KV 读;(b) 错误捕获器的 kill-switch 必须零运行时依赖,不能让它依赖 KV/DB,否则一次边缘存储抽风会顺手静音它。board 页给 Sentry 一行只读展示。这不是债,是刻意设计,记此供将来回看"为什么 Sentry 不在 board"。
+- **状态**: 接受(pre-launch)。即时生效需求出现时再处理取舍 1。
+
 ## 使用约定
 
 - 发现就追加一条，**只记录、默认不顺手去修**——修一个根基问题往往是独立的一摊活，会冲散当前任务的焦点。除非用户当场要你修。
@@ -32,6 +50,36 @@
 ---
 
 ## 🔴 根基级
+
+### 🔴 客户端多账号本地隔离只靠"登出时擦库"一条腿,无 account_id 维度过滤 + URLCache 登出不清
+- **发现**: 2026-06-08 · session(用户问"登一个号再登另一个号数据会混吗")
+- **位置**: `apps/pendingbot/Sources/Storage/AccountStore.swift:226`(`signOut`)、`apps/pendingbot/Sources/Storage/LocalDatabase.swift:338`(`wipeForSignOut`)、`:378`(`loadConversations` 等读查询)、`apps/pendingbot/Sources/Storage/ProtectedURLCache.swift`、`apps/pendingbot/Sources/PendingBotApp.swift`(`onChange(of: accountStore.current)`)
+- **问题**: 本地 SQLite(会话/消息/好友/群)的账号隔离**完全依赖"登出时 `wipeForSignOut()` 物理删库 + 轮换 Keychain 密钥"**。表里虽有 `user_id`/`account_id` 列但**读查询一律 `fetchAll` 不带 WHERE 过滤**,DB 本身不区分账号。两个具体缺口:
+  - ① **URLCache(图片/HTTP 缓存)登出时不清**。`signOut()` 删了 DB 却没调 `URLCache.shared.removeAllCachedResponses()`,`~/Library/Caches/ProtectedURLCache/` 是全用户共用目录、非账号作用域。实害有限(缓存键是 `/v1/uploads/<id>` 级 URL,B 通常不会去请求 A 的 upload id),但"登出后磁盘仍残上一个账号的图片缓存"是事实,隐私/卫生缺口。
+  - ② **强制换号(不经过 `signOut`)会泄漏**。`observeAuth()` / 后台刷新拿到**另一个 user 的 session** 时直接 `current = makeAccount(session:)`,不比较 `old.id != new.id`、不触发擦库;`PendingBotApp` 的 `onChange` 只判 `old == nil && new != nil`(纯登入)。因为没有 account_id 过滤,A 的整库在 B 的会话里仍可读。日常无 UI 经路(换号必走 signOut→signIn),属 token 刷新返回异身/服务端 session swap/会话劫持等例外时的洞。
+- **影响**: 账号隔离是隐私/数据一致性根基。当前"擦库一条腿"在正常登出登入流程下是安全的,但①让登出后残留可缓存内容、②让任何"绕过 signOut 的 session 变更"直接串号。两者都随功能增长易被无声打破(谁加个直接切号入口或改刷新逻辑就踩)。
+- **建议**: ① `signOut()` 里补 `URLCache.shared.removeAllCachedResponses()`(顺手把 ProtectedURLCache 目录也清)。② `PendingBotApp.onChange` 加 `if let o=old?.id, let n=new?.id, o != n { LocalDatabase.shared.wipeForSignOut(); AvatarCache.shared.clear(); URLCache… }` 守护强制换号。③ 中长期:给本地表加 `account_id` 并让所有读查询带 `WHERE account_id = ?`,把隔离从"擦库"升级为"作用域过滤"(纵深防御,即使擦库漏了也不串)。
+- **状态**: 待办(仅记录,未修)。
+
+### 🔴 pnc_ledger 计费账本曾对 anon 可读、对 authenticated 可改写(RLS 没开);宽 grant 习惯需审计
+- **发现**: 2026-06-08 · chore/security-advisor-hardening(Security Advisor 体检)
+- **位置**: `pendingbot.pnc_ledger`(整数事实源账本)+ 各表的 anon/authenticated grant
+- **问题**: pnc_ledger 是计费的整数事实源,但**RLS 一直没开**,且 `anon` 有 SELECT、`authenticated` 有 INSERT/SELECT/UPDATE/DELETE —— 任何登录用户能读/篡改**全量**账本、未登录用户能读全量。`me.ts /wallet/v2` 用**用户态 client** 读它,注释还写着"RLS 仅本人",但那道保护从来不存在(RLS 没开,只靠应用层 `.eq('subject_id', …)` 过滤,绕过即泄)。根因是**给表发 grant 时习惯性放宽**(连 anon 都给了 SELECT),而 RLS 没跟上。已修(`20260608083813`:开 RLS + subject 维度 SELECT policy + 收 anon/写权限)。
+- **影响**: 计费账本是钱的事实源,世界可读可改 = 数据泄露 + 篡改面。同类风险:**只要某张敏感表 grant 给了 anon/authenticated 又忘了开 RLS(或 RLS policy 比 grant 宽),就是同样的洞**。Supabase Security Advisor 的 `rls_disabled_in_public` 只抓"RLS 没开"这一种,抓不到"RLS 开了但 policy 太宽"或"grant 给 anon 太多"。
+- **建议**: ① 上线前把 **Security Advisor 跑成准入门**(`get_advisors security` 必须无 ERROR)。② 审计所有表的 anon grant —— anon 默认应几乎什么都没有(只有少数公开资源如 disposable_email_domains 才需要);写个 CI 断言"anon 不持有任何 pendingbot 表的写权限、敏感表无 SELECT"。③ 约定:新表一律先 `ENABLE ROW LEVEL SECURITY`,再按需加 policy;grant 走最小权限,别习惯性给 anon/authenticated 全 CRUD。
+- **状态**: pnc_ledger 实例已解决(`20260608083813`,db push 已应用 prod;验证:RLS on、anon 无权限、authenticated 仅 SELECT 自己、policy 生效)。**全表 grant 最小化审计 + advisor 准入门(①②)待办**。
+- **已审计为有意保留(Security Advisor 余项,非洞)**: 6 个 `bi_*` SECURITY DEFINER 视图(Grafana BI 让 bi_ro 跨 RLS 读聚合,故意的)、16 个 `rls_enabled_no_policy`(service-role 专用表,开 RLS 无 policy = 锁死 = 安全)、71 个 `authenticated` SECURITY DEFINER 函数(`20260524175632` 显式授的 RPC 面,内部自带 authz)。两个配置项留用户:`auth_leaked_password_protection`(Dashboard Auth 开关)、`pg_net in public`(迁 schema 有风险,暂留)。
+
+### 🔴 账号删除级联靠手维护,有两类静默杀手(NO ACTION 外键 + 收敛式 RI 交织);已第二次漂移
+- **发现**: 2026-06-08 · fix/account-deletion-cascade
+- **位置**: `supabase/migrations/0052_auth_delete_user_trigger.sql`(`_before_auth_user_delete` BEFORE DELETE 触发器)+ 全 schema 指向 `auth.users`/`pendingbot.users`/`pendingbot.subjects`/`conversations` 的外键 `ON DELETE` 动作
+- **问题**: `delete from auth.users` 能不能成功靠**两套手维护的东西**+ 一个 **Postgres RI 陷阱**同时不出错:
+  - ① 0052 触发器里逐表写死的 cleanup(删 bots/messages/convs、置空 audit_log/invites…);② 每张引用用户/subject 的表的 FK `ON DELETE` 动作。任何新表带个指向 user/subject 的 `NO ACTION`(Postgres 默认!)外键又没被照顾,就静默让全站删号报 "Database error deleting user"。这次 subject 体系(2026-05-24)整套没纳入 → 8 张 crew/runner 子表 `NO ACTION`。**migration `20260608051247` 给它们补了动作**。
+  - ③ **更隐蔽的杀手——收敛式多路 RI 交织**:一行同时被同一次 `delete from auth.users` 语句里的**一条 CASCADE 路径**和**一条 SET NULL 路径**命中,Postgres 在级联中途重校该行外键 → 23503(`insert or update on … violates …_fkey`)。device-login challenge 就是:`approved_by_user_id→users SET NULL` + `approved_subject_id→subjects SET NULL` + `issued_grant_id→grants CASCADE(随 subject)`,三路收敛在同一行。**纯改 FK 动作治不了**(它是级联中途对该行的"写"),`20260608051247` 把 issued_grant 改 CASCADE 后**仍然报同样的错**——这是教训:当时凭静态 FK 分析断定"级联是干净的",没复现就宣布修好,结果没修好。后来用回滚事务复现才钉死:删 subject 单独干净、删 auth.users 不干净,差就差在 auth.users 这一层的 SET NULL 路径。**全 schema 审计出恰好 4 张收敛表**(subjects / user_bot_contacts / group_join_requests / group_subject_members)。`20260608061958` 在 BEFORE 触发器里把这些行**提前单路删掉**(级联前删，互不交织),根治。
+  - **这是第二次漂移**:0002→0052 已补过一次同类账。
+- **影响**: 账号删除是合规面(数据删除权)+ 产品面(注销)的根基功能,却是最容易被新表悄悄打破的一类——破坏者离它很远(加张无关表),症状是全站删号挂掉,且**只有真正执行删除才暴露**(CI/typecheck 完全抓不到)。两类杀手都会随表数量**反复**复发。
+- **建议**: 把两个隐式不变量都变成红灯。① **NO ACTION 审计**:CI 断言"从 `auth.users` 出发的删除闭包里没有未被触发器覆盖的 `NO ACTION`/`RESTRICT` 外键"。② **收敛式 RI 审计**:CI 断言"没有一张表同时拥有指向 user/subject 的 CASCADE 外键和 SET NULL 外键"(本次那条 `bool_or(act='c') AND bool_or(act='n')` 查询),命中的必须进 BEFORE 触发器提前删。③ 约定:新表带指向 user/subject/conv/bot 的外键必须显式声明 `ON DELETE`,别吃 Postgres `NO ACTION` 默认。④ 流程教训:**删除级联这种"只有真删才暴露"的改动,别凭静态分析宣布修好——必须用回滚事务复现失败、再验证修复**。
+- **状态**: 两个实例都已解决并 db push 应用 prod(`20260608051247` 补 NO ACTION + 子树动作;`20260608061958` BEFORE 触发器提前删 4 张收敛表)。验证:回滚事务模拟 4 张收敛表的提前删 + subject 子树级联在真实卡住账号 617259ec 上全部 clean;真删本身受 prod 写门禁,留用户在 Studio 作终确认。**防复发护栏(①②CI 审计)待办**。
 
 ### 🔴 边缘读投影授权门 ↔ Supabase RLS 对齐是隐式不变量,无测试守护
 - **发现**: 2026-06-07 · feat/edge-read-offload(E6 对抗式审查 E4 授权门)
@@ -443,6 +491,18 @@
 - **建议**: 要分"我 vs 别人"需要读侧返回 `sender_user_id` 或在 members 里把 `me` 的 member_id 标出来再比对；附件等 crew upload 通道就绪后把 ComposerView 的 picker 接活。
 - **状态**: 部分修复 —— ① live push + ② inline 权限卡已于 T4.5 落地；③ 附件、④ 自我高亮仍未修（待读侧补字段 / crew upload 通道）
 
+### 🟡 客户端(iOS/Mac)从不把用户身份同步给 RevenueCat / PostHog / Sentry — 三个外部服务的 client 侧 identity 全缺
+
+- **发现**: 2026-06-08 · session(查"iOS 注册后 Polar 没对应用户")
+- **位置**: `apps/pendingbot/`(整个客户端;grep `revenuecat`/`Purchases`/`posthog`/`sentry` 零命中)、对照 edge 侧已就绪的 `apps/edge/src/routes/billing-webhooks.ts:185`(`ev.app_user_id`)、`apps/edge/src/lib/analytics.ts`(distinctId=subjectId)
+- **问题**: 所有外部服务都约定用 `subject_id`(= `auth.users.id`)当外部主键,edge 侧已按此接好;但 **客户端从没把这个 id 告诉这三个服务**:
+  1. **RevenueCat** —— iOS 完全没集成 SDK,从不调 `Purchases.configure` / `logIn(subjectId)`。后端 `/v1/billing/revenuecat/webhook` 已经在等 `app_user_id`,可一旦真走 IAP,RevenueCat 不知道这笔购买属于哪个 `subject_id` → **入账对不上人**(直接影响计费正确性)。
+  2. **PostHog** —— 客户端无 SDK、无 `identify(subjectId)`;目前只有 edge 侧 `topup_succeeded` 一个事件带 distinctId。注册、会话、产品行为在 client 侧全无埋点。
+  3. **Sentry** —— 任何地方(client + edge)都没 `setUser()`;报错事件挂不到具体用户,只有 trace/时间戳。
+- **影响**: RevenueCat 这条是 🟡 偏 🔴 的——IAP 上线前不补会导致购买无法归户、对账困难。PostHog/Sentry 两条是观测盲区(无用户维度归因),非阻断。注意这与 kill-switch(`BILLING_ENABLED`/`POSTHOG_ENABLED` 默认关,wrangler.jsonc)是两回事:开关只管 edge 发不发,**客户端 identity 缺失是开关打开也补不上的独立洞**。
+- **建议**: ① IAP 上线前必做:iOS 集 RevenueCat SDK,登录成功后 `Purchases.shared.logIn(subjectId)`,登出 `logOut()`;② PostHog iOS SDK + 登录后 `identify(subjectId)`、登出 `reset()`;③ Sentry(client 用 sentry-cocoa,edge 在 worker 入口)登录后 `setUser(id: subjectId)`。三者共用"拿到 session 后取 `auth.users.id` 调一次 identify"的同一时机,可一并接。
+- **状态**: 大部分已解决 2026-06-08(feat/client-telemetry-sdks)。新增 `apps/pendingbot/Sources/Networking/Telemetry.swift` 协调器:`PendingBotApp`(iOS+macOS)init 调 `configure()`,`onChange(of: accountStore.current)` 登录 `identify(subjectId)` / 登出 `reset()`,三 SDK 统一用 `subject_id`、不传 PII。PostHog(3.59.3)/Sentry(9.16.1)填真 key(`.remote`),iOS+Mac 编译双绿 + 模拟器启动冒烟通过。**剩余两条尾巴**:(a) RevenueCat 走 `Purchases.isConfigured` gate、`revenueCatKey` 暂为空串占位 → SDK 休眠,待 RC 账号开通补 `appl_…` key + 真上 IAP(身份代码已就位);(b) PostHog/Sentry 事件真实投递到 dashboard 仅靠"启动不崩"验证,真机/真登录的端到端归因闭环未做。
+
 ## 🟢 不规范
 
 ### 🟢 surf_runs / scroll_runs 是 envelope 取代后的遗留死表(仍挂在 realtime publication 上)
@@ -634,6 +694,7 @@
 - **状态**: 待办（前置依赖，需用户落库角色 + 配 datasource）
 
 ### 🟡 admin 控制台（apps/admin）依赖的 edge admin 端点尚不存在 —— dataProvider 指向"意图路径"，调用即 404
+> **2026-06-08 重定位（`feat/board-console`，spec `docs/superpowers/specs/2026-06-08-board-console-cms-design.md`）**：本条记的"补一整套 `/v1/admin/*` 运营端点"方向已**作废**。重新定调:控制台从「运营仪表盘」纠正为「**内容/预设/配置管理台**」(board CMS)。下面 11 条里的 1-3(用户/Bots/会话浏览)归 **PostHog**、4-9(计费/钱包/账号)归 **Polar/RevenueCat**、10-11(人工协助/权限审批)归 **PendingCrew**(独立开源应用),**都不在中央后台建**。已落地:`/v1/board/preset-bots` 全 CRUD(requireAdmin + admin_audit before/after,经通用 `boardResource` 工厂),前端换 Ant Design、退役 8 个旧运营页。**仍待做(各自后续计划)**:P2 预设会话/群+预设来信(需建 `preset_letters` 表)、P3 tool 管理、P4 KV 配置类(模型目录/pricing/i18n/place_names)。下方原始清单仅作历史留档。
 - **发现**: 2026-06-03 · feat/dashboard-wiring（dashboard stack block 4）
 - **位置**: `apps/admin/src/providers/resource-map.ts`（`RESOURCE_ROUTES` + `ADMIN_ACTION_ENDPOINTS`，逐条标了 `exists:false`）、`apps/admin/src/providers/data-provider.ts`、`apps/edge/src/index.ts`（v1 路由挂载处，**当前无任何 `/v1/admin/*`**）
 - **问题**: 新建的 Refine admin 控制台按 spec 要求"读写都过 edge、绝不直连 Postgres、前端不持 service-role key"，所以 dataProvider 把每个资源映射到 edge REST 路由。但**edge 目前没有 admin 路由面**：`users.is_admin` 字段在 DB 里存在，`@pendingbot/identity` 也导出了 `requireAdmin(...)`，但**全仓没有任何地方 mount 或使用它**。控制台为了不埋"假装能用"的 stub，把这些资源指向**意图中的** edge 路径并在代码里 `exists:false` 标注 + 页面渲染告警横条；调用当前会 404。
@@ -654,7 +715,7 @@
   10. `GET /v1/admin/permission-requests`（list）—— 权限审批**列表**（decide 动作已存在，但没有 admin 列表读）。
   11. `GET /v1/admin/human-help-requests`（list）—— **admin-wide** 人工协助队列（现有那条只看 caller 自己被点名的，不是全局队列）。
 - **建议**: 新建 `apps/edge/src/routes/admin.ts`，挂在 `/v1/admin`，第一道中间件 `requireSession()` 后接 `requireAdmin(c => SELECT is_admin FROM pendingbot.users WHERE id=c.var.userId)`，所有读用 `serviceClient` 跨用户查、所有写进 `admin_audit`（actor_id/before/after/ip/user_agent 已有列）。读端点返回 `{ items: [...] }`（控制台 dataProvider 已按此 normalize）。建端点时同步把 `resource-map.ts` 对应条目翻成 `exists:true`，并把本条状态推进。计费两个端点落地前先决定 `pnc_ledger` 视图建不建（spec 名 vs 实表名的口径要统一）。
-- **状态**: 待办（控制台前端已接好并可编译/构建；等 edge admin 路由面落地）
+- **状态**: 已重定位为 board CMS（见顶部 2026-06-08 note）。P0 框架 + P1 预设机器人已落地并双审/全量验证（edge 540 vitest + typecheck 绿、admin build 绿）；P2–P4 待后续计划。原始"补全 /v1/admin/* 运营面"方向作废。
 
 
 - 🟡 **旧 per-conversation 分摊模型"连根拔"未完(invite 流耦合 + 物理 drop 待协调)** — `feat/ios-wallet-group`(2026-06-03,基于 `chore/retire-billing-v2`)。群消费结算早已切到责任 subject 的实缴池+认缴(`settleGroupSpend`),用户拍板 iOS+edge 连根拔旧 per-conversation `group_member_billing` 分摊。**本拍已做**:删 `lib/group-billing.ts`+测试(死)、删 `groups.ts` 的 `/billing|/cap|/participates` 三路由。**未做(耦合群邀请流 + iOS,独立一摊)**:(a) `groups.ts:groupBillingInviteSnapshot` 仍读 `group_member_billing` 生成邀请预览"分摊"文案,两处调用(创建群邀请 / 邀请预览)嵌进 invite 响应,iOS `FriendsTabView` 消费 `mode_label/invitee_participates/payer_count_after` —— 新模型无 per-conversation "participates" 概念,该快照前提已不成立,需解耦/移除并改 iOS 邀请预览 UI;(b) 接受邀请 handler 仍写 `group_member_billing`(seeding)+ 用 `group_member_invitations.invitee_participates`;(c) 物理 drop 迁移:`group_member_billing` 表 + `group_set_billing/cap/participates` RPC + `group_member_invitations.billing_snapshot`/`invitee_participates` 列。**(c) 必须在 `chore/retire-billing-v2` 部署、且 (a)(b) 解耦后再 apply**(生产 main 当前仍 live 在旧模型上,提前 drop 会 500)。建议作为独立 task 整体收口,别塞进钱包 UI 这一拍。
@@ -719,3 +780,7 @@
   - **缓存消息无附件**:`LocalDatabase.messages` 没有附件列,cached 行是纯文字,图片/文件 chip 等 `loadMessages` 网络往返解析——与 iOS 缓存 hydrate(`attachments: nil`)一致,非 Mac 独有缺口。
 
 - 🟡 **本地 Swift 单测 / 交互式二进制 smoke 在"超长 session"末段被宿主 PTY 耗尽卡住 —— 验证方法学缺口,非代码缺陷** — `feat/session-crew-comms`(2026-06-08,#274)。`xcodebuild test`(macOS)报 `Pseudo Terminal Setup Error / IDEPseudoTerminalDomain ErrorCode 7 Errno 6 (Device not configured)`。根因经只读诊断坐实:`kern.tty.ptmx_max=511`,而托管本 agent 的宿主进程(`Claude` app,本次 PID 1321)在长 session 里**泄漏 ptmx master fd**,单进程占满 **510/511**,xctest runner 分不到新 PTY → 启动失败;同源地,直接 `--mcp-serve` 跑**阻塞读 stdin** 的真二进制也卡(harness 后台化下 stdin 不绑文件 EOF + PTY 退化)。**不能** kill 宿主(=断 session),**不擅自** `sudo sysctl -w kern.tty.ptmx_max=…`(改系统设置需用户授权)。**当前 workaround**:自包含 Foundation 模块(`LocalApprovalStore`/`LocalWhiteboardStore`/`McpServer` 等)用 `swiftc <真实源文件> + 断言 main` 编 CLI driver 直接跑(不读 stdin、不需 PTY),step ① 已 21 断言全绿;XCTest 文件保留为 Xcode GUI / CI(PTY 充足)下的 canonical 验证。**待用户在场时**:在新鲜 session(或重启宿主 app 释放 ptmx fd)下跑一次完整 `xcodebuild test` 收口,或评估给宿主 app 修 PTY fd 泄漏。**影响**:长 session 末段无法用 xctest 自验 Swift,只能 swiftc-driver 兜底——验证仍真实,但不是 canonical runner。
+
+- 🟡 **`boardResource` 把所有 DB 错误一律压成 500 `database_error`,无法区分 409 conflict** — `feat/board-console`(2026-06-08)。`apps/edge/src/lib/board-resource.ts` 的 CRUD 工厂在 list/get/create/update/delete 各处都是 `if (error) return jsonError(c, 500, 'database_error', …)`,把 Postgres 错误码全部抹平。preset-bot 表的 `slug` 唯一约束冲突(以及将来任何唯一/外键约束)会以 500 返回,而非语义正确的 409 `conflict`,前端无法据此提示"slug 已被占用"。P1 只有 preset-bots,管理员手输 slug 撞车概率低,可忍;**P2–P4 换表(尤其有用户可见唯一键的资源)若需向前端暴露唯一冲突,需扩工厂**:按 `error.code === '23505'`(unique_violation)/ `'23503'`(fk_violation)映射到 409 并带上冲突列信息,而不是无脑 500。
+
+- 🟡 **`boardResource` list 硬编码 `.limit(500)` 是魔法值且静默截断** — `feat/board-console`(2026-06-08)。`apps/edge/src/lib/board-resource.ts` 的 LIST 路由写死 `.limit(500)`,既是裸魔法数(无命名、无注释来由),又**无 count / has_more 信号**:行数超 500 时直接静默吃掉尾部,前端无从得知列表被截。preset-bots 量小(模板行数十级)不会触顶,当前安全;**P2 换大表(如模型目录、未来用户可见的大集合)前应提为 `opts.listLimit`(显式可配)或加真正的分页**(cursor / offset + `count: 'exact'` 回传总数 / `has_more`),否则换表那刻就埋下"列表只显示前 500"的隐性数据缺失。

@@ -102,6 +102,9 @@ struct MacRootView: View {
         } detail: {
             detailColumn
         }
+        // 还原登录窗的透明 + 圆角裁剪,否则主界面继承透明窗 → 不自带材质的
+        // 空态列(右栏 MacEmptyColumn)直接透到桌面。见 MacMainWindowStyler。
+        .background(MacMainWindowStyler())
         .onChange(of: selectedTab) { _, _ in
             // 切 tab 时清掉中间列的选中,避免上一个 tab 的 selection 串到下一个
             // tab 的右栏;但若是程序触发的跨 tab 跳转,改为选中目标会话。
@@ -206,6 +209,77 @@ private struct MacEmptyColumn: View {
         }
         .padding(32)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.Palette.canvas)
+    }
+}
+
+/// Reverts the cosmetic window surgery `MacLoginWindowStyler` applied to the
+/// shared `NSWindow` for the login card (transparent backing + 22pt corner
+/// clip on the contentView). The login and the main app live in the SAME
+/// WindowGroup window, so without this the main app inherits a transparent,
+/// corner-masked window — empty panes that don't paint their own material
+/// (e.g. the detail column's `MacEmptyColumn`) show straight through to the
+/// desktop. Here we put the window back to a normal opaque app window.
+private struct MacMainWindowStyler: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let v = NSView(frame: .zero)
+        DispatchQueue.main.async { [weak v] in
+            if let w = v?.window { context.coordinator.attach(to: w) }
+        }
+        return v
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async { [weak nsView] in
+            if let w = nsView?.window { context.coordinator.attach(to: w) }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    @MainActor
+    final class Coordinator {
+        private weak var window: NSWindow?
+        private var observed = false
+
+        func attach(to window: NSWindow) {
+            self.window = window
+            Self.restore(window)
+            guard !observed else { return }
+            observed = true
+            // 登录窗复用同一个 NSWindow,透明设置可能在视图切换后才被
+            // NavigationSplitView 合成过分隔区 → 首帧残留一条没铺到的细缝。
+            // 单次 async restore 赶不上那一帧,所以再挂这几个事件补一拍,
+            // 不依赖单一时机(跟 MacLoginWindowStyler 同套路)。
+            let nc = NotificationCenter.default
+            for name: NSNotification.Name in [
+                NSWindow.didBecomeKeyNotification,
+                NSWindow.didBecomeMainNotification,
+                NSWindow.didResizeNotification,
+            ] {
+                nc.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated {
+                        guard let self, let w = self.window else { return }
+                        Self.restore(w)
+                    }
+                }
+            }
+        }
+
+        private static func restore(_ window: NSWindow) {
+            window.isOpaque = true
+            window.backgroundColor = .windowBackgroundColor
+            if let content = window.contentView {
+                content.wantsLayer = true
+                content.layer?.masksToBounds = false
+                content.layer?.cornerRadius = 0
+            }
+            window.invalidateShadow()
+            // 强制整窗立即重绘,把首帧那条瞬态细缝在当帧就补掉,
+            // 不用等用户重开窗口触发的下一次重布局。
+            window.viewsNeedDisplay = true
+            window.displayIfNeeded()
+        }
     }
 }
 
