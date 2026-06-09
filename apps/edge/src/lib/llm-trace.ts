@@ -55,7 +55,7 @@ export interface TraceGenerationArgs {
  * observing. Failures are logged and swallowed.
  */
 export async function traceGeneration(env: Env, args: TraceGenerationArgs): Promise<void> {
-  if (!langfuseEnabled(env)) return;
+  if (!(await langfuseEnabled(env))) return;
   const langfuse = getLangfuseClient(env);
   if (!langfuse) return;
 
@@ -132,7 +132,7 @@ export interface RecordScoreArgs {
  * signals (e.g. arena A/B preference votes) that aren't tied to a generation.
  */
 export async function recordScore(env: Env, args: RecordScoreArgs): Promise<void> {
-  if (!langfuseEnabled(env)) return;
+  if (!(await langfuseEnabled(env))) return;
   const langfuse = getLangfuseClient(env);
   if (!langfuse) return;
 

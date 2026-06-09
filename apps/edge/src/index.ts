@@ -44,6 +44,7 @@ import { conversationListRoutes, messageTailRoutes } from './routes/projections'
 import { wellKnownRoutes } from './routes/well-known';
 import { billingWebhookRoutes } from './routes/billing-webhooks';
 import { langfusePromptRoutes } from './routes/langfuse-prompts';
+import { boardRoutes } from './routes/board';
 import { handleScheduled } from './cron';
 import { persistAuditMessage, GatewayCostPendingError } from './llm/router';
 import type { AuditMessage } from './queue/audit-types';
@@ -156,6 +157,7 @@ v1.route('/realtime-hub', realtimeHubRoutes);
 v1.route('/realtime-internal', realtimeInternalRoutes);
 v1.route('/billing', billingWebhookRoutes);  // /v1/billing/polar/webhook + /v1/billing/revenuecat/webhook
 v1.route('/langfuse', langfusePromptRoutes);  // /v1/langfuse/prompt-webhook (Langfuse prompt-version → PROMPTS_KV)
+v1.route('/board', boardRoutes);  // 内容/预设/配置管理台(requireAdmin)
 
 app.route('/v1', v1);
 

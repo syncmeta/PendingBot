@@ -495,7 +495,7 @@ export interface SettleGroupParams {
 export async function settleGroupSpend(p: SettleGroupParams): Promise<void> {
   const { env, supa, subjectId } = p;
   // Kill-switch: billing off (default) → don't decay the pool / debit members.
-  if (!billingEnabled(env)) return;
+  if (!(await billingEnabled(env))) return;
   const spend = Math.trunc(p.spendMicros);
   if (!Number.isFinite(spend) || spend <= 0) return;
 

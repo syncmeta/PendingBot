@@ -74,11 +74,34 @@ export interface FakeWallet {
   balances: Record<string, number>;
 }
 
+/// Minimal in-memory KV backing the `MEMORY` binding. `store` holds the
+/// JSON values; `get(key, 'json')` returns the stored object, `put(key, val)`
+/// JSON-parses and stores. `throws` makes both ops reject (to exercise the
+/// KV-failure fallback path). Tests can seed `store` and inspect it after.
+export interface FakeKv {
+  store: Record<string, unknown>;
+  throws: boolean;
+}
+
 export function makeFakeEnv(
   db: FakeDb,
-  opts?: { wallet?: FakeWallet },
+  opts?: { wallet?: FakeWallet; kv?: FakeKv },
 ): Env {
   const fakeWallet: FakeWallet = opts?.wallet ?? { calls: [], balances: {} };
+  const fakeKv: FakeKv = opts?.kv ?? { store: {}, throws: false };
+  const memoryBinding = {
+    get: async (key: string, _type?: string) => {
+      if (fakeKv.throws) throw new Error('kv down');
+      return fakeKv.store[key] ?? null;
+    },
+    put: async (key: string, value: string) => {
+      if (fakeKv.throws) throw new Error('kv down');
+      fakeKv.store[key] = typeof value === 'string' ? JSON.parse(value) : value;
+    },
+    delete: async (key: string) => {
+      delete fakeKv.store[key];
+    },
+  };
   const walletBinding = {
     idFromName: (name: string) => name,
     get: (subjectId: string) => ({
@@ -110,8 +133,10 @@ export function makeFakeEnv(
     // Billing tests exercise the live gate/debit path — enable the kill-switch.
     BILLING_ENABLED: 'true',
     WALLET: walletBinding,
+    MEMORY: memoryBinding,
     __fakeDb: db,
     __fakeWallet: fakeWallet,
+    __fakeKv: fakeKv,
   };
   return env as Env;
 }

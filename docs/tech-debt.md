@@ -10,6 +10,24 @@
 
 **不记**：linter/typecheck 已经能抓的纯风格问题、个人口味、与项目健康无关的琐碎 TODO。
 
+---
+
+### 🟡 board 管理台无可用浏览器登录路径(EU Supabase CAPTCHA 挡客户端登录)
+- **发现**: 2026-06-09 · `feat/board-console` e2e 验证时
+- **现象**: `apps/admin` 登录页走 `supabase.auth.signInWithPassword`,EU 项目(zafhoiwwpanpuashtnxy)Auth 开了 CAPTCHA 保护 → 客户端登录返回 `captcha protection: request disallowed (no captcha_token found)`。客户端 OTP(`signInWithOtp`)同样会被 captcha 挡。**只有 service_role 的 admin API(generate_link+verify)能绕过 captcha** —— 这正是本次 e2e 用来 mint JWT 验证后端的方式。
+- **影响**: board 后端已端到端验证可用(requireAdmin/CRUD/audit 全通),但**没有真人能从浏览器登进去** —— 部署后前门仍是锁的。
+- **修法(择一,属"board auth 加固"未来工作)**: (a) 给登录页接 Cloudflare Turnstile 控件,`signInWithPassword({options:{captchaToken}})` 带 token;(b) 直接做用户定的 passkey+TOTP+密码栈(passkey 需先核 Supabase 原生支持,见下条相关);(c) 仅临时:Supabase 后台关 CAPTCHA 验完再开(不作为长期方案,削弱真 app 注册防护)。
+- **状态**: 待办。后端不阻塞;board 真正"可登录可用"前必须解决其一。
+
+---
+
+### 🟢 功能开关(board)运行时切的传播延迟 ≤60s + Sentry 仍 env-only
+- **发现**: 2026-06-08 · `feat/board-console`(计划 `docs/superpowers/plans/2026-06-08-board-feature-flags.md`)
+- **位置**: `apps/edge/src/lib/feature-flags.ts`(isolate 60s TTL 缓存)、`apps/edge/src/routes/board-feature-flags.ts`(PUT 写 `cfg:feature-flags` KV)
+- **取舍 1(传播延迟)**: board 切 Billing/PostHog/Langfuse 后,worker 端要 ≤60s(isolate-local TTL 缓存)+ KV 全球传播(秒级)才全节点生效。PUT 没做显式 cache-bust —— isolate 多、bust 不可靠。对 pre-launch 开关可接受;若将来要"切了即时全网生效",得改更短 TTL 或挪到一个单点 DO 读。
+- **取舍 2(Sentry 不上 board)**: Sentry 开关保持 env + 重部署,**故意不做运行时切**。原因:(a) `@sentry/cloudflare` 的 `withSentry` options 回调签名是同步 `(env)=>CloudflareOptions|undefined`,容不下异步 KV 读;(b) 错误捕获器的 kill-switch 必须零运行时依赖,不能让它依赖 KV/DB,否则一次边缘存储抽风会顺手静音它。board 页给 Sentry 一行只读展示。这不是债,是刻意设计,记此供将来回看"为什么 Sentry 不在 board"。
+- **状态**: 接受(pre-launch)。即时生效需求出现时再处理取舍 1。
+
 ## 使用约定
 
 - 发现就追加一条，**只记录、默认不顺手去修**——修一个根基问题往往是独立的一摊活，会冲散当前任务的焦点。除非用户当场要你修。
@@ -668,6 +686,7 @@
 - **状态**: 待办（前置依赖，需用户落库角色 + 配 datasource）
 
 ### 🟡 admin 控制台（apps/admin）依赖的 edge admin 端点尚不存在 —— dataProvider 指向"意图路径"，调用即 404
+> **2026-06-08 重定位（`feat/board-console`，spec `docs/superpowers/specs/2026-06-08-board-console-cms-design.md`）**：本条记的"补一整套 `/v1/admin/*` 运营端点"方向已**作废**。重新定调:控制台从「运营仪表盘」纠正为「**内容/预设/配置管理台**」(board CMS)。下面 11 条里的 1-3(用户/Bots/会话浏览)归 **PostHog**、4-9(计费/钱包/账号)归 **Polar/RevenueCat**、10-11(人工协助/权限审批)归 **PendingCrew**(独立开源应用),**都不在中央后台建**。已落地:`/v1/board/preset-bots` 全 CRUD(requireAdmin + admin_audit before/after,经通用 `boardResource` 工厂),前端换 Ant Design、退役 8 个旧运营页。**仍待做(各自后续计划)**:P2 预设会话/群+预设来信(需建 `preset_letters` 表)、P3 tool 管理、P4 KV 配置类(模型目录/pricing/i18n/place_names)。下方原始清单仅作历史留档。
 - **发现**: 2026-06-03 · feat/dashboard-wiring（dashboard stack block 4）
 - **位置**: `apps/admin/src/providers/resource-map.ts`（`RESOURCE_ROUTES` + `ADMIN_ACTION_ENDPOINTS`，逐条标了 `exists:false`）、`apps/admin/src/providers/data-provider.ts`、`apps/edge/src/index.ts`（v1 路由挂载处，**当前无任何 `/v1/admin/*`**）
 - **问题**: 新建的 Refine admin 控制台按 spec 要求"读写都过 edge、绝不直连 Postgres、前端不持 service-role key"，所以 dataProvider 把每个资源映射到 edge REST 路由。但**edge 目前没有 admin 路由面**：`users.is_admin` 字段在 DB 里存在，`@pendingbot/identity` 也导出了 `requireAdmin(...)`，但**全仓没有任何地方 mount 或使用它**。控制台为了不埋"假装能用"的 stub，把这些资源指向**意图中的** edge 路径并在代码里 `exists:false` 标注 + 页面渲染告警横条；调用当前会 404。
@@ -688,7 +707,7 @@
   10. `GET /v1/admin/permission-requests`（list）—— 权限审批**列表**（decide 动作已存在，但没有 admin 列表读）。
   11. `GET /v1/admin/human-help-requests`（list）—— **admin-wide** 人工协助队列（现有那条只看 caller 自己被点名的，不是全局队列）。
 - **建议**: 新建 `apps/edge/src/routes/admin.ts`，挂在 `/v1/admin`，第一道中间件 `requireSession()` 后接 `requireAdmin(c => SELECT is_admin FROM pendingbot.users WHERE id=c.var.userId)`，所有读用 `serviceClient` 跨用户查、所有写进 `admin_audit`（actor_id/before/after/ip/user_agent 已有列）。读端点返回 `{ items: [...] }`（控制台 dataProvider 已按此 normalize）。建端点时同步把 `resource-map.ts` 对应条目翻成 `exists:true`，并把本条状态推进。计费两个端点落地前先决定 `pnc_ledger` 视图建不建（spec 名 vs 实表名的口径要统一）。
-- **状态**: 待办（控制台前端已接好并可编译/构建；等 edge admin 路由面落地）
+- **状态**: 已重定位为 board CMS（见顶部 2026-06-08 note）。P0 框架 + P1 预设机器人已落地并双审/全量验证（edge 540 vitest + typecheck 绿、admin build 绿）；P2–P4 待后续计划。原始"补全 /v1/admin/* 运营面"方向作废。
 
 
 - 🟡 **旧 per-conversation 分摊模型"连根拔"未完(invite 流耦合 + 物理 drop 待协调)** — `feat/ios-wallet-group`(2026-06-03,基于 `chore/retire-billing-v2`)。群消费结算早已切到责任 subject 的实缴池+认缴(`settleGroupSpend`),用户拍板 iOS+edge 连根拔旧 per-conversation `group_member_billing` 分摊。**本拍已做**:删 `lib/group-billing.ts`+测试(死)、删 `groups.ts` 的 `/billing|/cap|/participates` 三路由。**未做(耦合群邀请流 + iOS,独立一摊)**:(a) `groups.ts:groupBillingInviteSnapshot` 仍读 `group_member_billing` 生成邀请预览"分摊"文案,两处调用(创建群邀请 / 邀请预览)嵌进 invite 响应,iOS `FriendsTabView` 消费 `mode_label/invitee_participates/payer_count_after` —— 新模型无 per-conversation "participates" 概念,该快照前提已不成立,需解耦/移除并改 iOS 邀请预览 UI;(b) 接受邀请 handler 仍写 `group_member_billing`(seeding)+ 用 `group_member_invitations.invitee_participates`;(c) 物理 drop 迁移:`group_member_billing` 表 + `group_set_billing/cap/participates` RPC + `group_member_invitations.billing_snapshot`/`invitee_participates` 列。**(c) 必须在 `chore/retire-billing-v2` 部署、且 (a)(b) 解耦后再 apply**(生产 main 当前仍 live 在旧模型上,提前 drop 会 500)。建议作为独立 task 整体收口,别塞进钱包 UI 这一拍。
@@ -751,3 +770,7 @@
   - **编排仍是两套(iOS 在 `ConversationView+Loading`/`MessageTabView` 里内联,Mac 在 `ChatDataSource` 里镜像)**:本 session **刻意未动 iOS shipping 代码**(避免无真机回归时改已验证的 iOS View)。把两端的 cache-first 编排抽成一个**完全共享的 store**(读+网络+diff/merge+写回一处,两端只接 UI)是正经的下一步,但那是重构 iOS 已验证路径,**必须等用户在场做 iOS 真机回归**再动。当前镜像有结构性重复:cache 写回的 row 映射、error 抑制策略、sender 解析在 iOS 与 Mac 各写了一遍,column/policy 改了要两处同步。
   - **未读数 cached 首屏为 0**:`cachedConversations` 缓存行不带 unread(iOS 的未读真源是 server-truth unread store / `user_unread_counts`,不在 conversations 表),所以纯缓存首屏的红点要等网络刷新才出。可接受(和 preview/排序一拍 settle),但和 iOS 完全一致需把未读也落进某个 Mac 可读的缓存通道。
   - **缓存消息无附件**:`LocalDatabase.messages` 没有附件列,cached 行是纯文字,图片/文件 chip 等 `loadMessages` 网络往返解析——与 iOS 缓存 hydrate(`attachments: nil`)一致,非 Mac 独有缺口。
+
+- 🟡 **`boardResource` 把所有 DB 错误一律压成 500 `database_error`,无法区分 409 conflict** — `feat/board-console`(2026-06-08)。`apps/edge/src/lib/board-resource.ts` 的 CRUD 工厂在 list/get/create/update/delete 各处都是 `if (error) return jsonError(c, 500, 'database_error', …)`,把 Postgres 错误码全部抹平。preset-bot 表的 `slug` 唯一约束冲突(以及将来任何唯一/外键约束)会以 500 返回,而非语义正确的 409 `conflict`,前端无法据此提示"slug 已被占用"。P1 只有 preset-bots,管理员手输 slug 撞车概率低,可忍;**P2–P4 换表(尤其有用户可见唯一键的资源)若需向前端暴露唯一冲突,需扩工厂**:按 `error.code === '23505'`(unique_violation)/ `'23503'`(fk_violation)映射到 409 并带上冲突列信息,而不是无脑 500。
+
+- 🟡 **`boardResource` list 硬编码 `.limit(500)` 是魔法值且静默截断** — `feat/board-console`(2026-06-08)。`apps/edge/src/lib/board-resource.ts` 的 LIST 路由写死 `.limit(500)`,既是裸魔法数(无命名、无注释来由),又**无 count / has_more 信号**:行数超 500 时直接静默吃掉尾部,前端无从得知列表被截。preset-bots 量小(模板行数十级)不会触顶,当前安全;**P2 换大表(如模型目录、未来用户可见的大集合)前应提为 `opts.listLimit`(显式可配)或加真正的分页**(cursor / offset + `count: 'exact'` 回传总数 / `has_more`),否则换表那刻就埋下"列表只显示前 500"的隐性数据缺失。
