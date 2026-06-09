@@ -158,9 +158,7 @@
 		D2A35BC6C425A562D3124CED /* LetterComposeSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E55C06FEBF15F6F9C54D5EA /* LetterComposeSheet.swift */; };
 		D57CD481C115FD6D4F067F1F /* EnvelopeThinkingTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05749CCA7DC81C13CE7D3C84 /* EnvelopeThinkingTrace.swift */; };
 		D6974FC7B55E1BC31FFBB131 /* PushService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2F07903E8E0959584180E65 /* PushService.swift */; };
-		D6B56E0E014E471E4FC5D0CF /* MacSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 938C7A004AA7042843389102 /* MacSettingsView.swift */; };
 		D6BA5491F9DE20519ACE28CD /* HostedConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7EEDB9DF3C6B9D1EC67C769F /* HostedConfig.swift */; };
-		D75770E01905BA3C3A8D4119 /* MacMeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D8EFC98BB125FA73157E5A2 /* MacMeView.swift */; };
 		D7E54D526FC58DAACFDBA45C /* BotVisibilityTag.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58C7852B0C9D1F1A7346DDCB /* BotVisibilityTag.swift */; };
 		D7F737DC5F1187C26D825274 /* ServerTimestamp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9E0A1F2EEFADA0D94998172 /* ServerTimestamp.swift */; };
 		D86D67B77E20704ED320D0F9 /* EmailSignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = 023C318B8EB2B3A4CC9F8594 /* EmailSignIn.swift */; };
@@ -253,7 +251,6 @@
 		48F02BEA5BEDE74073641EEB /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		49F01F9B87EF2ADEAEFA4BD3 /* WideRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WideRootView.swift; sourceTree = "<group>"; };
 		4AA1FB293BD301008D3819AD /* EnvelopeTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvelopeTabView.swift; sourceTree = "<group>"; };
-		4D8EFC98BB125FA73157E5A2 /* MacMeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacMeView.swift; sourceTree = "<group>"; };
 		4DBC29A5C2D31677E274BAA7 /* FriendSort.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FriendSort.swift; sourceTree = "<group>"; };
 		508FBAF36D83C0824F8073F4 /* CallFloatingPill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallFloatingPill.swift; sourceTree = "<group>"; };
 		512494761C7ECD20BFA8BB34 /* MacGroupWalletView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacGroupWalletView.swift; sourceTree = "<group>"; };
@@ -306,7 +303,6 @@
 		9142C17F5B4C0AC7A9AA91ED /* PlatformImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformImage.swift; sourceTree = "<group>"; };
 		9203CD5A29F63BF0D4B5B9B7 /* AccountStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountStore.swift; sourceTree = "<group>"; };
 		9262605631A1A0281E9C3768 /* TopTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopTab.swift; sourceTree = "<group>"; };
-		938C7A004AA7042843389102 /* MacSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacSettingsView.swift; sourceTree = "<group>"; };
 		954AA26D0420171081DFA5EA /* MacWelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacWelcomeView.swift; sourceTree = "<group>"; };
 		95EAE20F68A86A8C803A0B1E /* ModelPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelPicker.swift; sourceTree = "<group>"; };
 		98EE77602B594DA83ABDCBB6 /* PendingBotSharedModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingBotSharedModels.swift; sourceTree = "<group>"; };
@@ -553,9 +549,7 @@
 			isa = PBXGroup;
 			children = (
 				512494761C7ECD20BFA8BB34 /* MacGroupWalletView.swift */,
-				4D8EFC98BB125FA73157E5A2 /* MacMeView.swift */,
 				FB653A5286751AAC55874F9C /* MacProfileEditView.swift */,
-				938C7A004AA7042843389102 /* MacSettingsView.swift */,
 				CA812051DC5CDCA9D1D41712 /* MacWalletView.swift */,
 				954AA26D0420171081DFA5EA /* MacWelcomeView.swift */,
 				4B6ED05D5BC8BD3EDAD14EF6 /* Views */,
@@ -935,10 +929,8 @@
 				BDDDE8F25B3B11A420609162 /* LocalDatabase.swift in Sources */,
 				E81BA5D57A39095B26E2EE89 /* Log.swift in Sources */,
 				BC5C3C8B82FDABE15170EABE /* MacGroupWalletView.swift in Sources */,
-				D75770E01905BA3C3A8D4119 /* MacMeView.swift in Sources */,
 				38162CA82F7165D9C9A4767D /* MacProfileEditView.swift in Sources */,
 				82A8EEB896FD422C7064FFB2 /* MacRemoteSessionsView.swift in Sources */,
-				D6B56E0E014E471E4FC5D0CF /* MacSettingsView.swift in Sources */,
 				EAB07C90F63F81DBC6FD3AED /* MacWalletView.swift in Sources */,
 				95771EBFA9FE35E196DBAB95 /* MacWelcomeView.swift in Sources */,
 				B502735FC12E0BB52BB19368 /* MarkdownText.swift in Sources */,

@@ -15,8 +15,8 @@ import SwiftUI
 /// ```
 ///
 /// 现阶段只在 macOS 接入(iPad 翻转留给后续 task)。已迁移的 tab(消息 / 好友 /
-/// 来信)中列 / 右栏直接取共享 `FeatureSurface` 的 `listColumn` / `detailColumn`;
-/// 未迁移的 tab(Crew / 我)继续渲染现有可用的 Mac 平行列,不退化成空
+/// 来信 / 我)中列 / 右栏直接取共享 `FeatureSurface` 的 `listColumn` /
+/// `detailColumn`;仅剩 Crew tab 继续渲染现有可用的 Mac 平行列,不退化成空
 /// placeholder。`#else`(iOS,此处暂未启用)各 tab 给跨平台占位 Text。
 struct WideRootView: View {
     @State private var selectedTab: TopTab = .message
@@ -120,8 +120,11 @@ struct WideRootView: View {
         switch selectedTab {
         case .me:
             // 「我」tab 直接把账号详情放到右栏(中间列保持空态),
-            // 因为「我」tab 没有可枚举的 list 内容。
-            MacMeView()
+            // 因为「我」tab 没有可枚举的 list 内容。右栏取共享
+            // `MeTabView` 的 `detailColumn`(FeatureSurface「无列表型」),
+            // 取代已删的 Mac 平行 `MacMeView`。selection 对「我」无语义,
+            // 传 nil。
+            MeTabView().detailColumn(selection: nil)
         case .message:
             // 消息 detail = 共享 surface 的 detail 列,纯从 selection(ChatDest)
             // 解析。注意:这是与 list 列不同的 `MessageTabView()` 实例,二者
