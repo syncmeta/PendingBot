@@ -79,6 +79,11 @@ struct CrewDetailV2View: View {
                 )
             }
         }
+        // 服务端 session 列表(终端按钮)。原本只置位 showingSessionsSheet
+        // 却没有对应的 .sheet 接它,按钮是死的 —— 补上 presenter。
+        .sheet(isPresented: $showingSessionsSheet) {
+            RemoteSessionsView(crewId: crewId, crewTitle: detail?.crew.title ?? fallbackTitle)
+        }
         .alert("出错", isPresented: .constant(error != nil)) {
             Button("好") { error = nil }
         } message: {
