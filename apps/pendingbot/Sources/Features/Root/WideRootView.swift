@@ -14,10 +14,10 @@ import SwiftUI
 /// └──────────┴────────────────┴───────────────────────────┘
 /// ```
 ///
-/// 现阶段只在 macOS 接入(iPad 翻转留给后续 task)。已迁移的 tab(消息 / 好友)
-/// 中列 / 右栏直接取共享 `FeatureSurface` 的 `listColumn` / `detailColumn`;
-/// 未迁移的 tab(Crew / 来信 / 我)继续渲染现有可用的 Mac 平行列,不退化成
-/// 空 placeholder。`#else`(iOS,此处暂未启用)各 tab 给跨平台占位 Text。
+/// 现阶段只在 macOS 接入(iPad 翻转留给后续 task)。已迁移的 tab(消息 / 好友 /
+/// 来信)中列 / 右栏直接取共享 `FeatureSurface` 的 `listColumn` / `detailColumn`;
+/// 未迁移的 tab(Crew / 我)继续渲染现有可用的 Mac 平行列,不退化成空
+/// placeholder。`#else`(iOS,此处暂未启用)各 tab 给跨平台占位 Text。
 struct WideRootView: View {
     @State private var selectedTab: TopTab = .message
     /// 中间列的选中项。**未迁移**的 tab(crew / envelope)仍用 `String?` ID
@@ -29,6 +29,10 @@ struct WideRootView: View {
     @State private var friendsSelection: PendingPeer? = nil
     /// 消息 tab 的选中项 —— 共享 `MessageTabView` 的 `Selection`(`ChatDest`)。
     @State private var messagesSelection: ChatDest? = nil
+    /// 来信 tab 的选中项 —— 共享 `EnvelopeTabView` 的 `Selection`(`envelope_runs.id`
+    /// 字符串)。壳把同一个 binding 喂给 feed 列(写)和正文列(读);正文列的
+    /// `EnvelopeArticleView` 按 id 自取行,所以只需带 id。
+    @State private var envelopeSelection: String? = nil
     /// 跨 tab 跳转待定值(好友点 bot → 切到消息 tab 选中该会话)。切 tab 的
     /// onChange 会消费它,避免被「切 tab 清 selection」覆盖——确定性、无竞态。
     @State private var pendingConversationJump: String? = nil
@@ -88,8 +92,9 @@ struct WideRootView: View {
             FriendsTabView().listColumn(selection: $friendsSelection)
                 .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
         case .envelope:
-            // 来信 tab 中列:奏折/信件 feed;选中看正文。
-            MacEnvelopeColumn(selectedEnvelopeId: $selectedItemId)
+            // 来信 tab 中列 = 共享 `EnvelopeTabView` 的 feed 列;选中一封来信
+            // (envelope_runs.id)后右栏是正文 detail。
+            EnvelopeTabView().listColumn(selection: $envelopeSelection)
                 .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
         case .crew:
             // Crew tab 中列接入真实机组列表;选中一个 crew 后右栏看它的
@@ -136,12 +141,10 @@ struct WideRootView: View {
             // 解析(同上 separate-@State 注意点:`bot: nil`,ConversationView 自解析)。
             FriendsTabView().detailColumn(selection: friendsSelection)
         case .envelope:
-            if let envelopeId = selectedItemId {
-                MacEnvelopeDetail(envelopeId: envelopeId)
-                    .id(envelopeId)
-            } else {
-                WidePlaceholderColumn(message: "选中一封来信查看正文", prominent: true)
-            }
+            // 来信 detail = 共享 surface 的 detail 列,纯从 selection
+            // (envelope_runs.id)解析;`EnvelopeArticleView` 按 id 自取行 +
+            // 订阅 Realtime,与中列是不同 `EnvelopeTabView()` 实例也无妨。
+            EnvelopeTabView().detailColumn(selection: envelopeSelection)
         }
         #else
         WidePlaceholderColumn(message: selectedTab.label, prominent: true)

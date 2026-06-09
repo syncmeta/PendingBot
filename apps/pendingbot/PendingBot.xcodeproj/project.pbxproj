@@ -19,7 +19,6 @@
 		05A7024046B9139FBD7C2D87 /* ComposerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E77E1B14AD8B57831025E060 /* ComposerView.swift */; };
 		0764DE6E6E5998186C2AEF3D /* PermissionRequestCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA2C5A82ADBE3A378A292684 /* PermissionRequestCard.swift */; };
 		096B537A54400F2BC07A0775 /* GroupCallSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C54E13C9AEE93EC21726216 /* GroupCallSession.swift */; };
-		09D4746AF1AD5616504DC333 /* MacEnvelopeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7013EADBDCDA5C670AA6DBB9 /* MacEnvelopeView.swift */; };
 		0B2D6E04E981C24EDB2ED740 /* FriendsTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6BD7F212A4938F0C066074F /* FriendsTabView.swift */; };
 		0BD44E1EB0D5BE9AB101E1D5 /* CallFloatingPill.swift in Sources */ = {isa = PBXBuildFile; fileRef = 508FBAF36D83C0824F8073F4 /* CallFloatingPill.swift */; };
 		0D14B87E36E28B1C76B152E6 /* BubbleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAF9F958E634C73E5136CC46 /* BubbleView.swift */; };
@@ -280,7 +279,6 @@
 		6D2B2B8D8BD1DE4D364525C4 /* GroupWalletView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWalletView.swift; sourceTree = "<group>"; };
 		6EFB784DC12029E53EB12A5C /* RealtimeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeManager.swift; sourceTree = "<group>"; };
 		6F57C354DC67393099BE1D8E /* GroupCallTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupCallTransport.swift; sourceTree = "<group>"; };
-		7013EADBDCDA5C670AA6DBB9 /* MacEnvelopeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacEnvelopeView.swift; sourceTree = "<group>"; };
 		70EAEDCC6E5ABCC5261A43E3 /* MyQRBusinessCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyQRBusinessCard.swift; sourceTree = "<group>"; };
 		7114A9AF0BBDF033ADE65E67 /* ConversationView+Realtime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConversationView+Realtime.swift"; sourceTree = "<group>"; };
 		72CE91B5FAEED2B40DF223A1 /* EnvelopeAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvelopeAPI.swift; sourceTree = "<group>"; };
@@ -568,7 +566,6 @@
 		4B6ED05D5BC8BD3EDAD14EF6 /* Views */ = {
 			isa = PBXGroup;
 			children = (
-				7013EADBDCDA5C670AA6DBB9 /* MacEnvelopeView.swift */,
 				186A7AED372BD3345AEC8273 /* MacRemoteSessionsView.swift */,
 			);
 			path = Views;
@@ -937,7 +934,6 @@
 				A0D13A30C3F770CF9B9505E1 /* LetterSenderAvatar.swift in Sources */,
 				BDDDE8F25B3B11A420609162 /* LocalDatabase.swift in Sources */,
 				E81BA5D57A39095B26E2EE89 /* Log.swift in Sources */,
-				09D4746AF1AD5616504DC333 /* MacEnvelopeView.swift in Sources */,
 				BC5C3C8B82FDABE15170EABE /* MacGroupWalletView.swift in Sources */,
 				D75770E01905BA3C3A8D4119 /* MacMeView.swift in Sources */,
 				38162CA82F7165D9C9A4767D /* MacProfileEditView.swift in Sources */,
