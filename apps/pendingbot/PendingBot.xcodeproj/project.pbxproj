@@ -93,7 +93,6 @@
 		80F4BC61FE476D0E3362F831 /* ModelPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95EAE20F68A86A8C803A0B1E /* ModelPicker.swift */; };
 		81AE8716B84995322DFC5EE4 /* CrewChatStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F80EEA9363B2D0019EECF31A /* CrewChatStore.swift */; };
 		81C3A1F5BC0BEEAC5D96DE66 /* ActiveVoiceCallStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6250CBEDB98FA64D32915F09 /* ActiveVoiceCallStore.swift */; };
-		82A8EEB896FD422C7064FFB2 /* MacRemoteSessionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 186A7AED372BD3345AEC8273 /* MacRemoteSessionsView.swift */; };
 		8358C6E7D2CDA9AC7C388452 /* ConversationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83F41539F59462EA04C55F6F /* ConversationView.swift */; };
 		83CDD45BF74B5724F75FC0AD /* CallDiagnosticsLogic.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6541D1291535650ACAD4D6F1 /* CallDiagnosticsLogic.swift */; };
 		84A5D47FF0FA288DABACACC2 /* RemoteSessionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20EC68D4DC48DD48B412E35E /* RemoteSessionsView.swift */; };
@@ -211,7 +210,6 @@
 		13BCD0D49AA6CCB35BBB0C31 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
 		161466ECAC938388BC8F72E3 /* CrewChildSummaryCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewChildSummaryCard.swift; sourceTree = "<group>"; };
 		17979E6D0A17BE0BEFD3BB38 /* TabHeaderBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabHeaderBar.swift; sourceTree = "<group>"; };
-		186A7AED372BD3345AEC8273 /* MacRemoteSessionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacRemoteSessionsView.swift; sourceTree = "<group>"; };
 		199916D33039F4F07FC95D7D /* WalletV2Format.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletV2Format.swift; sourceTree = "<group>"; };
 		1C5FC1E414D4CABC226AD902 /* BrandAvatar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrandAvatar.swift; sourceTree = "<group>"; };
 		1E0533AC3090836219CA2A47 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
@@ -546,17 +544,8 @@
 			children = (
 				512494761C7ECD20BFA8BB34 /* MacGroupWalletView.swift */,
 				954AA26D0420171081DFA5EA /* MacWelcomeView.swift */,
-				4B6ED05D5BC8BD3EDAD14EF6 /* Views */,
 			);
 			path = Mac;
-			sourceTree = "<group>";
-		};
-		4B6ED05D5BC8BD3EDAD14EF6 /* Views */ = {
-			isa = PBXGroup;
-			children = (
-				186A7AED372BD3345AEC8273 /* MacRemoteSessionsView.swift */,
-			);
-			path = Views;
 			sourceTree = "<group>";
 		};
 		5499C93C9DF42D382007DFA9 /* Products */ = {
@@ -923,7 +912,6 @@
 				BDDDE8F25B3B11A420609162 /* LocalDatabase.swift in Sources */,
 				E81BA5D57A39095B26E2EE89 /* Log.swift in Sources */,
 				BC5C3C8B82FDABE15170EABE /* MacGroupWalletView.swift in Sources */,
-				82A8EEB896FD422C7064FFB2 /* MacRemoteSessionsView.swift in Sources */,
 				95771EBFA9FE35E196DBAB95 /* MacWelcomeView.swift in Sources */,
 				B502735FC12E0BB52BB19368 /* MarkdownText.swift in Sources */,
 				BC1CCF7E6090730EF93B7BF0 /* MathRendering.swift in Sources */,

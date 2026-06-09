@@ -3,9 +3,8 @@ import SwiftUI
 /// 共享三列宽屏壳 — A5。
 ///
 /// 这是 `Mac/MacRootView.swift` 的跨平台化升级:同样的 `NavigationSplitView`
-/// 三列骨架(tab 侧栏 / 中间 list / 右栏 detail)+ 同样的确定性
-/// `pendingConversationJump` 选择状态机,但类型本身不带 `os()` guard,
-/// 用共享的 `TopTab` 而非 Mac-private 的 `MacTab`。
+/// 三列骨架(tab 侧栏 / 中间 list / 右栏 detail),但类型本身不带 `os()`
+/// guard,用共享的 `TopTab` 而非 Mac-private 的 `MacTab`。
 ///
 /// ```
 /// ┌──────────┬────────────────┬───────────────────────────┐
@@ -14,16 +13,13 @@ import SwiftUI
 /// └──────────┴────────────────┴───────────────────────────┘
 /// ```
 ///
-/// 现阶段只在 macOS 接入(iPad 翻转留给后续 task)。已迁移的 tab(消息 / 好友 /
-/// 来信 / 我)中列 / 右栏直接取共享 `FeatureSurface` 的 `listColumn` /
-/// `detailColumn`;仅剩 Crew tab 继续渲染现有可用的 Mac 平行列,不退化成空
-/// placeholder。`#else`(iOS,此处暂未启用)各 tab 给跨平台占位 Text。
+/// 现阶段只在 macOS 接入(iPad 翻转留给后续 task)。**五个 tab 全部**取共享
+/// `FeatureSurface` 的 `listColumn` / `detailColumn`(「我」无 list,壳给中列
+/// 空态、右栏放 `detailColumn`),不再有任何 Mac 平行列。每个 tab 持有各自的
+/// 强类型 selection,壳把同一个 binding 喂给中列(写)和右栏(读)。
+/// `#else`(iOS,此处暂未启用)各 tab 给跨平台占位 Text。
 struct WideRootView: View {
     @State private var selectedTab: TopTab = .message
-    /// 中间列的选中项。**未迁移**的 tab(crew / envelope)仍用 `String?` ID
-    /// 占位驱动它们的 Mac 平行列。已迁移的好友 / 消息 tab 改用下面各自的
-    /// 强类型 selection。
-    @State private var selectedItemId: String? = nil
     /// 好友 tab 的选中项 —— 直接持有共享 `FriendsTabView` 的 `Selection`
     /// (`PendingPeer`),壳把同一个 binding 喂给 list 列(写)和 detail 列(读)。
     @State private var friendsSelection: PendingPeer? = nil
@@ -33,9 +29,10 @@ struct WideRootView: View {
     /// 字符串)。壳把同一个 binding 喂给 feed 列(写)和正文列(读);正文列的
     /// `EnvelopeArticleView` 按 id 自取行,所以只需带 id。
     @State private var envelopeSelection: String? = nil
-    /// 跨 tab 跳转待定值(好友点 bot → 切到消息 tab 选中该会话)。切 tab 的
-    /// onChange 会消费它,避免被「切 tab 清 selection」覆盖——确定性、无竞态。
-    @State private var pendingConversationJump: String? = nil
+    /// Crew tab 的选中项 —— 共享 `CrewTabV2View` 的 `Selection`(crew id 字符串)。
+    /// 壳把同一个 binding 喂给 list 列(写)和 detail 列(读);detail 列的
+    /// `CrewDetailV2View` 按 id 自取机组(`getCrewV2`),所以只需带 id。
+    @State private var crewSelection: String? = nil
 
     var body: some View {
         NavigationSplitView {
@@ -44,16 +41,6 @@ struct WideRootView: View {
             middleColumn
         } detail: {
             detailColumn
-        }
-        .onChange(of: selectedTab) { _, _ in
-            // 切 tab 时清掉中间列的选中,避免上一个 tab 的 selection 串到下一个
-            // tab 的右栏;但若是程序触发的跨 tab 跳转,改为选中目标会话。
-            if let jump = pendingConversationJump {
-                selectedItemId = jump
-                pendingConversationJump = nil
-            } else {
-                selectedItemId = nil
-            }
         }
     }
 
@@ -97,9 +84,9 @@ struct WideRootView: View {
             EnvelopeTabView().listColumn(selection: $envelopeSelection)
                 .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
         case .crew:
-            // Crew tab 中列接入真实机组列表;选中一个 crew 后右栏看它的
-            // 服务端 session(跨端 viewer)。
-            MacCrewListColumn(selectedCrewId: $selectedItemId)
+            // Crew tab 中列 = 共享 `CrewTabV2View` 的 list 列;选中一个 crew
+            // (crew id)后右栏是机组群聊 detail。
+            CrewTabV2View().listColumn(selection: $crewSelection)
                 .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
         case .me:
             // 「我」tab 没有可枚举的 list 内容,中间列保持空态;账号详情放右栏。
@@ -134,11 +121,10 @@ struct WideRootView: View {
             // 仍可用(Phase 7 真机验证 bot 元信息渲染)。
             MessageTabView().detailColumn(selection: messagesSelection)
         case .crew:
-            if let crewId = selectedItemId {
-                MacRemoteSessionsView(crewId: crewId)
-            } else {
-                WidePlaceholderColumn(message: "选中 Crew 频道查看详情", prominent: true)
-            }
+            // Crew detail = 共享 surface 的 detail 列,纯从 selection(crew id)
+            // 解析;`CrewDetailV2View` 按 id 自取机组 + 订阅 Realtime,与中列
+            // 是不同 `CrewTabV2View()` 实例也无妨。
+            CrewTabV2View().detailColumn(selection: crewSelection)
         case .friends:
             // 好友 detail = 共享 surface 的 detail 列,纯从 selection(PendingPeer)
             // 解析(同上 separate-@State 注意点:`bot: nil`,ConversationView 自解析)。
