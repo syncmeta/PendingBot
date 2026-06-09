@@ -195,14 +195,13 @@ private struct SplashView: View {
 struct PendingBotApp: App {
     @StateObject private var accountStore = AccountStore.shared
     // 跟 iOS 一致:把 ModelCatalog.shared 当 environmentObject 注入,供
-    // Mac 端建/管机器人的模型选择器(MacModelPickerSheet 等)读目录。
+    // 共享建/管机器人面的模型选择器读目录。
     @StateObject private var modelCatalog = ModelCatalog.shared
 
     var body: some Scene {
         WindowGroup {
-            // T4.5 后续:macOS 也走会话 gate（未登录 → MacWelcomeView，已登录 →
-            // MacRootView），跟 iOS RootView 一致。此前 Mac 端直接显示 MacRootView
-            // 但没有登录入口,导致没会话、所有 /v1/* 401。
+            // macOS 走会话 gate(未登录 → MacWelcomeView,已登录 → 跨平台
+            // 三列 shell WideRootView),跟 iOS RootView 一致。
             MacRootGate()
                 .environmentObject(accountStore)
                 .environmentObject(modelCatalog)
