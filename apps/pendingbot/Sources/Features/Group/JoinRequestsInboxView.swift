@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 /// Inbox of pending join-requests for a group. Owner/admin sees the
@@ -32,7 +31,7 @@ struct JoinRequestsInboxView: View {
             }
         }
         .navigationTitle("加群请求")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavTitle()
         .task { await load() }
         .refreshable { await load() }
     }
@@ -202,4 +201,3 @@ struct JoinRequestsInboxView: View {
         }
     }
 }
-#endif

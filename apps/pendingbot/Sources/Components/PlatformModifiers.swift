@@ -3,7 +3,7 @@ import SwiftUI
 /// Keyboard hint for `platformKeyboard(_:)`. Top-level (not nested in the
 /// `View` extension) because Swift disallows declaring an enum inside an
 /// extension that also adds methods referencing it.
-enum PlatformKeyboard { case url, `default` }
+enum PlatformKeyboard { case url, number, `default` }
 
 extension ToolbarItemPlacement {
     /// Leading nav-bar slot on iOS; cancellation slot on macOS.
@@ -48,6 +48,7 @@ extension View {
         #if os(iOS)
         switch kind {
         case .url: self.keyboardType(.URL)
+        case .number: self.keyboardType(.numberPad)
         case .default: self
         }
         #else

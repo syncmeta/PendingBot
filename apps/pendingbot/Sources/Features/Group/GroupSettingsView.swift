@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 /// Group settings — group-info section (title, group number, policy),
@@ -130,7 +129,7 @@ struct GroupSettingsView: View {
             }
         }
         .navigationTitle("群聊设置")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavTitle()
         .task { await load() }
         .refreshable { await load() }
         .alert("确定退出?", isPresented: $leaveConfirm) {
@@ -148,14 +147,14 @@ struct GroupSettingsView: View {
                             groupTitle: meta?.title ?? "",
                             isAdmin: isAdmin)
                     .navigationTitle("群二维码")
-                    .navigationBarTitleDisplayMode(.inline)
+                    .inlineNavTitle()
                     .toolbar {
-                        ToolbarItem(placement: .topBarTrailing) {
+                        ToolbarItem(placement: .platformTrailing) {
                             Button("关闭") { showingGroupQR = false }
                         }
                     }
             }
-            .presentationDetents([.medium, .large])
+            .platformDetents([.medium, .large])
         }
         .sheet(isPresented: $showingInviteMembers) {
             NavigationStack {
@@ -164,9 +163,9 @@ struct GroupSettingsView: View {
                     existingUserIds: Set(members.compactMap(\.userId)),
                 )
                 .navigationTitle("邀请好友入群")
-                .navigationBarTitleDisplayMode(.inline)
+                .inlineNavTitle()
                 .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) {
+                    ToolbarItem(placement: .platformTrailing) {
                         Button("关闭") { showingInviteMembers = false }
                     }
                 }
@@ -180,7 +179,7 @@ struct GroupSettingsView: View {
                     pendingPeer: peer,
                 )
                 .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
+                    ToolbarItem(placement: .platformLeading) {
                         Button("关闭") { openingPeer = nil }
                     }
                 }
@@ -195,7 +194,7 @@ struct GroupSettingsView: View {
                                 targetDisplayName: target.displayLabel) { ok in
                 if ok { Task { await reloadFriends() } }
             }
-            .presentationDetents([.medium])
+            .platformDetents([.medium])
         }
         .confirmationDialog(
             roleActionTarget?.displayLabel ?? "成员",
@@ -266,7 +265,7 @@ struct GroupSettingsView: View {
                 .truncationMode(.middle)
             if !numberHandle.isEmpty {
                 Button {
-                    UIPasteboard.general.string = numberHandle
+                    Clipboard.copy(numberHandle)
                     Haptics.tap()
                     copiedNumber = true
                     Task {
@@ -1006,7 +1005,7 @@ private struct GroupAddFriendSheet: View {
             Form {
                 Section {
                     TextField("验证信息（可选）", text: $verifyMessage, axis: .vertical)
-                        .textInputAutocapitalization(.sentences)
+                        .platformAutocapitalization(false)
                         .lineLimit(1...3)
                 } header: {
                     Text("加他好友？")
@@ -1037,9 +1036,9 @@ private struct GroupAddFriendSheet: View {
                 }
             }
             .navigationTitle("加好友")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavTitle()
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: .platformLeading) {
                     Button("取消") {
                         onClose(false)
                         dismiss()
@@ -1095,4 +1094,3 @@ private struct GroupAddFriendSheet: View {
 extension PendingPeer: Identifiable {
     var id: String { "\(kind):\(peerId)" }
 }
-#endif
