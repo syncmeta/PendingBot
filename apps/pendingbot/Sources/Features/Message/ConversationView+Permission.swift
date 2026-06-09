@@ -15,16 +15,15 @@ extension ConversationView {
         case approve
         case reject
 
-        // APIClient.PermissionRequestDecision lives in the iOS-only Crew
-        // slice (Features/Crew/CrewAPI.swift). iOS-only until that migrates.
-        #if os(iOS)
+        // APIClient.PermissionRequestDecision lives in the now-cross-platform
+        // Crew slice (Features/Crew/CrewAPI.swift), so this bridge compiles on
+        // both iOS and macOS.
         fileprivate var apiValue: APIClient.PermissionRequestDecision {
             switch self {
             case .approve: return .approve
             case .reject:  return .reject
             }
         }
-        #endif
     }
 
     /// Approve or reject a pending permission_request card. The card
@@ -36,10 +35,9 @@ extension ConversationView {
     /// `messageId` is the messages.id of the synthesised log row; the
     /// underlying permission_requests.id is read from the payload.
     ///
-    /// iOS-only: the decide endpoint (`api.decidePermissionRequest`) is part
-    /// of the iOS-only Crew slice. On macOS the card still renders but the
-    /// decision round-trip is unavailable (tech-debt until Crew migrates).
-    #if os(iOS)
+    /// Cross-platform: the decide endpoint (`api.decidePermissionRequest`) now
+    /// lives in the cross-platform Crew slice, so permission approve/deny works
+    /// on both iOS and macOS.
     func decidePermissionRequest(_ messageId: String, decision: PermissionRequestDecisionKind) async {
         guard let api else { return }
         guard let payload = permissionRequestsByMsgId[messageId],
@@ -107,9 +105,4 @@ extension ConversationView {
             self.error = error.localizedDescription
         }
     }
-    #else
-    func decidePermissionRequest(_ messageId: String, decision: PermissionRequestDecisionKind) async {
-        // No-op on macOS — the permission decide endpoint isn't available yet.
-    }
-    #endif
 }

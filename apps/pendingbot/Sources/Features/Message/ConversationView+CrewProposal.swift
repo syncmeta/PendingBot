@@ -15,17 +15,15 @@ extension ConversationView {
         case approve
         case reject
 
-        // APIClient.CrewProposalDecision lives in the iOS-only Crew slice
-        // (Features/Crew/CrewAPI.swift). Until that slice is cross-platform,
-        // the API-coupled bridge is iOS-only.
-        #if os(iOS)
+        // APIClient.CrewProposalDecision lives in the now-cross-platform Crew
+        // slice (Features/Crew/CrewAPI.swift), so this bridge compiles on both
+        // iOS and macOS.
         fileprivate var apiValue: APIClient.CrewProposalDecision {
             switch self {
             case .approve: return .approve
             case .reject:  return .reject
             }
         }
-        #endif
     }
 
     /// Approve or reject a pending crew_proposal card. The card view
@@ -34,10 +32,9 @@ extension ConversationView {
     /// optimistically updated on success so the card flips to its
     /// "已确认 / 已拒绝" badge state immediately.
     ///
-    /// iOS-only: the decide endpoint (`api.decideCrewProposal`) is part of
-    /// the iOS-only Crew slice. On macOS the card still renders but the
-    /// decision round-trip is unavailable (tech-debt until Crew migrates).
-    #if os(iOS)
+    /// Cross-platform: the decide endpoint (`api.decideCrewProposal`) now lives
+    /// in the cross-platform Crew slice, so crew-proposal approve/reject works
+    /// on both iOS and macOS.
     func decideCrewProposal(_ messageId: String, decision: CrewProposalDecisionKind) async {
         guard let api else { return }
         // Sanity gate — must have a payload to act on, and it must
@@ -114,9 +111,4 @@ extension ConversationView {
             self.error = error.localizedDescription
         }
     }
-    #else
-    func decideCrewProposal(_ messageId: String, decision: CrewProposalDecisionKind) async {
-        // No-op on macOS — the Crew decide endpoint isn't available yet.
-    }
-    #endif
 }
