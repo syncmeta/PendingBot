@@ -38,65 +38,79 @@ struct MeTabView: View {
     }
 
     var body: some View {
-        Group {
-            if sidebarLayout {
-                NavigationSplitView {
-                    VStack(spacing: 0) {
-                        coreContent
-                        if let topTabSelection {
-                            SidebarTabBar(selection: topTabSelection)
+        chrome(
+            Group {
+                if sidebarLayout {
+                    NavigationSplitView {
+                        VStack(spacing: 0) {
+                            coreContent
+                            if let topTabSelection {
+                                SidebarTabBar(selection: topTabSelection)
+                            }
                         }
+                        .sidebarColumnWidth()
+                    } detail: {
+                        EmptyDetailHint(text: "在左侧选项里走走", systemImage: "person.crop.circle")
                     }
-                    .sidebarColumnWidth()
-                } detail: {
-                    EmptyDetailHint(text: "在左侧选项里走走", systemImage: "person.crop.circle")
+                } else {
+                    coreContent
                 }
-            } else {
-                coreContent
             }
-        }
-        // 头像/昵称重roll 页(ProfileBootstrapView)是 iOS-only(PhotosUI +
-        // 横向分页),Mac 端没有该编辑面 —— cover 整体 iOS 限定。
-        #if os(iOS)
-        .fullScreenCover(isPresented: $showRandomize) {
-            ProfileBootstrapView(allowsBack: true)
-                .environmentObject(AccountStore.shared)
-        }
-        #endif
-        .alert("出错", isPresented: Binding(
-            get: { error != nil },
-            set: { if !$0 { error = nil } }
-        )) {
-            Button("好") { error = nil }
-        } message: { Text(error ?? "") }
-        .confirmationDialog(
-            confirmTitle,
-            isPresented: Binding(
-                get: { pendingConfirm != nil },
-                set: { if !$0 { pendingConfirm = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            switch pendingConfirm {
-            case .signOut:
-                Button("退出登录", role: .destructive) { signOut() }
-                Button("取消", role: .cancel) {}
-            case .delete:
-                Button("去意已决，有缘再见", role: .destructive) {
-                    Task { await deleteAccount(sentiment: .seeYouAgain) }
+        )
+    }
+
+    /// Wraps a root view with the tab's shared chrome — the reroll cover
+    /// (iOS-only), the error alert, and the sign-out / delete-account
+    /// confirmation dialog. Pulled out of `body` so the Mac shell's
+    /// `detailColumn` and the `compactRoot` can each be self-contained:
+    /// both entry points carry the same actions, regardless of which
+    /// SwiftUI container hosts them. The iOS `body` calls this with the
+    /// exact same content it used to inline, so its behavior is unchanged.
+    @ViewBuilder
+    private func chrome(_ content: some View) -> some View {
+        content
+            // 头像/昵称重roll 页(ProfileBootstrapView)是 iOS-only(PhotosUI +
+            // 横向分页),Mac 端没有该编辑面 —— cover 整体 iOS 限定。
+            #if os(iOS)
+            .fullScreenCover(isPresented: $showRandomize) {
+                ProfileBootstrapView(allowsBack: true)
+                    .environmentObject(AccountStore.shared)
+            }
+            #endif
+            .alert("出错", isPresented: Binding(
+                get: { error != nil },
+                set: { if !$0 { error = nil } }
+            )) {
+                Button("好") { error = nil }
+            } message: { Text(error ?? "") }
+            .confirmationDialog(
+                confirmTitle,
+                isPresented: Binding(
+                    get: { pendingConfirm != nil },
+                    set: { if !$0 { pendingConfirm = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                switch pendingConfirm {
+                case .signOut:
+                    Button("退出登录", role: .destructive) { signOut() }
+                    Button("取消", role: .cancel) {}
+                case .delete:
+                    Button("去意已决，有缘再见", role: .destructive) {
+                        Task { await deleteAccount(sentiment: .seeYouAgain) }
+                    }
+                    Button("去意已决，再也不见", role: .destructive) {
+                        Task { await deleteAccount(sentiment: .farewellForever) }
+                    }
+                    Button("取消", role: .cancel) {}
+                case .none:
+                    EmptyView()
                 }
-                Button("去意已决，再也不见", role: .destructive) {
-                    Task { await deleteAccount(sentiment: .farewellForever) }
+            } message: {
+                if pendingConfirm == .delete {
+                    Text("若去意已决，28天后将会删除你在这个应用里的所有数据，期间在任意设备登录可恢复账号\n两个选项触发同一个流程，我只是想知道你的态度")
                 }
-                Button("取消", role: .cancel) {}
-            case .none:
-                EmptyView()
             }
-        } message: {
-            if pendingConfirm == .delete {
-                Text("若去意已决，28天后将会删除你在这个应用里的所有数据，期间在任意设备登录可恢复账号\n两个选项触发同一个流程，我只是想知道你的态度")
-            }
-        }
     }
 
     private var confirmTitle: String {
@@ -311,6 +325,43 @@ struct MeTabView: View {
             self.error = "注销失败：\(error.localizedDescription)"
             Haptics.error()
         }
+    }
+}
+
+// MARK: - FeatureSurface (Mac three-column shell)
+
+/// 「我」是 FeatureSurface 的「无列表型」装配:没有可枚举的 list 内容,
+/// 它本身就是一个自包含的设置/账号菜单(NavigationStack 内 push 子页)。
+/// 映射(对齐 FeatureSurface.swift 的「无列表型」约定 + 已删的 `MacMeView`
+/// 在 detail 列的位置):
+///   • `detailColumn` 承载真正的 `MeTabView` 菜单内容(壳的右栏);
+///     中列由壳给空态/入口,与「我没有 list」一致。
+///   • `listColumn` 给最小占位(协议要求该方法存在;壳实际中列用自己的
+///     `WidePlaceholderColumn`,不一定调它)。
+///   • `compactRoot` = 同一份菜单内容,自包含(带 chrome)。
+/// Selection 用占位 `String`(无实际选中语义),仅为满足
+/// `associatedtype Selection: Hashable`。iOS `body` 不受影响,这些方法
+/// 是 additive、只有 Mac 壳会调。
+extension MeTabView: FeatureSurface {
+    typealias Selection = String
+
+    func listColumn(selection: Binding<String?>) -> some View {
+        // 「我」没有可枚举 list —— 给一个最小空态占位(壳的中列通常用它
+        // 自己的 `WidePlaceholderColumn`,这里只为满足协议)。
+        EmptyDetailHint(text: "账号与设置在右侧", systemImage: "person.crop.circle")
+    }
+
+    func detailColumn(selection: String?) -> some View {
+        // 右栏 = 自包含的「我」菜单(NavigationStack 内 push 子页),带上
+        // 与 iOS `body` 同款的 chrome(错误 alert + 退出/注销确认 + iOS-only
+        // reroll cover),所以退出登录 / 注销账号从这一列照常工作。
+        chrome(coreContent)
+    }
+
+    func compactRoot() -> some View {
+        // compact 入口同样是自包含菜单 + chrome。Mac 壳当前不走 compact,
+        // 但保持与 iOS 行为一致、可编译。
+        chrome(coreContent)
     }
 }
 
