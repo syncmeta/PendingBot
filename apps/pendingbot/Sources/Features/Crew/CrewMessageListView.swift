@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 // T4.6 P1 Step 4 — the crew chat message stream. Hand-ports the inline
@@ -39,7 +38,7 @@ struct CrewMessageListView: View {
                 .padding(.vertical, 8)
             }
             .defaultScrollAnchor(.bottom)
-            .scrollDismissesKeyboard(.interactively)
+            .platformScrollKeyboardDismiss()
             .refreshable { await store.load(detail: detail) }
             .onChange(of: store.revision) {
                 withAnimation(.easeOut(duration: 0.2)) {
@@ -114,4 +113,3 @@ struct CrewMessageListView: View {
         .padding(.top, 60)
     }
 }
-#endif

@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 /// T4.6 — PendingBot iOS Crew Tab v2.
@@ -42,9 +41,8 @@ struct CrewTabV2View: View {
         NavigationStack {
             content
                 .navigationTitle("机组")
-                .navigationBarTitleDisplayMode(.large)
                 .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) {
+                    ToolbarItem(placement: .platformTrailing) {
                         Menu {
                             Button {
                                 showingCreateSheet = true
@@ -53,6 +51,11 @@ struct CrewTabV2View: View {
                             }
                             .disabled(subject == nil)
 
+                            #if os(iOS)
+                            // 扫码授权桌面端 needs the camera (QRScannerView /
+                            // AVFoundation) — iOS-only. Mac has no camera, so
+                            // the scan entry is hidden there (a Mac user
+                            // approves device-login from a different surface).
                             Divider()
 
                             Button {
@@ -60,6 +63,7 @@ struct CrewTabV2View: View {
                             } label: {
                                 Label("扫码授权桌面端", systemImage: "qrcode.viewfinder")
                             }
+                            #endif
 
                             Button {
                                 Task { await loadAll() }
@@ -85,6 +89,7 @@ struct CrewTabV2View: View {
                 onCreated: { _ in showingCreateSheet = false }
             )
         }
+        #if os(iOS)
         .sheet(isPresented: $scanningDeviceLogin) {
             QRScannerView { value in
                 scanningDeviceLogin = false
@@ -98,6 +103,7 @@ struct CrewTabV2View: View {
             }
             .ignoresSafeArea()
         }
+        #endif
         .sheet(item: $pendingDeviceLogin) { payload in
             SubjectPickerSheet(
                 payload: payload,
@@ -155,7 +161,7 @@ struct CrewTabV2View: View {
                     CrewRowV2(crew: crew)
                 }
             }
-            .listStyle(.insetGrouped)
+            .platformListStyle()
             .navigationDestination(for: CrewSummaryV2.self) { crew in
                 CrewDetailV2View(crewId: crew.id, fallbackTitle: crew.title)
             }
@@ -285,4 +291,3 @@ private struct CrewRowV2: View {
         }
     }
 }
-#endif

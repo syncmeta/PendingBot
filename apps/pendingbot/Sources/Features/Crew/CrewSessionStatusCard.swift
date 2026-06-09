@@ -1,6 +1,4 @@
-#if os(iOS)
 import SwiftUI
-import UIKit
 
 // T4.6 P1 Step 6 — the inline session-status strip pinned above the chat.
 // Surfaces the subset of crew_sessions fields that excludes full logs /
@@ -31,14 +29,12 @@ struct CrewSessionStatusCard: View {
     let session: CrewSessionRow
     let crewId: String
 
-    @State private var showShare = false
-
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 statusBadge
                 Spacer(minLength: 4)
-                Button { showShare = true } label: {
+                ShareLink(item: sessionDeepLink) {
                     Image(systemName: "arrow.up.forward.app")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -65,11 +61,8 @@ struct CrewSessionStatusCard: View {
         .frame(width: 220, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color(.secondarySystemBackground))
+                .fill(Theme.Palette.surfaceMuted)
         )
-        .sheet(isPresented: $showShare) {
-            CrewDeepLinkShareSheet(url: sessionDeepLink)
-        }
     }
 
     private var title: String {
@@ -111,14 +104,3 @@ struct CrewSessionStatusCard: View {
         URL(string: "pendingcrew://crew/\(crewId)/session/\(session.id)")!
     }
 }
-
-/// Shared UIActivityViewController bridge for crew/session deep-link share.
-struct CrewDeepLinkShareSheet: UIViewControllerRepresentable {
-    let url: URL
-
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: [url], applicationActivities: nil)
-    }
-    func updateUIViewController(_: UIActivityViewController, context: Context) {}
-}
-#endif

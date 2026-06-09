@@ -1,8 +1,4 @@
-#if os(iOS)
-import SwiftUI
-import AVFoundation
-import UIKit
-import Observation
+import Foundation
 
 /// Codec for the contact-share QR.
 ///
@@ -98,6 +94,12 @@ enum DeviceLoginLink {
         )
     }
 }
+
+#if os(iOS)
+import SwiftUI
+import AVFoundation
+import UIKit
+import Observation
 
 /// SwiftUI wrapper around AVCaptureSession for QR-code scanning. The
 /// preview fills the parent; first valid QR detection fires `onScan`
