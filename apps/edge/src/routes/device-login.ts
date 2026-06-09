@@ -188,6 +188,33 @@ deviceLoginRoutes.get('/challenges/:id', async (c) => {
   const grantRow = grant && typeof grant === 'object' ? grant as Record<string, unknown> : {};
   const scopes = Array.isArray(grantRow.scopes) ? grantRow.scopes : [];
 
+  // Best-effort: mint a per-user family SSO credential for the approving
+  // user and hand it back so the app can stash it in the shared keychain
+  // group for future silent logins (POST /device-grant/mint). The consume
+  // RPC surfaces the approver via `granted_by_user_id`. If minting fails we
+  // log and continue — a missing family credential must never fail a login
+  // the device grant already succeeded for.
+  let familyCredential: string | null = null;
+  const grantedByUserId = typeof grantRow.granted_by_user_id === 'string' ? grantRow.granted_by_user_id : '';
+  if (grantedByUserId) {
+    const deviceName = typeof grantRow.device_name === 'string' && grantRow.device_name.length > 0
+      ? grantRow.device_name
+      : 'Mac';
+    const famToken = randomToken('pfa');
+    const famId = crypto.randomUUID();
+    const { error: famErr } = await svc.rpc('issue_family_sso_credential', {
+      p_id: famId,
+      p_user_id: grantedByUserId,
+      p_token_hash: await sha256Hex(famToken),
+      p_device_name: deviceName,
+    });
+    if (famErr) {
+      console.error('issue_family_sso_credential failed', rpcMessage(famErr));
+    } else {
+      familyCredential = famToken;
+    }
+  }
+
   return c.json({
     status: 'approved',
     deviceGrantToken: grantToken,
@@ -195,6 +222,7 @@ deviceLoginRoutes.get('/challenges/:id', async (c) => {
     subjectId: typeof grantRow.subject_id === 'string' ? grantRow.subject_id : null,
     grantKind: typeof grantRow.grant_kind === 'string' ? grantRow.grant_kind : null,
     scopes,
+    familyCredential,
   });
 });
 
