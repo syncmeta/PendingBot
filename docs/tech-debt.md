@@ -12,6 +12,15 @@
 
 ---
 
+### 🟡 board 管理台无可用浏览器登录路径(EU Supabase CAPTCHA 挡客户端登录)
+- **发现**: 2026-06-09 · `feat/board-console` e2e 验证时
+- **现象**: `apps/admin` 登录页走 `supabase.auth.signInWithPassword`,EU 项目(zafhoiwwpanpuashtnxy)Auth 开了 CAPTCHA 保护 → 客户端登录返回 `captcha protection: request disallowed (no captcha_token found)`。客户端 OTP(`signInWithOtp`)同样会被 captcha 挡。**只有 service_role 的 admin API(generate_link+verify)能绕过 captcha** —— 这正是本次 e2e 用来 mint JWT 验证后端的方式。
+- **影响**: board 后端已端到端验证可用(requireAdmin/CRUD/audit 全通),但**没有真人能从浏览器登进去** —— 部署后前门仍是锁的。
+- **修法(择一,属"board auth 加固"未来工作)**: (a) 给登录页接 Cloudflare Turnstile 控件,`signInWithPassword({options:{captchaToken}})` 带 token;(b) 直接做用户定的 passkey+TOTP+密码栈(passkey 需先核 Supabase 原生支持,见下条相关);(c) 仅临时:Supabase 后台关 CAPTCHA 验完再开(不作为长期方案,削弱真 app 注册防护)。
+- **状态**: 待办。后端不阻塞;board 真正"可登录可用"前必须解决其一。
+
+---
+
 ### 🟢 功能开关(board)运行时切的传播延迟 ≤60s + Sentry 仍 env-only
 - **发现**: 2026-06-08 · `feat/board-console`(计划 `docs/superpowers/plans/2026-06-08-board-feature-flags.md`)
 - **位置**: `apps/edge/src/lib/feature-flags.ts`(isolate 60s TTL 缓存)、`apps/edge/src/routes/board-feature-flags.ts`(PUT 写 `cfg:feature-flags` KV)
