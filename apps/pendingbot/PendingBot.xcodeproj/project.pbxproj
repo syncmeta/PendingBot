@@ -100,7 +100,6 @@
 		878BFE526B4D43CCF3685C88 /* SessionProxyClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84B168E06E56B966ACEF6F67 /* SessionProxyClient.swift */; };
 		882EC8BDACD6F413C71E3336 /* CallTones.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5C1F147E16D388E3F2607D8 /* CallTones.swift */; };
 		893DE6A673BE7A6AA2C40025 /* ConversationView+Streaming.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C772BAA4B0D29D2620E67CF /* ConversationView+Streaming.swift */; };
-		8B333BA755644E0D336C10C1 /* PendingBotRegularRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C169F240D3B0FFEE51443992 /* PendingBotRegularRootView.swift */; };
 		8B3ABF92FFA3DDE2E866859C /* AccountStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9203CD5A29F63BF0D4B5B9B7 /* AccountStore.swift */; };
 		8B4901EDE82D47DC1E4D5365 /* ConversationView+Attachments.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA551869EBE6A7E25EEFBDCA /* ConversationView+Attachments.swift */; };
 		8BFBD69DDDB4A6CEEFF3AB5A /* ToolTraceEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09C163D426D19FF2D59C580E /* ToolTraceEvent.swift */; };
@@ -314,7 +313,6 @@
 		B856606A50216D8F41125BFC /* ProtectedURLCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtectedURLCache.swift; sourceTree = "<group>"; };
 		B864C55A6D09538AA4E09FAD /* UnreadStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnreadStore.swift; sourceTree = "<group>"; };
 		BE4AD56378500470C3FFCB27 /* CrewProposalCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewProposalCard.swift; sourceTree = "<group>"; };
-		C169F240D3B0FFEE51443992 /* PendingBotRegularRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingBotRegularRootView.swift; sourceTree = "<group>"; };
 		C385DAFA1E0BFEEC5520467A /* EnvelopeDataSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvelopeDataSource.swift; sourceTree = "<group>"; };
 		C49D5C2273CF903796CDB250 /* GroupCallView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupCallView.swift; sourceTree = "<group>"; };
 		C4F92F6F520EC1E69BFB6426 /* CrewSessionStatusCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewSessionStatusCard.swift; sourceTree = "<group>"; };
@@ -515,7 +513,6 @@
 				2D43D52E887A812E6C48AA8F /* AppCommands.swift */,
 				0689D829BCC97AF9D3099F61 /* AppEnvironment.swift */,
 				B1A7B2A2C127FA6D633617EC /* FeatureSurface.swift */,
-				C169F240D3B0FFEE51443992 /* PendingBotRegularRootView.swift */,
 				2EA1B13DB170E604F3CB03B8 /* SettingsScene.swift */,
 				0535C2EB32C3F6E1DFE0EA95 /* TabRoot.swift */,
 				9262605631A1A0281E9C3768 /* TopTab.swift */,
@@ -920,7 +917,6 @@
 				C5029F554D68B613AC801852 /* OpenAICallTransport.swift in Sources */,
 				FAECF2B5BD0A3A5A114A1851 /* PendingBotApp.swift in Sources */,
 				24DE7D404DE3727CE2B2ABA7 /* PendingBotBigScreenApp.swift in Sources */,
-				8B333BA755644E0D336C10C1 /* PendingBotRegularRootView.swift in Sources */,
 				F3238C85A9A478B6EA7B7F55 /* PendingBotSharedModels.swift in Sources */,
 				43893E0FD47933996253DBF3 /* PendingPeer.swift in Sources */,
 				0764DE6E6E5998186C2AEF3D /* PermissionRequestCard.swift in Sources */,

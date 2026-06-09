@@ -57,7 +57,11 @@ struct TabRoot: View {
         if store.current != nil {
             Group {
                 if sidebarLayout {
-                    PendingBotRegularRootView(selection: selected)
+                    // iPad regular 收敛到与 macOS @main 同一个三列壳。注入
+                    // `selected` 作为外部 tab 绑定,壳跟着 TabRoot 的选择走 ——
+                    // 下面的深链 onChange 改 `selected.wrappedValue` 时,壳的
+                    // 侧栏与中/右栏会同步翻 tab。
+                    WideRootView(externalTab: selected)
                 } else {
                     compactBody
                 }
