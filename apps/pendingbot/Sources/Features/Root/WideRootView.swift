@@ -13,12 +13,24 @@ import SwiftUI
 /// └──────────┴────────────────┴───────────────────────────┘
 /// ```
 ///
-/// 现阶段只在 macOS 接入(iPad 翻转留给后续 task)。**五个 tab 全部**取共享
+/// macOS @main 与 iPad regular 共用同一个壳。**五个 tab 全部**取共享
 /// `FeatureSurface` 的 `listColumn` / `detailColumn`(「我」无 list,壳给中列
 /// 空态、右栏放 `detailColumn`),不再有任何 Mac 平行列。每个 tab 持有各自的
 /// 强类型 selection,壳把同一个 binding 喂给中列(写)和右栏(读)。
-/// `#else`(iOS,此处暂未启用)各 tab 给跨平台占位 Text。
+/// 中/右栏的 list/detail 渲染是跨平台的(`FeatureSurface` 方法不带 `os()`
+/// guard),iOS 与 macOS 走同一份 switch,不再有 iOS 占位分支。
+///
+/// ## tab 选择来源 — 内部 `@State` vs 外部 binding
+/// macOS @main 路径(`WideRootView()` 无参)用内部 `@State selectedTab`,壳
+/// 自己拥有 tab 选择。iPad 路径(`WideRootView(externalTab:)`)由 `TabRoot`
+/// 注入它的 `selected` 绑定,壳跟着 `TabRoot` 的选择走 —— 这样深链翻 tab
+/// (`/b/<slug>` → 好友、群邀请 → 消息)经 `TabRoot.onChange` 改 `selected`
+/// 后,壳侧栏与中/右栏会同步切换。`tabSelection` 计算属性统一这两条路径:
+/// `externalTab ?? $selectedTab`。
 struct WideRootView: View {
+    /// 外部 tab 绑定 —— iPad 由 `TabRoot` 注入(承接深链翻 tab);macOS @main
+    /// 不传(`nil`),壳退回内部 `@State selectedTab`,行为与接入前完全一致。
+    var externalTab: Binding<TopTab>? = nil
     @State private var selectedTab: TopTab = .message
     /// 好友 tab 的选中项 —— 直接持有共享 `FriendsTabView` 的 `Selection`
     /// (`PendingPeer`),壳把同一个 binding 喂给 list 列(写)和 detail 列(读)。
@@ -34,6 +46,11 @@ struct WideRootView: View {
     /// `CrewDetailV2View` 按 id 自取机组(`getCrewV2`),所以只需带 id。
     @State private var crewSelection: String? = nil
 
+    /// 统一 tab 选择来源:外部注入(iPad,跟 `TabRoot.selected`)优先,否则
+    /// 用内部 `@State`(macOS @main)。侧栏 List 与 中/右栏 switch 全部读它,
+    /// 这样两条路径走同一份代码,深链翻 tab 在 iPad 上也能落到壳。
+    private var tabSelection: Binding<TopTab> { externalTab ?? $selectedTab }
+
     var body: some View {
         NavigationSplitView {
             sidebar
@@ -48,13 +65,15 @@ struct WideRootView: View {
 
     private var sidebar: some View {
         // 单选侧栏:`List(selection:)` 要 `Binding<SelectionValue?>`,而
-        // `selectedTab` 是非可选的 —— 派生一个永不为 nil 的 optional 绑定,
-        // 两端(iOS/macOS)都能用同一个初始化器。
-        let tabSelection = Binding<TopTab?>(
-            get: { selectedTab },
-            set: { if let new = $0 { selectedTab = new } }
+        // `tabSelection` 是非可选的 —— 派生一个永不为 nil 的 optional 绑定,
+        // 两端(iOS/macOS)都能用同一个初始化器。写回经 `tabSelection`,
+        // 所以 iPad 点侧栏会改 `TabRoot.selected`、macOS 改内部 `@State`。
+        let tabBinding = tabSelection
+        let listSelection = Binding<TopTab?>(
+            get: { tabBinding.wrappedValue },
+            set: { if let new = $0 { tabBinding.wrappedValue = new } }
         )
-        return List(selection: tabSelection) {
+        return List(selection: listSelection) {
             ForEach(TopTab.allCases) { tab in
                 Label(tab.label, systemImage: tab.systemImage)
                     .tag(tab)
@@ -64,10 +83,12 @@ struct WideRootView: View {
         .navigationSplitViewColumnWidth(min: 150, ideal: 168, max: 200)
     }
 
+    // 中/右栏取共享 `FeatureSurface` 的 list/detail 列。这些方法是跨平台的
+    // (各 tab 的 extension 不带 `os()` guard),所以同一份 switch 在 macOS
+    // @main 与 iPad regular 上都渲染真业务面 —— 不再有 iOS 占位分支。
     @ViewBuilder
     private var middleColumn: some View {
-        #if os(macOS)
-        switch selectedTab {
+        switch tabSelection.wrappedValue {
         case .message:
             // 消息 tab 中列 = 共享 `MessageTabView` 的 list 列;选中一个会话
             // (ChatDest)后右栏是聊天 detail。壳持有 selection,list 写、detail 读。
@@ -94,17 +115,11 @@ struct WideRootView: View {
                 .navigationTitle("我")
                 .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
         }
-        #else
-        WidePlaceholderColumn(message: selectedTab.label)
-            .navigationTitle(selectedTab.label)
-            .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
-        #endif
     }
 
     @ViewBuilder
     private var detailColumn: some View {
-        #if os(macOS)
-        switch selectedTab {
+        switch tabSelection.wrappedValue {
         case .me:
             // 「我」tab 直接把账号详情放到右栏(中间列保持空态),
             // 因为「我」tab 没有可枚举的 list 内容。右栏取共享
@@ -135,9 +150,6 @@ struct WideRootView: View {
             // 订阅 Realtime,与中列是不同 `EnvelopeTabView()` 实例也无妨。
             EnvelopeTabView().detailColumn(selection: envelopeSelection)
         }
-        #else
-        WidePlaceholderColumn(message: selectedTab.label, prominent: true)
-        #endif
     }
 }
 
