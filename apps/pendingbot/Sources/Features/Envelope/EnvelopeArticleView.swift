@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 import Supabase
 
@@ -36,10 +35,10 @@ struct EnvelopeArticleView: View {
         }
         .background(Theme.Palette.canvas.ignoresSafeArea())
         .navigationTitle("来信")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavTitle()
         .toolbar {
             if let run, run.isRunning {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .platformTrailing) {
                     Button("中止") { showCancelConfirm = true }
                         .disabled(cancelling)
                 }
@@ -355,4 +354,3 @@ private struct BotMeta: Decodable {
     let id: String
     let display_name: String
 }
-#endif
