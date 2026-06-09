@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 /// Single-account view (multi-account is gone with Supabase Auth — one Apple
@@ -72,4 +71,3 @@ struct AccountsView: View {
         }
     }
 }
-#endif

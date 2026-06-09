@@ -1,10 +1,14 @@
-#if os(iOS)
 import SwiftUI
 
 /// 我 — left-aligned header column (avatar / name / email, no card
 /// background) plus a native-style settings list. Tapping the header
 /// pushes into `ProfileBootstrapView` (the random-roll 头像 / 用户名
 /// 生成 page) so avatar + nickname share one editing surface.
+///
+/// 跨平台:iOS 渲染 compact / iPad-landscape 两套;macOS 走 `FeatureSurface`
+/// 的「无列表型」装配(壳把整页放右栏,中列空态)。iOS-only 的部分(头像
+/// 重roll → `ProfileBootstrapView`,依赖 PhotosUI;「设置」原地 push)用
+/// `#if os(iOS)` 围起;macOS 上头像不可点、「设置」改成打开 ⌘, 独立窗口。
 struct MeTabView: View {
     @EnvironmentObject private var store: AccountStore
     @Environment(\.useSidebarLayout) private var sidebarLayout
@@ -51,10 +55,14 @@ struct MeTabView: View {
                 coreContent
             }
         }
+        // 头像/昵称重roll 页(ProfileBootstrapView)是 iOS-only(PhotosUI +
+        // 横向分页),Mac 端没有该编辑面 —— cover 整体 iOS 限定。
+        #if os(iOS)
         .fullScreenCover(isPresented: $showRandomize) {
             ProfileBootstrapView(allowsBack: true)
                 .environmentObject(AccountStore.shared)
         }
+        #endif
         .alert("出错", isPresented: Binding(
             get: { error != nil },
             set: { if !$0 { error = nil } }
@@ -108,14 +116,18 @@ struct MeTabView: View {
                     VStack(spacing: 28) {
                         profileHeader
                             .contentShape(Rectangle())
+                            // 点头像进重roll 页 —— iOS-only(ProfileBootstrapView
+                            // 是 iOS 限定);macOS 上头像是纯展示,不可点。
+                            #if os(iOS)
                             .onTapGesture {
                                 showRandomize = true
                                 Haptics.tap()
                             }
+                            #endif
 
                         VStack(spacing: 0) {
                             NavigationLink {
-                                AddMeMethodsView().toolbar(.hidden, for: .tabBar)
+                                AddMeMethodsView().platformTabBarVisibility(false)
                             } label: {
                                 OptionRow(title: "加我为好友的方式")
                             }
@@ -124,7 +136,7 @@ struct MeTabView: View {
                             optionDivider
 
                             NavigationLink {
-                                WalletV2View().toolbar(.hidden, for: .tabBar)
+                                WalletV2View().platformTabBarVisibility(false)
                             } label: {
                                 OptionRow(title: "钱包")
                             }
@@ -133,7 +145,7 @@ struct MeTabView: View {
                             optionDivider
 
                             NavigationLink {
-                                BotCapabilitiesView().toolbar(.hidden, for: .tabBar)
+                                BotCapabilitiesView().platformTabBarVisibility(false)
                             } label: {
                                 OptionRow(title: "机器人能力扩展")
                             }
@@ -142,7 +154,7 @@ struct MeTabView: View {
                             optionDivider
 
                             NavigationLink {
-                                ArenaLeaderboardView().toolbar(.hidden, for: .tabBar)
+                                ArenaLeaderboardView().platformTabBarVisibility(false)
                             } label: {
                                 OptionRow(title: "猜你喜欢")
                             }
@@ -150,12 +162,10 @@ struct MeTabView: View {
 
                             optionDivider
 
-                            NavigationLink {
-                                SettingsView().toolbar(.hidden, for: .tabBar)
-                            } label: {
-                                OptionRow(title: "设置")
-                            }
-                            .buttonStyle(.plain)
+                            // 设置入口:iOS 原地 push 共享 `SettingsView`;macOS 用
+                            // `SettingsLink` 打开原生 ⌘, 独立设置窗口(D4:两端指向
+                            // 同一份设置内容,Mac 走系统 Settings 场景)。
+                            settingsEntry
                         }
                         .meGlassGroup()
 
@@ -197,8 +207,32 @@ struct MeTabView: View {
                 }
             }
             .background(Theme.Palette.canvas.ignoresSafeArea())
+            #if os(iOS)
             .toolbar(.hidden, for: .navigationBar)
+            #endif
         }
+    }
+
+    /// 设置入口。iOS 是 `NavigationLink` 原地 push 共享 `SettingsView`;
+    /// macOS 用 `SettingsLink`(macOS 14+)打开原生 ⌘, 独立设置窗口 ——
+    /// 该窗口由 App 的 `Settings` 场景托管,内容同样是共享 `SettingsView`,
+    /// 所以两端落到同一份设置内容(D4)。
+    @ViewBuilder
+    private var settingsEntry: some View {
+        #if os(iOS)
+        NavigationLink {
+            SettingsView().platformTabBarVisibility(false)
+        } label: {
+            OptionRow(title: "设置")
+        }
+        .buttonStyle(.plain)
+        #else
+        SettingsLink {
+            OptionRow(title: "设置")
+        }
+        .buttonStyle(.plain)
+        .simultaneousGesture(TapGesture().onEnded { Haptics.tap() })
+        #endif
     }
 
     /// Hairline separating two rows inside one glass group, inset to
@@ -359,14 +393,14 @@ struct ArenaLeaderboardView: View {
                     }
                     .listRowBackground(Theme.Palette.surface)
                 }
-                .listStyle(.insetGrouped)
+                .platformListStyle()
                 .scrollContentBackground(.hidden)
                 .background(Theme.Palette.canvas)
                 .refreshable { await load() }
             }
         }
         .navigationTitle("猜你喜欢")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavTitle()
         .task { await load() }
     }
 
@@ -430,4 +464,3 @@ struct ArenaLeaderboardView: View {
         }
     }
 }
-#endif
