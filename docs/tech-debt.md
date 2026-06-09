@@ -51,6 +51,16 @@
 
 ## 🔴 根基级
 
+### 🔴 客户端多账号本地隔离只靠"登出时擦库"一条腿,无 account_id 维度过滤 + URLCache 登出不清
+- **发现**: 2026-06-08 · session(用户问"登一个号再登另一个号数据会混吗")
+- **位置**: `apps/pendingbot/Sources/Storage/AccountStore.swift:226`(`signOut`)、`apps/pendingbot/Sources/Storage/LocalDatabase.swift:338`(`wipeForSignOut`)、`:378`(`loadConversations` 等读查询)、`apps/pendingbot/Sources/Storage/ProtectedURLCache.swift`、`apps/pendingbot/Sources/PendingBotApp.swift`(`onChange(of: accountStore.current)`)
+- **问题**: 本地 SQLite(会话/消息/好友/群)的账号隔离**完全依赖"登出时 `wipeForSignOut()` 物理删库 + 轮换 Keychain 密钥"**。表里虽有 `user_id`/`account_id` 列但**读查询一律 `fetchAll` 不带 WHERE 过滤**,DB 本身不区分账号。两个具体缺口:
+  - ① **URLCache(图片/HTTP 缓存)登出时不清**。`signOut()` 删了 DB 却没调 `URLCache.shared.removeAllCachedResponses()`,`~/Library/Caches/ProtectedURLCache/` 是全用户共用目录、非账号作用域。实害有限(缓存键是 `/v1/uploads/<id>` 级 URL,B 通常不会去请求 A 的 upload id),但"登出后磁盘仍残上一个账号的图片缓存"是事实,隐私/卫生缺口。
+  - ② **强制换号(不经过 `signOut`)会泄漏**。`observeAuth()` / 后台刷新拿到**另一个 user 的 session** 时直接 `current = makeAccount(session:)`,不比较 `old.id != new.id`、不触发擦库;`PendingBotApp` 的 `onChange` 只判 `old == nil && new != nil`(纯登入)。因为没有 account_id 过滤,A 的整库在 B 的会话里仍可读。日常无 UI 经路(换号必走 signOut→signIn),属 token 刷新返回异身/服务端 session swap/会话劫持等例外时的洞。
+- **影响**: 账号隔离是隐私/数据一致性根基。当前"擦库一条腿"在正常登出登入流程下是安全的,但①让登出后残留可缓存内容、②让任何"绕过 signOut 的 session 变更"直接串号。两者都随功能增长易被无声打破(谁加个直接切号入口或改刷新逻辑就踩)。
+- **建议**: ① `signOut()` 里补 `URLCache.shared.removeAllCachedResponses()`(顺手把 ProtectedURLCache 目录也清)。② `PendingBotApp.onChange` 加 `if let o=old?.id, let n=new?.id, o != n { LocalDatabase.shared.wipeForSignOut(); AvatarCache.shared.clear(); URLCache… }` 守护强制换号。③ 中长期:给本地表加 `account_id` 并让所有读查询带 `WHERE account_id = ?`,把隔离从"擦库"升级为"作用域过滤"(纵深防御,即使擦库漏了也不串)。
+- **状态**: 待办(仅记录,未修)。
+
 ### 🔴 pnc_ledger 计费账本曾对 anon 可读、对 authenticated 可改写(RLS 没开);宽 grant 习惯需审计
 - **发现**: 2026-06-08 · chore/security-advisor-hardening(Security Advisor 体检)
 - **位置**: `pendingbot.pnc_ledger`(整数事实源账本)+ 各表的 anon/authenticated grant
@@ -472,6 +482,18 @@
 - **影响**: 剩余两项都是体验降级而非功能缺失/报错。③ crew 里发不了图/文件；④ 我自己的消息和别人的同侧、无"自己"高亮。
 - **建议**: 要分"我 vs 别人"需要读侧返回 `sender_user_id` 或在 members 里把 `me` 的 member_id 标出来再比对；附件等 crew upload 通道就绪后把 ComposerView 的 picker 接活。
 - **状态**: 部分修复 —— ① live push + ② inline 权限卡已于 T4.5 落地；③ 附件、④ 自我高亮仍未修（待读侧补字段 / crew upload 通道）
+
+### 🟡 客户端(iOS/Mac)从不把用户身份同步给 RevenueCat / PostHog / Sentry — 三个外部服务的 client 侧 identity 全缺
+
+- **发现**: 2026-06-08 · session(查"iOS 注册后 Polar 没对应用户")
+- **位置**: `apps/pendingbot/`(整个客户端;grep `revenuecat`/`Purchases`/`posthog`/`sentry` 零命中)、对照 edge 侧已就绪的 `apps/edge/src/routes/billing-webhooks.ts:185`(`ev.app_user_id`)、`apps/edge/src/lib/analytics.ts`(distinctId=subjectId)
+- **问题**: 所有外部服务都约定用 `subject_id`(= `auth.users.id`)当外部主键,edge 侧已按此接好;但 **客户端从没把这个 id 告诉这三个服务**:
+  1. **RevenueCat** —— iOS 完全没集成 SDK,从不调 `Purchases.configure` / `logIn(subjectId)`。后端 `/v1/billing/revenuecat/webhook` 已经在等 `app_user_id`,可一旦真走 IAP,RevenueCat 不知道这笔购买属于哪个 `subject_id` → **入账对不上人**(直接影响计费正确性)。
+  2. **PostHog** —— 客户端无 SDK、无 `identify(subjectId)`;目前只有 edge 侧 `topup_succeeded` 一个事件带 distinctId。注册、会话、产品行为在 client 侧全无埋点。
+  3. **Sentry** —— 任何地方(client + edge)都没 `setUser()`;报错事件挂不到具体用户,只有 trace/时间戳。
+- **影响**: RevenueCat 这条是 🟡 偏 🔴 的——IAP 上线前不补会导致购买无法归户、对账困难。PostHog/Sentry 两条是观测盲区(无用户维度归因),非阻断。注意这与 kill-switch(`BILLING_ENABLED`/`POSTHOG_ENABLED` 默认关,wrangler.jsonc)是两回事:开关只管 edge 发不发,**客户端 identity 缺失是开关打开也补不上的独立洞**。
+- **建议**: ① IAP 上线前必做:iOS 集 RevenueCat SDK,登录成功后 `Purchases.shared.logIn(subjectId)`,登出 `logOut()`;② PostHog iOS SDK + 登录后 `identify(subjectId)`、登出 `reset()`;③ Sentry(client 用 sentry-cocoa,edge 在 worker 入口)登录后 `setUser(id: subjectId)`。三者共用"拿到 session 后取 `auth.users.id` 调一次 identify"的同一时机,可一并接。
+- **状态**: 大部分已解决 2026-06-08(feat/client-telemetry-sdks)。新增 `apps/pendingbot/Sources/Networking/Telemetry.swift` 协调器:`PendingBotApp`(iOS+macOS)init 调 `configure()`,`onChange(of: accountStore.current)` 登录 `identify(subjectId)` / 登出 `reset()`,三 SDK 统一用 `subject_id`、不传 PII。PostHog(3.59.3)/Sentry(9.16.1)填真 key(`.remote`),iOS+Mac 编译双绿 + 模拟器启动冒烟通过。**剩余两条尾巴**:(a) RevenueCat 走 `Purchases.isConfigured` gate、`revenueCatKey` 暂为空串占位 → SDK 休眠,待 RC 账号开通补 `appl_…` key + 真上 IAP(身份代码已就位);(b) PostHog/Sentry 事件真实投递到 dashboard 仅靠"启动不崩"验证,真机/真登录的端到端归因闭环未做。
 
 ## 🟢 不规范
 

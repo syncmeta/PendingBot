@@ -47,6 +47,18 @@ packages:
     url: https://github.com/gonzalezreal/swift-markdown-ui
     minVersion: 2.4.0
     maxVersion: 3.0.0
+  PostHog:
+    url: https://github.com/PostHog/posthog-ios
+    minVersion: 3.0.0
+    maxVersion: 4.0.0
+  RevenueCat:
+    url: https://github.com/RevenueCat/purchases-ios
+    minVersion: 5.0.0
+    maxVersion: 6.0.0
+  Sentry:
+    url: https://github.com/getsentry/sentry-cocoa
+    minVersion: 9.0.0
+    maxVersion: 10.0.0
   SwiftMath:
     url: https://github.com/mgriebling/SwiftMath
     minVersion: 1.0.0
@@ -98,6 +110,12 @@ targets:
         product: GoogleSignIn
       - package: MarkdownUI
         product: MarkdownUI
+      - package: PostHog
+        product: PostHog
+      - package: RevenueCat
+        product: RevenueCat
+      - package: Sentry
+        product: Sentry
       - package: SwiftMath
         product: SwiftMath
       - package: Supabase
