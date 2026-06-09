@@ -177,6 +177,10 @@ private struct CrewDetailSheet: View {
                     Text("基本信息")
                 }
 
+                #if os(iOS)
+                // 群钱包入口依赖 Group slice 的 `GroupWalletView`,后者还在
+                // `#if os(iOS)` 围栏里(Group slice 跨平台化是单独一档活)。
+                // Mac 先不显示这一行,等 Group slice 解锁后去掉这个 gate。
                 Section {
                     NavigationLink {
                         GroupWalletView(subjectId: detail.crew.responsibleSubjectId)
@@ -186,6 +190,7 @@ private struct CrewDetailSheet: View {
                 } header: {
                     Text("账户")
                 }
+                #endif
 
                 Section {
                     if let captain = detail.captain {
