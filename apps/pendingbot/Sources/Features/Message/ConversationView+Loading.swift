@@ -326,6 +326,64 @@ extension ConversationView {
         }
     }
 
+    /// Fetch the full `Bot` record when the caller didn't supply one but
+    /// the conversation IS a bot conversation. The Mac 3-column shell
+    /// renders the list and the detail as *separate* MessageTabView /
+    /// FriendsTabView instances with disjoint `@State`, so the detail's
+    /// `bot(for:)` reads an empty `@State bots` and hands us `bot: nil`.
+    /// Without the record the header drops its `· <model>` suffix and the
+    /// in-chat BotConfigView entry disappears (both read `effectiveBot`).
+    /// Resolving it here makes the shared view robust regardless of how it
+    /// was constructed.
+    ///
+    /// Gated on `bot == nil`, so on iOS — where the list always passes a
+    /// real bot — this never fires and behaviour is byte-identical. Runs at
+    /// most once (early-returns when `resolvedBot` is already set). For
+    /// human-human convs there is no bot id to resolve and it no-ops.
+    ///
+    /// Same query shape as `MessageTabView.load()` / `BotManagement` — the
+    /// `bots` columns that map 1:1 onto the `Bot` model — so there's one
+    /// select to keep in sync, no new endpoint.
+    func resolveBotIfNeeded() async {
+        guard bot == nil, resolvedBot == nil else { return }
+        // Resolve the bot id: a materialized bot conv carries it on
+        // `conversation.bot_id`; a not-yet-materialized one carries it on
+        // the pending peer (only when the peer is a bot, not a human).
+        let botId: String? = {
+            if !conversation.bot_id.isEmpty { return conversation.bot_id }
+            if let p = pendingPeer, p.kind == "bot" { return p.peerId }
+            return nil
+        }()
+        guard let botId else { return }
+        struct BotRow: Decodable {
+            let id: String
+            let display_name: String
+            let model_id: String?
+            let visibility: String?
+            let creator_id: String?
+            let voice_call_enabled: Bool?
+        }
+        do {
+            let row: BotRow = try await SupabaseStack.shared
+                .from("bots")
+                .select("id, display_name, model_id, visibility, creator_id, voice_call_enabled")
+                .eq("id", value: botId)
+                .single()
+                .execute()
+                .value
+            self.resolvedBot = Bot(
+                id: row.id, display_name: row.display_name,
+                access_mode: nil, model: row.model_id,
+                visibility: row.visibility, creator_id: row.creator_id,
+                voice_call_enabled: row.voice_call_enabled
+            )
+        } catch {
+            // Decoration-only — the conversation works fully without it,
+            // so a miss just leaves the header suffix / settings entry off.
+            loadingLog.warning("bot self-resolve failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     /// Main history backfill. Hydrates from the local cache first so the
     /// conv opens with last-known content even offline, then overwrites
     /// from the server's authoritative view. Recall tombstones become

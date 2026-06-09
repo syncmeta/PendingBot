@@ -30,6 +30,18 @@ private struct ScrollBottomOffsetKey: PreferenceKey {
 struct ConversationView: View {
     @State var conversation: Conversation
     let bot: Bot?
+    /// Self-fetched bot record for the `bot == nil` case. The Mac 3-column
+    /// shell builds the detail column from a *different* MessageTabView /
+    /// FriendsTabView instance than the list, so `bot(for:)` reads an empty
+    /// `@State bots` and passes `bot: nil`. `resolveBotIfNeeded()` (in
+    /// ConversationView+Loading) fills this from the conv's / pending peer's
+    /// bot id so the header model suffix + BotConfigView entry come back.
+    /// Stays nil on iOS, where the list always supplies a real `bot`.
+    @State var resolvedBot: Bot?
+    /// The bot to drive header + settings off of: the caller-supplied one
+    /// when present, else the self-resolved record. On iOS this is always
+    /// `bot` (the resolve path is gated on `bot == nil` and never fires).
+    var effectiveBot: Bot? { bot ?? resolvedBot }
     /// Mutable so the "+ new conv" header button can flip a materialized
     /// chat back to pending without reconstructing the view.
     @State var pendingPeer: PendingPeer?
@@ -304,8 +316,8 @@ struct ConversationView: View {
     /// (bots.model_id, which already accounts for the owner's edits in
     /// 我 → 机器人管理).
     private var botName: String {
-        let base = bot?.display_name ?? conversation.bot_name ?? conversation.bot_id
-        guard let slug = bot?.model, !slug.isEmpty else { return base }
+        let base = effectiveBot?.display_name ?? conversation.bot_name ?? conversation.bot_id
+        guard let slug = effectiveBot?.model, !slug.isEmpty else { return base }
         return "\(base) · \(modelCatalog.displayName(for: slug))"
     }
 
@@ -794,6 +806,12 @@ struct ConversationView: View {
             }
         }
         .task {
+            // Resolve the bot record when the shell handed us `bot: nil`
+            // (Mac 3-column detail is a separate instance from the list).
+            // Before the pending-conv guard so pending bot chats — whose
+            // bot id rides on `pendingPeer` — also get the header model
+            // suffix + BotConfigView entry. No-op on iOS (bot is non-nil).
+            await resolveBotIfNeeded()
             // Pending convs (lazy-created on first send) have no row yet —
             // skip history / skills / realtime until they materialise.
             guard !conversation.id.isEmpty else { return }
@@ -885,14 +903,14 @@ struct ConversationView: View {
                     initialAvatarPath: peer.avatarPath,
                     initialAvatarSeed: peer.avatarSeed
                 )
-            } else if let bot {
+            } else if let bot = effectiveBot {
                 BotConfigView(bot: bot, currentUserId: AccountStore.shared.current?.id)
             }
         }
         .navigationDestination(isPresented: $showingBotConfig) {
             // Bot-level config (model / voice / vision / envelope /
             // lookback / skills). Reached from the pre-chat action bar.
-            if let bot {
+            if let bot = effectiveBot {
                 BotConfigView(bot: bot, currentUserId: AccountStore.shared.current?.id)
             }
         }
@@ -1189,7 +1207,7 @@ struct ConversationView: View {
     /// the conversation is no longer empty, so the bar disappears on its
     /// own — no extra dismissal logic needed.
     private var showsBotPreChatActions: Bool {
-        conversation.conversation_type == "user_bot" && bot != nil
+        conversation.conversation_type == "user_bot" && effectiveBot != nil
     }
 
     @ViewBuilder
