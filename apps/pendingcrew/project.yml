@@ -70,6 +70,8 @@ targets:
       - path: Sources/Stores/LocalWhiteboardStore.swift
       # 待审批/待决策 store（ask 工具 + 权限 hook 用），同自包含。
       - path: Sources/Stores/LocalApprovalStore.swift
+      # 家族 SSO 凭据共享组存储（纯 Foundation+Security，自包含）。
+      - path: Sources/Support/FamilyCredentialStore.swift
       # 本地 prompts：PromptTemplate（纯 {{var}}）+ LocalPromptLoader（bundle 读）
       # 自包含，编进 bundle 单测；Resources/Prompts 作为 test bundle 资源，从
       # test bundle 加载验证 bundling + lookup 端到端。
