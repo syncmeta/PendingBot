@@ -11,6 +11,8 @@ struct CrewSidebarView: View {
     @EnvironmentObject private var model: AppModel
     @State private var showingCreateSheet = false
     @State private var confirmingSignOut = false
+    /// 本机模式下侧栏的可选登录入口（登录 SSO C2）—— 弹 LoginView sheet 扫码。
+    @State private var showingLogin = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -80,6 +82,16 @@ struct CrewSidebarView: View {
             } else {
                 Text("退出后本机 BYOK 配置会清空,需要重新填 API key 才能继续本地 crew。")
             }
+        }
+        // 本机模式可选登录（登录 SSO C2）：扫码完成后 model.isAuthenticated
+        // 翻 true，onChange 自动收 sheet —— LoginView 自身只切 .approved
+        // 状态不会 dismiss。
+        .sheet(isPresented: $showingLogin) {
+            LoginView()
+                .frame(minWidth: 480, minHeight: 560)
+        }
+        .onChange(of: model.isAuthenticated) { _, authed in
+            if authed { showingLogin = false }
         }
     }
 
@@ -154,6 +166,11 @@ struct CrewSidebarView: View {
                         Label("签出 / 切换身份", systemImage: "rectangle.portrait.and.arrow.right")
                     }
                 } else if currentMode == .local {
+                    Button {
+                        showingLogin = true
+                    } label: {
+                        Label("登录 PendingBot 账号", systemImage: "qrcode")
+                    }
                     Button {
                         confirmingSignOut = true
                     } label: {
