@@ -12,6 +12,13 @@
 
 ---
 
+### 🟢 Supabase legacy anon/service_role key 仍在项目里启用 — 全端已切新 key 后应停用
+- **发现**: 2026-06-10 · `chore/supabase-new-api-keys`(API key 迁新体系收尾)
+- **现状**: edge/admin/iOS/Mac 代码已全部切到 `sb_publishable_…`/`sb_secret_…`(worker 已部署并线上验证),但 Supabase 项目里 legacy `anon`/`service_role` JWT key **仍处于启用状态**(Dashboard → API Keys → Legacy tab)。两套并存是迁移期的预期形态,不是事故。
+- **遗留的 legacy 消费者**: (a) 已安装的旧 iOS 构建(二进制里嵌着旧 anon JWT)——pre-launch 只有用户自己的真机,装一次新构建即清零;(b) 本地 `supabase start` 栈(CLI 仍发 legacy 格式,`HostedConfig` `.dev` 与 `.dev.vars.example` 注释已说明);(c) 边角脚本若直接拿旧 key 调用(已知的 envelope-replay/list-convs 已切新名)。
+- **修法**: 真机装上新构建、确认无别处引用后,在 Dashboard 把 legacy keys disable(可随时 re-enable,非删除)。官方截止 2026 年底,不急,但停得越早攻击面越小——legacy service_role JWT 与 JWT secret 绑定,不可单独轮换。
+- **状态**: 待办(一次 Dashboard 操作 + 真机冒烟)。
+
 ### 🟡 board 管理台无可用浏览器登录路径(EU Supabase CAPTCHA 挡客户端登录)
 - **发现**: 2026-06-09 · `feat/board-console` e2e 验证时
 - **现象**: `apps/admin` 登录页走 `supabase.auth.signInWithPassword`,EU 项目(zafhoiwwpanpuashtnxy)Auth 开了 CAPTCHA 保护 → 客户端登录返回 `captcha protection: request disallowed (no captcha_token found)`。客户端 OTP(`signInWithOtp`)同样会被 captcha 挡。**只有 service_role 的 admin API(generate_link+verify)能绕过 captcha** —— 这正是本次 e2e 用来 mint JWT 验证后端的方式。

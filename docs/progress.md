@@ -1,6 +1,8 @@
 # PendingBot / PendingCrew 进度账本 (Progress Ledger)
 
-**最近对账：2026-06-09**（对照实际代码 / 迁移 / git，不是看 task 标记）
+**最近对账：2026-06-10**（对照实际代码 / 迁移 / git，不是看 task 标记）
+
+> **2026-06-10 Supabase API key 迁新体系已合 main 并部署（`6289b117`，--no-ff，#293）**：anon/service_role JWT → `sb_publishable_…`(wrangler 明文 var + iOS 内嵌 + admin VITE var)/`sb_secret_…`(wrangler secret,守卫管道推送不落屏)。edge typecheck+548 vitest、admin tsc、iOS build、Mac 测试全绿;worker 已部署(ba4a138a)并线上冒烟(publishable/secret 直连 Supabase 200,对照错 key 401;worker 401 envelope 正常)。PendingCrew runner env 封禁改 `SUPABASE_` 前缀整段(根治"key 改名就漏")。JWT signing key 早已是非对称+JWKS,此次只动 API key 轴。**剩**:Dashboard 停用 legacy keys(tech-debt 2026-06-10 条)、app 真实登录态回归(随 #290 真机验证一起)。
 
 > **2026-06-09 三端共享 UI 已合 main（`b4d0b131`，--no-ff，feat/tri-platform-ui 71 commit）**：全 feature slice 跨平台、iPad 收敛三列、`Sources/Mac/` 删到只剩 MacWelcomeView,双端 BUILD SUCCEEDED。合并时把 main 的客户端遥测 SDK(#275-280)+ Mac 登录窗还原透明(MacMainWindowStyler 从已删 MacRootView 搬到 WideRootView)一并解冲突。**剩**:#290 Phase 7 三端真机/模拟器验证(需用户真账号)、#291 Mac composer 三横幅、#292 Mac 二维码名片。`feat/mac-login-align`(#212 对齐版)作废,以本条为准。下方 2026-06-08 那条「未合」状态已被本条更新。
 
