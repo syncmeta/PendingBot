@@ -65,11 +65,14 @@ public enum LocalCodingAgentEnv {
     /// 这是 defensive check，调用方本来就不该传。
     public static func isForbidden(key: String) -> Bool {
         // 别让 PendingCrew 自己的 device-grant / supabase 凭据混进去。
+        // SUPABASE_ 整个前缀封死（SECRET_KEY/PUBLISHABLE_KEY/JWT_SECRET/
+        // DB_PASSWORD…）——按名枚举在 key 改名时会漏（service_role →
+        // sb_secret 迁移差点就漏了），sub-agent 也没有任何合法理由拿到
+        // 我们的 supabase 凭据。
         let upper = key.uppercased()
         return upper.hasPrefix("PENDINGBOT_")
             || upper.hasPrefix("PENDINGCREW_")
-            || upper == "SUPABASE_SERVICE_ROLE_KEY"
-            || upper == "SUPABASE_ANON_KEY"
+            || upper.hasPrefix("SUPABASE_")
     }
 }
 #endif
