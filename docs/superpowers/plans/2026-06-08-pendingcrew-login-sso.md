@@ -437,7 +437,7 @@ func mintGrant(familyCredential: String, subjectId: String, grantKind: String,
 
 ## 人工尾巴（需用户 / 真机 / 部署）
 
-- [ ] **D4 provisioning**:Apple Developer 给 `com.pendingname.pendingcrew` + `com.pendingname.pendingbot` 的 App ID 都加 `com.pendingname.shared` keychain group，重签 profile。**只有你能做。**
+- [x] ~~**D4 provisioning**~~ **勘误：keychain group 不需要 Apple Developer portal 配置**（portal 里只有 App Groups——那是共享容器机制，另一回事）。provisioning profile 自动允许 `TEAMID.*` 下所有 keychain 组；只要两个 app 的 entitlements 各声明 `$(AppIdentifierPrefix)com.pendingname.shared` + 非 ad-hoc 签名即可。已落：PendingCrew `2de2f4d7`（B1）+ PendingBot `e630da0e`，双 macOS build 绿。剩"真机跨 app 互读"归入下面的验证条。
 - [ ] **PendingBot 侧**:PendingBot(Mac/手机)登录成功时也**存一份家族凭据进共享组**（对称改 PendingBot 客户端 + 它的 approve 流回传 familyCredential）。本 plan 只做 PendingCrew 侧 + edge;PendingBot 侧单列。
 - [ ] **跨 app 真读验**:两个真签名 app 装同机 → PendingBot 写、PendingCrew 读到家族凭据 → 秒登。headless 验不了（errSecMissingEntitlement）。
 - [ ] **部署 edge** + 真 Supabase 会话跑 mint 全链路。
