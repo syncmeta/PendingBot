@@ -58,7 +58,7 @@ function loadDevVars(): Record<string, string> {
   return env;
 }
 const env = loadDevVars();
-const supa = createClient(env.SUPABASE_URL!, env.SUPABASE_SERVICE_ROLE_KEY!, {
+const supa = createClient(env.SUPABASE_URL!, env.SUPABASE_SECRET_KEY!, {
   auth: { autoRefreshToken: false, persistSession: false },
   db: { schema: 'pendingbot' },
 });

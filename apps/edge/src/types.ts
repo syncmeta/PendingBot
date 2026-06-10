@@ -112,9 +112,16 @@ export interface Env {
   /// Unified Billing). Not a secret — just the alias name.
   GOOGLE_BYOK_ALIAS?: string;
 
+  /// Publishable API key (`sb_publishable_…`). Public by design — plain var
+  /// in wrangler.jsonc, not a secret. userClient pairs it with the caller's
+  /// JWT so RLS runs as `authenticated`.
+  SUPABASE_PUBLISHABLE_KEY: string;
+
   // ── Secrets (set via `wrangler secret put --env <env>`) ────────
-  SUPABASE_ANON_KEY: string;
-  SUPABASE_SERVICE_ROLE_KEY: string;
+  /// Secret API key (`sb_secret_…`). Maps to the `service_role` Postgres
+  /// role (BYPASSRLS) — same privileges as the legacy service_role JWT,
+  /// but independently rotatable/revocable.
+  SUPABASE_SECRET_KEY: string;
   /// Cloudflare API token (AI Gateway Read). persistAuditMessage uses it
   /// to read the gateway's computed per-request cost from the Logs API
   /// when a provider doesn't report its own. Optional — unset means

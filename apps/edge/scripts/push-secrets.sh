@@ -64,8 +64,9 @@ WRANGLER=./node_modules/.bin/wrangler
 echo "Pushing secrets to env=$ENV …"
 
 # --- from .dev.vars ----------------------------------------------------------
-put SUPABASE_ANON_KEY         "$(get_var SUPABASE_ANON_KEY)"
-put SUPABASE_SERVICE_ROLE_KEY "$(get_var SUPABASE_SERVICE_ROLE_KEY)"
+# SUPABASE_PUBLISHABLE_KEY is NOT here — it's public, lives as a plain var
+# in wrangler.jsonc. Only the sb_secret_… key is a real secret.
+put SUPABASE_SECRET_KEY       "$(get_var SUPABASE_SECRET_KEY)"
 put OPENROUTER_API_KEY        "$(get_var OPENROUTER_API_KEY)"
 put HONCHO_API_KEY            "$(get_var HONCHO_API_KEY)"
 put HONCHO_WORKSPACE_ID       "$(get_var HONCHO_WORKSPACE_ID)"

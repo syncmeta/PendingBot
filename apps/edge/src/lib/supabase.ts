@@ -21,7 +21,7 @@ export type SupabaseClient = ReturnType<typeof createClient<Database, 'pendingbo
 const DEFAULT_DB = { schema: 'pendingbot' } as const;
 
 export function userClient(env: Env, userJwt: string): SupabaseClient {
-  return createClient<Database, 'pendingbot'>(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+  return createClient<Database, 'pendingbot'>(env.SUPABASE_URL, env.SUPABASE_PUBLISHABLE_KEY, {
     global: {
       headers: { Authorization: `Bearer ${userJwt}` },
     },
@@ -34,7 +34,7 @@ export function userClient(env: Env, userJwt: string): SupabaseClient {
 }
 
 export function serviceClient(env: Env): SupabaseClient {
-  return createClient<Database, 'pendingbot'>(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
+  return createClient<Database, 'pendingbot'>(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,

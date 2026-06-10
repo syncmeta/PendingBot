@@ -5,9 +5,12 @@
 CF_ACCOUNT_ID=
 
 # Supabase (local `supabase start`)
+# New-format API keys (sb_publishable_… / sb_secret_…). For a local stack,
+# `supabase status` prints them; legacy anon/service_role JWT values also
+# still work here until end of 2026 if your CLI stack predates the new keys.
 SUPABASE_URL=http://localhost:54321
-SUPABASE_ANON_KEY=
-SUPABASE_SERVICE_ROLE_KEY=
+SUPABASE_PUBLISHABLE_KEY=
+SUPABASE_SECRET_KEY=
 SUPABASE_JWT_SECRET=
 
 # CORS origin for dev (web client URL)
