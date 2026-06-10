@@ -214,6 +214,9 @@ struct PendingBotApp: App {
     // 跟 iOS 一致:把 ModelCatalog.shared 当 environmentObject 注入,供
     // 共享建/管机器人面的模型选择器读目录。
     @StateObject private var modelCatalog = ModelCatalog.shared
+    // 共享 feature 视图(MessageTab/Envelope/SidebarTabBar)都声明了
+    // @EnvironmentObject UnreadStore — 不注入会在首屏 load() 即断言崩溃。
+    @StateObject private var unreadStore = UnreadStore.shared
 
     init() {
         // 跟 iOS 入口对齐:首帧前 init 观测/计费身份 SDK(空 key 自动 no-op)。
@@ -229,8 +232,13 @@ struct PendingBotApp: App {
             MacRootGate()
                 .environmentObject(accountStore)
                 .environmentObject(modelCatalog)
+                .environmentObject(unreadStore)
+                // 跟 iOS 一致:双色品牌(#044735 + #fdfcfa)只有浅色设计,
+                // 锁 light,不跟随系统深色。
+                .preferredColorScheme(.light)
                 // 跟 iOS 一致:登录态变化时同步观测/计费身份。
                 .onChange(of: accountStore.current) { _, new in
+                    unreadStore.bind(account: new)
                     if let id = new?.id {
                         Telemetry.shared.identify(id)
                     } else {
@@ -241,6 +249,7 @@ struct PendingBotApp: App {
                     // 跟 iOS 入口对齐:.task 里 hydrate 持久化的 supabase
                     // session,避免冷启动直接闪过 "未登录" 态。
                     await accountStore.bootstrap()
+                    unreadStore.bind(account: accountStore.current)
                     // 冷启动已登录:补一次 identify(onChange 可能尚未在观测)。
                     if let id = accountStore.current?.id {
                         Telemetry.shared.identify(id)
