@@ -91,6 +91,8 @@ struct MessageTabView: View {
     /// for every iOS code path — the normal `body` never sets it, so iOS
     /// behavior is byte-identical to before.
     var externalSelection: Binding<ChatDest?>? = nil
+    /// 列模式开关:true = body 渲染 Mac 壳的 list 列(见 body 注释)。
+    var renderAsMacListColumn = false
 
     /// The selection the row highlight reads + the regular-layout nav writes:
     /// the shell's binding when our list is hosted by the Mac shell, otherwise
@@ -103,15 +105,24 @@ struct MessageTabView: View {
     }
 
     var body: some View {
-        chrome(
-            Group {
-                if sidebarLayout {
-                    regularBody
-                } else {
-                    compactBody
+        // Mac/iPad 三列壳的 list 列也必须经由 `body` 渲染:`listColumn` 若在
+        // 图外手动求值 `macListColumn`,捕获进 `.task` 闭包的那份 self 拷贝
+        // 永远不会被 SwiftUI 装入视图图 → @EnvironmentObject 不灌注,首次
+        // 读取(load() 里的 unread)直接断言崩溃。所以列模式作为 body 的
+        // 一个分支存在,由 `renderAsMacListColumn` 切换。
+        if renderAsMacListColumn {
+            macListColumn
+        } else {
+            chrome(
+                Group {
+                    if sidebarLayout {
+                        regularBody
+                    } else {
+                        compactBody
+                    }
                 }
-            }
-        )
+            )
+        }
     }
 
     /// Wraps a root view with the tab's shared chrome — the `.task` (load +
@@ -958,7 +969,12 @@ extension MessageTabView: FeatureSurface {
         // +/add-friend/scan/join-group actions and `load()` all work from it.
         var view = self
         view.externalSelection = selection
-        return view.macListColumn
+        // 返回配置过的 view 本体(而非图外求值的 `view.macListColumn`),
+        // 让 SwiftUI 把 MessageTabView 装进视图图 —— 否则它的 property
+        // wrapper(@EnvironmentObject/@State)永不灌注,`.task` 里第一次
+        // 读 `unread` 就 fatalError。渲染分支在 body 里走 macListColumn。
+        view.renderAsMacListColumn = true
+        return view
     }
 
     func detailColumn(selection: ChatDest?) -> some View {

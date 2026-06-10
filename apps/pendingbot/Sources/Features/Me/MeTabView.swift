@@ -19,6 +19,9 @@ struct MeTabView: View {
     @State private var error: String?
     @State private var showRandomize = false
 
+    /// detail 列模式开关:true = body 只渲染 chrome(coreContent)(Mac 壳右栏)。
+    var renderAsDetailColumn = false
+
     /// Two `.confirmationDialog`s attached to the same view collide on
     /// SwiftUI — one gets shadowed and its `isPresented` flag flips
     /// without the sheet ever appearing (most visible on Mac Catalyst).
@@ -38,25 +41,32 @@ struct MeTabView: View {
     }
 
     var body: some View {
-        chrome(
-            Group {
-                if sidebarLayout {
-                    NavigationSplitView {
-                        VStack(spacing: 0) {
-                            coreContent
-                            if let topTabSelection {
-                                SidebarTabBar(selection: topTabSelection)
+        // detail 列模式必须经 body 渲染(同 MessageTabView 的列模式:在图外
+        // 对 self 拷贝求值 chrome(coreContent) 会让 @EnvironmentObject 永不
+        // 灌注 → 首次读取断言崩溃)。
+        if renderAsDetailColumn {
+            chrome(coreContent)
+        } else {
+            chrome(
+                Group {
+                    if sidebarLayout {
+                        NavigationSplitView {
+                            VStack(spacing: 0) {
+                                coreContent
+                                if let topTabSelection {
+                                    SidebarTabBar(selection: topTabSelection)
+                                }
                             }
+                            .sidebarColumnWidth()
+                        } detail: {
+                            EmptyDetailHint(text: "在左侧选项里走走", systemImage: "person.crop.circle")
                         }
-                        .sidebarColumnWidth()
-                    } detail: {
-                        EmptyDetailHint(text: "在左侧选项里走走", systemImage: "person.crop.circle")
+                    } else {
+                        coreContent
                     }
-                } else {
-                    coreContent
                 }
-            }
-        )
+            )
+        }
     }
 
     /// Wraps a root view with the tab's shared chrome — the reroll cover
@@ -355,7 +365,11 @@ extension MeTabView: FeatureSurface {
         // 右栏 = 自包含的「我」菜单(NavigationStack 内 push 子页),带上
         // 与 iOS `body` 同款的 chrome(错误 alert + 退出/注销确认 + iOS-only
         // reroll cover),所以退出登录 / 注销账号从这一列照常工作。
-        chrome(coreContent)
+        // 返回配置过的 view 本体让 SwiftUI 装图(见 body 注释),渲染分支
+        // 在 body 里走 chrome(coreContent)。
+        var view = self
+        view.renderAsDetailColumn = true
+        return view
     }
 
     func compactRoot() -> some View {

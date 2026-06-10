@@ -50,23 +50,32 @@ struct CrewTabV2View: View {
     /// iOS code path — the normal `body` never sets it, so iOS behavior is
     /// byte-identical to before.
     var externalSelection: Binding<String?>? = nil
+    /// 列模式开关:true = body 渲染 Mac 壳的 list 列(见 body 注释)。
+    var renderAsMacListColumn = false
 
     var body: some View {
-        chrome(
-            NavigationStack {
-                content
-                    .navigationTitle("机组")
-                    .toolbar {
-                        ToolbarItem(placement: .platformTrailing) {
-                            crewMenu
+        // 列模式必须经 body 渲染(同 MessageTabView:在图外手动求值
+        // macListColumn 会让 self 拷贝的 @EnvironmentObject 永不灌注 →
+        // 首次读取断言崩溃)。
+        if renderAsMacListColumn {
+            macListColumn
+        } else {
+            chrome(
+                NavigationStack {
+                    content
+                        .navigationTitle("机组")
+                        .toolbar {
+                            ToolbarItem(placement: .platformTrailing) {
+                                crewMenu
+                            }
                         }
-                    }
-                    .refreshable { await loadAll() }
-                    .navigationDestination(for: CrewSummaryV2.self) { crew in
-                        CrewDetailV2View(crewId: crew.id, fallbackTitle: crew.title)
-                    }
-            }
-        )
+                        .refreshable { await loadAll() }
+                        .navigationDestination(for: CrewSummaryV2.self) { crew in
+                            CrewDetailV2View(crewId: crew.id, fallbackTitle: crew.title)
+                        }
+                }
+            )
+        }
     }
 
     /// Wraps a root view with the tab's shared chrome — the `.task { loadAll() }`,
@@ -316,7 +325,10 @@ extension CrewTabV2View: FeatureSurface {
         // `loadAll()` all work from this column.
         var view = self
         view.externalSelection = selection
-        return view.macListColumn
+        // 返回配置过的 view 本体让 SwiftUI 装图(见 body 注释),渲染分支
+        // 在 body 里走 macListColumn。
+        view.renderAsMacListColumn = true
+        return view
     }
 
     func detailColumn(selection: String?) -> some View {
