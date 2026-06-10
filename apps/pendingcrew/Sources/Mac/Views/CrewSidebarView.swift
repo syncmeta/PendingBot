@@ -90,8 +90,23 @@ struct CrewSidebarView: View {
         // 翻 true，onChange 自动收 sheet —— LoginView 自身只切 .approved
         // 状态不会 dismiss。
         .sheet(isPresented: $showingLogin) {
-            LoginView()
-                .frame(minWidth: 480, minHeight: 560)
+            // 右上角给关闭按钮（LoginView 本体是全屏 flow 设计，没有 dismiss）；
+            // Esc（cancelAction）同样可关。
+            ZStack(alignment: .topTrailing) {
+                LoginView()
+                Button {
+                    showingLogin = false
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
+                .padding(12)
+                .help("关闭")
+            }
+            .frame(minWidth: 480, minHeight: 560)
         }
         .onChange(of: model.isAuthenticated) { _, authed in
             if authed { showingLogin = false }
@@ -148,34 +163,47 @@ struct CrewSidebarView: View {
         }
     }
 
-    /// Sidebar 底部固定条:显示当前 backend mode + (登录态)代表的 subject,
-    /// 右侧 menu 触发签出。device grant 是 subject-scoped(spec v2 §4.4),
-    /// 切换身份 = 签出 + 重扫,所以同一条 UI 同时覆盖两种语义。
+    /// Sidebar 底部固定条。
+    /// - 已登录:显示代表的 subject + ⋯ 菜单(签出/切换身份)。
+    /// - 未登录:整行就是一个「登录」入口(用户定调:别堆"本机/七七八八"解释)——
+    ///   点开选「用本机 PendingBot 身份登录」(共享组有家族凭据时)或「扫码登录」。
+    @ViewBuilder
     private var identityFooter: some View {
-        HStack(spacing: 8) {
-            Image(systemName: identityIcon)
-                .foregroundStyle(.tint)
-                .frame(width: 22)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(identityTitle)
-                    .font(.caption.weight(.medium))
-                    .lineLimit(1)
-                Text(identitySubtitle)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 4)
-            Menu {
-                if currentMode == .logged {
-                    Button {
-                        confirmingSignOut = true
-                    } label: {
-                        Label("签出 / 切换身份", systemImage: "rectangle.portrait.and.arrow.right")
+        Group {
+            if currentMode == .logged {
+                HStack(spacing: 10) {
+                    Image(systemName: identityIcon)
+                        .font(.title3)
+                        .foregroundStyle(.tint)
+                        .frame(width: 26)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(identityTitle)
+                            .font(.callout.weight(.medium))
+                            .lineLimit(1)
+                        Text(identitySubtitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
-                } else if currentMode == .local {
-                    // 家族 SSO（用户定调：不静默，登录必须手动点这一下）——
-                    // 共享 keychain 组里有本机 PendingBot 留下的家族凭据才显示。
+                    Spacer(minLength: 4)
+                    Menu {
+                        Button {
+                            confirmingSignOut = true
+                        } label: {
+                            Label("签出 / 切换身份", systemImage: "rectangle.portrait.and.arrow.right")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                            .imageScale(.medium)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                }
+            } else {
+                Menu {
+                    // 家族 SSO（不静默，登录必须手动点这一下）—— 共享 keychain
+                    // 组里有本机 PendingBot 留下的家族凭据才显示。
                     if model.familySSOAvailable {
                         Button {
                             Task {
@@ -192,25 +220,29 @@ struct CrewSidebarView: View {
                     Button {
                         showingLogin = true
                     } label: {
-                        Label("扫码登录 PendingBot 账号", systemImage: "qrcode")
+                        Label("扫码登录", systemImage: "qrcode")
                     }
-                    Button {
-                        confirmingSignOut = true
-                    } label: {
-                        Label("退出本机模式", systemImage: "rectangle.portrait.and.arrow.right")
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "person.crop.circle")
+                            .font(.title3)
+                            .foregroundStyle(.tint)
+                            .frame(width: 26)
+                        Text("登录")
+                            .font(.callout.weight(.medium))
+                        Spacer(minLength: 4)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
                     }
+                    .contentShape(Rectangle())
                 }
-            } label: {
-                Image(systemName: "ellipsis.circle")
-                    .imageScale(.medium)
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .disabled(currentMode == nil)
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.vertical, 14)
         .background(.bar)
     }
 
@@ -244,9 +276,9 @@ struct CrewSidebarView: View {
         switch mode {
         case .logged:
             if let kind = crewStore.subjects.first?.kindEnum {
-                return kind == .groupAccount ? "群账号 · unified billing" : "本人账号 · unified billing"
+                return kind == .groupAccount ? "群账号" : "本人账号"
             }
-            return "已登录 · unified billing"
+            return "已登录"
         case .local:
             return "本地 crew · 本机已登录的 claude / codex"
         }

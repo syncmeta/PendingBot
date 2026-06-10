@@ -59,7 +59,7 @@ struct WelcomeView: View {
             choiceButton(
                 icon: "qrcode",
                 title: "登录 PendingBot 账号",
-                subtitle: "扫码授权这台机器,享 unified billing + Fly 云端 crew"
+                subtitle: "扫码授权这台机器,解锁云端 crew"
             ) {
                 onChoose(.login)
             }
