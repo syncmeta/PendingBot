@@ -2,7 +2,9 @@
 
 **最近对账：2026-06-09**（对照实际代码 / 迁移 / git，不是看 task 标记）
 
-> **2026-06-08 三端共享 UI 地基 + bot 管理片解锁 + 消息slice迁移启动（`feat/tri-platform-ui`，未合，关联 #212）**
+> **2026-06-09 三端共享 UI 已合 main（`b4d0b131`，--no-ff，feat/tri-platform-ui 71 commit）**：全 feature slice 跨平台、iPad 收敛三列、`Sources/Mac/` 删到只剩 MacWelcomeView,双端 BUILD SUCCEEDED。合并时把 main 的客户端遥测 SDK(#275-280)+ Mac 登录窗还原透明(MacMainWindowStyler 从已删 MacRootView 搬到 WideRootView)一并解冲突。**剩**:#290 Phase 7 三端真机/模拟器验证(需用户真账号)、#291 Mac composer 三横幅、#292 Mac 二维码名片。`feat/mac-login-align`(#212 对齐版)作废,以本条为准。下方 2026-06-08 那条「未合」状态已被本条更新。
+
+> **2026-06-08 三端共享 UI 地基 + bot 管理片解锁 + 消息slice迁移启动（`feat/tri-platform-ui`，关联 #212）**
 > - **缘起**：用户问"Mac 新建机器人选模型为何跟 iOS 不一样"。根因——`Features/*` 当年图省事整体 `#if os(iOS)` 一刀切，Mac 被迫在 `Sources/Mac/` 平行重写（阉割版：建 bot 只能单模型，无 arena）。用户定调：**不计成本一次打好地基，默认全三端共享含 UI，只 Mac 硬件真没有的（语音/相机/推送）才留 iOS-only**。spec：`docs/superpowers/specs/2026-06-08-tri-platform-ui-share-design.md`；plan：`docs/superpowers/plans/2026-06-08-tri-platform-ui-foundation.md` + `2026-06-08-message-slice-migration.md`。
 > - **与 #212/`feat/mac-login-align` 的关系**：那条分支同哲学但**逐屏给 Mac 另画对齐版**（MacChatView/MacFriendsView 视觉贴 iOS）；本条是**彻底版**——直接共享 iOS 那份视图，最终**取代**那些 Mac 平行实现。两条分支需择一收口（建议以本条为准，平行 Mac 文件随各 slice 删）。
 > - **已完成（subagent-driven，每步两端编译坐实，iOS 全程绿）**：
