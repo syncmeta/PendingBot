@@ -80,7 +80,7 @@ struct CrewSidebarView: View {
             if currentMode == .logged {
                 Text("签出后本机 device grant 立即失效;若需切换到别的身份(本人 / 群账号),签出后回到登录页重新扫码即可。")
             } else {
-                Text("退出后本机 BYOK 配置会清空,需要重新填 API key 才能继续本地 crew。")
+                Text("退出会清掉选填的 API key 配置;本机 crew 数据保留,Mac 上随时可继续本机模式。")
             }
         }
         // 本机模式可选登录（登录 SSO C2）：扫码完成后 model.isAuthenticated
@@ -174,7 +174,7 @@ struct CrewSidebarView: View {
                     Button {
                         confirmingSignOut = true
                     } label: {
-                        Label("退出 BYOK 模式", systemImage: "rectangle.portrait.and.arrow.right")
+                        Label("退出本机模式", systemImage: "rectangle.portrait.and.arrow.right")
                     }
                 }
             } label: {
