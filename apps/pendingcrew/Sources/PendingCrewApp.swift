@@ -103,10 +103,8 @@ struct RootView: View {
                 }
             }
         }
-        // 启动静默家族 SSO（登录 SSO B4）：共享 keychain 组里有家族凭据且
-        // 本 app 未登录 → mint 换 grant 秒登。tryFamilySSO 自带 guard
-        // （已登录 / 无凭据直接 return），best-effort 不阻塞启动。
-        .task { await model.tryFamilySSO() }
+        // 家族 SSO 不在启动时静默登录（用户定调：登录必须是用户显式动作）——
+        // 入口在侧栏身份菜单「用本机 PendingBot 身份登录」，点一下才 mint。
         // 凭据消失(签出)时清 crew 缓存 + flow 回 welcome。
         .onChange(of: model.isConfigured) { _, configured in
             if !configured {

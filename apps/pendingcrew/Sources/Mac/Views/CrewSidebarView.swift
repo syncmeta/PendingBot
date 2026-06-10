@@ -13,6 +13,9 @@ struct CrewSidebarView: View {
     @State private var confirmingSignOut = false
     /// 本机模式下侧栏的可选登录入口（登录 SSO C2）—— 弹 LoginView sheet 扫码。
     @State private var showingLogin = false
+    /// 家族 SSO 一键登录的进行中 / 失败态（不静默，用户手动点）。
+    @State private var familySSOBusy = false
+    @State private var familySSOFailed = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -93,6 +96,11 @@ struct CrewSidebarView: View {
         .onChange(of: model.isAuthenticated) { _, authed in
             if authed { showingLogin = false }
         }
+        .alert("登录失败", isPresented: $familySSOFailed) {
+            Button("好", role: .cancel) {}
+        } message: {
+            Text("本机授权凭据可能已失效或网络异常，请改用扫码登录。")
+        }
     }
 
     private var selectionBinding: Binding<String?> {
@@ -166,10 +174,25 @@ struct CrewSidebarView: View {
                         Label("签出 / 切换身份", systemImage: "rectangle.portrait.and.arrow.right")
                     }
                 } else if currentMode == .local {
+                    // 家族 SSO（用户定调：不静默，登录必须手动点这一下）——
+                    // 共享 keychain 组里有本机 PendingBot 留下的家族凭据才显示。
+                    if model.familySSOAvailable {
+                        Button {
+                            Task {
+                                familySSOBusy = true
+                                let ok = await model.tryFamilySSO()
+                                familySSOBusy = false
+                                if !ok { familySSOFailed = true }
+                            }
+                        } label: {
+                            Label("用本机 PendingBot 身份登录", systemImage: "person.crop.circle.badge.checkmark")
+                        }
+                        .disabled(familySSOBusy)
+                    }
                     Button {
                         showingLogin = true
                     } label: {
-                        Label("登录 PendingBot 账号", systemImage: "qrcode")
+                        Label("扫码登录 PendingBot 账号", systemImage: "qrcode")
                     }
                     Button {
                         confirmingSignOut = true

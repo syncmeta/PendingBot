@@ -144,14 +144,18 @@ final class AppModel: ObservableObject {
         FamilyCredentialStore.set(FamilyCredential(token: token, subjectId: subjectId))
     }
 
-    /// 启动时静默家族 SSO：共享 keychain 组里有家族凭据且本 app 尚未登录时，
-    /// 用它调 `POST /v1/device-grant/mint` 换本 app 自己的 scoped device grant，
-    /// 免扫码秒登。**best-effort**：任何一步失败都静默放弃，留在本机模式，
-    /// 绝不阻塞启动。RootView `.task` 调一次。
-    func tryFamilySSO() async {
-        guard credential == nil else { return }
-        guard let cred = FamilyCredentialStore.get() else { return }
-        guard let url = URL(string: apiBaseURL) else { return }
+    /// 共享 keychain 组里是否有家族凭据 —— 侧栏据此决定显不显示
+    /// 「用本机 PendingBot 身份登录」入口。
+    var familySSOAvailable: Bool { FamilyCredentialStore.get() != nil }
+
+    /// 家族 SSO 登录：用共享 keychain 组里的家族凭据调 `POST /v1/device-grant/mint`
+    /// 换本 app 自己的 scoped device grant，免扫码。**不在启动时自动跑** ——
+    /// 登录必须是用户显式动作（侧栏菜单点一下）。返回是否成功，失败留在本机模式。
+    @discardableResult
+    func tryFamilySSO() async -> Bool {
+        guard credential == nil else { return true }
+        guard let cred = FamilyCredentialStore.get() else { return false }
+        guard let url = URL(string: apiBaseURL) else { return false }
         // mint 不需要本 app 的 grant —— 鉴权是家族凭据本身作 bearer，
         // 所以跟 LoginView 的 device-login 一样用无 token 的 client。
         let api = PendingCrewAPI(baseURL: url)
@@ -164,9 +168,12 @@ final class AppModel: ObservableObject {
             )
             if let token = resp.deviceGrantToken {
                 try saveDeviceGrantToken(token)   // mode 翻成 .logged
+                return true
             }
+            return false
         } catch {
-            print("[family-sso] silent login failed: \(error)")
+            print("[family-sso] login failed: \(error)")
+            return false
         }
     }
 
