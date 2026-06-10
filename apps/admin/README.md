@@ -33,15 +33,15 @@ bun run dev              # http://127.0.0.1:5174
 
 All client-exposed, prefixed `VITE_` (Vite inlines them at build time via
 `import.meta.env`). Set the SAME keys as **Cloudflare Pages → Settings →
-Environment variables** for prod. None are secrets in the service-role sense —
-the Supabase anon key is RLS-gated and safe in the browser. **Never** put
-`SUPABASE_SERVICE_ROLE_KEY` here.
+Environment variables** for prod. None are secrets — the Supabase publishable
+key is RLS-gated and safe in the browser. **Never** put the `sb_secret_…` key
+here.
 
 | Var | Meaning |
 |---|---|
 | `VITE_EDGE_API_URL` | Edge origin, e.g. `https://bot.pendingname.com`. Routes are `<base>/v1/*`. |
 | `VITE_SUPABASE_URL` | Supabase project URL (for Auth only). |
-| `VITE_SUPABASE_ANON_KEY` | Supabase anon/public key (Auth only). |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | Supabase publishable key, `sb_publishable_…` (Auth only). |
 
 > CORS: the edge locks `ALLOWED_ORIGIN` to a single origin
 > (`apps/edge/wrangler.jsonc`). The deployed Pages origin must be added there,

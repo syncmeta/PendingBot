@@ -20,7 +20,7 @@ export const EDGE_API_URL = required(
 ).replace(/\/+$/, '');
 
 export const SUPABASE_URL = required('VITE_SUPABASE_URL', import.meta.env.VITE_SUPABASE_URL);
-export const SUPABASE_ANON_KEY = required(
-  'VITE_SUPABASE_ANON_KEY',
-  import.meta.env.VITE_SUPABASE_ANON_KEY,
+export const SUPABASE_PUBLISHABLE_KEY = required(
+  'VITE_SUPABASE_PUBLISHABLE_KEY',
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
 );
