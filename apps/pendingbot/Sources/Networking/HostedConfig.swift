@@ -39,16 +39,18 @@ enum HostedConfig {
             }
         }
 
-        /// Public anon key for supabase-swift client. RLS守门, not a secret —
-        /// embedded in the binary by design. The `.dev` value is the canonical
-        /// `supabase start` anon key; if you've customised JWT_SECRET locally,
-        /// swap in your own from `supabase status`.
-        var supabaseAnonKey: String {
+        /// Publishable API key for supabase-swift client. RLS守门, not a
+        /// secret — embedded in the binary by design. `.remote` is the
+        /// project's `sb_publishable_…` key (new key system; the legacy anon
+        /// JWT is retired there). `.dev` keeps the canonical `supabase start`
+        /// legacy anon JWT — the local CLI stack still issues that format;
+        /// swap in your own from `supabase status` if customised.
+        var supabasePublishableKey: String {
             switch self {
             case .dev:
                 return "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
             case .remote:
-                return "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InphZmhvaXd3cGFucHVhc2h0bnh5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1MzA2ODgsImV4cCI6MjA5NjEwNjY4OH0.P-mpklkOj07OC3fJyD9-DHuu46yHmlDdNZoyoFDWSXE"
+                return "sb_publishable_DobbxW0fIrpb21noFfMdXg_3xPrbm1d"
             }
         }
 
@@ -144,7 +146,7 @@ enum HostedConfig {
     /// full Networking rewrite, route this to the active env's worker.
     static var serverURL: URL { environment.workerURL }
     static var supabaseURL: URL { environment.supabaseURL }
-    static var supabaseAnonKey: String { environment.supabaseAnonKey }
+    static var supabasePublishableKey: String { environment.supabasePublishableKey }
 
     static let displayName = "大绿豆"
 }
