@@ -17,7 +17,14 @@
 - **现象**: `apps/admin` 登录页走 `supabase.auth.signInWithPassword`,EU 项目(zafhoiwwpanpuashtnxy)Auth 开了 CAPTCHA 保护 → 客户端登录返回 `captcha protection: request disallowed (no captcha_token found)`。客户端 OTP(`signInWithOtp`)同样会被 captcha 挡。**只有 service_role 的 admin API(generate_link+verify)能绕过 captcha** —— 这正是本次 e2e 用来 mint JWT 验证后端的方式。
 - **影响**: board 后端已端到端验证可用(requireAdmin/CRUD/audit 全通),但**没有真人能从浏览器登进去** —— 部署后前门仍是锁的。
 - **修法(择一,属"board auth 加固"未来工作)**: (a) 给登录页接 Cloudflare Turnstile 控件,`signInWithPassword({options:{captchaToken}})` 带 token;(b) 直接做用户定的 passkey+TOTP+密码栈(passkey 需先核 Supabase 原生支持,见下条相关);(c) 仅临时:Supabase 后台关 CAPTCHA 验完再开(不作为长期方案,削弱真 app 注册防护)。
-- **状态**: 待办。后端不阻塞;board 真正"可登录可用"前必须解决其一。
+- **状态**: 待办。后端不阻塞;board 真正"可登录可用"前必须解决其一。**用户已拍板:接 Cloudflare Turnstile 控件**(待 site key + 确认 Supabase captcha provider=Turnstile)。
+
+### 🟢 `wrangler dev` 默认 env 无 KV/DO/R2 绑定 — board feature-flags 本地 PUT 会 500
+- **发现**: 2026-06-09 · board e2e 时
+- **现象**: `wrangler.jsonc` 的真实绑定全在 `env.production` 下,默认 env(`wrangler dev` 用)只有 vars。`c.env.MEMORY` undefined → feature-flags PUT 抛 `Cannot read properties of undefined (reading 'put')` 500;**读路径不受影响**(`loadOverrides`/`readOverrides` catch 后回退 env 默认 —— 优雅降级符合设计)。`--env production` 会触发容器镜像构建(要 Docker),不适合轻量本地调试。
+- **本次 workaround**: 临时在 wrangler.jsonc 顶层加 `kv_namespaces: [{binding:'MEMORY', id:…}]`(本地模拟,不碰生产 KV),验完 `git checkout` 还原。
+- **修法(若本地调 board 写路径成为常态)**: 把 MEMORY(及按需 PROMPTS_KV)的 kv_namespaces 永久加到默认 env —— 本地是 miniflare 模拟,加了无副作用;或接受每次临时加。
+- **状态**: 接受(一次性 e2e 已过);记此免得下个 session 重新踩。
 
 ---
 
