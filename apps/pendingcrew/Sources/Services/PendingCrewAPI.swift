@@ -72,6 +72,42 @@ struct PendingCrewAPI {
         return try await perform(request)
     }
 
+    // MARK: - Family SSO mint
+
+    /// `POST /v1/device-grant/mint` — 用家族凭据（`pfa_*`，来自共享 keychain
+    /// 组 `FamilyCredentialStore`）静默换本 app 自己的 scoped device grant，
+    /// 免扫码。鉴权用 `familyCredential` 作 bearer（不是实例的
+    /// `bearerToken` —— 此时本 app 还没有 grant）。
+    func mintGrant(
+        familyCredential: String,
+        subjectId: String,
+        grantKind: String,
+        scopes: [String],
+        deviceName: String = currentDeviceName(),
+        devicePublicKey: String = "scaffold-placeholder-key-0123456789abcdef"
+    ) async throws -> MintGrantResponse {
+        struct Body: Encodable {
+            let subjectId: String
+            let grantKind: String
+            let scopes: [String]
+            let appKind: String
+            let deviceName: String
+            let devicePublicKey: String
+        }
+        return try await post(
+            path: "v1/device-grant/mint",
+            body: Body(
+                subjectId: subjectId,
+                grantKind: grantKind,
+                scopes: scopes,
+                appKind: "pendingcrew_macos",
+                deviceName: deviceName,
+                devicePublicKey: devicePublicKey
+            ),
+            bearer: familyCredential
+        )
+    }
+
     // MARK: - Subjects
 
     /// 返回 caller 能代表/登录的 subject(目前固定 1 个,即 grant 绑定的那个)。
@@ -448,16 +484,23 @@ struct PendingCrewAPI {
         return try await perform(request)
     }
 
+    /// `bearer` 非 nil 时用它覆盖实例的 `bearerToken`（mintGrant 用家族凭据
+    /// 鉴权，此时还没有本 app 的 grant）；nil 保持原行为。
     private func post<Body: Encodable, Response: Decodable>(
         path: String,
         body: Body,
-        authenticated: Bool = true
+        authenticated: Bool = true,
+        bearer: String? = nil
     ) async throws -> Response {
         var request = URLRequest(url: baseURL.appendingPathComponent(path))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(body)
-        if authenticated { attachAuth(to: &request) }
+        if let bearer {
+            request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
+        } else if authenticated {
+            attachAuth(to: &request)
+        }
         return try await perform(request)
     }
 
@@ -807,6 +850,17 @@ struct CreateCrewRequest: Encodable {
 struct CreateCrewResponse: Decodable {
     let crewId: String
     let captainBotId: String?
+}
+
+/// `POST /v1/device-grant/mint` 的响应（家族凭据静默换 grant）。形状对齐
+/// device-login consume：grant token + 元数据。字段全 optional 解耦 edge 端
+/// 演进，调用方只硬依赖 `deviceGrantToken`。
+struct MintGrantResponse: Decodable {
+    let deviceGrantToken: String?
+    let grantId: String?
+    let subjectId: String?
+    let grantKind: String?
+    let scopes: [String]?
 }
 
 // MARK: - Error envelope
