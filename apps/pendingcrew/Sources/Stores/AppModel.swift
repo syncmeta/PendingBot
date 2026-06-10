@@ -128,9 +128,46 @@ final class AppModel: ObservableObject {
     }
 
     func clearAuth() {
+        // 注意：这里**不**清 FamilyCredentialStore —— 家族凭据是账号级、跨 app
+        // 共享的（PendingBot / 其它家族成员都靠它静默 mint），签出本 app 的
+        // device grant 不该连坐。真要吊销家族凭据走 PendingBot 端的管理入口。
         KeychainStore.delete(account: KeychainAccount.deviceGrant)
         credential = nil
         currentUserId = nil
+    }
+
+    // MARK: - 家族 SSO（登录 SSO B4）
+
+    /// QR 登录 consume 时随 grant 下发的家族凭据（`pfa_*`）落到共享 keychain
+    /// 组，供家族 app（含本 app 重装后）静默 mint。LoginView poll 成功分支调。
+    func saveFamilyCredential(token: String, subjectId: String) {
+        FamilyCredentialStore.set(FamilyCredential(token: token, subjectId: subjectId))
+    }
+
+    /// 启动时静默家族 SSO：共享 keychain 组里有家族凭据且本 app 尚未登录时，
+    /// 用它调 `POST /v1/device-grant/mint` 换本 app 自己的 scoped device grant，
+    /// 免扫码秒登。**best-effort**：任何一步失败都静默放弃，留在本机模式，
+    /// 绝不阻塞启动。RootView `.task` 调一次。
+    func tryFamilySSO() async {
+        guard credential == nil else { return }
+        guard let cred = FamilyCredentialStore.get() else { return }
+        guard let url = URL(string: apiBaseURL) else { return }
+        // mint 不需要本 app 的 grant —— 鉴权是家族凭据本身作 bearer，
+        // 所以跟 LoginView 的 device-login 一样用无 token 的 client。
+        let api = PendingCrewAPI(baseURL: url)
+        do {
+            let resp = try await api.mintGrant(
+                familyCredential: cred.token,
+                subjectId: cred.subjectId,
+                grantKind: "pendingcrew_control",
+                scopes: ["subject:read", "crew:read", "crew:write", "runner:read", "runner:write"]
+            )
+            if let token = resp.deviceGrantToken {
+                try saveDeviceGrantToken(token)   // mode 翻成 .logged
+            }
+        } catch {
+            print("[family-sso] silent login failed: \(error)")
+        }
     }
 
     /// 由 `CrewStore.refreshSubjects` 在解析到 subject 时回填(best-effort)。

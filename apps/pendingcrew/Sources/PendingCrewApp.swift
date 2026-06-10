@@ -103,6 +103,10 @@ struct RootView: View {
                 }
             }
         }
+        // 启动静默家族 SSO（登录 SSO B4）：共享 keychain 组里有家族凭据且
+        // 本 app 未登录 → mint 换 grant 秒登。tryFamilySSO 自带 guard
+        // （已登录 / 无凭据直接 return），best-effort 不阻塞启动。
+        .task { await model.tryFamilySSO() }
         // 凭据消失(签出)时清 crew 缓存 + flow 回 welcome。
         .onChange(of: model.isConfigured) { _, configured in
             if !configured {
