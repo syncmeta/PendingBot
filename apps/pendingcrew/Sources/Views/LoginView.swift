@@ -191,6 +191,14 @@ struct LoginView: View {
                         await MainActor.run {
                             do {
                                 try model.saveDeviceGrantToken(token)
+                                // 家族凭据（pfa_*）只在 consume 这一拍随 grant
+                                // 下发 —— 落进共享 keychain 组，家族 app 之后
+                                // 静默 mint 免扫码（登录 SSO C1）。subjectId
+                                // 缺失就不存（凭据没有默认 mint 目标没意义）。
+                                if let fam = response.familyCredential,
+                                   let sid = response.subjectId {
+                                    model.saveFamilyCredential(token: fam, subjectId: sid)
+                                }
                                 status = .approved
                             } catch {
                                 errorMessage = "保存登录凭据失败: \(error.localizedDescription)"
