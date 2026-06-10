@@ -9,6 +9,10 @@
   <key>keychain-access-groups</key>
   <array>
     <string>$(AppIdentifierPrefix)com.pendingname.pendingcrew</string>
+    <!-- 家族 SSO 共享组：同 team 的 PendingBot 也声明它，双方经 kSecAttrAccessGroup
+         显式读写家族凭据(pfa_)。keychain group 无需 Apple Developer portal 配置 ——
+         profile 自动允许 TEAMID.* 下所有组(与 App Groups 不同)。 -->
+    <string>$(AppIdentifierPrefix)com.pendingname.shared</string>
   </array>
 </dict>
 </plist>
