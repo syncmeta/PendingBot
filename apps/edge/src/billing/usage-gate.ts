@@ -115,7 +115,7 @@ export async function gateConversation(
   ctx: { conversationId?: string | null; userId?: string | null },
 ): Promise<InsufficientBalanceError | null> {
   // Kill-switch: billing off (default) → never block.
-  if (!billingEnabled(env)) return null;
+  if (!(await billingEnabled(env))) return null;
   try {
     const target = await resolveBillingSubjectId(supa, ctx);
     if (!target) return null;

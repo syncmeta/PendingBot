@@ -59,6 +59,12 @@ struct WideRootView: View {
         } detail: {
             detailColumn
         }
+        #if os(macOS)
+        // 还原登录窗的透明 + 圆角裁剪(MacLoginWindowStyler 对共享 NSWindow
+        // 做的手术),否则登录后主界面继承透明窗 → 不自带材质的空态列直接
+        // 透到桌面。登录与主 app 共用同一个 WindowGroup 窗口。
+        .background(MacMainWindowStyler())
+        #endif
     }
 
     // MARK: - Columns
@@ -175,5 +181,72 @@ private struct WidePlaceholderColumn: View {
         }
         .padding(32)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.Palette.canvas)
     }
 }
+
+#if os(macOS)
+import AppKit
+
+/// 还原 `MacLoginWindowStyler` 对共享 `NSWindow` 做的化妆手术(透明 backing
+/// + contentView 22pt 圆角裁剪)。登录卡片与主 app 住同一个 WindowGroup 窗口,
+/// 不还原的话主 app 继承透明 + 圆角窗 —— 不自绘材质的空态列(如 detail 列的
+/// 占位)会直接透到桌面。这里把窗口恢复成正常不透明 app 窗口。
+/// (从已删除的 MacRootView.swift 搬来,随 WideRootView 接管 macOS 主壳。)
+private struct MacMainWindowStyler: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let v = NSView(frame: .zero)
+        DispatchQueue.main.async { [weak v] in
+            if let w = v?.window { context.coordinator.attach(to: w) }
+        }
+        return v
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async { [weak nsView] in
+            if let w = nsView?.window { context.coordinator.attach(to: w) }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    @MainActor
+    final class Coordinator {
+        private weak var window: NSWindow?
+        private var observed = false
+
+        func attach(to window: NSWindow) {
+            self.window = window
+            Self.restore(window)
+            guard !observed else { return }
+            observed = true
+            let nc = NotificationCenter.default
+            for name: NSNotification.Name in [
+                NSWindow.didBecomeKeyNotification,
+                NSWindow.didBecomeMainNotification,
+                NSWindow.didResizeNotification,
+            ] {
+                nc.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated {
+                        guard let self, let w = self.window else { return }
+                        Self.restore(w)
+                    }
+                }
+            }
+        }
+
+        private static func restore(_ window: NSWindow) {
+            window.isOpaque = true
+            window.backgroundColor = .windowBackgroundColor
+            if let content = window.contentView {
+                content.wantsLayer = true
+                content.layer?.masksToBounds = false
+                content.layer?.cornerRadius = 0
+            }
+            window.invalidateShadow()
+            window.viewsNeedDisplay = true
+            window.displayIfNeeded()
+        }
+    }
+}
+#endif

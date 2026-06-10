@@ -17,6 +17,7 @@
 		0439679498FC5BEEB9128C08 /* TabHeaderBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17979E6D0A17BE0BEFD3BB38 /* TabHeaderBar.swift */; };
 		04409BF069F6090B17FDEA09 /* ConversationView+Loading.swift in Sources */ = {isa = PBXBuildFile; fileRef = E87432FAA048B69C5F8515B5 /* ConversationView+Loading.swift */; };
 		05A7024046B9139FBD7C2D87 /* ComposerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E77E1B14AD8B57831025E060 /* ComposerView.swift */; };
+		0613E1F22C606A45274C8631 /* Telemetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = D54BAACC30821E9F6A189EDC /* Telemetry.swift */; };
 		0764DE6E6E5998186C2AEF3D /* PermissionRequestCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA2C5A82ADBE3A378A292684 /* PermissionRequestCard.swift */; };
 		096B537A54400F2BC07A0775 /* GroupCallSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C54E13C9AEE93EC21726216 /* GroupCallSession.swift */; };
 		0B2D6E04E981C24EDB2ED740 /* FriendsTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6BD7F212A4938F0C066074F /* FriendsTabView.swift */; };
@@ -46,7 +47,7 @@
 		2B724B440312D4E9372269A0 /* ConversationView+Realtime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7114A9AF0BBDF033ADE65E67 /* ConversationView+Realtime.swift */; };
 		2EDC3C6BB075E73E53D0BBB6 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 48F02BEA5BEDE74073641EEB /* PrivacyInfo.xcprivacy */; };
 		306D026B79B03723153035AD /* CrewSessionAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03D2467ADBD40F4F8755863A /* CrewSessionAPI.swift */; };
-		30E08775E0377B26A0398856 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 42AEEDC8DF7B9FD796EE879D /* Supabase */; };
+		30E08775E0377B26A0398856 /* RevenueCat in Frameworks */ = {isa = PBXBuildFile; productRef = DEC52C9A106DF58231433479 /* RevenueCat */; };
 		32FAAF4A0D4EC4DEAC048497 /* ProfileBootstrapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B53E0D25B2AB056D25D67C8 /* ProfileBootstrapView.swift */; };
 		33A0E9A245FD9DBFB4DC699F /* CrewMessageListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26BEFAA0CA92FE472585DD78 /* CrewMessageListView.swift */; };
 		366C2519D09D1C6CDFEA2562 /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13BCD0D49AA6CCB35BBB0C31 /* QRScannerView.swift */; };
@@ -93,6 +94,7 @@
 		80F4BC61FE476D0E3362F831 /* ModelPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95EAE20F68A86A8C803A0B1E /* ModelPicker.swift */; };
 		81AE8716B84995322DFC5EE4 /* CrewChatStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F80EEA9363B2D0019EECF31A /* CrewChatStore.swift */; };
 		81C3A1F5BC0BEEAC5D96DE66 /* ActiveVoiceCallStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6250CBEDB98FA64D32915F09 /* ActiveVoiceCallStore.swift */; };
+		82377BA858D6D0500093F323 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 42AEEDC8DF7B9FD796EE879D /* Supabase */; };
 		8358C6E7D2CDA9AC7C388452 /* ConversationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83F41539F59462EA04C55F6F /* ConversationView.swift */; };
 		83CDD45BF74B5724F75FC0AD /* CallDiagnosticsLogic.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6541D1291535650ACAD4D6F1 /* CallDiagnosticsLogic.swift */; };
 		84A5D47FF0FA288DABACACC2 /* RemoteSessionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20EC68D4DC48DD48B412E35E /* RemoteSessionsView.swift */; };
@@ -111,6 +113,7 @@
 		93195F559ABAEBD132E64F17 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 11A77E911EA1D815E90E7BFD /* GRDB */; };
 		95771EBFA9FE35E196DBAB95 /* MacWelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 954AA26D0420171081DFA5EA /* MacWelcomeView.swift */; };
 		968D6C940981E2A023C7B257 /* CrewComposerBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48A52B363C89957B95F12AD6 /* CrewComposerBar.swift */; };
+		96EE73E3BB865D1BD001659A /* SwiftMath in Frameworks */ = {isa = PBXBuildFile; productRef = 6F86D21C91A9BC3B4CA176D0 /* SwiftMath */; };
 		9A4A8A9216FA410B81046949 /* CrewSessionPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22B3BF0A069E8CE296ED306E /* CrewSessionPresentation.swift */; };
 		9C2D3AD0DFC095E62EEFD731 /* TopTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9262605631A1A0281E9C3768 /* TopTab.swift */; };
 		9CFC1AD9B491F3CD69777FF6 /* RealtimeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6EFB784DC12029E53EB12A5C /* RealtimeManager.swift */; };
@@ -124,8 +127,9 @@
 		A7ADFAD7B076861A93C987D1 /* UserAvatar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A4C4C281584EA9A3D270E66 /* UserAvatar.swift */; };
 		ACB7DE5BB4722BC475D80C54 /* BrandAvatar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C5FC1E414D4CABC226AD902 /* BrandAvatar.swift */; };
 		AD4913CC001344F2013796AB /* WalletV2Format.swift in Sources */ = {isa = PBXBuildFile; fileRef = 199916D33039F4F07FC95D7D /* WalletV2Format.swift */; };
-		AE2E39CEFC00A4D6517ABAE9 /* SwiftMath in Frameworks */ = {isa = PBXBuildFile; productRef = 6F86D21C91A9BC3B4CA176D0 /* SwiftMath */; };
+		AE2E39CEFC00A4D6517ABAE9 /* PostHog in Frameworks */ = {isa = PBXBuildFile; productRef = F07C1C728E35EB3257CCCE89 /* PostHog */; };
 		AEF24DAC89A4BDB1F89EB53F /* CrewProposalCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE4AD56378500470C3FFCB27 /* CrewProposalCard.swift */; };
+		B1F765C31CB716461C8AB2AC /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = AFB2808B7709AD578487E1FB /* Sentry */; };
 		B502735FC12E0BB52BB19368 /* MarkdownText.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F8C48D5CD8682E938D093C /* MarkdownText.swift */; };
 		B5B71DE9781BE668FF81DE91 /* BlinkingCursor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C86ED7FEA6F6BBBFA222E483 /* BlinkingCursor.swift */; };
 		B652E5852C42C437A6849CA3 /* GroupJoinView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9010CC63D1CC724A55770E7A /* GroupJoinView.swift */; };
@@ -333,6 +337,7 @@
 		D2426E68B61F7DC57E429193 /* CrewDetailV2View.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewDetailV2View.swift; sourceTree = "<group>"; };
 		D2FF6CBBDD7A1F3222907A47 /* MathRendering.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MathRendering.swift; sourceTree = "<group>"; };
 		D4F8C48D5CD8682E938D093C /* MarkdownText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownText.swift; sourceTree = "<group>"; };
+		D54BAACC30821E9F6A189EDC /* Telemetry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Telemetry.swift; sourceTree = "<group>"; };
 		D829BEA540B1FE3C5FACFC35 /* ModelCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelCatalog.swift; sourceTree = "<group>"; };
 		DA2C5A82ADBE3A378A292684 /* PermissionRequestCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionRequestCard.swift; sourceTree = "<group>"; };
 		DAF9F958E634C73E5136CC46 /* BubbleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BubbleView.swift; sourceTree = "<group>"; };
@@ -366,8 +371,11 @@
 				93195F559ABAEBD132E64F17 /* GRDB in Frameworks */,
 				68CC7CE5D41AC8BE5940E886 /* GoogleSignIn in Frameworks */,
 				A2E9CBC1BBEC585F2594DFAC /* MarkdownUI in Frameworks */,
-				AE2E39CEFC00A4D6517ABAE9 /* SwiftMath in Frameworks */,
-				30E08775E0377B26A0398856 /* Supabase in Frameworks */,
+				AE2E39CEFC00A4D6517ABAE9 /* PostHog in Frameworks */,
+				30E08775E0377B26A0398856 /* RevenueCat in Frameworks */,
+				B1F765C31CB716461C8AB2AC /* Sentry in Frameworks */,
+				96EE73E3BB865D1BD001659A /* SwiftMath in Frameworks */,
+				82377BA858D6D0500093F323 /* Supabase in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -435,6 +443,7 @@
 				84B168E06E56B966ACEF6F67 /* SessionProxyClient.swift */,
 				B35BE5986401AECDFE09E6BD /* SessionProxyProtocol.swift */,
 				0767E4C8060BA86E1484AB2E /* SupabaseStack.swift */,
+				D54BAACC30821E9F6A189EDC /* Telemetry.swift */,
 				7FA08FADEA9A413F05BD5BF4 /* VoiceCallAPI.swift */,
 			);
 			path = Networking;
@@ -731,6 +740,9 @@
 				11A77E911EA1D815E90E7BFD /* GRDB */,
 				58587B83E149045A770D0833 /* GoogleSignIn */,
 				23AC5D1A6CD4C748003E6936 /* MarkdownUI */,
+				F07C1C728E35EB3257CCCE89 /* PostHog */,
+				DEC52C9A106DF58231433479 /* RevenueCat */,
+				AFB2808B7709AD578487E1FB /* Sentry */,
 				6F86D21C91A9BC3B4CA176D0 /* SwiftMath */,
 				42AEEDC8DF7B9FD796EE879D /* Supabase */,
 			);
@@ -767,6 +779,9 @@
 				9295E2EA2B9DDF578513CC84 /* XCRemoteSwiftPackageReference "GRDB.swift" */,
 				27FF4C03EE683C1EF818DA87 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
 				96B306B367BFCB52C99F8552 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */,
+				17D4B265BDF4FE510639DB73 /* XCRemoteSwiftPackageReference "posthog-ios" */,
+				EBD901D18BC1B777B424B580 /* XCRemoteSwiftPackageReference "purchases-ios" */,
+				72FA627C52C46EB6885E0358 /* XCRemoteSwiftPackageReference "sentry-cocoa" */,
 				E22BFBEF3FFC995818D5FAF3 /* XCRemoteSwiftPackageReference "supabase-swift" */,
 				3C2317EDB19D6043688D1BCB /* XCRemoteSwiftPackageReference "SwiftMath" */,
 				29D657BB797271F924E65A03 /* XCRemoteSwiftPackageReference "WebRTC" */,
@@ -951,6 +966,7 @@
 				0439679498FC5BEEB9128C08 /* TabHeaderBar.swift in Sources */,
 				01587F44B0F28DB47EE66436 /* TabRoot.swift in Sources */,
 				D090456C9CA0DB1105357715 /* TabTitle.swift in Sources */,
+				0613E1F22C606A45274C8631 /* Telemetry.swift in Sources */,
 				EA718CA41F77A4324BF6052E /* Theme.swift in Sources */,
 				8BFBD69DDDB4A6CEEFF3AB5A /* ToolTraceEvent.swift in Sources */,
 				275EBB90F22BDCDFEE0D5F84 /* ToolTraceView.swift in Sources */,
@@ -1179,6 +1195,15 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		17D4B265BDF4FE510639DB73 /* XCRemoteSwiftPackageReference "posthog-ios" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/PostHog/posthog-ios";
+			requirement = {
+				kind = versionRange;
+				maximumVersion = 4.0.0;
+				minimumVersion = 3.0.0;
+			};
+		};
 		27FF4C03EE683C1EF818DA87 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/google/GoogleSignIn-iOS";
@@ -1206,6 +1231,15 @@
 				minimumVersion = 1.0.0;
 			};
 		};
+		72FA627C52C46EB6885E0358 /* XCRemoteSwiftPackageReference "sentry-cocoa" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/getsentry/sentry-cocoa";
+			requirement = {
+				kind = versionRange;
+				maximumVersion = 10.0.0;
+				minimumVersion = 9.0.0;
+			};
+		};
 		9295E2EA2B9DDF578513CC84 /* XCRemoteSwiftPackageReference "GRDB.swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/duckduckgo/GRDB.swift";
@@ -1230,6 +1264,15 @@
 				kind = versionRange;
 				maximumVersion = 3.0.0;
 				minimumVersion = 2.0.0;
+			};
+		};
+		EBD901D18BC1B777B424B580 /* XCRemoteSwiftPackageReference "purchases-ios" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/RevenueCat/purchases-ios";
+			requirement = {
+				kind = versionRange;
+				maximumVersion = 6.0.0;
+				minimumVersion = 5.0.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
@@ -1259,6 +1302,21 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 3C2317EDB19D6043688D1BCB /* XCRemoteSwiftPackageReference "SwiftMath" */;
 			productName = SwiftMath;
+		};
+		AFB2808B7709AD578487E1FB /* Sentry */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 72FA627C52C46EB6885E0358 /* XCRemoteSwiftPackageReference "sentry-cocoa" */;
+			productName = Sentry;
+		};
+		DEC52C9A106DF58231433479 /* RevenueCat */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = EBD901D18BC1B777B424B580 /* XCRemoteSwiftPackageReference "purchases-ios" */;
+			productName = RevenueCat;
+		};
+		F07C1C728E35EB3257CCCE89 /* PostHog */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 17D4B265BDF4FE510639DB73 /* XCRemoteSwiftPackageReference "posthog-ios" */;
+			productName = PostHog;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

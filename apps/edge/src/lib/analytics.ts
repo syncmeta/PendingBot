@@ -39,7 +39,7 @@ export interface CaptureArgs {
  * observing. Failures are logged and swallowed.
  */
 export async function capture(env: Env, args: CaptureArgs): Promise<void> {
-  if (!posthogEnabled(env) || !env.POSTHOG_KEY) return;
+  if (!(await posthogEnabled(env)) || !env.POSTHOG_KEY) return;
 
   const client = new PostHog(env.POSTHOG_KEY, {
     host: env.POSTHOG_HOST,

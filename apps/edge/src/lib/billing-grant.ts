@@ -107,7 +107,7 @@ export async function grantSignupBonus(
   svcSupa: SupabaseClient,
   userId: string,
 ): Promise<void> {
-  if (!billingEnabled(env) || !polarReady(env)) return;
+  if (!(await billingEnabled(env)) || !polarReady(env)) return;
   const externalRef = `signup:${userId}`;
   try {
     const { data: existing } = await svcSupa

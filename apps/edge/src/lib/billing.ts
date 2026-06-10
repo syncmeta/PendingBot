@@ -203,7 +203,7 @@ export async function requireBalance(
   userId: string,
 ): Promise<void> {
   // Kill-switch: billing off (default) → never block.
-  if (!billingEnabled(env)) return;
+  if (!(await billingEnabled(env))) return;
   const gate = await getBalanceGateState(env, supa, userId);
   if (!gate.allowed) {
     throw new InsufficientBalanceError(gate.balance_credits, gate.min_threshold);

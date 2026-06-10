@@ -24,6 +24,10 @@ struct PendingBotApp: App {
         // before AppDelegate.didFinishLaunching's `bootstrap()`, which
         // is when the CallKit provider's delegate goes live.
         MainActor.assumeIsolated {
+            // Init telemetry / billing-identity SDKs before the first frame so
+            // Sentry catches launch crashes. No-ops for any SDK whose key is
+            // unset (see Telemetry / HostedConfig).
+            Telemetry.shared.configure()
             CallKitManager.shared.onIncomingAnswer = { convId in
                 // The two slots are read by different consumers:
                 //   • MessageTabView.onChange(pendingNavConversationId)
@@ -88,6 +92,13 @@ struct PendingBotApp: App {
                 #endif
                 .onChange(of: accountStore.current) { old, new in
                     unreadStore.bind(account: new)
+                    // Keep telemetry / billing-identity SDKs in sync with the
+                    // active session: identify on sign-in, reset on sign-out.
+                    if let id = new?.id {
+                        Telemetry.shared.identify(id)
+                    } else {
+                        Telemetry.shared.reset()
+                    }
                     // Sign-in transition (nil → account) is the moment to
                     // hand APNS over to PushService — the user has just
                     // authorized us to call /v1/devices/register.
@@ -103,7 +114,12 @@ struct PendingBotApp: App {
                     unreadStore.bind(account: accountStore.current)
                     modelCatalog.loadIfNeeded()
                     // If the user is already signed in from a previous
-                    // launch, kick off the push registration flow now.
+                    // launch, kick off the push registration flow now and
+                    // re-assert telemetry identity (cold launch may hydrate
+                    // `current` before onChange is observing).
+                    if let id = accountStore.current?.id {
+                        Telemetry.shared.identify(id)
+                    }
                     if accountStore.current != nil {
                         await PushService.shared.onSignedIn()
                     }
@@ -199,6 +215,13 @@ struct PendingBotApp: App {
     // 共享建/管机器人面的模型选择器读目录。
     @StateObject private var modelCatalog = ModelCatalog.shared
 
+    init() {
+        // 跟 iOS 入口对齐:首帧前 init 观测/计费身份 SDK(空 key 自动 no-op)。
+        MainActor.assumeIsolated {
+            Telemetry.shared.configure()
+        }
+    }
+
     var body: some Scene {
         WindowGroup {
             // macOS 走会话 gate(未登录 → MacWelcomeView,已登录 → 跨平台
@@ -206,10 +229,22 @@ struct PendingBotApp: App {
             MacRootGate()
                 .environmentObject(accountStore)
                 .environmentObject(modelCatalog)
+                // 跟 iOS 一致:登录态变化时同步观测/计费身份。
+                .onChange(of: accountStore.current) { _, new in
+                    if let id = new?.id {
+                        Telemetry.shared.identify(id)
+                    } else {
+                        Telemetry.shared.reset()
+                    }
+                }
                 .task {
                     // 跟 iOS 入口对齐:.task 里 hydrate 持久化的 supabase
                     // session,避免冷启动直接闪过 "未登录" 态。
                     await accountStore.bootstrap()
+                    // 冷启动已登录:补一次 identify(onChange 可能尚未在观测)。
+                    if let id = accountStore.current?.id {
+                        Telemetry.shared.identify(id)
+                    }
                 }
         }
         // 去掉窗口标题栏那条「大绿豆」标题条,让内容(尤其登录页)成一整片
