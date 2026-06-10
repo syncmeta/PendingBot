@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 /// 群钱包页(实缴池 + 认缴)。读/写 `/v1/group-subjects/:id/*`,模型见
@@ -33,11 +32,11 @@ struct GroupWalletView: View {
             membersSection
             actionsSection
         }
-        .listStyle(.insetGrouped)
+        .platformListStyle()
         .scrollContentBackground(.hidden)
         .background(Theme.Palette.canvas.ignoresSafeArea())
         .navigationTitle("群钱包")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavTitle()
         .refreshable { await reload() }
         .task {
             myUserId = (try? await SupabaseStack.shared.auth.session.user.id.uuidString.lowercased()) ?? ""
@@ -49,7 +48,7 @@ struct GroupWalletView: View {
                 working: working,
                 onSubmit: { credits in Task { await submit(form: form, credits: credits) } },
             )
-            .presentationDetents([.medium])
+            .platformDetents([.medium])
         }
         .confirmationDialog("退群会把你在群里的全部份额退回个人钱包,确定吗?",
                             isPresented: $confirmingLeave, titleVisibility: .visible) {
@@ -280,7 +279,7 @@ private struct AmountFormSheet: View {
             Form {
                 Section {
                     TextField("PNC 整数", text: $text)
-                        .keyboardType(.numberPad)
+                        .platformKeyboard(.number)
                 } footer: {
                     Text(form.footer)
                 }
@@ -299,7 +298,7 @@ private struct AmountFormSheet: View {
                 }
             }
             .navigationTitle(form.title)
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") { dismiss() }
@@ -308,4 +307,3 @@ private struct AmountFormSheet: View {
         }
     }
 }
-#endif

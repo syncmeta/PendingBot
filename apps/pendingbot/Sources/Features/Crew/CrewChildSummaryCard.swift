@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 // T4.6 P1 Step 7 — child-crew summary strip. Driven off the already-loaded
@@ -61,7 +60,7 @@ struct CrewChildSummaryCard: View {
         .frame(maxWidth: 220, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color(.secondarySystemBackground))
+                .fill(Theme.Palette.surfaceMuted)
         )
     }
 
@@ -69,4 +68,3 @@ struct CrewChildSummaryCard: View {
         String(format: "%.1f%%", Double(bps) / 100.0)
     }
 }
-#endif

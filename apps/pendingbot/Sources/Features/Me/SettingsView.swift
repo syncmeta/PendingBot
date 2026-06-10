@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 import OSLog
 
@@ -73,7 +72,7 @@ struct SettingsView: View {
         .scrollContentBackground(.hidden)
         .background(Theme.Palette.canvas.ignoresSafeArea())
         .navigationTitle("设置")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavTitle()
         .tint(Theme.Palette.accent)
         .task {
             // Pull authoritative value on view appear in case the user
@@ -115,4 +114,3 @@ struct SettingsView: View {
         }
     }
 }
-#endif

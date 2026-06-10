@@ -1,4 +1,3 @@
-#if os(iOS)
 import Foundation
 
 // T4.6 P1 — adapter that turns the snake_case crew whiteboard feed
@@ -249,4 +248,3 @@ struct CrewChatAdapter {
         return Adapted(message: msg, sender: sender)
     }
 }
-#endif

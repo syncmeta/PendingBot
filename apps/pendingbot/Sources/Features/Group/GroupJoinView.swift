@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 /// Scan-to-join flow (decisions.md D2 — per-inviter invite tokens). The user
@@ -108,17 +107,32 @@ struct GroupJoinView: View {
                 }
             }
             .navigationTitle("加群")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") { dismiss() }
                 }
             }
             .sheet(isPresented: $showScanner) {
+                #if os(iOS)
                 QRScannerView { scanned in
                     showScanner = false
                     Task { await resolve(GroupShareLink.token(fromScanned: scanned)) }
                 }
+                #else
+                // No camera on macOS — group invites arrive via the universal
+                // link (`/g/<token>`) handled by `prefilledToken` below.
+                VStack(spacing: 12) {
+                    Text("Mac 暂不支持扫码")
+                        .font(Theme.Fonts.body)
+                    Text("打开别人发你的群邀请链接即可加群。")
+                        .font(Theme.Fonts.footnote)
+                        .foregroundStyle(.secondary)
+                    Button("关闭") { showScanner = false }
+                        .buttonStyle(.borderedProminent)
+                }
+                .padding(40)
+                #endif
             }
             .onAppear {
                 if !prefilledToken.isEmpty, case .idle = preview {
@@ -173,4 +187,3 @@ struct GroupJoinView: View {
 
     private enum PendingState { case joined, pending }
 }
-#endif

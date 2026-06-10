@@ -1,8 +1,6 @@
-#if os(iOS)
 import SwiftUI
 import Supabase
-import CoreImage.CIFilterBuiltins
-import UIKit
+import CoreImage
 
 // User-facing bot CRUD lives behind RLS — INSERT / UPDATE / DELETE all
 // gate on creator_id = auth.uid() so the iOS client can talk to PostgREST
@@ -51,7 +49,7 @@ struct CreateBotSheet: View {
     @EnvironmentObject private var catalog: ModelCatalog
     /// Called with the freshly-inserted bot so the parent can prepend it
     /// to its own list without a re-fetch.
-    var onCreated: (FriendsTabView.BotPick) -> Void
+    var onCreated: (BotPick) -> Void
 
     @State private var step: CreateStep = .models
     @State private var displayName: String = ""
@@ -105,7 +103,7 @@ struct CreateBotSheet: View {
                 }
             }
             .navigationTitle("新建机器人")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     if step == .models {
@@ -140,7 +138,7 @@ struct CreateBotSheet: View {
     private var settingsSections: some View {
         Section {
             TextField("机器人名字", text: $displayName)
-                .textInputAutocapitalization(.never)
+                .platformAutocapitalization()
                 .autocorrectionDisabled(true)
             HStack {
                 Text("模型").foregroundStyle(Theme.Palette.inkMuted)
@@ -187,7 +185,7 @@ struct CreateBotSheet: View {
                 HStack(spacing: 4) {
                     Text("@").foregroundStyle(Theme.Palette.inkMuted)
                     TextField("机器人标识(slug)", text: $slug)
-                        .textInputAutocapitalization(.never)
+                        .platformAutocapitalization()
                         .autocorrectionDisabled(true)
                         .onChange(of: slug) { _, v in
                             let n = BotSlugRule.normalize(v)
@@ -335,7 +333,7 @@ struct CreateBotSheet: View {
                 .insert(ContactInsert(user_id: userId, bot_id: row.id, added_via: "manual"))
                 .execute()
 
-            let pick = FriendsTabView.BotPick(
+            let pick = BotPick(
                 id: row.id,
                 display_name: row.display_name,
                 model_id: row.model_id,
@@ -376,7 +374,7 @@ struct ManageBotSheet: View {
     var onChanged: () -> Void
     var onDeleted: (String) -> Void
 
-    let initial: FriendsTabView.BotPick
+    let initial: BotPick
 
     @State private var displayName: String = ""
     @State private var modelSlug: String = ""
@@ -421,7 +419,7 @@ struct ManageBotSheet: View {
             Form {
                 Section {
                     TextField("机器人名字", text: $displayName)
-                        .textInputAutocapitalization(.never)
+                        .platformAutocapitalization()
                         .autocorrectionDisabled(true)
                     HStack {
                         Text("模型").foregroundStyle(Theme.Palette.inkMuted)
@@ -472,7 +470,7 @@ struct ManageBotSheet: View {
                         HStack(spacing: 4) {
                             Text("@").foregroundStyle(Theme.Palette.inkMuted)
                             TextField("机器人标识(slug)", text: $slug)
-                                .textInputAutocapitalization(.never)
+                                .platformAutocapitalization()
                                 .autocorrectionDisabled(true)
                                 .onChange(of: slug) { _, v in
                                     let n = BotSlugRule.normalize(v)
@@ -555,7 +553,7 @@ struct ManageBotSheet: View {
                 }
             }
             .navigationTitle(initial.display_name)
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") { dismiss() }
@@ -837,7 +835,7 @@ struct TimeZonePickerView: View {
         }
         .searchable(text: $search, prompt: "搜索时区")
         .navigationTitle("机器人时区")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavTitle()
     }
 }
 
@@ -868,7 +866,7 @@ struct InviteListEditor: View {
             Section {
                 HStack(spacing: 8) {
                     TextField("对方的号码", text: $addingHandle)
-                        .textInputAutocapitalization(.never)
+                        .platformAutocapitalization()
                         .autocorrectionDisabled(true)
                     Button(adding ? "加…" : "邀请") {
                         Task { await addInviteByHandle() }
@@ -919,7 +917,7 @@ struct InviteListEditor: View {
             }
         }
         .navigationTitle("被邀请人")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavTitle()
         .task { await load() }
         .sheet(isPresented: $pickingContact) {
             InviteContactPickerSheet(
@@ -927,7 +925,7 @@ struct InviteListEditor: View {
                 alreadyInvited: Set(invites.map(\.user_id)),
                 onPicked: { Task { await load() } }
             )
-            .presentationDragIndicator(.visible)
+            .platformDragIndicator()
         }
     }
 
@@ -1078,7 +1076,7 @@ struct InviteContactPickerSheet: View {
                 }
             }
             .navigationTitle("从联系人选")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") { dismiss() }
@@ -1273,7 +1271,7 @@ struct BotConfigView: View {
         }
         .disabled(!loaded)
         .navigationTitle("机器人设置")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavTitle()
         .task { await load() }
         .toolbar {
             if canEdit {
@@ -1287,7 +1285,7 @@ struct BotConfigView: View {
         }
         .sheet(item: $pickerTarget) { target in
             modelPicker(for: target)
-                .presentationDragIndicator(.visible)
+                .platformDragIndicator()
                 .tint(Theme.Palette.accent)
         }
         .tint(Theme.Palette.accent)
@@ -1850,7 +1848,7 @@ struct BotVoiceSettingsView: View {
             }
         }
         .navigationTitle("通话设置")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavTitle()
         .disabled(!canEdit)
         .tint(Theme.Palette.accent)
     }
@@ -2110,7 +2108,7 @@ struct BotWebSearchSettingsView: View {
             )
         }
         .navigationTitle("搜索设置")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavTitle()
         .disabled(!canEdit)
         .tint(Theme.Palette.accent)
     }
@@ -2140,9 +2138,9 @@ private struct DomainListEditor: View {
             if canEdit {
                 HStack {
                     TextField(placeholder, text: $draft)
-                        .textInputAutocapitalization(.never)
+                        .platformAutocapitalization()
                         .autocorrectionDisabled()
-                        .keyboardType(.URL)
+                        .platformKeyboard(.url)
                         .onSubmit(add)
                     Button(action: add) {
                         Image(systemName: "plus.circle.fill")
@@ -2225,7 +2223,7 @@ struct BotSharePage: View {
 
                         HStack(spacing: 12) {
                             Button {
-                                UIPasteboard.general.string = shareURLString(token)
+                                Clipboard.copy(shareURLString(token))
                                 copied = true
                                 Haptics.tap()
                             } label: {
@@ -2269,7 +2267,7 @@ struct BotSharePage: View {
         }
         .background(Theme.Palette.canvas.ignoresSafeArea())
         .navigationTitle("分享机器人")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavTitle()
         .task { if case .loading = state { await load(forceNew: false) } }
     }
 
@@ -2301,8 +2299,6 @@ struct BotQRCard: View {
     let shareURL: String
     let botName: String
 
-    private let context = CIContext()
-
     var body: some View {
         VStack(spacing: 18) {
             qrPanel
@@ -2327,7 +2323,7 @@ struct BotQRCard: View {
         ZStack {
             background(size: size)
             if let qr = qrImage(for: shareURL) {
-                Image(uiImage: qr)
+                Image(platformImage: qr)
                     .interpolation(.none)
                     .resizable()
                     .scaledToFit()
@@ -2358,7 +2354,7 @@ struct BotQRCard: View {
     @ViewBuilder
     private func background(size: CGFloat) -> some View {
         let shape = RoundedRectangle(cornerRadius: 28, style: .continuous)
-        if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, macOS 26.0, *) {
             Color.clear
                 .frame(width: size, height: size)
                 .glassEffect(.regular, in: shape)
@@ -2375,42 +2371,15 @@ struct BotQRCard: View {
         }
     }
 
-    // Mirrors MyQRBusinessCard.qrImage / GroupQRCard.qrImage — kept in
-    // sync intentionally (CIQRCodeGenerator + recolour + manual
-    // quiet-zone padding). Extracting a shared helper would need pbxproj
-    // juggling for a new file; this copy is cheaper.
-    private func qrImage(for payload: String) -> UIImage? {
-        let filter = CIFilter.qrCodeGenerator()
-        filter.message = Data(payload.utf8)
-        filter.correctionLevel = "H"
-        guard let raw = filter.outputImage else { return nil }
-        let recolour = CIFilter.falseColor()
-        recolour.inputImage = raw
-        recolour.color0 = CIColor(red: 4 / 255.0, green: 71 / 255.0, blue: 53 / 255.0)
-        recolour.color1 = CIColor(red: 253 / 255.0, green: 252 / 255.0, blue: 250 / 255.0)
-        guard let coloured = recolour.outputImage else { return nil }
-        let scale: CGFloat = 10
-        let scaled = coloured.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-        guard let cg = context.createCGImage(scaled, from: scaled.extent) else { return nil }
-        let inner = CGFloat(cg.width)
-        let quiet = scale * 4
-        let total = inner + quiet * 2
-        let renderer = UIGraphicsImageRenderer(
-            size: CGSize(width: total, height: total),
-            format: {
-                let f = UIGraphicsImageRendererFormat.default()
-                f.scale = 1
-                f.opaque = true
-                return f
-            }(),
-        )
-        return renderer.image { ctx in
-            UIColor(red: 253 / 255.0, green: 252 / 255.0, blue: 250 / 255.0, alpha: 1).setFill()
-            ctx.fill(CGRect(x: 0, y: 0, width: total, height: total))
-            ctx.cgContext.translateBy(x: 0, y: total)
-            ctx.cgContext.scaleBy(x: 1, y: -1)
-            ctx.cgContext.draw(cg, in: CGRect(x: quiet, y: quiet, width: inner, height: inner))
-        }
+    // QR bitmap goes through the cross-platform `QRCode` shim
+    // (CoreImage → PlatformImage). The shim now reproduces the original
+    // iOS share-card styling: deep-green modules on off-white with a
+    // 4-module quiet-zone border, all in CoreImage so it runs on macOS too.
+    private func qrImage(for payload: String) -> PlatformImage? {
+        QRCode.image(payload,
+                     correctionLevel: "H",
+                     dark: CIColor(red: 4 / 255.0, green: 71 / 255.0, blue: 53 / 255.0),
+                     light: CIColor(red: 253 / 255.0, green: 252 / 255.0, blue: 250 / 255.0),
+                     quietModules: 4)
     }
 }
-#endif

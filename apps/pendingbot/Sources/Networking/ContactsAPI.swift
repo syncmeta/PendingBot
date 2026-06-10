@@ -1,4 +1,3 @@
-#if os(iOS)
 import Foundation
 import Supabase
 
@@ -30,4 +29,3 @@ enum ContactsAPI {
         }
     }
 }
-#endif

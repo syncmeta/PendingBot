@@ -1,4 +1,3 @@
-#if os(iOS)
 import Foundation
 import Supabase
 
@@ -96,4 +95,3 @@ extension ConversationView {
         }
     }
 }
-#endif

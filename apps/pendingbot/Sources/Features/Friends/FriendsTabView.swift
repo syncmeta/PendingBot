@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 import Supabase
 
@@ -63,78 +62,111 @@ struct FriendsTabView: View {
     // MessageTabView so tapping a friend on Mac / iPad-landscape opens
     // the chat in the right pane instead of pushing inside the sidebar.
     @State private var selectedPeer: PendingPeer?
+    /// External selection sink, only set when the Mac three-column shell
+    /// reuses our list via `FeatureSurface.listColumn(selection:)`. When
+    /// non-nil, row taps + highlight read/write THIS binding instead of the
+    /// internal `selectedPeer` @State, so the shell's own detail column (a
+    /// separate `NavigationSplitView` column) updates. nil for every iOS
+    /// code path — the normal `body` never sets it, so iOS behavior is
+    /// byte-identical to before.
+    var externalSelection: Binding<PendingPeer?>? = nil
+
+    /// The selection the sidebar reads for row highlight: the shell's
+    /// binding when the list is hosted by the Mac shell, otherwise the
+    /// internal @State. This is the single seam that lets one `sidebarBody`
+    /// serve both the iOS `regularBody` (internal state) and the Mac
+    /// `listColumn` (external binding). When `externalSelection` is nil
+    /// (every iOS path) this is exactly `selectedPeer`.
+    private var effectiveSelection: PendingPeer? {
+        externalSelection?.wrappedValue ?? selectedPeer
+    }
 
     var body: some View {
-        Group {
-            if sidebarLayout {
-                regularBody
-            } else {
-                compactBody
+        chrome(
+            Group {
+                if sidebarLayout {
+                    regularBody
+                } else {
+                    compactBody
+                }
             }
-        }
-        .task { await load() }
-        // Consume a /b/<slug> deep link both when it arrives while we're
-        // already on screen (onChange) and when TabRoot has just switched
-        // us in to handle it (onAppear).
-        .onAppear { consumeDeepLink() }
-        .onChange(of: deepLink.pendingAddBotToken) { _, _ in consumeDeepLink() }
-        .alert("出错", isPresented: .constant(error != nil)) {
-            Button("好") { error = nil }
-        } message: { Text(error ?? "") }
-        .sheet(isPresented: $addingFriend) {
-            AddFriendSheet { Task { await load() } }
-                .presentationDragIndicator(.visible)
-        }
-        .sheet(isPresented: $addingBot, onDismiss: { addBotPrefill = "" }) {
-            AddBotSheet(
-                onAdded: { addedBot in
-                    // Optimistic prepend so the row shows up immediately,
-                    // even before the network refresh resolves. Refresh
-                    // follows to pick up server-derived fields.
-                    if !self.bots.contains(where: { $0.id == addedBot.id }) {
-                        self.bots.insert(addedBot, at: 0)
-                    }
-                    Task {
-                        await load()
-                        // Drop straight into the new bot's chat — matches
-                        // the "accept friend request → open chat"
-                        // affordance for humans.
-                        await tapBot(addedBot)
-                    }
-                },
-                prefilledToken: addBotPrefill
-            )
-            .presentationDragIndicator(.visible)
-        }
-        .sheet(isPresented: $creatingBot) {
-            CreateBotSheet { newBot in
-                // Prepend so the user sees the new bot immediately,
-                // then refresh from server to get any RLS-derived
-                // ordering right.
-                self.bots.insert(newBot, at: 0)
-                Task { await load() }
+        )
+    }
+
+    /// Wraps a root view with the tab's shared chrome — the `.task { load() }`,
+    /// the deep-link consumer, the error alert, and the full sheet stack
+    /// (add-friend / add-bot / create-bot / manage-bot / QR / alias). Pulled
+    /// out of `body` so the Mac three-column shell's `listColumn` and the
+    /// `compactRoot` can each be self-contained: every entry point that hosts
+    /// the friend list carries the same actions + loading, regardless of which
+    /// SwiftUI container it's planted in. The iOS `body` calls this with the
+    /// exact same content it used to inline, so its behavior is unchanged.
+    @ViewBuilder
+    private func chrome(_ content: some View) -> some View {
+        content
+            .task { await load() }
+            // Consume a /b/<slug> deep link both when it arrives while we're
+            // already on screen (onChange) and when TabRoot has just switched
+            // us in to handle it (onAppear).
+            .onAppear { consumeDeepLink() }
+            .onChange(of: deepLink.pendingAddBotToken) { _, _ in consumeDeepLink() }
+            .alert("出错", isPresented: .constant(error != nil)) {
+                Button("好") { error = nil }
+            } message: { Text(error ?? "") }
+            .sheet(isPresented: $addingFriend) {
+                AddFriendSheet { Task { await load() } }
+                    .platformDragIndicator()
             }
-            .presentationDragIndicator(.visible)
-        }
-        .sheet(item: $managingBot) { pick in
-            ManageBotSheet(
-                onChanged: { Task { await load() } },
-                onDeleted: { id in
-                    self.bots.removeAll { $0.id == id }
-                },
-                initial: pick
-            )
-            .presentationDragIndicator(.visible)
-        }
-        .sheet(isPresented: $showingQR) {
-            MyQRSheet()
-                .presentationDetents([.fraction(0.72), .large])
-                .presentationDragIndicator(.visible)
-        }
-        .sheet(item: $aliasEditTarget) { contact in
-            ContactAliasSheet(contact: contact) { Task { await load() } }
-                .presentationDragIndicator(.visible)
-        }
+            .sheet(isPresented: $addingBot, onDismiss: { addBotPrefill = "" }) {
+                AddBotSheet(
+                    onAdded: { addedBot in
+                        // Optimistic prepend so the row shows up immediately,
+                        // even before the network refresh resolves. Refresh
+                        // follows to pick up server-derived fields.
+                        if !self.bots.contains(where: { $0.id == addedBot.id }) {
+                            self.bots.insert(addedBot, at: 0)
+                        }
+                        Task {
+                            await load()
+                            // Drop straight into the new bot's chat — matches
+                            // the "accept friend request → open chat"
+                            // affordance for humans.
+                            await tapBot(addedBot)
+                        }
+                    },
+                    prefilledToken: addBotPrefill
+                )
+                .platformDragIndicator()
+            }
+            .sheet(isPresented: $creatingBot) {
+                CreateBotSheet { newBot in
+                    // Prepend so the user sees the new bot immediately,
+                    // then refresh from server to get any RLS-derived
+                    // ordering right.
+                    self.bots.insert(newBot, at: 0)
+                    Task { await load() }
+                }
+                .platformDragIndicator()
+            }
+            .sheet(item: $managingBot) { pick in
+                ManageBotSheet(
+                    onChanged: { Task { await load() } },
+                    onDeleted: { id in
+                        self.bots.removeAll { $0.id == id }
+                    },
+                    initial: pick
+                )
+                .platformDragIndicator()
+            }
+            .sheet(isPresented: $showingQR) {
+                MyQRSheet()
+                    .platformDetents([.fraction(0.72), .large])
+                    .platformDragIndicator()
+            }
+            .sheet(item: $aliasEditTarget) { contact in
+                ContactAliasSheet(contact: contact) { Task { await load() } }
+                    .platformDragIndicator()
+            }
     }
 
     // ── Compact (iPhone) ────────────────────────────────────────────────────
@@ -143,7 +175,9 @@ struct FriendsTabView: View {
         NavigationStack(path: $path) {
             sidebarBody
                 .background(Theme.Palette.canvas.ignoresSafeArea())
+                #if os(iOS)
                 .toolbar(.hidden, for: .navigationBar)
+                #endif
                 .navigationDestination(for: PendingPeer.self) { peer in
                     ConversationView(
                         conversation: pendingConversation(for: peer),
@@ -152,7 +186,7 @@ struct FriendsTabView: View {
                     )
                 }
         }
-        .toolbar(path.isEmpty ? .visible : .hidden, for: .tabBar)
+        .platformTabBarVisibility(path.isEmpty)
     }
 
     // ── Regular (iPad landscape, Mac Catalyst) ──────────────────────────────
@@ -166,7 +200,9 @@ struct FriendsTabView: View {
                 }
             }
             .background(Theme.Palette.canvas.ignoresSafeArea())
+            #if os(iOS)
             .toolbar(.hidden, for: .navigationBar)
+            #endif
             .sidebarColumnWidth()
         } detail: {
             if let peer = selectedPeer {
@@ -218,7 +254,7 @@ struct FriendsTabView: View {
                     // the user's name card; tapping the rest of the row
                     // pushes a chat with self.
                     Section {
-                        let selfSelected = sidebarLayout && selectedPeer?.kind == "self"
+                        let selfSelected = sidebarLayout && effectiveSelection?.kind == "self"
                         SelfRow(
                             avatarSeed: AccountStore.shared.avatarSeed
                                 ?? AccountStore.shared.current?.id ?? "?",
@@ -320,7 +356,7 @@ struct FriendsTabView: View {
                         }
                     }
                 }
-                .listStyle(.insetGrouped)
+                .platformListStyle()
                 .scrollContentBackground(.hidden)
                 .contentMargins(.top, 0, for: .scrollContent)
                 .refreshable { await load() }
@@ -332,7 +368,7 @@ struct FriendsTabView: View {
     /// regular-size detail pane. Used to tint the row so the user can
     /// see what's open on the right.
     private func isSelected(kind: String, id: String) -> Bool {
-        guard let peer = selectedPeer else { return false }
+        guard let peer = effectiveSelection else { return false }
         return peer.kind == kind && peer.peerId == id
     }
 
@@ -374,18 +410,6 @@ struct FriendsTabView: View {
 
     // MARK: - Data
 
-    struct BotPick: Identifiable, Hashable {
-        let id: String
-        let display_name: String
-        let model_id: String?
-        let visibility: String?
-        let creator_id: String?
-        let voice_call_enabled: Bool?
-        /// When this bot was added (user_bot_contacts.added_at), epoch
-        /// seconds. Drives the "按加好友时间" sort; 0 when unknown (e.g. a
-        /// pre-v7 cached row before the network refresh lands).
-        var addedAt: Int = 0
-    }
     struct HumanPick: Identifiable, Hashable {
         let id: String
         /// Caller's local remark for this contact. Wins over `displayName`
@@ -1032,7 +1056,13 @@ struct FriendsTabView: View {
     /// iPad-landscape) shows the chat in the right detail pane via a
     /// selection binding; compact (iPhone) pushes onto the nav stack.
     private func open(_ peer: PendingPeer) {
-        if sidebarLayout {
+        if let externalSelection {
+            // Mac shell hosts our list as one column and owns the detail
+            // column separately — write the shell's binding so its detail
+            // updates. This branch is only reachable from `listColumn`,
+            // never from the iOS `body` (which leaves externalSelection nil).
+            externalSelection.wrappedValue = peer
+        } else if sidebarLayout {
             selectedPeer = peer
         } else {
             path.append(peer)
@@ -1058,6 +1088,67 @@ struct FriendsTabView: View {
             bot_name: peer.kind == "bot" ? peer.displayName : nil,
             last_message_content: nil,
             last_message_sender_type: nil
+        )
+    }
+}
+
+// MARK: - FeatureSurface (Mac three-column shell)
+
+/// Exposes the friend LIST and the conversation DETAIL as separate columns
+/// so the macOS `WideRootView` can drop them into one shared
+/// `NavigationSplitView` (list = middle column, detail = right column) —
+/// no nested split views. The iOS `body` above is untouched; these methods
+/// are additive and only the Mac shell calls them.
+///
+/// Selection plumbing: the shell owns the `Binding<PendingPeer?>` and passes
+/// it into `listColumn`. We build a `FriendsTabView` instance with its
+/// `externalSelection` set to that binding, so the (otherwise unchanged)
+/// `sidebarBody` routes row taps + highlight through the shell's selection
+/// instead of the internal `@State selectedPeer`. `detailColumn` renders the
+/// same `ConversationView` the iOS `regularBody` shows for a selected peer.
+extension FriendsTabView: FeatureSurface {
+    typealias Selection = PendingPeer
+
+    func listColumn(selection: Binding<PendingPeer?>) -> some View {
+        // A fresh instance bound to the shell's selection. Its body is the
+        // sidebar list alone (no SidebarTabBar — on Mac the tab strip is the
+        // shell's own first column), carrying the shared chrome so the
+        // +/create/manage/QR actions and `load()` all work from this column.
+        var view = self
+        view.externalSelection = selection
+        return view.macListColumn
+    }
+
+    func detailColumn(selection: PendingPeer?) -> some View {
+        Group {
+            if let peer = selection {
+                ConversationView(
+                    conversation: pendingConversation(for: peer),
+                    bot: bot(for: peer),
+                    pendingPeer: peer
+                )
+                .id(peer)
+            } else {
+                EmptyDetailHint(text: "选择一位好友或机器人开始聊天",
+                                systemImage: "person.2")
+            }
+        }
+    }
+
+    func compactRoot() -> some View {
+        // The iPhone NavigationStack, made self-contained by wrapping it in
+        // the same chrome the iOS `body` applies (sheets + `load()` task).
+        chrome(compactBody)
+    }
+}
+
+private extension FriendsTabView {
+    /// The friend list as a standalone column for the Mac shell: the shared
+    /// `sidebarBody` (no SidebarTabBar) on canvas, carrying the full chrome.
+    var macListColumn: some View {
+        chrome(
+            sidebarBody
+                .background(Theme.Palette.canvas.ignoresSafeArea())
         )
     }
 }
@@ -1283,84 +1374,7 @@ private struct HumanKindTag: View {
     }
 }
 
-// MARK: - Sort
-
-/// How the merged friend list is ordered. The direction (A→Z vs Z→A,
-/// 旧→新 vs 新→旧) is a separate `sortAscending` flag so each field can be
-/// flipped without multiplying the cases.
-enum FriendSortField: String, CaseIterable {
-    case name        // 名称 (pinyin-aware)
-    case recentChat  // 最近聊天
-    case addedTime   // 加好友时间
-
-    var label: String {
-        switch self {
-        case .name:       return "名称"
-        case .recentChat: return "最近聊天"
-        case .addedTime:  return "加好友时间"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .name:       return "textformat"
-        case .recentChat: return "bubble.left.and.bubble.right"
-        case .addedTime:  return "person.badge.clock"
-        }
-    }
-
-    /// Sensible default direction when the user first switches to this field:
-    /// names read A→Z; time fields lead with the most recent.
-    var defaultAscending: Bool {
-        switch self {
-        case .name:                  return true
-        case .recentChat, .addedTime: return false
-        }
-    }
-
-    /// Direction-aware label for the active row in the sort menu, so the user
-    /// can see (and toggle) whether tapping again flips the order.
-    func directionLabel(ascending: Bool) -> String {
-        switch self {
-        case .name:       return ascending ? "A→Z" : "Z→A"
-        case .recentChat: return ascending ? "最早优先" : "最近优先"
-        case .addedTime:  return ascending ? "最早添加" : "最近添加"
-        }
-    }
-}
-
 // MARK: - Filter pills
-
-/// Five-way filter sitting between the self row and the friend list.
-/// Each pill carries the colour of the tag it scopes to (人类 → accent
-/// green, 私有机器人 → plum, 公有机器人 → amber, 群聊 → tri-tone gradient).
-/// 全部 stays neutral white. All pills share the same frosted-glass
-/// capsule treatment as the login screen's brand pills.
-enum FriendFilter: Hashable, CaseIterable {
-    case all, humans, privateBots, publicBots, groups
-
-    var label: String {
-        switch self {
-        case .all:         return "全部"
-        case .humans:      return "人类"
-        case .privateBots: return "私有机器人"
-        case .publicBots:  return "公有机器人"
-        case .groups:      return "群聊"
-        }
-    }
-
-    /// Foreground colour when the pill is selected (and used for the
-    /// selected-state stroke). 全部 stays in plain ink.
-    var fg: Color {
-        switch self {
-        case .all:         return Theme.Palette.ink
-        case .humans:      return Theme.Palette.accent
-        case .privateBots: return Theme.Palette.plum
-        case .publicBots:  return Theme.Palette.amber
-        case .groups:      return Theme.Palette.ink
-        }
-    }
-}
 
 private struct FilterPillBar: View {
     @Binding var filter: FriendFilter
@@ -1482,7 +1496,7 @@ struct AddFriendSheet: View {
                 Section {
                     HStack(spacing: 8) {
                         TextField("号码 / 隐私号", text: $handleValue)
-                            .textInputAutocapitalization(.never)
+                            .platformAutocapitalization()
                             .autocorrectionDisabled()
                             .onSubmit { pushPreview() }
                         Button("查找") { pushPreview() }
@@ -1498,9 +1512,9 @@ struct AddFriendSheet: View {
                 }
             }
             .navigationTitle("加好友")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavTitle()
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: .platformLeading) {
                     Button("取消") { dismiss() }
                 }
             }
@@ -1571,7 +1585,7 @@ private struct AddFriendPreviewPage: View {
             }
             Section("验证信息（可选）") {
                 TextField("给对方留个话,会和申请一起送达", text: $verifyMessage, axis: .vertical)
-                    .textInputAutocapitalization(.sentences)
+                    .platformAutocapitalization(false)
                     .autocorrectionDisabled()
                     .lineLimit(1...3)
             }
@@ -1587,9 +1601,9 @@ private struct AddFriendPreviewPage: View {
             }
         }
         .navigationTitle("加好友")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavTitle()
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .platformTrailing) {
                 Button("发送申请") { Task { await submit() } }
                     .disabled(!canSubmit)
             }
@@ -1726,7 +1740,7 @@ struct AddBotSheet: View {
     /// Caller wants the picked BotPick so it can optimistically prepend
     /// to the list and route into the bot's chat without waiting for the
     /// reload to land.
-    var onAdded: (FriendsTabView.BotPick) -> Void = { _ in }
+    var onAdded: (BotPick) -> Void = { _ in }
     /// When non-empty, opens straight on the invite-preview page for this
     /// token (scan / universal-link flow). Empty => the invite-only info page.
     var prefilledToken: String = ""
@@ -1750,9 +1764,9 @@ struct AddBotSheet: View {
                 }
             }
             .navigationTitle("加机器人")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavTitle()
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: .platformLeading) {
                     Button("取消") { dismiss() }
                 }
             }
@@ -1781,7 +1795,7 @@ struct AddBotSheet: View {
 
 private struct AddBotPreviewPage: View {
     let token: String
-    var onAdded: (FriendsTabView.BotPick) -> Void
+    var onAdded: (BotPick) -> Void
     var onFinished: () -> Void
 
     @Environment(\.dismiss) private var dismissPage
@@ -1789,7 +1803,7 @@ private struct AddBotPreviewPage: View {
 
     enum Preview: Equatable {
         case loading
-        case loaded(bot: FriendsTabView.BotPick, inviterName: String?)
+        case loaded(bot: BotPick, inviterName: String?)
         case notFound(message: String)
     }
 
@@ -1822,9 +1836,9 @@ private struct AddBotPreviewPage: View {
             }
         }
         .navigationTitle("加机器人")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavTitle()
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .platformTrailing) {
                 Button("添加") { Task { await submit() } }
                     .disabled(!canSubmit)
             }
@@ -1870,7 +1884,7 @@ private struct AddBotPreviewPage: View {
         do {
             let p = try await api.resolveBotInvite(token: token)
             if Task.isCancelled { return }
-            let pick = FriendsTabView.BotPick(
+            let pick = BotPick(
                 id: p.botId,
                 display_name: p.displayName,
                 model_id: p.modelId,
@@ -1934,7 +1948,7 @@ struct ContactAliasSheet: View {
                 Section {
                     TextField(contact.displayName.isEmpty ? "起个备注" : "默认显示「\(contact.displayName)」",
                               text: $alias)
-                        .textInputAutocapitalization(.sentences)
+                        .platformAutocapitalization(false)
                         .autocorrectionDisabled()
                 } header: {
                     Text("备注")
@@ -1946,13 +1960,13 @@ struct ContactAliasSheet: View {
                 }
             }
             .navigationTitle("设置备注")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavTitle()
             .onAppear { alias = contact.alias ?? "" }
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: .platformLeading) {
                     Button("取消") { dismiss() }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .platformTrailing) {
                     Button("保存") { Task { await save() } }
                         .disabled(saving)
                 }
@@ -2010,9 +2024,19 @@ struct MyQRSheet: View {
             ZStack {
                 Theme.Palette.canvas.ignoresSafeArea()
                 ScrollView {
+                    #if os(iOS)
                     MyQRBusinessCard()
                         .padding(.horizontal, 24)
                         .padding(.vertical, 12)
+                    #else
+                    // MyQRBusinessCard is iOS-only (UIKit image rendering,
+                    // PHPhotoLibrary save). macOS shows a placeholder until a
+                    // cross-platform QR card lands.
+                    Text("二维码名片暂不支持 Mac")
+                        .font(Theme.Fonts.footnote)
+                        .foregroundStyle(.secondary)
+                        .padding(40)
+                    #endif
                 }
             }
             .toolbar {
@@ -2020,7 +2044,7 @@ struct MyQRSheet: View {
                     Button("关闭") { dismiss() }
                 }
             }
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavTitle()
         }
     }
 }
@@ -2031,7 +2055,7 @@ struct MyQRSheet: View {
 /// Preset bots and others' bots get no extra actions — the modifier
 /// returns the row unchanged.
 private struct BotRowOwnerActions: ViewModifier {
-    let bot: FriendsTabView.BotPick
+    let bot: BotPick
     let isMine: Bool
     let onManage: () -> Void
 
@@ -2050,4 +2074,3 @@ private struct BotRowOwnerActions: ViewModifier {
         }
     }
 }
-#endif

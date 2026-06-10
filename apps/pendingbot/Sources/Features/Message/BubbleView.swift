@@ -1,6 +1,7 @@
-#if os(iOS)
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
 
 /// Asymmetric layout inspired by Claude.ai (not iMessage):
 ///   • Bot — borderless, left-aligned, avatar + name row, then content.
@@ -283,7 +284,10 @@ struct AttachmentGrid: View {
                             .onTapGesture { zoomed = ZoomTarget(path: att.url) }
                             // The image's own context menu — long-pressing a
                             // thumbnail offers "save to album", not the text
-                            // bubble's copy/recall menu.
+                            // bubble's copy/recall menu. Save-to-album is an
+                            // iOS-only affordance (system photo library);
+                            // macOS users save via the image viewer / Finder.
+                            #if os(iOS)
                             .contextMenu {
                                 Button {
                                     saveToAlbum(att)
@@ -291,6 +295,7 @@ struct AttachmentGrid: View {
                                     Label("保存到相册", systemImage: "square.and.arrow.down")
                                 }
                             }
+                            #endif
                     }
                 }
             }
@@ -298,14 +303,16 @@ struct AttachmentGrid: View {
                 FileAttachmentChip(attachment: att)
             }
         }
-        .fullScreenCover(item: $zoomed) { target in
+        .platformFullScreenCover(item: $zoomed) { target in
             ImageViewer(path: target.path, serverURL: serverURL)
         }
     }
 
     /// Download the full image through the auth-gated endpoint and write
     /// it to the system photo library. NSPhotoLibraryAddUsageDescription
-    /// is already declared; iOS prompts on first use.
+    /// is already declared; iOS prompts on first use. iOS-only — the
+    /// save-to-album affordance isn't surfaced on macOS.
+    #if os(iOS)
     private func saveToAlbum(_ att: Attachment) {
         Task {
             guard let data = try? await APIClient().download("v1/uploads/\(att.id)"),
@@ -319,6 +326,7 @@ struct AttachmentGrid: View {
             }
         }
     }
+    #endif
 }
 
 /// Identifiable wrapper so a tapped image path can drive `.fullScreenCover`.
@@ -388,9 +396,14 @@ struct FileAttachmentChip: View {
         }
         .buttonStyle(.plain)
         .disabled(downloading)
+        // System share sheet (UIActivityViewController) is iOS-only; on
+        // macOS the file is still downloaded to a temp dir but the share
+        // presentation is skipped until a macOS share path lands.
+        #if os(iOS)
         .sheet(item: $shareURL) { wrapped in
             ShareSheet(items: [wrapped.url])
         }
+        #endif
     }
 
     /// SF Symbol picked from the MIME so the chip reads at a glance.
@@ -436,6 +449,8 @@ struct IdentifiedURL: Identifiable {
 }
 
 /// Minimal UIActivityViewController bridge for the file share sheet.
+/// iOS-only — wraps UIKit's UIActivityViewController.
+#if os(iOS)
 struct ShareSheet: UIViewControllerRepresentable {
     let items: [Any]
 

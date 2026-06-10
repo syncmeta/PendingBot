@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 /// Avatar view that prefers an uploaded image (`/v1/uploads/<id>`) when
@@ -9,18 +8,18 @@ import SwiftUI
 /// directly — there's no way to inject the Authorization header. The
 /// loader fetches once with the current JWT, caches the bytes in a
 /// process-lifetime dictionary keyed by id, and renders the resulting
-/// `UIImage`.
+/// `PlatformImage`.
 struct UserAvatar: View {
     let seed: String
     let attachmentId: String?
     var size: CGFloat = 36
 
-    @State private var image: UIImage?
+    @State private var image: PlatformImage?
 
     var body: some View {
         Group {
             if let image {
-                Image(uiImage: image)
+                Image(platformImage: image)
                     .resizable()
                     .scaledToFill()
                     .frame(width: size, height: size)
@@ -53,7 +52,7 @@ struct UserAvatar: View {
             guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
                 return
             }
-            guard let img = UIImage(data: data) else { return }
+            guard let img = PlatformImage.decode(data) else { return }
             AvatarCache.shared.store(img, for: id)
             image = img
         } catch {
@@ -65,18 +64,18 @@ struct UserAvatar: View {
 /// Process-lifetime cache so swapping between tabs / scrolling doesn't
 /// re-fetch the same blob. The endpoint is immutable so first byte is
 /// the only one we ever need; URLSession's HTTP cache could handle this
-/// too, but keeping a UIImage map skips re-decoding.
+/// too, but keeping a PlatformImage map skips re-decoding.
 final class AvatarCache: @unchecked Sendable {
     static let shared = AvatarCache()
     private let lock = NSLock()
-    private var store: [String: UIImage] = [:]
+    private var store: [String: PlatformImage] = [:]
 
-    func image(for id: String) -> UIImage? {
+    func image(for id: String) -> PlatformImage? {
         lock.lock(); defer { lock.unlock() }
         return store[id]
     }
 
-    func store(_ image: UIImage, for id: String) {
+    func store(_ image: PlatformImage, for id: String) {
         lock.lock(); defer { lock.unlock() }
         store[id] = image
     }
@@ -88,4 +87,3 @@ final class AvatarCache: @unchecked Sendable {
         store.removeAll()
     }
 }
-#endif

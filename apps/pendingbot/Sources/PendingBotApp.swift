@@ -199,8 +199,9 @@ private struct SplashView: View {
 
 #elseif os(macOS)
 
-/// PendingBot Mac 端 @main — T0.1 partial:5 tab 框架仍是 NavigationSplitView,
-/// "我" tab 已接入真实 AccountStore(MacMeView),其余 tab 暂为 placeholder。
+/// PendingBot Mac 端 @main — 已登录走跨平台三列壳 `WideRootView`;消息 /
+/// 好友 / 来信 / 我 tab 均接共享 `FeatureSurface`,仅 Crew tab 还留 Mac
+/// 平行列(最后一个 slice)。
 ///
 /// AccountStore 是单例,本来不依赖 EnvironmentObject 注入,但 SwiftUI
 /// `@EnvironmentObject` 在 Mac 端 + macOS 14 起对 ObservableObject 的
@@ -211,7 +212,7 @@ private struct SplashView: View {
 struct PendingBotApp: App {
     @StateObject private var accountStore = AccountStore.shared
     // 跟 iOS 一致:把 ModelCatalog.shared 当 environmentObject 注入,供
-    // Mac 端建/管机器人的模型选择器(MacModelPickerSheet 等)读目录。
+    // 共享建/管机器人面的模型选择器读目录。
     @StateObject private var modelCatalog = ModelCatalog.shared
 
     init() {
@@ -223,9 +224,8 @@ struct PendingBotApp: App {
 
     var body: some Scene {
         WindowGroup {
-            // T4.5 后续:macOS 也走会话 gate（未登录 → MacWelcomeView，已登录 →
-            // MacRootView），跟 iOS RootView 一致。此前 Mac 端直接显示 MacRootView
-            // 但没有登录入口,导致没会话、所有 /v1/* 401。
+            // macOS 走会话 gate(未登录 → MacWelcomeView,已登录 → 跨平台
+            // 三列 shell WideRootView),跟 iOS RootView 一致。
             MacRootGate()
                 .environmentObject(accountStore)
                 .environmentObject(modelCatalog)
@@ -250,9 +250,20 @@ struct PendingBotApp: App {
         // 去掉窗口标题栏那条「大绿豆」标题条,让内容(尤其登录页)成一整片
         // full-bleed 画布;红绿灯交通灯按钮仍浮在左上角内容之上。
         .windowStyle(.hiddenTitleBar)
-        // 窗口大小跟内容走:登录页是紧凑小窗,登录后 MacRootView 自己声明
+        // 窗口大小跟内容走:登录页是紧凑小窗,登录后 WideRootView 自己声明
         // minWidth 1100/minHeight 700 → 窗口长到主 app 尺寸(且仍可自由缩放)。
         .windowResizability(.contentSize)
+        // A8:原生菜单栏命令(新建机器人 ⌘N / 新建会话 ⇧⌘N / 搜索 ⌘F)。
+        .commands { AppCommands() }
+
+        // A8:macOS 系统设置场景。用 SwiftUI 的 `Settings` 场景把 ⌘, 绑到
+        // SettingsRootView;Settings 场景是独立窗口,environmentObject 不会从
+        // WindowGroup 继承过来,所以这里单独注入 accountStore / modelCatalog。
+        Settings {
+            SettingsRootView()
+                .environmentObject(accountStore)
+                .environmentObject(modelCatalog)
+        }
     }
 }
 

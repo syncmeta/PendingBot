@@ -1,4 +1,3 @@
-#if os(iOS)
 import Foundation
 
 /// Pure logic for splitting a bot's token stream into bubbles per the
@@ -150,4 +149,3 @@ final class BubbleSplitter: @unchecked Sendable {
         }
     }
 }
-#endif

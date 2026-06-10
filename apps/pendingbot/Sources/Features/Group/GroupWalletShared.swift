@@ -1,7 +1,7 @@
 import Foundation
 
 /// Cross-platform formatting + the amount-form model for the group wallet,
-/// shared by iOS `GroupWalletView` and native macOS `MacGroupWalletView`.
+/// used by the shared cross-platform `GroupWalletView` (iOS + macOS).
 enum GroupWalletFormat {
     /// PNC 小数 → "1,234.56"。
     static func fmt(_ pnc: Double) -> String {

@@ -1,4 +1,3 @@
-#if os(iOS)
 import Foundation
 import Supabase
 
@@ -471,5 +470,3 @@ enum EnvelopeRunDecoder {
         )
     }
 }
-
-#endif

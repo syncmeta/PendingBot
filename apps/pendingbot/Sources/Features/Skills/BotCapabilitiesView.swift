@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 /// 「我 → 机器人能力扩展」entry. Splits by upstream provider because
@@ -47,7 +46,7 @@ struct BotCapabilitiesView: View {
         .scrollContentBackground(.hidden)
         .background(Theme.Palette.canvas.ignoresSafeArea())
         .navigationTitle("机器人能力扩展")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavTitle()
         .tint(Theme.Palette.accent)
     }
 
@@ -55,7 +54,7 @@ struct BotCapabilitiesView: View {
     private func providerRow(_ p: BotProvider) -> some View {
         NavigationLink {
             ProviderCapabilitiesView(provider: p)
-                .toolbar(.hidden, for: .tabBar)
+                .platformTabBarVisibility(false)
         } label: {
             VStack(alignment: .leading, spacing: 3) {
                 Text(p.displayName)
@@ -80,13 +79,13 @@ struct ProviderCapabilitiesView: View {
             Section {
                 NavigationLink {
                     SkillsView(provider: provider)
-                        .toolbar(.hidden, for: .tabBar)
+                        .platformTabBarVisibility(false)
                 } label: {
                     Text("Skills")
                 }
                 NavigationLink {
                     MCPServersStubView(provider: provider)
-                        .toolbar(.hidden, for: .tabBar)
+                        .platformTabBarVisibility(false)
                 } label: {
                     Text("MCP Server")
                 }
@@ -95,7 +94,7 @@ struct ProviderCapabilitiesView: View {
         .scrollContentBackground(.hidden)
         .background(Theme.Palette.canvas.ignoresSafeArea())
         .navigationTitle(provider.displayName)
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavTitle()
         .tint(Theme.Palette.accent)
     }
 }
@@ -124,7 +123,7 @@ struct MCPServersStubView: View {
             }
             .padding(.horizontal, 32)
         }
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavTitle()
         .toolbar {
             ToolbarItem(placement: .principal) {
                 Text("MCP Server")
@@ -134,4 +133,3 @@ struct MCPServersStubView: View {
         }
     }
 }
-#endif

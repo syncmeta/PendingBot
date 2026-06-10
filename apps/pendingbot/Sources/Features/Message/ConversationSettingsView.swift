@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 // The old per-conversation "会话设置" page is gone — gear icon in the
@@ -96,7 +95,7 @@ struct ContactSettingsView: View {
             Section {
                 TextField(initialDisplayName.isEmpty ? "起个备注" : initialDisplayName,
                           text: $alias)
-                    .textInputAutocapitalization(.sentences)
+                    .platformAutocapitalization(false)
                     .autocorrectionDisabled()
                     .onSubmit { Task { await saveAlias() } }
                 if aliasDirty {
@@ -169,7 +168,7 @@ struct ContactSettingsView: View {
             }
         }
         .navigationTitle("好友设置")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavTitle()
         .task { await load() }
         .confirmationDialog(
             "确定要删除「\(initialDisplayName.isEmpty ? "这位好友" : initialDisplayName)」吗?",
@@ -427,7 +426,7 @@ struct LetterSettingsView: View {
             }
         }
         .navigationTitle("写信设置")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavTitle()
         .disabled(!canEdit)
         .sheet(item: $pickerTarget) { target in
             let initialSlug: String = {
@@ -452,7 +451,7 @@ struct LetterSettingsView: View {
                     pickerTarget = nil
                 }
             )
-            .presentationDragIndicator(.visible)
+            .platformDragIndicator()
             .tint(Theme.Palette.accent)
         }
         .tint(Theme.Palette.accent)
@@ -483,4 +482,3 @@ struct LetterSettingsView: View {
         return slug.split(separator: "/").last.map(String.init) ?? slug
     }
 }
-#endif

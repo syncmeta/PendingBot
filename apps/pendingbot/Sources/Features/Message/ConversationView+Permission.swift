@@ -1,4 +1,3 @@
-#if os(iOS)
 import Foundation
 import SwiftUI
 
@@ -16,6 +15,9 @@ extension ConversationView {
         case approve
         case reject
 
+        // APIClient.PermissionRequestDecision lives in the now-cross-platform
+        // Crew slice (Features/Crew/CrewAPI.swift), so this bridge compiles on
+        // both iOS and macOS.
         fileprivate var apiValue: APIClient.PermissionRequestDecision {
             switch self {
             case .approve: return .approve
@@ -32,6 +34,10 @@ extension ConversationView {
     ///
     /// `messageId` is the messages.id of the synthesised log row; the
     /// underlying permission_requests.id is read from the payload.
+    ///
+    /// Cross-platform: the decide endpoint (`api.decidePermissionRequest`) now
+    /// lives in the cross-platform Crew slice, so permission approve/deny works
+    /// on both iOS and macOS.
     func decidePermissionRequest(_ messageId: String, decision: PermissionRequestDecisionKind) async {
         guard let api else { return }
         guard let payload = permissionRequestsByMsgId[messageId],
@@ -100,4 +106,3 @@ extension ConversationView {
         }
     }
 }
-#endif
