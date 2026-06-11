@@ -24,3 +24,8 @@ export const SUPABASE_PUBLISHABLE_KEY = required(
   'VITE_SUPABASE_PUBLISHABLE_KEY',
   import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
 );
+
+// Turnstile site key — Supabase Auth has captcha protection enabled, so
+// signInWithPassword must carry a captchaToken. Optional: leave unset to
+// render the login form without the widget (envs where captcha is off).
+export const TURNSTILE_SITE_KEY: string | undefined = import.meta.env.VITE_TURNSTILE_SITE_KEY;
