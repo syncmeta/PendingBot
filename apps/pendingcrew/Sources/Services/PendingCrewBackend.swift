@@ -1,24 +1,21 @@
 import Foundation
 
-/// PendingCrew 数据后端的统一抽象(T5.2)。
+/// PendingCrew 数据后端的统一抽象。
 ///
-/// 双轨边界(spec v2 §5.3):
-/// - `EdgeBackend`(mode = `.logged`)— wrap `PendingCrewAPI`,所有 crew /
-///   subject 数据走 PendingBot edge,unified billing
-/// - `LocalBackend`(mode = `.byok`)— wrap `LocalCrewStore`,纯本地 JSON,
-///   crew 只本机,假 subject 单元素,Fly 等 cloud 资源不可用
+/// **接合 v2(spec 2026-06-10:本地为家,edge 是邮差)—— 双轨平行路由作废**:
+/// - `LocalBackend` 是**常驻 home**:macOS 上 crew CRUD / 白板 / 花名册
+///   永远走它,本地 crew 永远在、永远显示。
+/// - `EdgeBackend` 退化成"叠加能力的 API 面":遥控、未来的信箱 + 邀请,
+///   以及 iOS(暂无本地后端)的过渡路径。**不再平行路由 crew 数据**;
+///   能力判定用 `AppModel.isAuthenticated`,不要再用 `mode` 选后端。
 ///
 /// **设计原则**:protocol 返回值 shape **跟 edge 一致**(`CrewSummary` /
 /// `CrewDetail` / `UserSubject` 几个 model 复用),这样 UI 层 + `CrewStore`
-/// 不分叉。BYOK 路径只在数据来源上短路;view 层依然只看到一组 crews + 一个
-/// subject picker。
+/// 不分叉。
 ///
-/// **mode + 能力查询**:UI(如 CreateCrewSheet / sidebar Machines section)
-/// 在渲染时通过 `mode` 决定灰显 / 加 "登录解锁" 提示。
-///
-/// **未来扩展**:此 protocol 是 phase 5/v1.1+ 多个端点(share-change /
-/// runner / mailbox / whiteboard 等)的注入点;每新加一个端点就在 protocol
-/// 加方法 + 两个实现各补一份(LocalBackend 多半 throw `notSupportedInByok`)。
+/// **未来扩展**:edge 信箱(store-and-forward)+ 远端成员接入在 block 3
+/// 落地时,以"本地真源 + edge 中转"接进 LocalBackend 的白板路径,而不是
+/// 给 EdgeBackend 恢复平行地位。
 @MainActor
 protocol PendingCrewBackend: AnyObject {
     var mode: BackendMode { get }

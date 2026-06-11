@@ -13,15 +13,13 @@ import SwiftUI
 /// （那是 codex 留下的待重构债务）。新增状态应归并成结构化 model
 /// （如 `CrewDetail` 容器），见 spec v2 §6.2 / roadmap §11。
 ///
-/// **双轨 backend(T5.1 + T5.2)**:
-/// - 登录态(`credential.kind == .deviceGrant`)→ `backend.mode == .logged`,
-///   走 PendingBot edge,unified billing。
-/// - 未登录 BYOK 态(`byokConfig.hasAnyKey`)→ `backend.mode == .byok`,
-///   全本地,JSON crew store + 本机 captain。
-/// - 两态都没有 → `RootView` 显示 WelcomeView 让用户选。
-///
-/// 本次 scope 内 mode 选定后不可在 app 内切换;签出走 `clearAuth()`/`clearByok()`
-/// 重启回 WelcomeView。
+/// **接合 v2(spec 2026-06-10):双轨 backend 作废,本地为家**:
+/// - macOS 上 `backend` **恒为 `LocalBackend`** —— 本地 crew 永远在、永远显示。
+/// - 登录(`credential.kind == .deviceGrant`)只是账号级**能力叠加**
+///   (遥控 / 未来信箱 + 邀请),不再切换 crew 数据来源。能力判定用
+///   `isAuthenticated`,不要再用 `mode` 路由数据。
+/// - iOS 暂无本地后端(LocalRunner 是 macOS-only),仍走 EdgeBackend,
+///   等本地后端跨平台后统一。
 @MainActor
 final class AppModel: ObservableObject {
     @Published var apiBaseURL: String
@@ -73,14 +71,16 @@ final class AppModel: ObservableObject {
             && (defaults.bool(forKey: DefaultsKey.localModeSelected) || loadedByok?.hasAnyKey == true)
     }
 
-    /// 当前生效的 backend。WelcomeView 阶段(没凭据)返回 nil —— UI 层
-    /// 不应当在那个 phase 调任何数据方法。
+    /// 当前生效的 backend(接合 v2:**不再按 mode 路由**)。
+    /// - macOS:恒为 `LocalBackend` —— 本地 crew 是常驻 home,登录只叠加能力。
+    /// - iOS:暂无本地后端(LocalRunner 是 macOS-only),登录态走 EdgeBackend,
+    ///   未登录返回 nil(WelcomeView 时态)。等本地后端跨平台后统一成恒本地。
     var backend: PendingCrewBackend? {
-        switch mode {
-        case .logged: return edgeBackend
-        case .local: return localBackend
-        case .none: return nil
-        }
+        #if os(macOS)
+        return localBackend
+        #else
+        return credential != nil ? edgeBackend : nil
+        #endif
     }
 
     /// `RootView` 用它决定显 WelcomeView 还是直接进主界面。
@@ -99,7 +99,10 @@ final class AppModel: ObservableObject {
     /// **不**包含 BYOK。BYOK 态判定用 `mode == .byok` 或 `byokConfig?.hasAnyKey`。
     var isAuthenticated: Bool { credential != nil }
 
-    /// 当前 backend mode。两种凭据都没有时返回 nil(WelcomeView 时态)。
+    /// **display/capability only —— 不再路由 crew 数据**(接合 v2)。
+    /// `backend` 在 macOS 上恒为本地;这个值只剩"登没登录"的展示语义,
+    /// 新代码判能力请直接用 `isAuthenticated`。
+    /// 两种凭据都没有时返回 nil(WelcomeView 时态)。
     var mode: BackendMode? {
         if credential != nil { return .logged }
         #if os(macOS)
