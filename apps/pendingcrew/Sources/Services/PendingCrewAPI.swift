@@ -451,6 +451,23 @@ struct PendingCrewAPI {
         try await get(path: "v1/crews/\(crewId)/members")
     }
 
+    /// `POST /v1/crews/:crewId/members` — 把 PendingBot 侧的 bot / 人类账号
+    /// 拉进 relay crew conversation（接合 v2 block 3）。`kind` ∈ bot / human，
+    /// bot 须 caller 可用、human 须好友/同 subject 成员（校验在 edge RPC）。
+    /// 幂等：已是成员也回 201。Needs `crew:write` + grant subject 匹配。
+    func addCrewMember(crewId: String, kind: String, botId: String? = nil, userId: String? = nil) async throws {
+        struct Body: Encodable {
+            let kind: String
+            let botId: String?
+            let userId: String?
+        }
+        struct Response: Decodable { let crewId: String }
+        let _: Response = try await post(
+            path: "v1/crews/\(crewId)/members",
+            body: Body(kind: kind, botId: botId, userId: userId)
+        )
+    }
+
     // MARK: - Session inbox (runner per-turn context: whiteboard + mailbox)
 
     /// `GET /v1/sessions/:sessionId/inbox` — the per-turn context bundle the
