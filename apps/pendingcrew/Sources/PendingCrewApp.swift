@@ -112,18 +112,18 @@ struct RootView: View {
                 flow = .welcome
             }
         }
-        // 登录/登出(mode 翻转)时清缓存重拉 —— 接合 v2 后 macOS backend 恒为
-        // 本地,这里的 reset+refresh 只是重载本地列表 + subject(能力叠加态
-        // 变了,subject 展示要跟上),**不会**让本地 crew 消失。
+        // 登录/登出时清缓存重拉 —— 接合 v2 后 macOS backend 恒为本地,
+        // 这里的 reset+refresh 只是重载本地列表 + subject(能力叠加态变了,
+        // subject 展示要跟上),**不会**让本地 crew 消失。
         // `isConfigured` 在 macOS 上恒 true,上面那个 onChange 不触发 ——
-        // 用 mode 作为登录态翻转的触发线。
+        // 用 isAuthenticated 作为登录态翻转的触发线。
         //
         // 重置后让 MacThreePaneView 的 `.task` 自然在下一帧重跑 list /
-        // subjects —— 但 `.task` 只在 view 出现时跑,mode 切换不重建视图,
-        // 所以这里显式拉一次。WelcomeView 时态(mode == nil)跳过。
-        .onChange(of: model.mode) { _, newMode in
+        // subjects —— 但 `.task` 只在 view 出现时跑,登录态切换不重建视图,
+        // 所以这里显式拉一次。
+        .onChange(of: model.isAuthenticated) { _, _ in
             crewStore.reset()
-            if newMode != nil {
+            if model.isConfigured {
                 Task {
                     await crewStore.refreshList()
                     await crewStore.refreshSubjects()

@@ -18,11 +18,6 @@ import Foundation
 /// 给 EdgeBackend 恢复平行地位。
 @MainActor
 protocol PendingCrewBackend: AnyObject {
-    var mode: BackendMode { get }
-
-    /// 主能力查询 —— UI 渲染时判断要不要灰显 Fly / cloud 资源相关入口。
-    var supportsCloudRuntime: Bool { get }
-
     // MARK: - Subject
     func listMySubjects() async throws -> [UserSubject]
 
@@ -63,9 +58,6 @@ protocol PendingCrewBackend: AnyObject {
 /// 每次方法调用前重新 resolve `(baseURL, token)`,避免 url / 凭据变化
 /// 后还用老 instance。
 final class EdgeBackend: PendingCrewBackend {
-    var mode: BackendMode { .logged }
-    var supportsCloudRuntime: Bool { true }
-
     private unowned let appModel: AppModel
 
     init(appModel: AppModel) {
@@ -132,9 +124,6 @@ final class EdgeBackend: PendingCrewBackend {
 /// 形状,不再分叉(Spec §5.3 双轨边界明确"BYOK 本地态依然有 subject 概念,
 /// 只是只有一个,代表 '本机/这台机器'")。
 final class LocalBackend: PendingCrewBackend {
-    var mode: BackendMode { .local }
-    var supportsCloudRuntime: Bool { false }
-
     /// 写死的"本机 BYOK"subject id —— LocalCrewStore 里 crew 都标这个
     /// responsibleSubjectId。后续 Phase 引真本机 captain 时这个 id 也是
     /// 责任分账的唯一 holder。

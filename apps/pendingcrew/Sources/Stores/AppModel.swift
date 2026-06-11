@@ -42,7 +42,7 @@ final class AppModel: ObservableObject {
 
     private let defaults: UserDefaults
 
-    /// 两条 backend 实例,启动时一次性构造,mode 切换只是切引用。
+    /// 两条 backend 实例,启动时一次性构造。
     /// 不在 each-call 时 new (避免 EdgeBackend 内每次重新解析 credential
     /// 但 instance 不复用的浪费;LocalBackend.store 是 shared singleton)。
     private lazy var edgeBackend: EdgeBackend = EdgeBackend(appModel: self)
@@ -95,22 +95,10 @@ final class AppModel: ObservableObject {
         #endif
     }
 
-    /// 兼容老代码 —— `isAuthenticated` 现在仅指"登录态(device grant)",
-    /// **不**包含 BYOK。BYOK 态判定用 `mode == .byok` 或 `byokConfig?.hasAnyKey`。
+    /// `isAuthenticated` 仅指"登录态(device grant)",**不**包含 BYOK key
+    /// (那个用 `byokConfig?.hasAnyKey` 判)。接合 v2 后这是唯一的能力门:
+    /// 登录 = 账号级能力叠加(遥控/未来信箱),不再有 `mode` 路由。
     var isAuthenticated: Bool { credential != nil }
-
-    /// **display/capability only —— 不再路由 crew 数据**(接合 v2)。
-    /// `backend` 在 macOS 上恒为本地;这个值只剩"登没登录"的展示语义,
-    /// 新代码判能力请直接用 `isAuthenticated`。
-    /// 两种凭据都没有时返回 nil(WelcomeView 时态)。
-    var mode: BackendMode? {
-        if credential != nil { return .logged }
-        #if os(macOS)
-        return .local   // Mac 默认本机模式（无需开屏选），登录是可选升级。
-        #else
-        return localModeSelected ? .local : nil
-        #endif
-    }
 
     func saveAPIBaseURL(_ url: String) {
         let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -170,7 +158,7 @@ final class AppModel: ObservableObject {
                 scopes: ["subject:read", "crew:read", "crew:write", "runner:read", "runner:write"]
             )
             if let token = resp.deviceGrantToken {
-                try saveDeviceGrantToken(token)   // mode 翻成 .logged
+                try saveDeviceGrantToken(token)   // isAuthenticated 翻 true
                 return true
             }
             return false
@@ -252,18 +240,6 @@ final class AppModel: ObservableObject {
         cachedRunnerHostId = id
         return id
     }
-}
-
-/// PendingCrewBackend 的 mode 标记。
-/// 放在 AppModel 文件里因为初始化路由就要用,不想为了一个 enum 起新 file。
-enum BackendMode: Equatable {
-    /// 走 PendingBot edge,扫码登录,unified billing。
-    case logged
-    /// **本机模式**:直接驱动本机已登录的 claude / codex CLI（用它们自己的
-    /// 登录态/订阅额度，**不需要 API key**），JSON store，只本机 crew。
-    /// 过去叫 "byok" —— 其实 key 是选填的（仅未来 SDK/`-p` API-key 额度池路径用），
-    /// 进本机模式不该被"有没有 key"门禁，所以正名为 `.local`。
-    case local
 }
 
 private enum DefaultsKey {
