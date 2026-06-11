@@ -8,10 +8,15 @@ final class McpServerTests: XCTestCase {
         try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
         return d
     }
-    private func server(_ dir: URL) -> McpServer {
+    private func server(_ dir: URL, isCaptain: Bool = false) -> McpServer {
         McpServer(store: LocalWhiteboardStore(directory: dir),
                   approvals: LocalApprovalStore(directory: dir),
-                  crewId: "c", sessionId: "sess-1")
+                  crewId: "c", sessionId: "sess-1", isCaptain: isCaptain)
+    }
+    private func callAnswerDecision(_ s: McpServer, reqId: String, reply: String) -> String {
+        s.handleLine("""
+        {"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"answer_decision","arguments":{"reqId":"\(reqId)","reply":"\(reply)"}}}
+        """) ?? ""
     }
 
     func testInitializeReturnsCapabilities() {
@@ -107,5 +112,62 @@ final class McpServerTests: XCTestCase {
         XCTAssertTrue(r?.contains("选 A") ?? false, "ask 应拿到答复返回")
         XCTAssertTrue(s.store.list(crewId: "c").contains { $0.text.contains("🔔 待决策") && $0.text.contains("选 A 还是 B?") },
                       "ask 应往白板贴一条待决策通知")
+    }
+
+    // MARK: - answer_decision（机长专用，chunk2 T4）
+
+    func testNonCaptainToolsListLacksAnswerDecision() {
+        let r = server(tempDir()).handleLine(#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#)!
+        XCTAssertFalse(r.contains("answer_decision"))
+    }
+
+    func testCaptainToolsListHasAnswerDecision() {
+        let r = server(tempDir(), isCaptain: true).handleLine(#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#)!
+        XCTAssertTrue(r.contains("answer_decision"))
+    }
+
+    func testNonCaptainAnswerDecisionRejected() {
+        let s = server(tempDir())
+        let id = s.approvals.raise(crewId: "c", kind: "decision", sessionId: "w", summary: "q")
+        XCTAssertTrue(callAnswerDecision(s, reqId: id, reply: "选 A").contains("仅机长可用"))
+        XCTAssertEqual(s.approvals.item(crewId: "c", id: id)?.status, "pending")
+    }
+
+    func testCaptainAnswerDecisionAnswersAndUnblocksAsk() {
+        let s = server(tempDir(), isCaptain: true)
+        let id = s.approvals.raise(crewId: "c", kind: "decision", sessionId: "w", summary: "选 A 还是 B?")
+        let r = callAnswerDecision(s, reqId: id, reply: "选 A")
+        XCTAssertTrue(r.contains("已答复"))
+        let item = s.approvals.item(crewId: "c", id: id)
+        XCTAssertEqual(item?.status, "answered")
+        XCTAssertEqual(item?.reply, "选 A")
+        // 发起方 ask 的 long-poll（已预先答复）立刻拿到答复
+        XCTAssertEqual(s.awaitReply(reqId: id, pollInterval: 0.01), "选 A")
+    }
+
+    func testAnswerDecisionWrongReqId() {
+        let s = server(tempDir(), isCaptain: true)
+        XCTAssertTrue(callAnswerDecision(s, reqId: "nope", reply: "x").contains("找不到待决策"))
+    }
+
+    func testAnswerDecisionAlreadyAnswered() {
+        let s = server(tempDir(), isCaptain: true)
+        let id = s.approvals.raise(crewId: "c", kind: "decision", sessionId: "w", summary: "q")
+        s.approvals.answer(crewId: "c", id: id, reply: "first")
+        XCTAssertTrue(callAnswerDecision(s, reqId: id, reply: "second").contains("已被答复"))
+        XCTAssertEqual(s.approvals.item(crewId: "c", id: id)?.reply, "first")
+    }
+
+    func testAnswerDecisionPermissionKindRejected() {
+        let s = server(tempDir(), isCaptain: true)
+        let id = s.approvals.raise(crewId: "c", kind: "permission", sessionId: "w", summary: "rm?")
+        XCTAssertTrue(callAnswerDecision(s, reqId: id, reply: "allow").contains("不是待决策"))
+        XCTAssertEqual(s.approvals.item(crewId: "c", id: id)?.status, "pending")
+    }
+
+    func testAnswerDecisionEmptyReplyRejected() {
+        let s = server(tempDir(), isCaptain: true)
+        let id = s.approvals.raise(crewId: "c", kind: "decision", sessionId: "w", summary: "q")
+        XCTAssertTrue(callAnswerDecision(s, reqId: id, reply: "  ").contains("reply 不能为空"))
     }
 }

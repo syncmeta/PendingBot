@@ -4,7 +4,7 @@ import Foundation
 /// 由 `PendingCrewEntry.main()` 在 argv 带 helper flag 时调用，跑完即返回。
 ///
 /// 子命令（flag 形式，因为是同一 app 二进制的 argv，不是子进程参数）：
-///   `--mcp-serve --crew <id> --dir <path> --session <id>`           → MCP stdio server
+///   `--mcp-serve --crew <id> --dir <path> --session <id> [--captain]` → MCP stdio server
 ///   `--mcp-hook  --crew <id> --dir <path> --session <id>`           → 吐未读白板的 PostToolUse hook JSON
 ///   `--mcp-permission-hook --crew <id> --dir <path> --gate <a,b>`   → 权限审批 PreToolUse hook
 enum McpHelperMain {
@@ -24,8 +24,10 @@ enum McpHelperMain {
 
         if serve {
             // newline-delimited JSON-RPC over stdin/stdout（MCP stdio）。
+            // `--captain` → 解锁机长专用 answer_decision 工具（chunk2 T4）。
+            let captain = args.contains("--captain")
             let server = McpServer(store: store, approvals: LocalApprovalStore(directory: dir),
-                                   crewId: crewId, sessionId: sessionId)
+                                   crewId: crewId, sessionId: sessionId, isCaptain: captain)
             while let line = readLine(strippingNewline: true) {
                 if let out = server.handleLine(line) {
                     print(out)

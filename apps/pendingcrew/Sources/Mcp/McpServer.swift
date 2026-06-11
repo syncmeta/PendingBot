@@ -13,12 +13,17 @@ final class McpServer {
     let approvals: LocalApprovalStore
     let crewId: String
     let sessionId: String
+    /// 机长 session 标记（helper `--captain` flag 传入）—— 解锁机长专用工具
+    /// `answer_decision`（chunk2 T4）。worker session 看不到也调不动。
+    let isCaptain: Bool
 
-    init(store: LocalWhiteboardStore, approvals: LocalApprovalStore, crewId: String, sessionId: String) {
+    init(store: LocalWhiteboardStore, approvals: LocalApprovalStore, crewId: String, sessionId: String,
+         isCaptain: Bool = false) {
         self.store = store
         self.approvals = approvals
         self.crewId = crewId
         self.sessionId = sessionId
+        self.isCaptain = isCaptain
     }
 
     /// 处理一行 JSON-RPC。返回应答 JSON 字符串；通知（无 id / `notifications/*`）→ nil。
@@ -42,7 +47,7 @@ final class McpServer {
                 "serverInfo": ["name": "pendingcrew", "version": "0.1.0"],
             ])
         case "tools/list":
-            return result(id: id, ["tools": [
+            var tools: [[String: Any]] = [
                 [
                     "name": "post_to_crew",
                     "description": "把关键节点发到 crew 群聊白板（只发要紧的：开始/完成/卡住/交接/重要发现，别倒 IO 日志）。",
@@ -69,7 +74,22 @@ final class McpServer {
                         "required": ["question"],
                     ],
                 ],
-            ]])
+            ]
+            if isCaptain {
+                tools.append([
+                    "name": "answer_decision",
+                    "description": "（机长专用）答复一条待决策：用你的判断给出答复，answering 会立刻解开发起 session 的等待。",
+                    "inputSchema": [
+                        "type": "object",
+                        "properties": [
+                            "reqId": ["type": "string"],
+                            "reply": ["type": "string"],
+                        ],
+                        "required": ["reqId", "reply"],
+                    ],
+                ])
+            }
+            return result(id: id, ["tools": tools])
         case "tools/call":
             let params = obj["params"] as? [String: Any]
             return handleToolCall(id: id,
@@ -109,6 +129,27 @@ final class McpServer {
                                        text: "🔔 待决策：\(question)\n（请在 PendingCrew 待办列表里答复）",
                                        category: "question")
             return toolResult(id: id, text: awaitReply(reqId: reqId))
+        case "answer_decision":
+            // 机长专用（chunk2 T4）：答复一条 decision，解开发起 session 的 long-poll。
+            guard isCaptain else {
+                return toolResult(id: id, text: "ERROR: 仅机长可用")
+            }
+            let reqId = (args["reqId"] as? String) ?? ""
+            let reply = (args["reply"] as? String) ?? ""
+            guard !reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return toolResult(id: id, text: "ERROR: reply 不能为空")
+            }
+            guard let item = approvals.item(crewId: crewId, id: reqId) else {
+                return toolResult(id: id, text: "ERROR: 找不到待决策 \(reqId)")
+            }
+            guard item.kind == "decision" else {
+                return toolResult(id: id, text: "ERROR: 该条不是待决策（权限审批请人类处理）")
+            }
+            guard item.status == "pending" else {
+                return toolResult(id: id, text: "ERROR: 该条已被答复")
+            }
+            approvals.answer(crewId: crewId, id: reqId, reply: reply)
+            return toolResult(id: id, text: "已答复，发起的 session 将继续。")
         default:
             return toolResult(id: id, text: "ERROR: 未知工具 \(name ?? "nil")")
         }
