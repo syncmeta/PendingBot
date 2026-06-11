@@ -108,6 +108,54 @@ final class LocalCrewStore {
         return CreateCrewResponse(crewId: id, captainBotId: captainBotId)
     }
 
+    // MARK: - Relay 绑定（接合 v2 block 3：edge 信箱）
+
+    /// 把本地 crew 绑到 edge 侧 relay crew conversation（「接入 PendingBot」
+    /// 成功后调）。同时把推送水位初始化为 nil —— CrewRelayAgent 首 tick 会
+    /// 以"绑定时白板末尾"为基线，只上行之后的新消息。
+    func bindRemoteConversation(crewId: String, remoteConversationId: String) {
+        guard var crew = crews[crewId] else { return }
+        crew.remoteConversationId = remoteConversationId
+        crew.relayCursor = nil
+        crew.relayPushedThroughId = nil
+        crews[crewId] = crew
+        persistToDisk()
+    }
+
+    /// 更新拉取游标（edge `lastCursor`，ISO8601）。
+    func setRelayCursor(crewId: String, cursor: String?) {
+        guard var crew = crews[crewId], crew.relayCursor != cursor else { return }
+        crew.relayCursor = cursor
+        crews[crewId] = crew
+        persistToDisk()
+    }
+
+    /// 更新上行推送水位（最后一条已推送的本地白板消息 id）。
+    func setRelayPushedThrough(crewId: String, messageId: String?) {
+        guard var crew = crews[crewId], crew.relayPushedThroughId != messageId else { return }
+        crew.relayPushedThroughId = messageId
+        crews[crewId] = crew
+        persistToDisk()
+    }
+
+    /// 单条 crew 的 relay 绑定快照（UI / 同步代理读）。crew 不存在或未绑定
+    /// remote conversation → nil。
+    func relayBinding(for crewId: String) -> LocalCrewRelayBinding? {
+        guard let crew = crews[crewId], let remoteId = crew.remoteConversationId else { return nil }
+        return LocalCrewRelayBinding(
+            crewId: crew.id,
+            remoteConversationId: remoteId,
+            relayCursor: crew.relayCursor,
+            relayPushedThroughId: crew.relayPushedThroughId,
+            captainName: crew.captainName
+        )
+    }
+
+    /// 所有已绑定 relay 的 crew（CrewRelayAgent 每 tick 遍历）。
+    func listRelayBindings() -> [LocalCrewRelayBinding] {
+        crews.keys.compactMap { relayBinding(for: $0) }
+    }
+
     /// 删除一条 crew。
     func deleteCrew(_ id: String) {
         guard crews.removeValue(forKey: id) != nil else { return }
@@ -167,6 +215,13 @@ private struct LocalCrew: Codable, Equatable {
     let captainName: String?
     let createdAt: String
     let updatedAt: String
+    // 接合 v2 block 3：edge relay 信箱绑定（optional → 旧 JSON 缺键向后兼容）。
+    /// 绑定的 edge crew conversation id（「接入 PendingBot」后写入）。
+    var remoteConversationId: String? = nil
+    /// 拉取游标 —— edge `lastCursor`（ISO8601），断线重连续传。
+    var relayCursor: String? = nil
+    /// 上行推送水位 —— 最后一条已推送到 edge 的本地白板消息 id。
+    var relayPushedThroughId: String? = nil
 
     var summary: CrewSummary {
         CrewSummary(
@@ -215,6 +270,17 @@ private struct LocalCrew: Codable, Equatable {
             }
         )
     }
+}
+
+/// relay 绑定快照 —— `LocalCrew` 私有,把同步代理需要的字段抠出来给
+/// CrewRelayAgent / inspector UI 用。
+struct LocalCrewRelayBinding: Equatable {
+    let crewId: String
+    let remoteConversationId: String
+    let relayCursor: String?
+    let relayPushedThroughId: String?
+    /// 本地 captain 名字 —— relay 上行 captain 话语时作 senderLabel。
+    let captainName: String?
 }
 
 private struct LocalCrewFile: Codable {

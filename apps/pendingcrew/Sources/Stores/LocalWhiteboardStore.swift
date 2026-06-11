@@ -82,6 +82,36 @@ final class LocalWhiteboardStore: @unchecked Sendable {
             createdAt: ISO8601DateFormatter().string(from: Date())))
     }
 
+    /// 追加一条 **relay 拉下来的** 消息（接合 v2 block 3：CrewRelayAgent 把
+    /// edge 信箱新条目搬进本地白板）。幂等：同 `relayRemoteId` 已存在 → no-op
+    /// （edge 拉取 `?since=` 是闭区间,游标边界条目会重复出现）。
+    func appendRelayMessage(
+        crewId: String,
+        remoteId: String,
+        senderKind: String,
+        senderDisplayName: String?,
+        text: String,
+        createdAt: String
+    ) {
+        let rows = load(crewId: crewId)
+        guard !rows.contains(where: { $0.relayRemoteId == remoteId }) else { return }
+        append(crewId: crewId, LocalWhiteboardMessage(
+            id: UUID().uuidString.lowercased(),
+            senderKind: senderKind,
+            senderUserId: nil,
+            senderSessionId: nil,
+            category: nil,
+            text: text,
+            createdAt: createdAt,
+            relayRemoteId: remoteId,
+            senderDisplayName: senderDisplayName))
+    }
+
+    /// 该 crew 已从 relay 同步进来的 edge message id 集合（拉取去重用）。
+    func relayRemoteIds(crewId: String) -> Set<String> {
+        Set(load(crewId: crewId).compactMap(\.relayRemoteId))
+    }
+
     // MARK: - Persistence
 
     private func fileURL(_ crewId: String) -> URL {
@@ -117,4 +147,10 @@ struct LocalWhiteboardMessage: Codable, Equatable {
     let text: String
     /// ISO8601 字符串，与 edge `created_at` 同形，便于 UI 复用时间分隔逻辑。
     let createdAt: String
+    /// relay 来源的 edge message id（接合 v2 block 3）。非 nil = 这条是
+    /// CrewRelayAgent 从 edge 信箱搬进来的 —— 上行推送侧据此排除（防回环），
+    /// 拉取侧据此去重。本地产生的消息恒为 nil（默认值兼容旧调用方/旧 JSON）。
+    var relayRemoteId: String? = nil
+    /// relay 消息在 edge 侧的发送者显示名（iOS 用户名 / bot 名）。本地消息 nil。
+    var senderDisplayName: String? = nil
 }
