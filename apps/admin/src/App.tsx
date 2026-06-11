@@ -13,7 +13,7 @@ import { FeatureFlagsPage } from './pages/feature-flags';
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename="/board">
       <ConfigProvider theme={RefineThemes.Blue}>
         <AntdApp>
           <Refine

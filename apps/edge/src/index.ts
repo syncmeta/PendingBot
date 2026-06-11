@@ -79,8 +79,9 @@ const app = new Hono<AppBindings>();
 
 app.use('*', logger());
 
-// CORS — lock to the configured origin per env. Worker exposes Authorization
-// header for the supabase JWT carried on writes.
+// CORS — lock to the configured origin(s) per env. Worker exposes
+// Authorization header for the supabase JWT carried on writes.
+// ALLOWED_ORIGIN is comma-separated (app origin + admin console origin).
 //
 // Fallback when ALLOWED_ORIGIN is unset: deny all browser origins (return []).
 // Native iOS clients don't honor CORS so they're unaffected — only browsers
@@ -90,7 +91,12 @@ app.use('*', logger());
 app.use('*', async (c, next) => {
   const origin = c.env.ALLOWED_ORIGIN;
   return cors({
-    origin: origin ? [origin] : [],
+    origin: origin
+      ? origin
+          .split(',')
+          .map((o) => o.trim())
+          .filter(Boolean)
+      : [],
     credentials: true,
     allowHeaders: ['Authorization', 'Content-Type', 'X-Client-Version', 'X-Client-Platform'],
     maxAge: 600,
@@ -112,6 +118,21 @@ app.onError((err, c) => {
   return jsonError(c, 500, 'internal_error', {
     message: c.env.ENVIRONMENT === 'production' ? undefined : String(err),
   });
+});
+
+// Board admin console — apps/admin SPA served same-origin from the assets
+// binding so the Cloudflare Access cookie covers both the page and the
+// /v1/board/* API (a cross-origin host couldn't carry it). The built SPA
+// uses base /board/, the binding's directory is the bare dist/, so strip the
+// prefix before asset lookup; unknown paths fall through to index.html
+// (assets.not_found_handling = single-page-application).
+app.get('/board', (c) => c.redirect('/board/'));
+app.get('/board/*', (c) => {
+  const assets = c.env.ASSETS;
+  if (!assets) return jsonError(c, 404, 'not_found');
+  const url = new URL(c.req.url);
+  url.pathname = url.pathname.replace(/^\/board/, '') || '/';
+  return assets.fetch(new Request(url.toString(), c.req.raw));
 });
 
 // Routes — mounted under /v1/

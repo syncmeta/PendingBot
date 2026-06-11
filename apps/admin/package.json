@@ -9,7 +9,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --port 5174",
     "typecheck": "tsc --noEmit",
-    "deploy": "wrangler pages deploy dist --project-name=pendingbot-admin"
+    "deploy": "echo 'admin ships with the edge worker: bun --filter=@pendingbot/edge run deploy' && exit 1"
   },
   "dependencies": {
     "@refinedev/antd": "^6",

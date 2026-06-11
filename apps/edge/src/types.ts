@@ -98,6 +98,17 @@ export interface Env {
   LANGFUSE_ENABLED?: string;
   SUPABASE_URL: string;
   ALLOWED_ORIGIN: string;
+  /// Cloudflare Access coordinates for the board console gate
+  /// (lib/cf-access.ts). Team domain like `<team>.cloudflareaccess.com` and
+  /// the Access application AUD tag. The /v1/board/* gate is FAIL-CLOSED:
+  /// unset vars reject every board request, so only set them together with a
+  /// live Access app in front of the route.
+  CF_ACCESS_TEAM_DOMAIN?: string;
+  CF_ACCESS_AUD?: string;
+  /// Workers static assets (apps/admin SPA served under /board). Optional so
+  /// test harnesses without the binding still typecheck; the /board route
+  /// 404s when absent.
+  ASSETS?: Fetcher;
   /// AI Gateway coordinates for the Logs API cost lookup (lib/ai-gateway.ts).
   /// Optional so `wrangler dev` without these set still typechecks/runs.
   CF_ACCOUNT_ID?: string;

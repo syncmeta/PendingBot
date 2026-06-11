@@ -21,14 +21,18 @@ import { edgeFetch, EdgeApiError } from './http';
 // tighten `check` to reject non-admins client-side too (logged to tech-debt).
 // ─────────────────────────────────────────────────────────────────────────
 
-type LoginVars = { email?: string; password?: string };
+type LoginVars = { email?: string; password?: string; captchaToken?: string };
 
 export const authProvider: AuthProvider = {
-  login: async ({ email, password }: LoginVars) => {
+  login: async ({ email, password, captchaToken }: LoginVars) => {
     if (!email || !password) {
       return { success: false, error: { name: 'LoginError', message: '请输入邮箱和密码' } };
     }
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+      options: { captchaToken },
+    });
     if (error) {
       return {
         success: false,
