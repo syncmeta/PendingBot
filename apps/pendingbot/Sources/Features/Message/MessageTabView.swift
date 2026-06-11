@@ -1770,10 +1770,9 @@ private struct CreateGroupView: View {
         let selectedHumans = members.filter { $0.kind == .human && selectedIds.contains($0.id) }.map(\.id)
         do {
             // Worker /v1/groups (open_group_conv RPC). Direct INSERTs would
-            // skip conversation_group_meta + group_billing_config +
-            // group_member_billing seeding, leave the 30-member cap
+            // skip conversation_group_meta seeding, leave the 30-member cap
             // unenforced, and let private bots through. The RPC is the
-            // single contract that keeps all those side-tables consistent.
+            // single contract that keeps those side-tables consistent.
             struct Body: Encodable {
                 let title: String?
                 let memberUserIds: [String]

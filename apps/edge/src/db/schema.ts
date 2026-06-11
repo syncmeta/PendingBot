@@ -1481,6 +1481,42 @@ export type Database = {
           },
         ]
       }
+      family_sso_credentials: {
+        Row: {
+          created_at: string
+          device_name: string
+          expires_at: string
+          id: string
+          last_used_at: string | null
+          revoked_at: string | null
+          status: string
+          token_hash: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          device_name: string
+          expires_at?: string
+          id?: string
+          last_used_at?: string | null
+          revoked_at?: string | null
+          status?: string
+          token_hash: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          device_name?: string
+          expires_at?: string
+          id?: string
+          last_used_at?: string | null
+          revoked_at?: string | null
+          status?: string
+          token_hash?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       friend_requests: {
         Row: {
           created_at: string
@@ -1803,81 +1839,31 @@ export type Database = {
           },
         ]
       }
-      group_member_billing: {
-        Row: {
-          cap_credits: number | null
-          conversation_id: string
-          frozen_at: string | null
-          joined_at: string
-          muted: boolean
-          overdrawn: boolean
-          participates: boolean
-          spent_credits: number
-          user_id: string
-        }
-        Insert: {
-          cap_credits?: number | null
-          conversation_id: string
-          frozen_at?: string | null
-          joined_at?: string
-          muted?: boolean
-          overdrawn?: boolean
-          participates?: boolean
-          spent_credits?: number
-          user_id: string
-        }
-        Update: {
-          cap_credits?: number | null
-          conversation_id?: string
-          frozen_at?: string | null
-          joined_at?: string
-          muted?: boolean
-          overdrawn?: boolean
-          participates?: boolean
-          spent_credits?: number
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "group_member_billing_conv_fkey"
-            columns: ["conversation_id"]
-            isOneToOne: false
-            referencedRelation: "conversations"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       group_member_invitations: {
         Row: {
-          billing_snapshot: Json
           conversation_id: string
           created_at: string
           decided_at: string | null
           id: string
           invitee_id: string
-          invitee_participates: boolean
           inviter_id: string
           status: Database["pendingbot"]["Enums"]["join_request_status"]
         }
         Insert: {
-          billing_snapshot?: Json
           conversation_id: string
           created_at?: string
           decided_at?: string | null
           id?: string
           invitee_id: string
-          invitee_participates?: boolean
           inviter_id: string
           status?: Database["pendingbot"]["Enums"]["join_request_status"]
         }
         Update: {
-          billing_snapshot?: Json
           conversation_id?: string
           created_at?: string
           decided_at?: string | null
           id?: string
           invitee_id?: string
-          invitee_participates?: boolean
           inviter_id?: string
           status?: Database["pendingbot"]["Enums"]["join_request_status"]
         }
@@ -3194,6 +3180,7 @@ export type Database = {
           granted_by_user_id: string | null
           id: string
           last_used_at: string | null
+          parent_family_credential_id: string | null
           platform: string
           revoked_at: string | null
           scopes: Json
@@ -3211,6 +3198,7 @@ export type Database = {
           granted_by_user_id?: string | null
           id?: string
           last_used_at?: string | null
+          parent_family_credential_id?: string | null
           platform?: string
           revoked_at?: string | null
           scopes?: Json
@@ -3228,6 +3216,7 @@ export type Database = {
           granted_by_user_id?: string | null
           id?: string
           last_used_at?: string | null
+          parent_family_credential_id?: string | null
           platform?: string
           revoked_at?: string | null
           scopes?: Json
@@ -3236,6 +3225,13 @@ export type Database = {
           token_hash?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "subject_device_grants_parent_family_credential_id_fkey"
+            columns: ["parent_family_credential_id"]
+            isOneToOne: false
+            referencedRelation: "family_sso_credentials"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "subject_device_grants_subject_id_fkey"
             columns: ["subject_id"]
@@ -4854,6 +4850,15 @@ export type Database = {
         Args: { p_conversation_id: string; p_user_id: string }
         Returns: boolean
       }
+      issue_family_sso_credential: {
+        Args: {
+          p_device_name: string
+          p_id: string
+          p_token_hash: string
+          p_user_id: string
+        }
+        Returns: string
+      }
       list_bot_invitees: {
         Args: { p_bot_id: string }
         Returns: {
@@ -4865,6 +4870,20 @@ export type Database = {
       mark_session_mailbox_delivered: {
         Args: { p_item_ids: string[]; p_session_id: string }
         Returns: number
+      }
+      mint_device_grant_from_family: {
+        Args: {
+          p_app_kind: string
+          p_device_name: string
+          p_device_public_key: string
+          p_family_token_hash: string
+          p_grant_id: string
+          p_grant_kind: string
+          p_scopes: Json
+          p_subject_id: string
+          p_token_hash: string
+        }
+        Returns: Json
       }
       normalize_email: { Args: { p_email: string }; Returns: string }
       open_crew_conv: {
@@ -4938,6 +4957,10 @@ export type Database = {
           source: string
           subject_id: string
         }[]
+      }
+      revoke_family_sso_credential: {
+        Args: { p_family_id: string }
+        Returns: undefined
       }
       runner_host_heartbeat: {
         Args: {

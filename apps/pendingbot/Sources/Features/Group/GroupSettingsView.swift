@@ -36,10 +36,6 @@ struct GroupSettingsView: View {
     @State private var numberHandle: String = ""
     @State private var copiedNumber = false
 
-    // Cap/balance gate — own freeze state drives the banner; the per-
-    // member overdrawn flags drive the badges in the member list.
-    @State private var iAmFrozen: Bool = false
-
     // Friends lookup so member taps can route to the existing user_user
     // chat directly when a row is already a contact.
     @State private var friendUserIds: Set<String> = []
@@ -53,10 +49,6 @@ struct GroupSettingsView: View {
 
     var body: some View {
         Form {
-            if iAmFrozen {
-                frozenBanner
-            }
-
             if let meta {
                 Section("群信息") {
                     if isAdmin {
@@ -234,23 +226,6 @@ struct GroupSettingsView: View {
         }
     }
 
-    // MARK: - Frozen banner
-
-    private var frozenBanner: some View {
-        Section {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("你已达到本群的 PND 上限")
-                    .font(Theme.Fonts.subheadline.weight(.semibold))
-                    .foregroundStyle(Theme.Palette.amber)
-                Text("从超出之后的新消息你看不到,也无法在群里发消息。提高上限或充值后恢复。")
-                    .font(Theme.Fonts.footnote)
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 4)
-        }
-    }
-
     // MARK: - Group number row (auto-minted, fixed identifier)
 
     @ViewBuilder
@@ -345,15 +320,9 @@ struct GroupSettingsView: View {
                 .foregroundStyle(Theme.Palette.ink)
                 .lineLimit(1)
             Spacer(minLength: 8)
-            // Right side: status badge + role / bot tags. Stacked so a
-            // 群主 + 机器人 + 已达上限 row still fits on one line by
-            // truncating the name first.
+            // Right side: role / bot tags. Stacked so a 群主 + 机器人 row
+            // still fits on one line by truncating the name first.
             HStack(spacing: 6) {
-                if m.frozen {
-                    statusPill(text: "已达上限",
-                               fg: Theme.Palette.amber,
-                               bg: Theme.Palette.amberBg)
-                }
                 if m.isBot {
                     statusPill(text: "机器人",
                                fg: Theme.Palette.inkMuted,
@@ -468,19 +437,12 @@ struct GroupSettingsView: View {
                 .execute()
                 .value
 
+            // `muted` lives on the participant row (the retired split
+            // table that used to carry it is gone) — only the caller's
+            // own value is consumed below.
             async let partResp: [ParticipantDecodable] = SupabaseStack.shared
                 .from("conversation_participants")
-                .select("participant_type, participant_id, role, nickname")
-                .eq("conversation_id", value: conversationId)
-                .execute()
-                .value
-
-            // Read every member's billing row (RLS-policy-3 lets any
-            // participant see the lot post-0066) so the list can paint
-            // 已达上限 badges for anyone, not just the caller.
-            async let billingResp: [BillingDecodable] = SupabaseStack.shared
-                .from("group_member_billing")
-                .select("user_id, muted, overdrawn, frozen_at")
+                .select("participant_type, participant_id, role, nickname, muted")
                 .eq("conversation_id", value: conversationId)
                 .execute()
                 .value
@@ -496,11 +458,7 @@ struct GroupSettingsView: View {
 
             let metas = try await metaResp
             let parts = try await partResp
-            let billings = try await billingResp
             let handles = try await handlesResp
-
-            let billingByUser = Dictionary(uniqueKeysWithValues:
-                billings.map { ($0.user_id, $0) })
 
             // Resolve display names + avatars: bots from `bots`, humans
             // from `users.display_name + avatar_path`. Two extra reads,
@@ -550,7 +508,6 @@ struct GroupSettingsView: View {
                 let avatarSeed = isBot
                     ? p.participant_id
                     : (userInfo[p.participant_id]?.2 ?? p.participant_id)
-                let frozen = !isBot && (billingByUser[p.participant_id]?.overdrawn ?? false)
                 let resolvedName: String = {
                     if isBot { return botNames[p.participant_id] ?? "未知机器人" }
                     return userInfo[p.participant_id]?.0 ?? ""
@@ -563,8 +520,7 @@ struct GroupSettingsView: View {
                     role: p.role,
                     display_name: resolvedName,
                     avatar_path: avatarPath,
-                    avatar_seed: avatarSeed,
-                    frozen: frozen
+                    avatar_seed: avatarSeed
                 ))
                 return Member(
                     id: "\(p.participant_type):\(p.participant_id)",
@@ -576,14 +532,12 @@ struct GroupSettingsView: View {
                     avatarSeed: avatarSeed,
                     role: p.role,
                     isOwner: p.role == "owner",
-                    frozen: frozen,
                 )
             }
             self.myNickname = me?.nickname ?? ""
             self.isAdmin = (me?.role == "owner" || me?.role == "admin")
             self.myRole = me?.role ?? ""
-            self.myMuted = billingByUser[myUserId]?.muted ?? false
-            self.iAmFrozen = billingByUser[myUserId]?.overdrawn ?? false
+            self.myMuted = me?.muted ?? false
 
             self.numberHandle = handles.first(where: { $0.handle_type == "number" })?.value ?? ""
 
@@ -613,9 +567,9 @@ struct GroupSettingsView: View {
 
     /// Read the most-recent cached snapshot of meta + members so the
     /// view paints last-known content while `load()` waits on the
-    /// network. Frozen / muted / friend-membership state aren't cached
-    /// here — the badges that depend on them paint in once the network
-    /// load finishes, but the avatars + names + role hierarchy land
+    /// network. Muted / friend-membership state aren't cached here —
+    /// the controls that depend on them paint in once the network load
+    /// finishes, but the avatars + names + role hierarchy land
     /// instantly.
     private func hydrateFromCache() {
         if let cachedMeta = CacheRepository.cachedGroupMeta(conversationId: conversationId) {
@@ -646,7 +600,6 @@ struct GroupSettingsView: View {
                 avatarSeed: r.avatar_seed ?? r.participant_id,
                 role: r.role ?? "",
                 isOwner: r.role == "owner",
-                frozen: r.frozen,
             )
         }
         let myRole = cachedMembers.first(where: {
@@ -735,7 +688,6 @@ struct GroupSettingsView: View {
                     avatarSeed: m.avatarSeed,
                     role: role,
                     isOwner: m.isOwner,
-                    frozen: m.frozen
                 )
             }
             Haptics.success()
@@ -803,7 +755,6 @@ struct GroupSettingsView: View {
         let avatarSeed: String
         let role: String
         let isOwner: Bool
-        let frozen: Bool
     }
 
     private struct GroupMetaDecodable: Decodable {
@@ -818,13 +769,7 @@ struct GroupSettingsView: View {
         let participant_id: String
         let role: String
         let nickname: String?
-    }
-
-    private struct BillingDecodable: Decodable {
-        let user_id: String
-        let muted: Bool
-        let overdrawn: Bool
-        let frozen_at: String?
+        let muted: Bool?
     }
 
     private struct HandleRow: Decodable {

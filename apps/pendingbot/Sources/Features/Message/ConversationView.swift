@@ -304,14 +304,6 @@ struct ConversationView: View {
     // POST handler in the same extension.
     @State var continueDeciding: Bool = false
 
-    /// Group conv only — set when the caller's group_member_billing.
-    /// overdrawn = true (per-group cap exhausted OR wallet balance can't
-    /// cover the next allocation; migration 0066 unifies both into the
-    /// same flag). The timestamp is the moment of the flip — messages
-    /// from this point forward are hidden and the composer locks. Older
-    /// messages stay visible so the user can still scroll their history.
-    @State var groupFreezeAt: Date?
-
     /// "<bot_name> · <model-tag>". The model is the bot's resolved model
     /// (bots.model_id, which already accounts for the owner's edits in
     /// 我 → 机器人管理).
@@ -835,7 +827,6 @@ struct ConversationView: View {
             // Ensure the roster is in before the auto-join below reads it.
             await identity.value
             await loadPendingContinueIfNeeded()
-            await loadGroupFreezeIfNeeded()
             // Cold-launch path: we arrived here because the user
             // accepted a CallKit incoming voice ring. Now that
             // loadGroupSendersIfNeeded() has populated `groupSenders`
@@ -968,7 +959,6 @@ struct ConversationView: View {
                 showFileImporter: $showFileImporter,
                 showPhotoPicker: $showPhotoPicker,
                 showCamera: $showCamera,
-                iAmFrozen: iAmFrozen,
                 pendingContinue: pendingContinue,
                 continueDeciding: continueDeciding,
                 conversationType: conversation.conversation_type ?? "",
@@ -1034,23 +1024,10 @@ struct ConversationView: View {
     #endif
 
     private var canSend: Bool {
-        guard !iAmFrozen else { return false }
         return !input.trimmingCharacters(in: .whitespaces).isEmpty
             || pendingAttachments.contains(where: \.isUploaded)
     }
 
-    /// True iff this is a group conv and the caller has been frozen out
-    /// by group_member_billing.overdrawn. Drives the banner above the
-    /// composer and the displayed-message filter below.
-    private var iAmFrozen: Bool {
-        groupFreezeAt != nil
-    }
-
-    /// Messages the freeze gate allows the caller to see. Pre-freeze
-    /// rows stay visible (they were already in this user's allowance
-    /// when posted); rows whose `created_at` is at-or-after the freeze
-    /// timestamp are hidden — that's the user-facing rule "你看不到
-    /// 自从达到上限之后的新消息".
     private var displayedMessages: [ChatMessage] {
         let groups = arenaGroups
         var base = messages
@@ -1063,9 +1040,7 @@ struct ConversationView: View {
                 return groups[p] == nil
             }
         }
-        guard let freezeAt = groupFreezeAt else { return base }
-        let cutoff = Int(freezeAt.timeIntervalSince1970)
-        return base.filter { $0.created_at < cutoff }
+        return base
     }
 
     /// Arena blind-compare groups keyed by parent (user prompt) message id.
@@ -2232,11 +2207,6 @@ struct ConversationView: View {
             // expanding it after the turn completes; only the live binding
             // is cleared here.
             liveTraceUserMsgId = nil
-            // Re-check the freeze flag after a turn — billing for this
-            // turn may have flipped the caller from active to overdrawn,
-            // and the banner / message filter need to update without
-            // waiting for a manual refresh.
-            await loadGroupFreezeIfNeeded()
         }
     }
 
@@ -2268,9 +2238,8 @@ struct ConversationView: View {
     // ── REST: history + delete ─────────────────────────────────────────────
 
     // loadSkills + loadPeerProfileIfNeeded + fetchGroupMemberProfiles +
-    // loadGroupSendersIfNeeded + loadGroupFreezeIfNeeded +
-    // loadPendingContinueIfNeeded + loadHistory live in
-    // ConversationView+Loading.swift.
+    // loadGroupSendersIfNeeded + loadPendingContinueIfNeeded + loadHistory
+    // live in ConversationView+Loading.swift.
 
     // Group-only surfaces — groupSenderFor + mentionPrefix /
     // mentionCandidates / insertMention + decideContinue — live in
