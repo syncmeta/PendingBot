@@ -71,9 +71,30 @@ struct CrewSessionWindowView: View {
 
     /// 横向滚动的 session 切换条：每个 run 一个 capsule（名字 + 状态点 +
     /// 未读 badge 占位），点击切前台；已退出的带 ✕ 可移除。
+    /// 选中 crew 是否已有在跑的 captain run（启动按钮的显隐 + startCaptain 防重）。
+    private var hasRunningCaptain: Bool {
+        guard let crewId = crewStore.selectedDetail?.crew.id else { return false }
+        return sessionRunner.runs.contains {
+            $0.crewId == crewId && $0.role == .captain && $0.status == .running
+        }
+    }
+
     private var sessionBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
+                if crewStore.selectedDetail != nil && !hasRunningCaptain {
+                    Button {
+                        Task { await startCaptain() }
+                    } label: {
+                        Text("⚓ 启动 Captain")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.indigo)
+                    .controlSize(.small)
+                    .disabled(starting)
+                    .help("起一个机长 session：读白板、报到、答复待决策")
+                }
                 ForEach(barRuns) { run in
                     SessionBarItemView(
                         run: run,
@@ -216,10 +237,55 @@ struct CrewSessionWindowView: View {
         }
     }
 
+    /// 启动机长 session（chunk2 T3）。与 worker 的差异只有两点：世界观后追加
+    /// captain persona（`crew-captain.zh.md`），MCP helper 带 `--captain` 解锁
+    /// answer_decision。机长是调度者不改代码 —— 直接用 crew 目录，不开 isolation
+    /// worktree。每 crew 同时只允许一个在跑的 captain。
+    private func startCaptain() async {
+        guard let detail = crewStore.selectedDetail else { return }
+        guard !hasRunningCaptain else { return }
+        guard let wd = detail.crew.workingDirectory, !wd.isEmpty else {
+            localError = "这个 crew 没有工作目录 —— 在建 crew 时设置后再启动 Captain。"
+            return
+        }
+        let workdir = URL(fileURLWithPath: (wd as NSString).expandingTildeInPath)
+        starting = true
+        defer { starting = false }
+        localError = nil
+
+        let localSessionId = "captain-" + String(UUID().uuidString.lowercased().prefix(8))
+        let initialPrompt = "你是本 crew 的机长。先用 read_whiteboard 了解群聊现状，然后简短报到（post_to_crew 一句）并待命。后续有待决策会通知你。"
+        // persona best-effort：加载失败不挡启动（只是没机长人设，与世界观同策略）。
+        let persona = try? LocalPromptLoader().rawTemplate(name: "crew-captain", locale: "zh")
+        do {
+            var cfg = SessionConfig(kind: .claudeCode, initialPrompt: initialPrompt)
+            cfg.appendSystemPromptFile = await renderWorldModelFile(
+                detail: detail, taskBrief: initialPrompt, workdir: workdir,
+                sessionId: localSessionId, appendPersona: persona)
+            let comms = prepareLocalCommsConfig(
+                crewId: detail.crew.id, sessionId: localSessionId, captain: true)
+            cfg.settingsFile = comms.settings
+            cfg.mcpConfigFile = comms.mcp
+            try await sessionRunner.start(
+                crewId: detail.crew.id,
+                sessionId: localSessionId,
+                config: cfg,
+                workingDirectory: workdir,
+                taskBrief: initialPrompt,
+                role: .captain
+            )
+        } catch {
+            localError = error.localizedDescription
+        }
+    }
+
     /// BYOK: 渲染本地世界观 system prompt → 临时 `.md` → 返回路径供
     /// `--append-system-prompt-file`。logged 模式返回 nil（edge 注入）。
     /// best-effort：任一步失败返 nil，session 仍照常启动（只是没世界观）。
-    private func renderWorldModelFile(detail: CrewDetail, taskBrief: String, workdir: URL, sessionId: String) async -> String? {
+    /// `appendPersona` 非 nil 时（captain session）把 persona 拼到世界观后面 ——
+    /// captain 与 worker 的差异只是「追加 persona + --captain 工具门禁」（chunk2 §2）。
+    private func renderWorldModelFile(detail: CrewDetail, taskBrief: String, workdir: URL, sessionId: String,
+                                      appendPersona: String? = nil) async -> String? {
         guard appModel.mode == .local, let backend = appModel.backend else { return nil }
         let members = (try? await backend.listCrewMembers(crewId: detail.crew.id))?.members ?? []
         let humans = members
@@ -236,7 +302,10 @@ struct CrewSessionWindowView: View {
             humans: humans,
             captainName: detail.captain?.displayName,
             captainBotId: detail.captain?.botId)
-        guard let md = try? LocalSessionWorldModel().render(ctx) else { return nil }
+        guard var md = try? LocalSessionWorldModel().render(ctx) else { return nil }
+        if let persona = appendPersona {
+            md += "\n\n---\n\n" + persona
+        }
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("pendingcrew-worldmodel-\(UUID().uuidString).md")
         do {
@@ -252,16 +321,20 @@ struct CrewSessionWindowView: View {
     /// helper = `Bundle.main.executablePath`（re-exec self：app 二进制兼当 helper，最自包含、
     /// 免 embed）；白板 dir = `LocalWhiteboardStore.defaultDirectory`（与 app/store 同一份）。
     /// logged 模式 / 任一步失败 → 对应 nil（session 仍启动，少 comms）。
-    private func prepareLocalCommsConfig(crewId: String, sessionId: String) -> (settings: String?, mcp: String?) {
+    private func prepareLocalCommsConfig(crewId: String, sessionId: String,
+                                         captain: Bool = false) -> (settings: String?, mcp: String?) {
         guard appModel.mode == .local, let helper = Bundle.main.executablePath
         else { return (nil, nil) }
         let dir = LocalWhiteboardStore.defaultDirectory.path
         let tmp = FileManager.default.temporaryDirectory
 
         // mcp-config：command + args 是 exec 形式（claude 直接 spawn，不过 shell）→ 不引号。
+        // captain → 多带 --captain，helper 端解锁机长专用 answer_decision（chunk2 T4）。
+        var serveArgs = ["--mcp-serve", "--crew", crewId, "--dir", dir, "--session", sessionId]
+        if captain { serveArgs.append("--captain") }
         let mcp: [String: Any] = ["mcpServers": ["crew": [
             "command": helper,
-            "args": ["--mcp-serve", "--crew", crewId, "--dir", dir, "--session", sessionId],
+            "args": serveArgs,
         ]]]
         // settings：两个 hook 的 command 都是 shell 字符串（claude 过 sh -c）→ 引号每段。
         // PostToolUse：每轮注入未读白板。
