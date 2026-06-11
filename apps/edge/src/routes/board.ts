@@ -5,6 +5,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { requireSession, requireAdmin } from '@pendingbot/identity';
+import { requireCfAccess } from '../lib/cf-access';
 import { isBoardAdmin } from '../lib/board-audit';
 import { boardResource } from '../lib/board-resource';
 import { boardFeatureFlagsRoutes } from './board-feature-flags';
@@ -12,7 +13,8 @@ import type { AppBindings } from '../types';
 
 export const boardRoutes = new Hono<AppBindings>();
 
-// 门禁:必须登录且 is_admin。
+// 门禁三层:Cloudflare Access(边缘身份墙,fail-closed)→ 登录 → is_admin。
+boardRoutes.use('*', requireCfAccess());
 boardRoutes.use('*', requireSession());
 boardRoutes.use('*', requireAdmin(isBoardAdmin));
 

@@ -37,6 +37,13 @@ vi.mock('@pendingbot/identity', () => ({
   },
 }));
 
+// Access 边缘门在测试环境放行(真实校验逻辑由 src/lib/cf-access.test.ts 覆盖;
+// 这里测的是门内的 board 业务逻辑)。
+vi.mock('../src/lib/cf-access', () => ({
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  requireCfAccess: () => async (_c: any, next: any) => next(),
+}));
+
 installFakeSupabaseMock();
 
 // Minimal env: env defaults + a controllable MEMORY KV.
