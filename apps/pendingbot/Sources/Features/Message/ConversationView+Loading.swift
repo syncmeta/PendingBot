@@ -172,7 +172,6 @@ extension ConversationView {
         // path where senders weren't pre-hydrated. The network refresh below
         // then overwrites with the authoritative roster.
         hydrateGroupSendersFromCache()
-        let cached = CacheRepository.cachedGroupMembers(conversationId: conversation.id)
         do {
             struct PartRow: Decodable {
                 let participant_type: String
@@ -212,13 +211,6 @@ extension ConversationView {
                 (try await botResp).map { ($0.id, $0.display_name) })
             let userMap = await userInfoMap
 
-            // Preserve any frozen flags the settings page previously
-            // wrote — chat-side load doesn't query group_member_billing,
-            // so without this we'd clobber that bit back to false and
-            // the frozen badge would flash off on the next settings
-            // open until the next billing-fetch round-trip.
-            let priorFrozen: [String: Bool] = Dictionary(uniqueKeysWithValues:
-                cached.map { ("\($0.participant_type):\($0.participant_id)", $0.frozen) })
             var lookup: [String: GroupBubbleSender] = [:]
             var cacheRows: [LocalDatabase.GroupMemberRow] = []
             for p in parts {
@@ -250,8 +242,7 @@ extension ConversationView {
                     role: p.role,
                     display_name: resolvedName,
                     avatar_path: info?.1,
-                    avatar_seed: avatarSeed,
-                    frozen: priorFrozen[key] ?? false
+                    avatar_seed: avatarSeed
                 ))
             }
             self.groupSenders = lookup
@@ -259,40 +250,6 @@ extension ConversationView {
                 conversationId: conversation.id, cacheRows)
         } catch {
             loadingLog.warning("group senders load failed: \(error.localizedDescription, privacy: .public)")
-        }
-    }
-
-    /// Group conv only — read the caller's group_member_billing row to
-    /// learn whether they've crossed their per-group cap or run out of
-    /// wallet balance (migration 0066 unifies both into `overdrawn`).
-    /// When true, `frozen_at` carries the wall-clock moment of the flip
-    /// — used by `displayedMessages` to hide post-freeze rows and by
-    /// `iAmFrozen` to lock the composer + show the banner.
-    func loadGroupFreezeIfNeeded() async {
-        guard conversation.conversation_type == "group" else { return }
-        guard !conversation.id.isEmpty else { return }
-        guard let me = AccountStore.shared.current?.id else { return }
-        do {
-            struct Row: Decodable {
-                let overdrawn: Bool
-                let frozen_at: String?
-            }
-            let rows: [Row] = try await SupabaseStack.shared
-                .from("group_member_billing")
-                .select("overdrawn, frozen_at")
-                .eq("conversation_id", value: conversation.id)
-                .eq("user_id", value: me)
-                .limit(1)
-                .execute()
-                .value
-            if let row = rows.first, row.overdrawn,
-               let raw = row.frozen_at, let parsed = ServerTimestamp.parse(raw) {
-                self.groupFreezeAt = parsed
-            } else {
-                self.groupFreezeAt = nil
-            }
-        } catch {
-            loadingLog.warning("group freeze load failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 

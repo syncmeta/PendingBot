@@ -87,8 +87,7 @@ enum CacheRepository {
     /// successful resolve. Server is authoritative for who's in the group, so
     /// this delete-then-insert (in one txn, via `LocalDatabase`) avoids stale
     /// rows after a member leaves. Callers pass the canonical rows they build
-    /// alongside their view-model members (including the prior-frozen
-    /// preservation the chat-side load does).
+    /// alongside their view-model members.
     @MainActor
     static func persistGroupMembers(
         conversationId: String, _ rows: [LocalDatabase.GroupMemberRow]

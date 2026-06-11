@@ -321,6 +321,14 @@ final class LocalDatabase {
                           on: "messages",
                           columns: ["conversation_id", "message_seq"])
         }
+        // The per-member freeze model (group_member_billing.overdrawn) was
+        // retired server-side along with its table; the cached flag has no
+        // writer or reader anymore.
+        m.registerMigration("v10_drop_group_member_frozen") { db in
+            try db.alter(table: "group_members") { t in
+                t.drop(column: "frozen")
+            }
+        }
         return m
     }
 
@@ -584,10 +592,9 @@ final class LocalDatabase {
     // MARK: - Group cache (members + meta)
 
     /// Cached snapshot of a single `conversation_participants` row enriched
-    /// with the resolved display_name / avatar_path / avatar_seed and the
-    /// own-side `frozen` flag from `group_member_billing`. Both the chat
-    /// timeline (GroupBubbleSender) and the settings page (Member) hydrate
-    /// from this same shape — settings reads role/frozen, chat doesn't.
+    /// with the resolved display_name / avatar_path / avatar_seed. Both the
+    /// chat timeline (GroupBubbleSender) and the settings page (Member)
+    /// hydrate from this same shape — settings additionally reads role.
     struct GroupMemberRow: Codable, FetchableRecord, PersistableRecord {
         var conversation_id: String
         var participant_type: String
@@ -597,7 +604,6 @@ final class LocalDatabase {
         var display_name: String
         var avatar_path: String?
         var avatar_seed: String?
-        var frozen: Bool
 
         static let databaseTableName = "group_members"
     }
