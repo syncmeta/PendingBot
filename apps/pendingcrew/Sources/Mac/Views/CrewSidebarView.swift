@@ -68,23 +68,19 @@ struct CrewSidebarView: View {
         .sheet(isPresented: $showingCreateSheet) {
             CreateCrewSheet()
         }
+        // 只有已登录的 footer 菜单能触发(未登录 footer 是登录入口)——
+        // 接合 v2 后没有"退出本机模式"概念,本地 crew 永远在。
         .confirmationDialog(
-            currentMode == .logged
-                ? "签出当前身份"
-                : "退出本机模式",
+            "签出当前身份",
             isPresented: $confirmingSignOut,
             titleVisibility: .visible
         ) {
-            Button(currentMode == .logged ? "签出" : "退出本机模式", role: .destructive) {
+            Button("签出", role: .destructive) {
                 signOut()
             }
             Button("取消", role: .cancel) {}
         } message: {
-            if currentMode == .logged {
-                Text("签出后本机 device grant 立即失效;若需切换到别的身份(本人 / 群账号),签出后回到登录页重新扫码即可。")
-            } else {
-                Text("退出会清掉选填的 API key 配置;本机 crew 数据保留,Mac 上随时可继续本机模式。")
-            }
+            Text("签出后本机 device grant 立即失效;若需切换到别的身份(本人 / 群账号),签出后重新扫码即可。本机 crew 不受影响。")
         }
         // 本机模式可选登录（登录 SSO C2）：扫码完成后 model.isAuthenticated
         // 翻 true，onChange 自动收 sheet —— LoginView 自身只切 .approved
@@ -125,12 +121,13 @@ struct CrewSidebarView: View {
         )
     }
 
-    /// 根据 backend.mode 切两种 placeholder。
-    /// - logged → "Fly machine — v1.1 上线"(灰显)
-    /// - byok → "登录 PendingBot 解锁云端 Fly machine"(灰显 + 锁图标)
+    /// 接合 v2：按 `isAuthenticated`(能力叠加)切两种 placeholder ——
+    /// (backend 恒本地,旧 supportsCloudRuntime 已删)。
+    /// - 已登录 → "Fly machine — v1.1 上线"(灰显)
+    /// - 未登录 → "登录 PendingBot 解锁云端 Fly machine"(灰显 + 锁图标)
     @ViewBuilder
     private var machinesRow: some View {
-        if crewStore.supportsCloudRuntime {
+        if model.isAuthenticated {
             HStack(spacing: 8) {
                 Image(systemName: "cloud")
                     .foregroundStyle(.tertiary)
@@ -170,7 +167,7 @@ struct CrewSidebarView: View {
     @ViewBuilder
     private var identityFooter: some View {
         Group {
-            if currentMode == .logged {
+            if model.isAuthenticated {
                 HStack(spacing: 10) {
                     Image(systemName: identityIcon)
                         .font(.title3)
@@ -246,54 +243,30 @@ struct CrewSidebarView: View {
         .background(.bar)
     }
 
-    private var currentMode: BackendMode? { crewStore.mode }
-
+    // identity 三件套只在已登录 footer 渲染(未登录 footer 是登录菜单,
+    // 自带文案)—— 接合 v2 后不再按 mode 分叉。
     private var identityIcon: String {
-        guard let mode = currentMode else { return "questionmark.circle" }
-        switch mode {
-        case .logged:
-            if crewStore.subjects.first?.kindEnum == .groupAccount {
-                return "person.3.fill"
-            }
-            return "person.crop.circle.fill"
-        case .local:
-            return "laptopcomputer"
-        }
+        crewStore.subjects.first?.kindEnum == .groupAccount
+            ? "person.3.fill"
+            : "person.crop.circle.fill"
     }
 
     private var identityTitle: String {
-        guard let mode = currentMode else { return "未配置" }
-        switch mode {
-        case .logged:
-            return crewStore.subjects.first?.displayName ?? "已登录"
-        case .local:
-            return "本机 claude / codex"
-        }
+        crewStore.subjects.first?.displayName ?? "已登录"
     }
 
     private var identitySubtitle: String {
-        guard let mode = currentMode else { return "—" }
-        switch mode {
-        case .logged:
-            if let kind = crewStore.subjects.first?.kindEnum {
-                return kind == .groupAccount ? "群账号" : "本人账号"
-            }
-            return "已登录"
-        case .local:
-            return "本地 crew · 本机已登录的 claude / codex"
+        if let kind = crewStore.subjects.first?.kindEnum {
+            return kind == .groupAccount ? "群账号" : "本人账号"
         }
+        return "已登录"
     }
 
     private func signOut() {
-        switch currentMode {
-        case .logged:
-            model.clearAuth()
-        case .local:
-            model.clearByokConfig()
-        case .none:
-            break
-        }
-        // crewStore.reset() 由 RootView 监听 model.isConfigured 自动调,
+        // 接合 v2:签出只是撤掉登录能力叠加,本机 crew / 本机模式不受影响。
+        guard model.isAuthenticated else { return }
+        model.clearAuth()
+        // crewStore.reset() 由 RootView 监听登录态变化自动调,
         // 不在这里重复 wire 以避免双触发顺序歧义。
     }
 

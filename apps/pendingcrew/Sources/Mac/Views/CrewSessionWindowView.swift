@@ -48,10 +48,8 @@ struct CrewSessionWindowView: View {
                 SessionRunContentView(run: run)
                     .id(run.runID)
                 // 内联待办卡片：本 session 调 ask / 撞权限被拦时，就地答（写 LocalApprovalStore
-                // 解 helper 的 long-poll）。BYOK 本地路径；logged 走 edge interactions。
-                if appModel.mode == .local {
-                    SessionApprovalCardsView(crewId: run.crewId, sessionId: run.sessionId)
-                }
+                // 解 helper 的 long-poll）。接合 v2：comms/审批恒为本地，不再按 mode 门禁。
+                SessionApprovalCardsView(crewId: run.crewId, sessionId: run.sessionId)
             } else {
                 idleState
             }
@@ -80,8 +78,7 @@ struct CrewSessionWindowView: View {
     /// chunk2 T5：发现新待决策 → 注入运行中的 captain session（spec §2 唤醒=app 注入）。
     /// 没有在跑的 captain 就什么都不做（等 captain 启动后第一个 tick 再补通知）。
     private func notifyCaptainOfNewDecisions() {
-        guard appModel.mode == .local,
-              let crewId = crewStore.selectedDetail?.crew.id,
+        guard let crewId = crewStore.selectedDetail?.crew.id,
               let captainRun = sessionRunner.runs.first(where: {
                   $0.crewId == crewId && $0.role == .captain && $0.status == .running
               })
@@ -246,29 +243,25 @@ struct CrewSessionWindowView: View {
         defer { starting = false }
         localError = nil
 
-        var serverLink: CrewSessionServerLink? = nil
-        if appModel.mode == .logged {
-            do { serverLink = try await prepareServerSession(detail: detail, taskBrief: firstPrompt) }
-            catch {
-                localError = "服务端 session 准备失败: \(error.localizedDescription)"
-                return
-            }
-        }
+        // 接合 v2：本地 crew id 不再对应 edge 的 crew 行，server link（跨设备
+        // 遥控可跟看）在 block 3（信箱）重建本地↔edge 绑定后再启用 ——
+        // 此前恒为 nil，prepareServerSession 保留不删，届时复用。
+        let serverLink: CrewSessionServerLink? = nil
         if let sid = serverLink?.sessionId { handledSessionIds.insert(sid) }
         do {
             var cfg = SessionConfig(kind: selectedKind, initialPrompt: firstPrompt)
             // isolation=on → 独立 worktree;off → crew 共享目录（spec §8/§11）。
             let workdir = SessionWorkspace.resolve(
                 crewDirectory: dir, isolation: cfg.isolation, hint: firstPrompt)
-            // BYOK: 渲染本地世界观 → 临时 .md → claude --append-system-prompt-file
-            // (spec local-first chunk 4)。logged 模式 edge 自己注入世界观,这里跳过；
-            // best-effort,失败 nil 不挡 session 启动。
-            // BYOK 本地 session 的合成 id —— 世界观 / mcp-config / hook settings 三处一致。
+            // 渲染本地世界观 → 临时 .md → claude --append-system-prompt-file
+            // (spec local-first chunk 4)。接合 v2：恒为本地渲染（不再有"logged
+            // 由 edge 注入"的分叉）；best-effort,失败 nil 不挡 session 启动。
+            // 本地 session 的合成 id —— 世界观 / mcp-config / hook settings 三处一致。
             let localSessionId = serverLink?.sessionId ?? UUID().uuidString.lowercased()
             cfg.appendSystemPromptFile = await renderWorldModelFile(
                 detail: detail, taskBrief: firstPrompt, workdir: workdir, sessionId: localSessionId)
-            // 本地 crew-comms 接线（BYOK）：MCP(post_to_crew/read_whiteboard) + hook(注入
-            // 未读白板)。logged 模式 prepareLocalCommsConfig 返回 (nil,nil)（edge 管 comms）。
+            // 本地 crew-comms 接线：MCP(post_to_crew/read_whiteboard) + hook(注入
+            // 未读白板)。接合 v2：comms 恒为本地，无论登没登录。
             let comms = prepareLocalCommsConfig(crewId: detail.crew.id, sessionId: localSessionId)
             cfg.settingsFile = comms.settings
             cfg.mcpConfigFile = comms.mcp
@@ -329,14 +322,14 @@ struct CrewSessionWindowView: View {
         }
     }
 
-    /// BYOK: 渲染本地世界观 system prompt → 临时 `.md` → 返回路径供
-    /// `--append-system-prompt-file`。logged 模式返回 nil（edge 注入）。
+    /// 渲染本地世界观 system prompt → 临时 `.md` → 返回路径供
+    /// `--append-system-prompt-file`。接合 v2：恒为本地渲染（无 mode 分叉）。
     /// best-effort：任一步失败返 nil，session 仍照常启动（只是没世界观）。
     /// `appendPersona` 非 nil 时（captain session）把 persona 拼到世界观后面 ——
     /// captain 与 worker 的差异只是「追加 persona + --captain 工具门禁」（chunk2 §2）。
     private func renderWorldModelFile(detail: CrewDetail, taskBrief: String, workdir: URL, sessionId: String,
                                       appendPersona: String? = nil) async -> String? {
-        guard appModel.mode == .local, let backend = appModel.backend else { return nil }
+        guard let backend = appModel.backend else { return nil }
         let members = (try? await backend.listCrewMembers(crewId: detail.crew.id))?.members ?? []
         let humans = members
             .filter { $0.memberKind == "human" }
@@ -366,14 +359,14 @@ struct CrewSessionWindowView: View {
         }
     }
 
-    /// BYOK: 生成 per-session 的 settings.json（PostToolUse hook = 自身二进制 `--mcp-hook`，
+    /// 生成 per-session 的 settings.json（PostToolUse hook = 自身二进制 `--mcp-hook`，
     /// 每轮注入未读白板）+ mcp-config.json（自身二进制 `--mcp-serve`，post_to_crew/read_whiteboard）。
     /// helper = `Bundle.main.executablePath`（re-exec self：app 二进制兼当 helper，最自包含、
     /// 免 embed）；白板 dir = `LocalWhiteboardStore.defaultDirectory`（与 app/store 同一份）。
-    /// logged 模式 / 任一步失败 → 对应 nil（session 仍启动，少 comms）。
+    /// 接合 v2：comms 恒为本地，不再按 mode 跳过。任一步失败 → 对应 nil（session 仍启动，少 comms）。
     private func prepareLocalCommsConfig(crewId: String, sessionId: String,
                                          captain: Bool = false) -> (settings: String?, mcp: String?) {
-        guard appModel.mode == .local, let helper = Bundle.main.executablePath
+        guard let helper = Bundle.main.executablePath
         else { return (nil, nil) }
         let dir = LocalWhiteboardStore.defaultDirectory.path
         let tmp = FileManager.default.temporaryDirectory
@@ -422,13 +415,18 @@ struct CrewSessionWindowView: View {
 
     // MARK: - auto-claim (K: captain-created queued sessions)
 
-    /// Poll the crew's server sessions; when the captain queues one (status=
-    /// 'queued') and this Mac is free, claim it + run it locally with the crew's
-    /// working dir. local_host: the captain (on edge) creates the row, this Mac
-    /// executes. Logged mode only.
+    /// Poll the crew's server sessions; when something queues one on edge (e.g.
+    /// remote control from the phone, status='queued') and this Mac is free,
+    /// claim it + run it locally with the crew's working dir. 登录态能力叠加,
+    /// gate 用 isAuthenticated。
+    /// 接合 v2：本地 crew 与 edge 队列的绑定在 block 3（信箱）重建后再启用 ——
+    /// 本地 crew id 目前在 edge 没有对应行，轮询只会空转。loop 保留不删，届时翻开关。
+    private var edgeQueueBindingReady: Bool { false }
+
     private func autoClaimLoop() async {
+        guard edgeQueueBindingReady else { return }
         while !Task.isCancelled {
-            if appModel.mode == .logged,
+            if appModel.isAuthenticated,
                let detail = crewStore.selectedDetail,
                sessionRunner.current == nil || sessionRunner.current?.status != .running,
                let api = try? appModel.loggedAPIClient(),

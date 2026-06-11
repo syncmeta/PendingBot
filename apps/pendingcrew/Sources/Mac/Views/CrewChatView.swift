@@ -52,14 +52,10 @@ struct CrewChatView: View {
         .task(id: crewId) { await pollLoop() }
     }
 
-    // 登录用户 id(auth.users.id) —— AppModel 在 subject 解析时回填。
-    // CrewSenderResolver 用它把 senderUserId 等于本值的 user 消息识别成
-    // "自己"(右对齐、无头像)。BYOK 用本地哨兵(本地白板消息都标这个),让
-    // 自己的消息右对齐;登录态 nil(尚未解析)时退化为旧行为。
-    private var localUserId: String? {
-        if appModel.mode == .local { return LocalWhiteboardStore.localUserId }
-        return appModel.currentUserId
-    }
+    // 本机用户哨兵 id —— 接合 v2 后 macOS 白板恒为本地，本机人类消息都标
+    // `LocalWhiteboardStore.localUserId`，CrewSenderResolver 据此把自己的
+    // 消息识别成"自己"(右对齐、无头像)。
+    private var localUserId: String? { LocalWhiteboardStore.localUserId }
 
     private var timeline: some View {
         ScrollViewReader { proxy in
@@ -161,12 +157,12 @@ struct CrewChatView: View {
         sending = true
         defer { sending = false }
         do {
-            // 附件只 edge 支持:BYOK 下有附件 → 软报错、不发(spec local-first §8.4)。
+            // 附件上传是登录后的能力叠加(走 edge 上传)：未登录 → 软报错、不发。
             // 上传走 loggedAPIClient(edge 专属),拿到 ids 再交给 backend 发文。
             var attachmentIds: [String] = []
             if !toUpload.isEmpty {
-                guard appModel.mode == .logged, let api = try? appModel.loggedAPIClient() else {
-                    loadError = "BYOK 模式暂不支持群聊附件"
+                guard appModel.isAuthenticated, let api = try? appModel.loggedAPIClient() else {
+                    loadError = "群聊附件需登录 PendingBot"
                     return
                 }
                 for att in toUpload {
