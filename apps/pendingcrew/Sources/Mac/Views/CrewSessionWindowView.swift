@@ -28,8 +28,15 @@ struct CrewSessionWindowView: View {
     /// 「新建」表单）。运行中再发 = 直接把文本注入终端续聊。
     var body: some View {
         VStack(spacing: 0) {
+            if !sessionRunner.runs.isEmpty {
+                sessionBar
+                Divider()
+            }
             if let run = sessionRunner.current {
+                // `.id(run.runID)` 强制换 run 时整个终端视图重建 —— 否则 SwiftUI
+                // 复用同一个 NSViewRepresentable，切换条点了终端不换。
                 SessionRunContentView(run: run)
+                    .id(run.runID)
                 // 内联待办卡片：本 session 调 ask / 撞权限被拦时，就地答（写 LocalApprovalStore
                 // 解 helper 的 long-poll）。BYOK 本地路径；logged 走 edge interactions。
                 if appModel.mode == .local {
@@ -49,6 +56,38 @@ struct CrewSessionWindowView: View {
     }
 
     private var isRunning: Bool { sessionRunner.current?.status == .running }
+
+    // MARK: - session bar (chunk2 T2)
+
+    /// 当前选中 crew 的 runs，captain 置顶，其余按启动顺序。
+    private var barRuns: [CrewSessionRun] {
+        let crewId = crewStore.selectedDetail?.crew.id
+        let runs = sessionRunner.runs.filter { $0.crewId == crewId }
+        return runs.filter { $0.role == .captain } + runs.filter { $0.role != .captain }
+    }
+
+    /// 未读消息数占位 —— chunk2 T6 接真未读（白板/@提及），先恒 0 不渲染。
+    private func badgeCount(for run: CrewSessionRun) -> Int { 0 }
+
+    /// 横向滚动的 session 切换条：每个 run 一个 capsule（名字 + 状态点 +
+    /// 未读 badge 占位），点击切前台；已退出的带 ✕ 可移除。
+    private var sessionBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(barRuns) { run in
+                    SessionBarItemView(
+                        run: run,
+                        isSelected: run.runID == sessionRunner.selectedRunId,
+                        badgeCount: badgeCount(for: run),
+                        select: { sessionRunner.select(run.runID) },
+                        remove: { sessionRunner.remove(run.runID) }
+                    )
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+        }
+    }
 
     private var idleState: some View {
         VStack(spacing: 10) {
@@ -338,6 +377,56 @@ struct CrewSessionWindowView: View {
         )
         _ = try await api.claimSession(runnerHostId: hostId, sessionId: sessionId)
         return CrewSessionServerLink(api: api, runnerHostId: hostId, sessionId: sessionId)
+    }
+}
+
+/// 切换条上的单个 session 项。`@ObservedObject` 订阅 run 的 `@Published status`
+/// 驱动状态点/✕（嵌套 ObservableObject —— 父 view 观察不到 run 自己的变更）。
+private struct SessionBarItemView: View {
+    @ObservedObject var run: CrewSessionRun
+    let isSelected: Bool
+    let badgeCount: Int
+    let select: () -> Void
+    let remove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(run.status == .running ? Color.green : Color.gray)
+                .frame(width: 7, height: 7)
+            Text(run.displayName)
+                .font(.caption.weight(isSelected ? .semibold : .regular))
+                .lineLimit(1)
+            if badgeCount > 0 {
+                Text("\(badgeCount)")
+                    .font(.caption2.weight(.semibold))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Color.red, in: Capsule())
+                    .foregroundStyle(.white)
+            }
+            if run.status != .running {
+                Button(action: remove) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("移除这个 session")
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(
+            isSelected ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.08),
+            in: Capsule()
+        )
+        .overlay(
+            Capsule().strokeBorder(
+                isSelected ? Color.accentColor.opacity(0.5) : .clear, lineWidth: 1)
+        )
+        .contentShape(Capsule())
+        .onTapGesture(perform: select)
     }
 }
 
