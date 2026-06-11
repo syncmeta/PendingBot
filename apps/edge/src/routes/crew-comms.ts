@@ -154,6 +154,20 @@ export function mapMessageToEntry(
   resolvedAttachments?: CrewWireAttachment[],
 ): Record<string, unknown> {
   const lp = (m.log_payload ?? {}) as Record<string, unknown>;
+  // 接合 v2 block 3:Mac relay 上行的来源标注落在 attachments jsonb 上
+  // ({ origin: 'mac_relay', senderLabel?, localSessionId?, ids? })。读取侧
+  // 原样透出,Mac 同步代理靠它做回环防护(过滤自己推上去的条目)。
+  let relay: Record<string, unknown> | null = null;
+  if (m.attachments && typeof m.attachments === 'object' && !Array.isArray(m.attachments)) {
+    const a = m.attachments as { origin?: unknown; senderLabel?: unknown; localSessionId?: unknown };
+    if (typeof a.origin === 'string') {
+      relay = {
+        origin: a.origin,
+        senderLabel: typeof a.senderLabel === 'string' ? a.senderLabel : null,
+        localSessionId: typeof a.localSessionId === 'string' ? a.localSessionId : null,
+      };
+    }
+  }
   const senderKind =
     m.role === 'user' || m.role === 'human' ? 'user'
     : m.role === 'bot' || m.role === 'assistant' ? 'bot'
@@ -175,6 +189,8 @@ export function mapMessageToEntry(
     // Renderable attachment objects (hydrated from messages.attachments
     // `{ ids: [...] }`). null when the message has none.
     attachments: resolvedAttachments && resolvedAttachments.length > 0 ? resolvedAttachments : null,
+    // Mac relay 来源标记(null = 非 relay 上行)。
+    relay,
     created_at: m.created_at,
   };
 }
@@ -234,6 +250,11 @@ const CrewMessageBody = z.object({
   // Stored on the messages row as `{ ids: [...] }` (mirror routes/messages.ts)
   // and hydrated → full renderable objects on read by hydrateCrewAttachments.
   attachmentIds: z.array(z.string().uuid()).max(16).optional(),
+  // 接合 v2 block 3:Mac relay 代发本地 captain/session 话语时的来源标注。
+  // 仅 device-grant 路径生效;落进 attachments jsonb 并强制带
+  // origin:'mac_relay',Mac 拉取侧靠它过滤自己的上行(回环防护在客户端)。
+  senderLabel: z.string().trim().min(1).max(64).optional(),
+  localSessionId: z.string().trim().min(1).max(64).optional(),
 });
 
 /// Translate the spec-v2 mention shape into recipient_session_ids the
@@ -350,6 +371,22 @@ crewMessagesRoutes.post('/:crewId/messages', requireSubjectAuth(['crew:write']),
   // message synchronously (so the captain wake below sees it), then wake the
   // captain to reply via the standard bot-reply pipeline.
   const messageId = crypto.randomUUID();
+  // attachments jsonb 同时承载附件 ids 与 relay 来源标注(最小侵入:不加列、
+  // 不改 log 卡机制)。Mac relay 上行(device-grant + senderLabel/localSessionId)
+  // 一律打上 origin:'mac_relay';读取侧 mapMessageToEntry 透出为 entry.relay。
+  const isMacRelay =
+    c.var.authKind === 'device_grant' && (parsed.senderLabel != null || parsed.localSessionId != null);
+  let attachmentsCell: Record<string, unknown> | null = parsed.attachmentIds?.length
+    ? { ids: parsed.attachmentIds }
+    : null;
+  if (isMacRelay) {
+    attachmentsCell = {
+      ...(attachmentsCell ?? {}),
+      origin: 'mac_relay',
+      ...(parsed.senderLabel ? { senderLabel: parsed.senderLabel } : {}),
+      ...(parsed.localSessionId ? { localSessionId: parsed.localSessionId } : {}),
+    };
+  }
   const { error: insErr } = await svc.from('messages').insert({
     id: messageId,
     client_message_id: crypto.randomUUID(),
@@ -360,7 +397,7 @@ crewMessagesRoutes.post('/:crewId/messages', requireSubjectAuth(['crew:write']),
     status: 'done',
     // Mirror routes/messages.ts: persist attachment refs as `{ ids: [...] }`
     // (null when none) so hydrateCrewAttachments can resolve them on read.
-    attachments: parsed.attachmentIds?.length ? { ids: parsed.attachmentIds } : null,
+    attachments: attachmentsCell,
   } as never);
   if (insErr) return jsonError(c, 500, 'database_error', { detail: insErr.message });
 
@@ -442,7 +479,11 @@ crewMessagesRoutes.get('/:crewId/messages', requireSubjectAuth(['crew:read']), a
   const attByMsg = await hydrateCrewAttachments(svc, chatRows);
   const whiteboard = chatRows.map((r) => mapMessageToEntry(r, attByMsg.get(r.id)));
 
-  return c.json({ crewId, whiteboard });
+  // 接合 v2 block 3:lastCursor = 本批最大 created_at(rows 升序 → 末行),
+  // Mac 同步代理存成 relayCursor,下次 `?since=` 续传;空批返回 null。
+  const lastCursor = chatRows.length > 0 ? chatRows[chatRows.length - 1].created_at : null;
+
+  return c.json({ crewId, whiteboard, lastCursor });
 });
 
 // ────────────────────────────────────────────────────────────────────
@@ -522,6 +563,98 @@ crewMessagesRoutes.get('/:crewId/members', requireSubjectAuth(['crew:read']), as
     }));
 
   return c.json({ crewId, captainBotId: meta.captain_bot_id, members: visible });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// POST /v1/crews/:crewId/members
+// ────────────────────────────────────────────────────────────────────
+//
+// 接合 v2 block 3:成员邀请走 device grant(或 JWT)。Mac「接入 PendingBot」
+// 后从本地把 PendingBot 侧的 bot / 人类账号拉进 relay crew conversation。
+// 校验全在 RPC crew_add_member_for_subject 里(security definer):
+//   * actor 能为 crew 的 responsible_subject 出面
+//   * bot 须 actor 可用(自己的 bot 或经 user_bot_contacts 加过的公有 bot)
+//   * human 须是 actor 好友(user_contacts)或 subject 成员
+// 幂等:已是 active 成员则原样返回(不报错)。
+
+const AddMemberBody = z.object({
+  kind: z.enum(['bot', 'human']),
+  botId: z.string().uuid().optional(),
+  userId: z.string().uuid().optional(),
+});
+
+crewMessagesRoutes.post('/:crewId/members', requireSubjectAuth(['crew:write']), async (c) => {
+  const crewId = c.req.param('crewId');
+  if (!isUuid(crewId)) {
+    return jsonError(c, 400, 'invalid_id', { message: 'crewId must be a uuid' });
+  }
+  let parsed: z.infer<typeof AddMemberBody>;
+  try {
+    parsed = AddMemberBody.parse(await c.req.json());
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+  if (parsed.kind === 'bot' && !parsed.botId) {
+    return jsonError(c, 400, 'invalid_body', { message: 'botId required when kind=bot' });
+  }
+  if (parsed.kind === 'human' && !parsed.userId) {
+    return jsonError(c, 400, 'invalid_body', { message: 'userId required when kind=human' });
+  }
+
+  const svc = serviceClient(c.env);
+  const { data: meta, error: metaErr } = await svc
+    .from('temporary_group_meta')
+    .select('conversation_id, responsible_subject_id')
+    .eq('conversation_id', crewId)
+    .eq('temporary_kind', 'crew')
+    .maybeSingle();
+  if (metaErr) return jsonError(c, 500, 'database_error', { detail: metaErr.message });
+  if (!meta) return jsonError(c, 404, 'not_found', { message: 'crew not found' });
+
+  // 与 POST /v1/crews 同款双轨:device grant → serviceClient + 显式 actor
+  // (RPC COALESCE(auth.uid(), p_actor_user_id));JWT → userClient,auth.uid()
+  // 驱动 RPC,传入的 actor 被忽略,无法冒充。
+  let actorUserId: string;
+  if (c.var.authKind === 'device_grant') {
+    const dg = c.var.deviceGrant;
+    if (!dg?.grantedByUserId) return jsonError(c, 403, 'forbidden');
+    if (dg.subjectId !== meta.responsible_subject_id) return jsonError(c, 403, 'forbidden');
+    actorUserId = dg.grantedByUserId;
+  } else {
+    const userId = c.var.userId;
+    if (!userId) return jsonError(c, 401, 'unauthorized');
+    actorUserId = userId;
+  }
+  const supa = c.var.authKind === 'device_grant' ? svc : userClient(c.env, c.var.userJwt!);
+
+  const { data, error } = await untypedRpc(supa).rpc('crew_add_member_for_subject', {
+    p_actor_user_id: actorUserId,
+    p_crew_conversation_id: crewId,
+    p_member_kind: parsed.kind === 'bot' ? 'registered_bot' : 'human',
+    p_bot_id: parsed.botId ?? null,
+    p_user_id: parsed.userId ?? null,
+  });
+  if (error) {
+    const message = rpcMessage(error);
+    const code = (error as { code?: string }).code ?? null;
+    if (code === '28000' || /authentication required/i.test(message)) {
+      return jsonError(c, 401, 'unauthorized', { message });
+    }
+    if (code === '42501' || /forbidden|not a friend|not visible|not invited/i.test(message)) {
+      return jsonError(c, 403, 'forbidden', { message });
+    }
+    if (code === 'P0002' || /not found/i.test(message)) {
+      return jsonError(c, 404, 'not_found', { message });
+    }
+    if (code === '22023' || /invalid|required|inactive/i.test(message)) {
+      return jsonError(c, 400, 'invalid_body', { message });
+    }
+    return jsonError(c, 500, 'database_error', { detail: message });
+  }
+
+  // RPC 返回成员行摘要 jsonb(含 already_member 标记);幂等命中也 201,
+  // 客户端不必区分"新加"还是"已在"。
+  return c.json({ crewId, member: data }, 201);
 });
 
 // ────────────────────────────────────────────────────────────────────
