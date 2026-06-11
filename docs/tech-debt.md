@@ -174,13 +174,12 @@
 - **建议**: 长期收敛到单一事实源（纯 DB 触发器 或 纯 edge），删另一份；短期两处注释互指（已加）。
 - **状态**: 待办
 
-### 🟡 subject_wallets / group_member_billing 物理 drop 卡在多-RPC 重写（#226 尾巴）
+### 🟡 subject_wallets / group_member_billing 物理 drop 卡在多-RPC 重写（#226 尾巴）— ✅ 已解决 2026-06-11（chore/drop-group-billing-tables，#295）
+- **解决**: 迁移 `20260611013529` 重写 8 个 live RPC（`open_group_conv`/`bootstrap_user_id`/`group_invite_user`/`group_invite_link_redeem`/`group_join_request_create`/`group_join_request_decide`/`group_remove_member`/`group_set_member_mute`）去掉死表读写 → `DROP TABLE group_member_billing` + drop `group_member_invitations.billing_snapshot`/`invitee_participates` 快照列。`subject_wallets` 核实早已不在 live（引用也已清零）。mute 状态收敛到 `conversation_participants.muted`（0045 起本就双写镜像）。edge 删 invite-decide 的 gmb INSERT；iOS 删 per-member freeze 整套 UI（见下条说明）+ GroupSettingsView mute 改读 participant 行 + 本地缓存 v10 迁移删 `frozen` 列。已 db push EU + live introspection 复核（表 0/引用函数 0/快照列 0）+ 建群写路径 smoke 通过。
+- **🔴 顺手修掉一个 P0**: live `open_group_conv` 还在 INSERT 已于 20260603112148 drop 的 `group_billing_config` → **2026-06-03 起生产建群（POST /v1/groups）一直是坏的**（42P01），与 `bootstrap_user_id` 同根因（20260604085445 修 signup 时漏了这个函数）。pre-launch 无人建群所以没炸出来。本迁移重写时一并去掉该语句。
+- **附带产品面决定（按"基线未验证就大胆重写"口径）**: per-member freeze（`overdrawn`/`frozen_at`、"已达上限"徽章、冻结横幅、composer 锁、消息隐藏）的唯一写入方 `apply_audit_split` 已随 billing-v2 退役删除——纯死状态，iOS 整套 UI 连根移除。新模型的会话级 gate（群钱包 exhausted → `dispatchGroupTurn` no_balance + continue 流）不受影响。**task #291（Mac composer 三横幅）的 freeze 横幅半项随之作废**，只剩 continue/@-mention 两项。
 - **发现**: 2026-06-04 · fix/billing-tails-email-norm（#226）
-- **位置**: 两表 + 写它们的 live SECURITY DEFINER RPC：`open_group_conv`(0048) / 群 join RPC / `bootstrap_user_id` / `group_set_member_mute`(0045) / freeze 触发器 / `grp_create_group_subject` / `getSubjectBalance`
-- **问题**: 旧 per-conversation 分摊退役后这两表已无业务读路径（invite 流已解耦，commit 75a3fd10），但仍被一批 live RPC 无脑 INSERT/UPDATE/SELECT，直接 DROP 会断建群/加群/静音/群账号创建。A 段孤儿清理 20260603112148 当初正因此把它们留给 #226。
-- **影响**: 迁移账本留两张"僵而不死"的表 + 一摊写它们的死路径，长期 dead-weight + 账本噪声。
-- **建议**: 独立 chore —— 先重写这批 RPC 去掉对两表的写/读，再发 DROP 迁移。别夹在别的 lane 顺手做。
-- **状态**: 待办（#226 物理 drop 专项）
+- **原问题**: 旧 per-conversation 分摊退役后这两表已无业务读路径，但仍被一批 live RPC 无脑 INSERT/UPDATE/SELECT，直接 DROP 会断建群/加群/静音；A 段孤儿清理 20260603112148 因此把它们留给 #226。
 
 ### 🟡 PendingCrew 群聊 user 作者无法区分是哪个人 — AppModel 不暴露登录 user id — ✅ 已解决 2026-06-05（feat/crew-captain-orchestration）
 - **解决**: `GET /v1/me/subject` 新增 `user_id`(device grant → `granted_by_user_id`;user JWT → `c.var.userId`);iOS `UserSubject.userId` 透出,`CrewStore.refreshSubjects` 回填 `AppModel.currentUserId`,`CrewChatView.localUserId` 改指过去。多人 crew 现可区分自己 vs 其他人类。
