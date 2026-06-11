@@ -21,6 +21,12 @@ struct CrewSessionWindowView: View {
     /// auto-claim loop (K: captain-created queued sessions) doesn't double-run
     /// them. Includes both manual starts and auto-claimed ones.
     @State private var handledSessionIds: Set<String> = []
+    /// chunk2 T5（captain 唤醒=app 注入）：已通知过 captain 的 decision id ——
+    /// 防止每个 tick 重复注入同一条待决策。
+    @State private var notifiedDecisionIds: Set<String> = []
+    /// 跨进程轮询（helper 写 LocalApprovalStore 文件、本进程读）—— 2s 检查
+    /// 新待决策并注入 captain PTY。与 SessionApprovalCardsView 的 1.5s 同套路。
+    private let captainTick = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
     /// spec §9.3 + 用户心智：右栏是**常驻**和 claude/codex 交互的面（像 Codex
     /// Desktop）。没有 session 时就地给一个 composer —— **第一条消息即开始
@@ -28,7 +34,9 @@ struct CrewSessionWindowView: View {
     /// 「新建」表单）。运行中再发 = 直接把文本注入终端续聊。
     var body: some View {
         VStack(spacing: 0) {
-            if !sessionRunner.runs.isEmpty {
+            // 选中 crew 就渲染 —— 零 run 时也得有 ⚓ 启动 Captain 入口
+            // （旧条件 !runs.isEmpty 让启动按钮在空列表时根本不可达）。
+            if crewStore.selectedDetail != nil {
                 sessionBar
                 Divider()
             }
@@ -53,6 +61,29 @@ struct CrewSessionWindowView: View {
         // the captain queued on the server (status='queued'). local_host = this
         // Mac is the executor; the captain just creates the queued row on edge.
         .task(id: crewStore.selectedDetail?.crew.id) { await autoClaimLoop() }
+        // chunk2 T5：captain 唤醒 = app 注入。本地 BYOK 模式下轮询待决策，
+        // 有新的（非 captain 自己 raise 的）就把提示注入 captain 的 PTY。
+        .onReceive(captainTick) { _ in notifyCaptainOfNewDecisions() }
+    }
+
+    /// chunk2 T5：发现新待决策 → 注入运行中的 captain session（spec §2 唤醒=app 注入）。
+    /// 没有在跑的 captain 就什么都不做（等 captain 启动后第一个 tick 再补通知）。
+    private func notifyCaptainOfNewDecisions() {
+        guard appModel.mode == .local,
+              let crewId = crewStore.selectedDetail?.crew.id,
+              let captainRun = sessionRunner.runs.first(where: {
+                  $0.crewId == crewId && $0.role == .captain && $0.status == .running
+              })
+        else { return }
+        let items = LocalApprovalStore.shared.pending(crewId: crewId).filter {
+            $0.kind == "decision"
+                && $0.sessionId != captainRun.sessionId
+                && !notifiedDecisionIds.contains($0.id)
+        }
+        for item in items {
+            captainRun.send("有新的待决策 #\(item.id)（来自 session \(item.sessionId)）：\(item.summary)\n能拍板就用 answer_decision 工具答它（reqId=\(item.id)）；拍不了就用 post_to_crew 发消息 @human 说明需要人类决策的理由与你的建议。")
+            notifiedDecisionIds.insert(item.id)
+        }
     }
 
     private var isRunning: Bool { sessionRunner.current?.status == .running }
