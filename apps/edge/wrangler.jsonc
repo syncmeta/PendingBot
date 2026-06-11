@@ -75,7 +75,9 @@
         "SUPABASE_PUBLISHABLE_KEY": "sb_publishable_DobbxW0fIrpb21noFfMdXg_3xPrbm1d",
         "POSTHOG_HOST": "https://eu.i.posthog.com",
         "LANGFUSE_BASE_URL": "https://cloud.langfuse.com",
-        "ALLOWED_ORIGIN": "https://bot.pendingname.com",
+        // Comma-separated allowlist: app origin + admin console (CF Pages,
+        // behind Cloudflare Access).
+        "ALLOWED_ORIGIN": "https://bot.pendingname.com,https://pendingbot-admin.pages.dev",
         // AI Gateway coordinates — the worker reads the gateway's
         // computed per-request cost from the Logs API when a provider
         // doesn't report its own (see lib/ai-gateway.ts). Account id +
