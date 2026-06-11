@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 /// Pill button that surfaces the currently-selected model. Tap opens
@@ -47,7 +46,7 @@ struct ModelPickerButton: View {
                 modelProvider?.wrappedValue = picked?.model_provider
                 showSheet = false
             })
-            .presentationDragIndicator(.visible)
+            .platformDragIndicator()
             .tint(Theme.Palette.accent)
         }
     }
@@ -198,7 +197,7 @@ struct ModelPickerSheet: View {
                     }
                 }
             }
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavTitle()
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     Text("选择模型")
@@ -220,7 +219,7 @@ struct ModelPickerSheet: View {
                 .font(Theme.Fonts.glyph(size: 13, weight: .medium))
                 .foregroundStyle(Theme.Palette.inkMuted)
             TextField("搜索 slug / 名字 / 厂商", text: $query)
-                .textInputAutocapitalization(.never)
+                .platformAutocapitalization()
                 .autocorrectionDisabled(true)
                 .font(Theme.Fonts.rounded(size: 14, weight: .regular))
                 .foregroundStyle(Theme.Palette.ink)
@@ -351,7 +350,7 @@ struct ModelPickerSheet: View {
                 .listRowBackground(Theme.Palette.surface)
             }
         }
-        .listStyle(.insetGrouped)
+        .platformListStyle()
         .scrollContentBackground(.hidden)
         .background(Theme.Palette.canvas)
     }
@@ -697,7 +696,7 @@ struct ArenaModelPickerSheet: View {
     var body: some View {
         NavigationStack {
             ArenaModelPoolEditor(selection: $selection)
-                .navigationBarTitleDisplayMode(.inline)
+                .inlineNavTitle()
                 .toolbar {
                     ToolbarItem(placement: .principal) {
                         Text(selection.resolvedCount >= 2 ? "价格模型池 · \(selection.resolvedCount) 个" : "选择模型池")
@@ -846,7 +845,7 @@ struct ArenaModelPoolEditor: View {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass").foregroundStyle(Theme.Palette.inkMuted)
                 TextField("搜索模型 / 厂商", text: $query)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    .platformAutocapitalization().autocorrectionDisabled()
                     .font(Theme.Fonts.rounded(size: 14, weight: .regular))
                 if !query.isEmpty {
                     Button { query = "" } label: {
@@ -989,7 +988,7 @@ struct ArenaModelPoolEditor: View {
             }
             .listRowBackground(Theme.Palette.surface)
         }
-        .listStyle(.insetGrouped)
+        .platformListStyle()
         .scrollContentBackground(.hidden)
         .background(Theme.Palette.canvas)
     }
@@ -1194,4 +1193,3 @@ private struct PriceRangeSlider: View {
         return bounds.lowerBound + Double(pct) * span
     }
 }
-#endif

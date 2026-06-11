@@ -12,12 +12,26 @@
 
 ---
 
+### 🟢 Supabase legacy anon/service_role key 仍在项目里启用 — 全端已切新 key 后应停用
+- **发现**: 2026-06-10 · `chore/supabase-new-api-keys`(API key 迁新体系收尾)
+- **现状**: edge/admin/iOS/Mac 代码已全部切到 `sb_publishable_…`/`sb_secret_…`(worker 已部署并线上验证),但 Supabase 项目里 legacy `anon`/`service_role` JWT key **仍处于启用状态**(Dashboard → API Keys → Legacy tab)。两套并存是迁移期的预期形态,不是事故。
+- **遗留的 legacy 消费者**: (a) 已安装的旧 iOS 构建(二进制里嵌着旧 anon JWT)——pre-launch 只有用户自己的真机,装一次新构建即清零;(b) 本地 `supabase start` 栈(CLI 仍发 legacy 格式,`HostedConfig` `.dev` 与 `.dev.vars.example` 注释已说明);(c) 边角脚本若直接拿旧 key 调用(已知的 envelope-replay/list-convs 已切新名)。
+- **修法**: 真机装上新构建、确认无别处引用后,在 Dashboard 把 legacy keys disable(可随时 re-enable,非删除)。官方截止 2026 年底,不急,但停得越早攻击面越小——legacy service_role JWT 与 JWT secret 绑定,不可单独轮换。
+- **状态**: 待办(一次 Dashboard 操作 + 真机冒烟)。
+
 ### 🟡 board 管理台无可用浏览器登录路径(EU Supabase CAPTCHA 挡客户端登录)
 - **发现**: 2026-06-09 · `feat/board-console` e2e 验证时
 - **现象**: `apps/admin` 登录页走 `supabase.auth.signInWithPassword`,EU 项目(zafhoiwwpanpuashtnxy)Auth 开了 CAPTCHA 保护 → 客户端登录返回 `captcha protection: request disallowed (no captcha_token found)`。客户端 OTP(`signInWithOtp`)同样会被 captcha 挡。**只有 service_role 的 admin API(generate_link+verify)能绕过 captcha** —— 这正是本次 e2e 用来 mint JWT 验证后端的方式。
 - **影响**: board 后端已端到端验证可用(requireAdmin/CRUD/audit 全通),但**没有真人能从浏览器登进去** —— 部署后前门仍是锁的。
 - **修法(择一,属"board auth 加固"未来工作)**: (a) 给登录页接 Cloudflare Turnstile 控件,`signInWithPassword({options:{captchaToken}})` 带 token;(b) 直接做用户定的 passkey+TOTP+密码栈(passkey 需先核 Supabase 原生支持,见下条相关);(c) 仅临时:Supabase 后台关 CAPTCHA 验完再开(不作为长期方案,削弱真 app 注册防护)。
-- **状态**: 待办。后端不阻塞;board 真正"可登录可用"前必须解决其一。
+- **状态**: 待办。后端不阻塞;board 真正"可登录可用"前必须解决其一。**用户已拍板:接 Cloudflare Turnstile 控件**(待 site key + 确认 Supabase captcha provider=Turnstile)。
+
+### 🟢 `wrangler dev` 默认 env 无 KV/DO/R2 绑定 — board feature-flags 本地 PUT 会 500
+- **发现**: 2026-06-09 · board e2e 时
+- **现象**: `wrangler.jsonc` 的真实绑定全在 `env.production` 下,默认 env(`wrangler dev` 用)只有 vars。`c.env.MEMORY` undefined → feature-flags PUT 抛 `Cannot read properties of undefined (reading 'put')` 500;**读路径不受影响**(`loadOverrides`/`readOverrides` catch 后回退 env 默认 —— 优雅降级符合设计)。`--env production` 会触发容器镜像构建(要 Docker),不适合轻量本地调试。
+- **本次 workaround**: 临时在 wrangler.jsonc 顶层加 `kv_namespaces: [{binding:'MEMORY', id:…}]`(本地模拟,不碰生产 KV),验完 `git checkout` 还原。
+- **修法(若本地调 board 写路径成为常态)**: 把 MEMORY(及按需 PROMPTS_KV)的 kv_namespaces 永久加到默认 env —— 本地是 miniflare 模拟,加了无副作用;或接受每次临时加。
+- **状态**: 接受(一次性 e2e 已过);记此免得下个 session 重新踩。
 
 ---
 
@@ -51,6 +65,22 @@
 
 ## 🔴 根基级
 
+### 🔴 `Features/*` UI 整体被无谓 `#if os(iOS)` 一刀切 → Mac 被迫平行重写,两套 UI 长期漂移
+- **发现**: 2026-06-08 · `feat/tri-platform-ui`
+- **位置**: `apps/pendingbot/Sources/Features/*`、`apps/pendingbot/Sources/Mac/*`
+- **病根**: 当年图省事把整个 `Features/*` 包进 `#if os(iOS)`,并非真有 iOS-only 依赖(实测只一小撮薄 shim:haptics/导航标题/剪贴板/二维码/键盘类型)。Mac 因此在 `Sources/Mac/` 整套平行重写,功能恒为 iOS 子集(典型:建 bot 只能单模型,无 arena)。两套 UI 靠人维持一致 → 必然漂移(#212 / `feat/mac-login-align` 就是在逐屏补这个漂移)。
+- **影响**: 三端体验不一致;每个新功能要写两遍;Mac 永远慢一拍。
+- **✅ 已基本解决(2026-06-09,已合 main `b4d0b131`)**: `feat/tri-platform-ui` 彻底版全 slice 迁完——好友/消息/会话/来信/我/Crew/群 全部跨平台 conform FeatureSurface + 接 WideRootView,iPad 收敛三列,`Sources/Mac/` 删到只剩 MacWelcomeView(登录壳)。两套 UI 在业务面正式合一。**剩尾巴(已记下方各 🟡 条 + task #290-292)**:Phase 7 三端真机/模拟器验证(代码全绿但未真机验)、Mac composer 三横幅、Mac 二维码名片等降级。`feat/mac-login-align`(#212 对齐版)作废,以本条为准。
+  - **(2026-06-09)WideRootView 接共享 FriendsTabView/MessageTabView surface + 删 4 个 Mac 平行文件(双端 BUILD SUCCEEDED)** — 好友/消息 tab 中列取 `listColumn(selection:)`、右栏取 `detailColumn(selection:)`(`db4d7d1c` 接线 + `92912e00` 删 `MacFriendsView`/`MacBotManagement`/`MacMessagesView`/`MacRootView`)。crew/envelope/me 仍走各自 Mac 平行列(`MacCrewListColumn`/`MacEnvelopeColumn`/`MacRemoteSessionsView`/`MacMeView`,留待后续 slice)。
+  - **✅(2026-06-09)Crew slice 收口 → WideRootView 现 100% 共享 surface,零 Mac 平行列(双端 BUILD SUCCEEDED)** — `CrewTabV2View` conform FeatureSurface(Selection=crew id 字符串,detail `CrewDetailV2View(crewId:)` 按 id 自取),crew tab 中列/右栏改取共享 surface(`25eb18f4` conform + `73faafbe` 接线 + 删整个 `Mac/Views/MacRemoteSessionsView.swift`(`MacCrewListColumn`+`MacRemoteSessionsView`))。**至此五个 tab 全部由共享 FeatureSurface 渲染,`WideRootView` 内再无任何 `#if os(macOS)` Mac 平行列**;顺手删了已成死代码的 `selectedItemId`/`pendingConversationJump`/切 tab 清 selection 的 onChange。**同时解决了下方 2026-06-08「Mac ConversationView 跨平台」条目的第 3 个尾巴**:`decideCrewProposal`/`decidePermissionRequest` 的 `#if os(iOS)` 围栏 + macOS no-op `#else` 已拆(`7c5f8735`),CrewAPI 已全跨平台,机组提案/权限请求的决定在 Mac 走真实 round-trip。剩"渲染像素 + 真账号"待 Phase 7 真机。
+    - **✅ 已解决(`feat/tri-platform-ui`,2026-06-09,双端 BUILD SUCCEEDED)**:Group slice 跨平台化后,删孤儿 `Sources/Mac/MacGroupWalletView.swift`(grep 零引用确认 + `xcodegen` 重生 pbxproj),并摘掉 `CrewDetailV2View` 群钱包行的 `#if os(iOS)` gate——Mac 现共用跨平台 `GroupWalletView`,群钱包入口恢复。`Sources/Mac/` 现只剩 `MacWelcomeView.swift`(macOS 登录门户)。
+  - **✅ 已解决(`feat/tri-platform-ui`,双端 BUILD SUCCEEDED)**: detail 恒拿 `bot: nil` 的装饰性降级已修 —— ConversationView 于 `bot==nil` 调 `resolveBotIfNeeded()`(`ConversationView+Loading.swift`)按 `conversation.bot_id`/`pendingPeer.peerId` 自取 `bots` 行,`effectiveBot = bot ?? resolvedBot` 驱动头部 `· <模型>` 后缀 + `BotConfigView` 入口 + pre-chat 设置按钮。**gated on `bot==nil` → iOS(恒传 bot)为 dead path,行为零变化**。剩"渲染像素 + 真账号"待 Phase 7 真机。
+
+### 🔴 好友列表(FriendsTabView)与消息/会话slice焊死 — 跨模块隐性耦合
+- **发现**: 2026-06-08 · `feat/tri-platform-ui`
+- **位置**: `Features/Friends/FriendsTabView.swift` ↔ `Features/Message/ConversationView.swift`(+9 扩展)
+- **耦合**: FriendsTabView 宽屏详情列**就是** `ConversationView`,导航栈用 `PendingPeer`(消息slice类型)。想共享好友列表必须连消息slice(24 文件/~10k 行)一起跨平台化,而消息slice又焊死 Call(iOS-only 语音)/相机相册(iOS-only)/键盘 inputAccessoryView(iOS-only UIKit)。
+- **处置**: 已测绘全部 iOS-only 面,plan 用**内部 `#if os(iOS)` 围栏**(非整文件锁)隔离 Call/相机/键盘,Mac 干净降级(无语音按钮、相册→文件选择、composer 用 safeAreaInset 代 inputAccessoryView)。这些 Mac 降级在 Phase 4 实装时各记一条 🟡。
 ### 🔴 客户端多账号本地隔离只靠"登出时擦库"一条腿,无 account_id 维度过滤 + URLCache 登出不清
 - **发现**: 2026-06-08 · session(用户问"登一个号再登另一个号数据会混吗")
 - **位置**: `apps/pendingbot/Sources/Storage/AccountStore.swift:226`(`signOut`)、`apps/pendingbot/Sources/Storage/LocalDatabase.swift:338`(`wipeForSignOut`)、`:378`(`loadConversations` 等读查询)、`apps/pendingbot/Sources/Storage/ProtectedURLCache.swift`、`apps/pendingbot/Sources/PendingBotApp.swift`(`onChange(of: accountStore.current)`)
@@ -152,13 +182,12 @@
 - **建议**: 长期收敛到单一事实源（纯 DB 触发器 或 纯 edge），删另一份；短期两处注释互指（已加）。
 - **状态**: 待办
 
-### 🟡 subject_wallets / group_member_billing 物理 drop 卡在多-RPC 重写（#226 尾巴）
+### 🟡 subject_wallets / group_member_billing 物理 drop 卡在多-RPC 重写（#226 尾巴）— ✅ 已解决 2026-06-11（chore/drop-group-billing-tables，#295）
+- **解决**: 迁移 `20260611013529` 重写 8 个 live RPC（`open_group_conv`/`bootstrap_user_id`/`group_invite_user`/`group_invite_link_redeem`/`group_join_request_create`/`group_join_request_decide`/`group_remove_member`/`group_set_member_mute`）去掉死表读写 → `DROP TABLE group_member_billing` + drop `group_member_invitations.billing_snapshot`/`invitee_participates` 快照列。`subject_wallets` 核实早已不在 live（引用也已清零）。mute 状态收敛到 `conversation_participants.muted`（0045 起本就双写镜像）。edge 删 invite-decide 的 gmb INSERT；iOS 删 per-member freeze 整套 UI（见下条说明）+ GroupSettingsView mute 改读 participant 行 + 本地缓存 v10 迁移删 `frozen` 列。已 db push EU + live introspection 复核（表 0/引用函数 0/快照列 0）+ 建群写路径 smoke 通过。
+- **🔴 顺手修掉一个 P0**: live `open_group_conv` 还在 INSERT 已于 20260603112148 drop 的 `group_billing_config` → **2026-06-03 起生产建群（POST /v1/groups）一直是坏的**（42P01），与 `bootstrap_user_id` 同根因（20260604085445 修 signup 时漏了这个函数）。pre-launch 无人建群所以没炸出来。本迁移重写时一并去掉该语句。
+- **附带产品面决定（按"基线未验证就大胆重写"口径）**: per-member freeze（`overdrawn`/`frozen_at`、"已达上限"徽章、冻结横幅、composer 锁、消息隐藏）的唯一写入方 `apply_audit_split` 已随 billing-v2 退役删除——纯死状态，iOS 整套 UI 连根移除。新模型的会话级 gate（群钱包 exhausted → `dispatchGroupTurn` no_balance + continue 流）不受影响。**task #291（Mac composer 三横幅）的 freeze 横幅半项随之作废**，只剩 continue/@-mention 两项。
 - **发现**: 2026-06-04 · fix/billing-tails-email-norm（#226）
-- **位置**: 两表 + 写它们的 live SECURITY DEFINER RPC：`open_group_conv`(0048) / 群 join RPC / `bootstrap_user_id` / `group_set_member_mute`(0045) / freeze 触发器 / `grp_create_group_subject` / `getSubjectBalance`
-- **问题**: 旧 per-conversation 分摊退役后这两表已无业务读路径（invite 流已解耦，commit 75a3fd10），但仍被一批 live RPC 无脑 INSERT/UPDATE/SELECT，直接 DROP 会断建群/加群/静音/群账号创建。A 段孤儿清理 20260603112148 当初正因此把它们留给 #226。
-- **影响**: 迁移账本留两张"僵而不死"的表 + 一摊写它们的死路径，长期 dead-weight + 账本噪声。
-- **建议**: 独立 chore —— 先重写这批 RPC 去掉对两表的写/读，再发 DROP 迁移。别夹在别的 lane 顺手做。
-- **状态**: 待办（#226 物理 drop 专项）
+- **原问题**: 旧 per-conversation 分摊退役后这两表已无业务读路径，但仍被一批 live RPC 无脑 INSERT/UPDATE/SELECT，直接 DROP 会断建群/加群/静音；A 段孤儿清理 20260603112148 因此把它们留给 #226。
 
 ### 🟡 PendingCrew 群聊 user 作者无法区分是哪个人 — AppModel 不暴露登录 user id — ✅ 已解决 2026-06-05（feat/crew-captain-orchestration）
 - **解决**: `GET /v1/me/subject` 新增 `user_id`(device grant → `granted_by_user_id`;user JWT → `c.var.userId`);iOS `UserSubject.userId` 透出,`CrewStore.refreshSubjects` 回填 `AppModel.currentUserId`,`CrewChatView.localUserId` 改指过去。多人 crew 现可区分自己 vs 其他人类。
@@ -781,6 +810,22 @@
 
 - 🟡 **本地 Swift 单测 / 交互式二进制 smoke 在"超长 session"末段被宿主 PTY 耗尽卡住 —— 验证方法学缺口,非代码缺陷** — `feat/session-crew-comms`(2026-06-08,#274)。`xcodebuild test`(macOS)报 `Pseudo Terminal Setup Error / IDEPseudoTerminalDomain ErrorCode 7 Errno 6 (Device not configured)`。根因经只读诊断坐实:`kern.tty.ptmx_max=511`,而托管本 agent 的宿主进程(`Claude` app,本次 PID 1321)在长 session 里**泄漏 ptmx master fd**,单进程占满 **510/511**,xctest runner 分不到新 PTY → 启动失败;同源地,直接 `--mcp-serve` 跑**阻塞读 stdin** 的真二进制也卡(harness 后台化下 stdin 不绑文件 EOF + PTY 退化)。**不能** kill 宿主(=断 session),**不擅自** `sudo sysctl -w kern.tty.ptmx_max=…`(改系统设置需用户授权)。**当前 workaround**:自包含 Foundation 模块(`LocalApprovalStore`/`LocalWhiteboardStore`/`McpServer` 等)用 `swiftc <真实源文件> + 断言 main` 编 CLI driver 直接跑(不读 stdin、不需 PTY),step ① 已 21 断言全绿;XCTest 文件保留为 Xcode GUI / CI(PTY 充足)下的 canonical 验证。**待用户在场时**:在新鲜 session(或重启宿主 app 释放 ptmx fd)下跑一次完整 `xcodebuild test` 收口,或评估给宿主 app 修 PTY fd 泄漏。**影响**:长 session 末段无法用 xctest 自验 Swift,只能 swiftc-driver 兜底——验证仍真实,但不是 canonical runner。
 
+- 🟡 **Mac 附件:无相机;composer 文本框是简化 SwiftUI 孪生(无硬件 Return-as-send / 无键盘帧跟踪)** — `feat/tri-platform-ui`(2026-06-08)。把 `ComposerView`/`ChatActionSheet`/`ConversationView+Attachments` 去 fence 跨平台:相册(PhotosPicker,macOS 13+)+ 文件上传两端共用,图片编码加了 `PlatformImage.jpegData(quality:)`(iOS UIImage.jpegData / macOS NSBitmapImageRep)+ CoreGraphics 降采样。**有意 iOS-only 的缺口**:
+  - **相机**:`CameraPicker`(UIImagePickerController)+ ChatActionSheet 的"拍照"tile + `ingestCameraImage(UIImage)` 全 `#if os(iOS)`。Mac 无摄像头,合理;但若以后要 Mac 端"从 Continuity Camera / 截图"取图,需另接(非本 task 范畴)。
+  - **composer 文本输入**:iOS 的 `ComposerTextField`(UITextView 子类)做了硬件 Return-as-send、Shift/⌥+Return 换行、IME marked-text 防误发、6 行封顶 + 键盘帧逐帧跟踪(inputAccessoryView)。macOS 孪生只是一个 `TextField(axis:.vertical).lineLimit(1...6)` + `.onSubmit`,**没有** IME 防误发细节、没有键盘帧跟踪(Mac 不需要)。功能可用但不是逐特性对齐;若 Mac 端要更精细的输入行为需再做。
+  - **宿主未接**:`ComposerView` 本身已跨平台编译,但它在 iOS 经 `ChatComposerAccessory`(inputAccessoryView,仍 `#if os(iOS)`)挂载;Mac 用 `.safeAreaInset` 挂 composer 是 ConversationView task 的事,本 task 未接。`ConversationView+Attachments.swift` 在 macOS 的唯一残留报错是对仍 fenced 的 `ConversationView` 的 cross-ref(extension 找不到类型),属预期。
+
+- 🟡 **Mac ConversationView 跨平台:无语音通话入口 + composer 缺横幅 + Crew/Permission 决定 no-op** — `feat/tri-platform-ui`(2026-06-08)。把主聊天 `ConversationView` + 全部 extension + `SubConversationView` 去 fence 跨平台,Call 切片(CallCenter/CallSession/GroupCallSession/IncomingCallStore/ActiveVoiceCallStore)内部 `#if os(iOS)` 围栏。双端:iOS BUILD SUCCEEDED;macOS 整模块仍因**其它未迁切片**(FriendsTabView/LetterComposeSheet 的 `.navigationBar`/`.tabBar`/`.topBarLeading/Trailing` 不可用 + Crew/Contacts API)bail,但 Message 切片自身 macOS 0 error。**有意 iOS-only 的缺口**:
+  - **无语音通话入口**:header 的 phone/群语音按钮、pre-chat 致电按钮、`activeCallBanner`(进行中通话条)、CallKit 冷/热启动 auto-join(`consumePendingAutoJoinIfMatches` + IncomingCallStore `.onChange`)在 macOS 全缺。Mac 聊天功能完整但不能发起/接听语音。要补需先把整个 Call 切片跨平台。
+  - **macOS composer 只挂裸输入行,无横幅**:iOS 经 `ChatComposerAccessory`(inputAccessoryView,仍 iOS-only)把 composer + freeze/continue/@-mention 三类横幅挂在键盘上;macOS 走 `.safeAreaInset(.bottom) { macComposer }` 直接渲染跨平台 `ComposerView`,**没有移植** 冻结提示 / 续聊确认 / @-提及候选这三个横幅。Mac 端这些交互(群冻结提示、跨 bot 续聊决定、群内 @-提及补全)暂时不可见。要补需把 ChatComposerAccessory 的横幅区抽成跨平台,或在 macComposer 里重画。
+  - **Crew/Permission 决定在 macOS 是 no-op**:`decideCrewProposal` / `decidePermissionRequest` 依赖 `APIClient.CrewProposalDecision` / `.PermissionRequestDecision` 嵌套类型 + decide 端点,都在仍 iOS-only 的 Crew 切片(`Features/Crew/CrewAPI.swift` 整文件 `#if os(iOS)`)。卡片视图(CrewProposalCardView/PermissionRequestCardView)已跨平台会渲染,但 macOS 点批准/拒绝是空实现(给了 no-op stub)。Crew 切片迁移后需把这两个决定方法解 fence。
+  - **均未真机/真账号回归**:本 task 只编译校验(iOS sim build + macOS error 扫描),没在真实登录态跑过聊天回合 / 语音 / 决定卡片。
+
+- 🟡 **macOS 全模块编译打通(milestone),但 3 处功能在 Mac 上是 placeholder / no-op** — `feat/tri-platform-ui`(2026-06-08)。收尾最后一批 macOS 编译 blocker:加了 `ToolbarItemPlacement.platformLeading/platformTrailing`(iOS topBar* / macOS cancellation+primary);解锁 `ContactsAPI`、`GroupAvatar`、`RelativeMessageTime`(含 `TimeSeparatorPill`)、`SkillsView`、`BotCapabilitiesView`(全是纯 Foundation/SwiftUI,只用已有跨平台 shim);修 `BotManagement` 的 `glassEffect` `#available` 漏了 `macOS 26.0`。**双端 BUILD SUCCEEDED**。**有意 iOS-only 的 Mac 缺口**:
+  - **二维码名片**:`MyQRBusinessCard`(UIKit 图像渲染 + PHPhotoLibrary 存图 + UIPasteboard)仍 iOS-only,`MyQRSheet` 在 macOS 显示「二维码名片暂不支持 Mac」占位。Mac 用户看不到自己的加好友二维码。要补需把 QR 渲染抽成 `PlatformImage`/CoreImage 跨平台版。
+  - ✅ **群设置(已解决,`feat/tri-platform-ui`,2026-06-09,双端 BUILD SUCCEEDED)**:整个 Group slice(`GroupSettingsView`/`GroupWalletView`/`GroupQRCard`/`GroupJoinView`/`JoinRequestsInboxView`)已去 `#if os(iOS)` fence,机械替换 shim(`inlineNavTitle`/`platform{Leading,Trailing}`/`platformListStyle`/`platformDetents`/`Clipboard.copy`/`platformKeyboard(.number)` 新增、`QRCode.image` + `Image(platformImage:)`),相机 `QRScannerView` 仍 `#if os(iOS)`(Mac 走邀请链接)。ConversationView 群设置 navigationDestination 占位已换真实 `GroupSettingsView(conversationId:)`,Mac 进群后可改成员/昵称/免打扰/退群。顺手修 `GroupQRCard` 的 `glassEffect` `#available` 漏 `macOS 26.0`。
+  - **推送活跃会话标记**:`PushService`(UIKit/PushKit/UserNotifications)iOS-only;ConversationView 的 `.onAppear`/`.onDisappear` 里 `PushService.shared.activeConversationId` 读写 + 相机 `ingestCameraImage` 的 `.onChange(of: cameraImage)` 都 `#if os(iOS)` 围栏。Mac 无推送前台 banner 抑制(无所谓,Mac 没接推送)/无相机(合理)。
+  均未真机回归 —— 本 task 只 iOS sim build + macOS build 双绿,没在真实登录态跑过。
 - 🟡 **`boardResource` 把所有 DB 错误一律压成 500 `database_error`,无法区分 409 conflict** — `feat/board-console`(2026-06-08)。`apps/edge/src/lib/board-resource.ts` 的 CRUD 工厂在 list/get/create/update/delete 各处都是 `if (error) return jsonError(c, 500, 'database_error', …)`,把 Postgres 错误码全部抹平。preset-bot 表的 `slug` 唯一约束冲突(以及将来任何唯一/外键约束)会以 500 返回,而非语义正确的 409 `conflict`,前端无法据此提示"slug 已被占用"。P1 只有 preset-bots,管理员手输 slug 撞车概率低,可忍;**P2–P4 换表(尤其有用户可见唯一键的资源)若需向前端暴露唯一冲突,需扩工厂**:按 `error.code === '23505'`(unique_violation)/ `'23503'`(fk_violation)映射到 409 并带上冲突列信息,而不是无脑 500。
 
 - 🟡 **`boardResource` list 硬编码 `.limit(500)` 是魔法值且静默截断** — `feat/board-console`(2026-06-08)。`apps/edge/src/lib/board-resource.ts` 的 LIST 路由写死 `.limit(500)`,既是裸魔法数(无命名、无注释来由),又**无 count / has_more 信号**:行数超 500 时直接静默吃掉尾部,前端无从得知列表被截。preset-bots 量小(模板行数十级)不会触顶,当前安全;**P2 换大表(如模型目录、未来用户可见的大集合)前应提为 `opts.listLimit`(显式可配)或加真正的分页**(cursor / offset + `count: 'exact'` 回传总数 / `has_more`),否则换表那刻就埋下"列表只显示前 500"的隐性数据缺失。

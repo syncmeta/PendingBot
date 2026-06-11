@@ -56,11 +56,10 @@ function rpcError(err: unknown, fallback = 'database error') {
 
 // 群邀请卡片的"计费提示"文案。
 //
-// 旧实现读 per-conversation 分摊表(group_member_billing)算"N 人共担"，那套
-// 模型已退役 —— 群消费改由责任 subject 的实缴池+认缴结算(billing/group-wallet.ts），
-// 不再有 per-member 分摊。这里不再读任何分摊状态，返回一句与新模型一致的中性提示，
-// 让邀请卡片有话可说但不再误导。billing_snapshot 列保留(iOS 仍解码 .text)，
-// invitee_participates 写常量 true(列尚未物理 drop；#226 物理 drop 时连列一起清）。
+// 旧 per-conversation 分摊模型已退役(表/列已物理 drop,迁移
+// 20260611013529)—— 群消费改由责任 subject 的实缴池+认缴结算
+// (billing/group-wallet.ts)。提示是常量,不再落库,GET /invitations
+// 在响应里合成 billing_snapshot(iOS 解码 .text 的形状不变)。
 function groupInviteBillingHint() {
   return {
     invitee_participates: true,
@@ -114,7 +113,6 @@ groupRoutes.post('/', async (c) => {
   const invitationIds: string[] = [];
   if (data && parsed.memberUserIds.length > 0) {
     const supaSvc = serviceClient(c.env);
-    const hint = groupInviteBillingHint();
     for (const inviteeId of parsed.memberUserIds) {
       if (inviteeId === c.var.userId!) continue;
       const { data: invite, error: inviteErr } = await supaSvc
@@ -124,8 +122,6 @@ groupRoutes.post('/', async (c) => {
           inviter_id: c.var.userId!,
           invitee_id: inviteeId,
           status: 'pending',
-          billing_snapshot: hint,
-          invitee_participates: hint.invitee_participates,
         })
         .select('id')
         .single();
@@ -262,8 +258,6 @@ groupRoutes.post('/:id/invite-user', async (c) => {
         inviter_id: inviterId,
         invitee_id: parsed.userId,
         status: 'pending',
-        billing_snapshot: hint,
-        invitee_participates: hint.invitee_participates,
         decided_at: null,
       })
       .select('id')
@@ -283,7 +277,7 @@ groupRoutes.get('/invitations', async (c) => {
   const supa = serviceClient(c.env);
   const { data, error } = await supa
     .from('group_member_invitations')
-    .select('id, conversation_id, inviter_id, invitee_id, status, billing_snapshot, invitee_participates, created_at, decided_at')
+    .select('id, conversation_id, inviter_id, invitee_id, status, created_at, decided_at')
     .eq('invitee_id', userId)
     .order('created_at', { ascending: false });
   if (error) return jsonError(c, 500, 'database_error', { detail: error.message });
@@ -311,9 +305,14 @@ groupRoutes.get('/invitations', async (c) => {
     }];
   }));
 
+  // billing_snapshot 不再落库(死分摊模型的快照列已 drop),响应里合成常量
+  // 提示,保持 iOS 解码形状(row.billing_snapshot?.text)不变。
+  const hint = groupInviteBillingHint();
   return c.json({
     invitations: (data ?? []).map((r) => ({
       ...r,
+      billing_snapshot: hint,
+      invitee_participates: hint.invitee_participates,
       group_title: titleByConv.get(r.conversation_id as string) ?? '群聊',
       inviter: inviterById.get(r.inviter_id as string) ?? {
         display_name: '',
@@ -363,24 +362,14 @@ groupRoutes.post('/invitations/:inviteId/decide', async (c) => {
     if ((count ?? 0) >= (meta?.max_members ?? 100)) {
       return jsonError(c, 400, 'conflict', { message: '群成员已满' });
     }
-    // group_member_billing 行仍要建:它不再承载分摊(那套已退役)，但 mute/freeze
-    // 等 RPC(group_set_member_mute 等)还 UPDATE 这张表的 muted/frozen_at —— 没行
-    // 会让那些操作在本表侧静默 no-op。participates 不再来自已废的 invite snapshot，
-    // 走表默认(true)。表/列的物理 drop 见 #226 报告(被 mute/join RPC 牵住，未删）。
-    const [{ error: partErr }, { error: billingErr }] = await Promise.all([
-      supa.from('conversation_participants').insert({
-        conversation_id: invite.conversation_id,
-        participant_type: 'user',
-        participant_id: userId,
-        role: 'member',
-      }),
-      supa.from('group_member_billing').insert({
-        conversation_id: invite.conversation_id,
-        user_id: userId,
-      }),
-    ]);
-    if (partErr || billingErr) {
-      return jsonError(c, 500, 'database_error', { detail: partErr?.message ?? billingErr?.message });
+    const { error: partErr } = await supa.from('conversation_participants').insert({
+      conversation_id: invite.conversation_id,
+      participant_type: 'user',
+      participant_id: userId,
+      role: 'member',
+    });
+    if (partErr) {
+      return jsonError(c, 500, 'database_error', { detail: partErr.message });
     }
   }
 
@@ -607,11 +596,11 @@ groupRoutes.post('/:id/bot-description', async (c) => {
 // Mute
 // ─────────────────────────────────────────────────────────────────────
 //
-// 旧的 per-conversation 分摊配置(/billing、/cap、/participates →
-// group_member_billing 表 + group_set_* RPC)已退役 —— 群消费改由责任
-// subject 的实缴池+认缴模型结算(billing/group-wallet.ts settleGroupSpend),
-// 配置入口移到群钱包页(/v1/group-subjects/:id/*)。表/RPC/列的物理 drop 见
-// supabase/migrations 的 retire 迁移(随 billing 分支部署协调应用)。
+// 旧的 per-conversation 分摊配置(/billing、/cap、/participates)已退役 ——
+// 群消费改由责任 subject 的实缴池+认缴模型结算(billing/group-wallet.ts
+// settleGroupSpend),配置入口移到群钱包页(/v1/group-subjects/:id/*)。
+// group_member_billing 表已物理 drop(迁移 20260611013529);mute 状态只存
+// conversation_participants.muted,group_set_member_mute RPC 只写那一处。
 
 const MuteBody = z.object({ muted: z.boolean() });
 groupRoutes.post('/:id/mute', async (c) => {

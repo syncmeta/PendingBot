@@ -36,7 +36,9 @@ struct MacRootGate: View {
                 MacWelcomeView()
             } else {
                 // 登录后才声明主 app 尺寸 → 窗口从登录小窗长到 1100×700。
-                MacRootView()
+                // A8:登录后渲染跨平台三列 shell WideRootView(已取代旧的
+                // Mac 专属 MacRootView,后者连同消息/好友 Mac 平行列已删)。
+                WideRootView()
                     .frame(minWidth: 1100, minHeight: 700)
             }
         }

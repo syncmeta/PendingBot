@@ -57,7 +57,11 @@ struct TabRoot: View {
         if store.current != nil {
             Group {
                 if sidebarLayout {
-                    PendingBotRegularRootView(selection: selected)
+                    // iPad regular 收敛到与 macOS @main 同一个三列壳。注入
+                    // `selected` 作为外部 tab 绑定,壳跟着 TabRoot 的选择走 ——
+                    // 下面的深链 onChange 改 `selected.wrappedValue` 时,壳的
+                    // 侧栏与中/右栏会同步翻 tab。
+                    WideRootView(externalTab: selected)
                 } else {
                     compactBody
                 }
@@ -172,21 +176,6 @@ struct TabRoot: View {
 
 }
 
-// ── EnvironmentValues ───────────────────────────────────────────────────────
-// The TabRoot owns the active APIClient + Account; child views read them
-// via @Environment so we don't have to thread bindings through every layer.
-
-private struct AccountKey: EnvironmentKey { static let defaultValue: Account? = nil }
-private struct APIKey: EnvironmentKey { static let defaultValue: APIClient? = nil }
-
-extension EnvironmentValues {
-    var account: Account? {
-        get { self[AccountKey.self] }
-        set { self[AccountKey.self] = newValue }
-    }
-    var api: APIClient? {
-        get { self[APIKey.self] }
-        set { self[APIKey.self] = newValue }
-    }
-}
+// EnvironmentValues for \.api / \.account moved to AppEnvironment.swift
+// (cross-platform — the keys must exist on macOS too).
 #endif

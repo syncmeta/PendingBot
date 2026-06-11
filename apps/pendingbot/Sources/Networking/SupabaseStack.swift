@@ -15,7 +15,7 @@ enum SupabaseStack {
         let env = HostedConfig.environment
         return SupabaseClient(
             supabaseURL: env.supabaseURL,
-            supabaseKey: env.supabaseAnonKey,
+            supabaseKey: env.supabasePublishableKey,
             options: SupabaseClientOptions(
                 db: SupabaseClientOptions.DatabaseOptions(schema: "pendingbot"),
                 // Opt into the v3 behaviour described in

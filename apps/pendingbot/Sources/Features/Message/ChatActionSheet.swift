@@ -1,6 +1,7 @@
-#if os(iOS)
 import SwiftUI
+#if os(iOS)
 import UIKit
+#endif
 
 /// WeChat-style "+" action panel for the chat composer. Renders inline
 /// below the input row (iMessage / WeChat style), so tapping the
@@ -45,6 +46,9 @@ struct ChatActionSheet: View {
                 }
                 .buttonStyle(.plain)
 
+                #if os(iOS)
+                // Camera capture is iOS-only — Macs have no camera path
+                // (UIImagePickerController is unavailable on macOS).
                 Button {
                     Haptics.tap()
                     onPickCamera()
@@ -53,6 +57,7 @@ struct ChatActionSheet: View {
                     actionTileLabel(icon: "camera", label: "拍照")
                 }
                 .buttonStyle(.plain)
+                #endif
 
                 Button {
                     Haptics.tap()
@@ -109,9 +114,12 @@ struct ChatActionSheet: View {
     }
 }
 
+#if os(iOS)
 /// Thin UIImagePickerController wrapper for the camera. PhotosPicker is
 /// already used for library selection; UIKit's picker is the cleanest
 /// way to get a one-shot camera capture without dragging in AVFoundation.
+/// iOS-only — `UIImagePickerController` doesn't exist on macOS and Macs
+/// have no camera capture path here.
 struct CameraPicker: UIViewControllerRepresentable {
     var onPick: (UIImage?) -> Void
 

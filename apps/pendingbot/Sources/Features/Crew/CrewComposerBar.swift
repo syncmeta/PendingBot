@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 import PhotosUI
 
@@ -29,7 +28,7 @@ struct CrewComposerBar: View {
     // pickers are never presented.
     @State private var pending: [PendingAttachment] = []
     @State private var photoItems: [PhotosPickerItem] = []
-    @State private var cameraImage: UIImage?
+    @State private var cameraImage: PlatformImage?
     @State private var showFileImporter = false
     @State private var showPhotoPicker = false
     @State private var showCamera = false
@@ -109,7 +108,7 @@ struct CrewComposerBar: View {
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
                             .background(
-                                Capsule().fill(Color(.secondarySystemBackground))
+                                Capsule().fill(Theme.Palette.surfaceMuted)
                             )
                     }
                     .buttonStyle(.plain)
@@ -157,4 +156,3 @@ struct CrewComposerBar: View {
         showPicker = false
     }
 }
-#endif

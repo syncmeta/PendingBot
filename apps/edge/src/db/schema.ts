@@ -1839,81 +1839,31 @@ export type Database = {
           },
         ]
       }
-      group_member_billing: {
-        Row: {
-          cap_credits: number | null
-          conversation_id: string
-          frozen_at: string | null
-          joined_at: string
-          muted: boolean
-          overdrawn: boolean
-          participates: boolean
-          spent_credits: number
-          user_id: string
-        }
-        Insert: {
-          cap_credits?: number | null
-          conversation_id: string
-          frozen_at?: string | null
-          joined_at?: string
-          muted?: boolean
-          overdrawn?: boolean
-          participates?: boolean
-          spent_credits?: number
-          user_id: string
-        }
-        Update: {
-          cap_credits?: number | null
-          conversation_id?: string
-          frozen_at?: string | null
-          joined_at?: string
-          muted?: boolean
-          overdrawn?: boolean
-          participates?: boolean
-          spent_credits?: number
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "group_member_billing_conv_fkey"
-            columns: ["conversation_id"]
-            isOneToOne: false
-            referencedRelation: "conversations"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       group_member_invitations: {
         Row: {
-          billing_snapshot: Json
           conversation_id: string
           created_at: string
           decided_at: string | null
           id: string
           invitee_id: string
-          invitee_participates: boolean
           inviter_id: string
           status: Database["pendingbot"]["Enums"]["join_request_status"]
         }
         Insert: {
-          billing_snapshot?: Json
           conversation_id: string
           created_at?: string
           decided_at?: string | null
           id?: string
           invitee_id: string
-          invitee_participates?: boolean
           inviter_id: string
           status?: Database["pendingbot"]["Enums"]["join_request_status"]
         }
         Update: {
-          billing_snapshot?: Json
           conversation_id?: string
           created_at?: string
           decided_at?: string | null
           id?: string
           invitee_id?: string
-          invitee_participates?: boolean
           inviter_id?: string
           status?: Database["pendingbot"]["Enums"]["join_request_status"]
         }

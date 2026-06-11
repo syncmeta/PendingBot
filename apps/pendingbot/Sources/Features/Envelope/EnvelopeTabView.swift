@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 import Supabase
 
@@ -10,6 +9,11 @@ import Supabase
 /// Reads the initial page directly from `pendingbot.envelope_runs` (RLS
 /// scoped to the signed-in user) and subscribes to a feed-level
 /// Realtime channel for live INSERT/UPDATE/DELETE.
+///
+/// Two layouts driven by `useSidebarLayout` (mirrors Friends / Messages):
+///   • compact (iPhone): NavigationStack push from the feed into the article
+///   • regular (iPad landscape, Mac Catalyst): NavigationSplitView with the
+///     feed as a sidebar and the article on the right detail pane.
 struct EnvelopeTabView: View {
     @EnvironmentObject private var store: AccountStore
     @EnvironmentObject private var unread: UnreadStore
@@ -28,89 +32,194 @@ struct EnvelopeTabView: View {
     @State private var loading = false
     @State private var error: String?
     @State private var path: [EnvelopeNav] = []
+    /// Selection-driven detail for the regular size class — mirrors
+    /// Friends / Messages so picking a row on Mac / iPad-landscape opens the
+    /// article in the right pane instead of pushing inside the sidebar.
+    @State private var selectedRunId: String?
 
     @State private var feedToken: EnvelopeFeedToken?
 
+    /// External selection sink, only set when the Mac three-column shell
+    /// reuses our feed via `FeatureSurface.listColumn(selection:)`. When
+    /// non-nil, row taps + highlight read/write THIS binding instead of the
+    /// internal `selectedRunId` @State, so the shell's own detail column (a
+    /// separate `NavigationSplitView` column) updates. nil for every iOS
+    /// code path — the normal `body` never sets it, so iOS behavior is
+    /// byte-identical to before.
+    var externalSelection: Binding<String?>? = nil
+    /// 列模式开关:true = body 渲染 Mac 壳的 list 列(见 body 注释)。
+    var renderAsMacListColumn = false
+
+    /// The selection the feed reads for row highlight: the shell's binding
+    /// when the feed is hosted by the Mac shell, otherwise the internal
+    /// @State. The single seam that lets one `coreContent` serve both the
+    /// iOS `regularBody` (internal state) and the Mac `listColumn` (external
+    /// binding). When `externalSelection` is nil (every iOS path) this is
+    /// exactly `selectedRunId`.
+    private var effectiveSelection: String? {
+        externalSelection?.wrappedValue ?? selectedRunId
+    }
+
     var body: some View {
-        Group {
-            if sidebarLayout {
-                NavigationSplitView {
-                    VStack(spacing: 0) {
-                        coreContent
-                        if let topTabSelection {
-                            SidebarTabBar(selection: topTabSelection)
-                        }
+        // 列模式必须经 body 渲染(同 MessageTabView:在图外手动求值
+        // macListColumn 会让 self 拷贝的 @EnvironmentObject 永不灌注 →
+        // 首次读取断言崩溃)。
+        if renderAsMacListColumn {
+            macListColumn
+        } else {
+            chrome(
+                Group {
+                    if sidebarLayout {
+                        regularBody
+                    } else {
+                        compactBody
                     }
-                    .sidebarColumnWidth()
-                } detail: {
-                    EmptyDetailHint(text: "选一封来信开读", systemImage: "envelope.open")
                 }
+            )
+        }
+    }
+
+    /// Wraps a root view with the tab's shared chrome — the `.task` (load +
+    /// feed subscribe), the `.onDisappear` channel teardown, and the error
+    /// alert. Pulled out of `body` so the Mac three-column shell's
+    /// `listColumn` and the `compactRoot` can each be self-contained: every
+    /// entry point that hosts the feed carries the same load + Realtime +
+    /// error surface, regardless of which SwiftUI container it's planted in.
+    /// The iOS `body` calls this with the exact same content it used to
+    /// inline, so its behavior is unchanged.
+    @ViewBuilder
+    private func chrome(_ content: some View) -> some View {
+        content
+            .task { await onAppearLifecycle() }
+            .onDisappear { Task { await onDisappearLifecycle() } }
+            .alert("出错", isPresented: .constant(error != nil)) {
+                Button("好") { error = nil }
+            } message: { Text(error ?? "") }
+    }
+
+    // ── Compact (iPhone) ────────────────────────────────────────────────────
+
+    private var compactBody: some View {
+        coreContent
+            .platformTabBarVisibility(path.isEmpty)
+    }
+
+    // ── Regular (iPad landscape, Mac Catalyst) ──────────────────────────────
+
+    private var regularBody: some View {
+        NavigationSplitView {
+            VStack(spacing: 0) {
+                feedList
+                if let topTabSelection {
+                    SidebarTabBar(selection: topTabSelection)
+                }
+            }
+            .background(Theme.Palette.canvas.ignoresSafeArea())
+            #if os(iOS)
+            .toolbar(.hidden, for: .navigationBar)
+            #endif
+            .sidebarColumnWidth()
+        } detail: {
+            if let id = selectedRunId {
+                EnvelopeArticleView(envelopeRunId: id)
+                    // .id forces a fresh article view (and a fresh Realtime
+                    // subscription) when the user picks a different letter —
+                    // without it the existing view would just rebind, leaking
+                    // the prior run's load / subscribe state.
+                    .id(id)
             } else {
-                coreContent
-                    .toolbar(path.isEmpty ? .visible : .hidden, for: .tabBar)
+                EmptyDetailHint(text: "选一封来信开读", systemImage: "envelope.open")
             }
         }
-        .task { await onAppearLifecycle() }
-        .onDisappear { Task { await onDisappearLifecycle() } }
-        .alert("出错", isPresented: .constant(error != nil)) {
-            Button("好") { error = nil }
-        } message: { Text(error ?? "") }
     }
+
+    // ── Compact feed → push article ─────────────────────────────────────────
 
     @ViewBuilder
     private var coreContent: some View {
         NavigationStack(path: $path) {
-            VStack(spacing: 0) {
-                // No "+" trigger — new envelopes are kicked off from each
-                // conversation's settings sheet. This tab is read-only.
-                TabHeaderBar(title: "来信") {
-                    if !runs.isEmpty {
-                        Text("\(runs.count) 封")
-                            .font(Theme.Fonts.rounded(size: 12, weight: .medium))
-                            .foregroundStyle(Theme.Palette.inkMuted)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(
-                                Capsule(style: .continuous)
-                                    .fill(Theme.Palette.surfaceMuted)
-                            )
+            feedList
+                .background(Theme.Palette.canvas.ignoresSafeArea())
+                #if os(iOS)
+                .toolbar(.hidden, for: .navigationBar)
+                #endif
+                .navigationDestination(for: EnvelopeNav.self) { dest in
+                    switch dest {
+                    case .article(let id):
+                        EnvelopeArticleView(envelopeRunId: id)
                     }
                 }
-                ZStack {
-                    Theme.Palette.canvas.ignoresSafeArea()
-                    if runs.isEmpty && !loading {
-                        EmptyState()
-                    } else {
-                        ScrollView {
-                            LazyVStack(spacing: 16) {
-                                ForEach(runs) { run in
-                                    EnvelopeFeedRow(run: run, senderName: senderName(for: run))
-                                        .contentShape(Rectangle())
-                                        .onTapGesture {
-                                            guard run.isDone || run.isRunning else { return }
-                                            unread.markEnvelopeRead(run.id)
-                                            path.append(.article(run.id))
-                                            Haptics.tap()
-                                        }
-                                }
-                            }
-                            .padding(.horizontal, Theme.Metrics.gutter)
-                            .padding(.vertical, 16)
-                            .readableColumnWidth()
-                        }
-                        .refreshable { await load() }
-                    }
+        }
+    }
+
+    // ── Feed (shared) ───────────────────────────────────────────────────────
+
+    /// The feed itself — header + scrolling letter cards. Shared by the
+    /// compact `coreContent` (push) and the regular `regularBody` /
+    /// Mac `listColumn` (selection). Row taps route through `open(_:)` so
+    /// the right surface (push / detail pane / shell binding) gets the pick.
+    @ViewBuilder
+    private var feedList: some View {
+        VStack(spacing: 0) {
+            // No "+" trigger — new envelopes are kicked off from each
+            // conversation's settings sheet. This tab is read-only.
+            TabHeaderBar(title: "来信") {
+                if !runs.isEmpty {
+                    Text("\(runs.count) 封")
+                        .font(Theme.Fonts.rounded(size: 12, weight: .medium))
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(Theme.Palette.surfaceMuted)
+                        )
                 }
             }
-            .background(Theme.Palette.canvas.ignoresSafeArea())
-            .toolbar(.hidden, for: .navigationBar)
-            .navigationDestination(for: EnvelopeNav.self) { dest in
-                switch dest {
-                case .article(let id):
-                    EnvelopeArticleView(envelopeRunId: id)
+            ZStack {
+                Theme.Palette.canvas.ignoresSafeArea()
+                if runs.isEmpty && !loading {
+                    EmptyState()
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 16) {
+                            ForEach(runs) { run in
+                                EnvelopeFeedRow(run: run, senderName: senderName(for: run))
+                                    .modifier(SelectedCardHighlight(
+                                        selected: sidebarLayout && effectiveSelection == run.id
+                                    ))
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { open(run) }
+                            }
+                        }
+                        .padding(.horizontal, Theme.Metrics.gutter)
+                        .padding(.vertical, 16)
+                        .readableColumnWidth()
+                    }
+                    .refreshable { await load() }
                 }
             }
         }
+    }
+
+    /// Route a tapped letter to the right surface: the Mac shell's detail
+    /// column via the external binding (when hosted there), the regular-size
+    /// detail pane via the internal `selectedRunId` @State (iPad-landscape /
+    /// Mac Catalyst), or a compact nav-stack push (iPhone). The
+    /// `externalSelection` branch is only reachable when the Mac three-column
+    /// shell built this instance — the iOS `body` leaves it nil, so iPhone /
+    /// iPad take exactly the push / detail path they always did.
+    private func open(_ run: EnvelopeRun) {
+        guard run.isDone || run.isRunning else { return }
+        unread.markEnvelopeRead(run.id)
+        if let externalSelection {
+            externalSelection.wrappedValue = run.id
+        } else if sidebarLayout {
+            selectedRunId = run.id
+        } else {
+            path.append(.article(run.id))
+        }
+        Haptics.tap()
     }
 
     // MARK: - Lifecycle
@@ -253,8 +362,89 @@ struct EnvelopeTabView: View {
 
 }
 
+// MARK: - FeatureSurface (Mac three-column shell)
+
+/// Exposes the letter FEED and the article DETAIL as separate columns so
+/// the macOS `WideRootView` can drop them into one shared
+/// `NavigationSplitView` (feed = middle column, article = right column) — no
+/// nested split views. The iOS `body` above is untouched; these methods are
+/// additive and only the Mac shell calls them.
+///
+/// Selection plumbing: the shell owns the `Binding<String?>` (an
+/// `envelope_runs.id`) and passes it into `listColumn`. We build an
+/// `EnvelopeTabView` instance with its `externalSelection` set to that
+/// binding, so the (otherwise unchanged) `feedList` routes row taps +
+/// highlight through the shell's selection instead of the internal
+/// `@State selectedRunId`. `detailColumn` renders the same
+/// `EnvelopeArticleView` the iOS `regularBody` shows for a selected letter,
+/// which self-fetches the row by id — so the shell only needs to carry the
+/// id, not the full feed row.
+extension EnvelopeTabView: FeatureSurface {
+    typealias Selection = String
+
+    func listColumn(selection: Binding<String?>) -> some View {
+        // A fresh instance bound to the shell's selection. Its body is the
+        // feed alone (no SidebarTabBar — on Mac the tab strip is the shell's
+        // own first column), carrying the shared chrome so `load()` + the
+        // feed Realtime subscription work from this column.
+        var view = self
+        view.externalSelection = selection
+        // 返回配置过的 view 本体让 SwiftUI 装图(见 body 注释),渲染分支
+        // 在 body 里走 macListColumn。
+        view.renderAsMacListColumn = true
+        return view
+    }
+
+    func detailColumn(selection: String?) -> some View {
+        Group {
+            if let id = selection {
+                EnvelopeArticleView(envelopeRunId: id)
+                    .id(id)
+            } else {
+                EmptyDetailHint(text: "选择一封来信查看正文",
+                                systemImage: "envelope.open")
+            }
+        }
+    }
+
+    func compactRoot() -> some View {
+        // The iPhone feed → push, made self-contained by wrapping it in the
+        // same chrome the iOS `body` applies (load task + error alert).
+        chrome(compactBody)
+    }
+}
+
+private extension EnvelopeTabView {
+    /// The letter feed as a standalone column for the Mac shell: the shared
+    /// `feedList` (no SidebarTabBar) on canvas, carrying the full chrome so
+    /// its load + Realtime work from this column.
+    var macListColumn: some View {
+        chrome(
+            feedList
+                .background(Theme.Palette.canvas.ignoresSafeArea())
+        )
+    }
+}
+
 enum EnvelopeNav: Hashable {
     case article(String)
+}
+
+/// Tints a feed card when it's the one currently shown in the regular-size
+/// detail pane, so the user can see what's open on the right. A no-op
+/// (clear) when not selected — keeps the card's own background / border.
+private struct SelectedCardHighlight: ViewModifier {
+    let selected: Bool
+
+    func body(content: Content) -> some View {
+        content.overlay(
+            RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
+                .strokeBorder(
+                    selected ? Theme.Palette.accent.opacity(0.6) : Color.clear,
+                    lineWidth: selected ? 1.5 : 0
+                )
+        )
+    }
 }
 
 private struct EmptyState: View {
@@ -286,4 +476,3 @@ private struct EmptyState: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
-#endif

@@ -1,4 +1,3 @@
-#if os(iOS)
 import Foundation
 import SwiftUI
 
@@ -16,6 +15,9 @@ extension ConversationView {
         case approve
         case reject
 
+        // APIClient.CrewProposalDecision lives in the now-cross-platform Crew
+        // slice (Features/Crew/CrewAPI.swift), so this bridge compiles on both
+        // iOS and macOS.
         fileprivate var apiValue: APIClient.CrewProposalDecision {
             switch self {
             case .approve: return .approve
@@ -29,6 +31,10 @@ extension ConversationView {
     /// `crewProposalBusy`), and the local payload's status is
     /// optimistically updated on success so the card flips to its
     /// "已确认 / 已拒绝" badge state immediately.
+    ///
+    /// Cross-platform: the decide endpoint (`api.decideCrewProposal`) now lives
+    /// in the cross-platform Crew slice, so crew-proposal approve/reject works
+    /// on both iOS and macOS.
     func decideCrewProposal(_ messageId: String, decision: CrewProposalDecisionKind) async {
         guard let api else { return }
         // Sanity gate — must have a payload to act on, and it must
@@ -106,4 +112,3 @@ extension ConversationView {
         }
     }
 }
-#endif

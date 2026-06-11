@@ -1,7 +1,8 @@
-#if os(iOS)
 import SwiftUI
 import PhotosUI
+#if os(iOS)
 import UIKit
+#endif
 
 /// Bottom-of-screen input bar — capsule field flanked by circle buttons.
 /// Matches the PendingBot composer:
@@ -18,7 +19,7 @@ struct ComposerView: View {
     @Binding var input: String
     @Binding var pending: [PendingAttachment]
     @Binding var photoItems: [PhotosPickerItem]
-    @Binding var cameraImage: UIImage?
+    @Binding var cameraImage: PlatformImage?
     /// Flipped true by the "文件" action tile; the host owns the
     /// `.fileImporter` sheet bound to it.
     @Binding var showFileImporter: Bool
@@ -228,8 +229,8 @@ struct ComposerView: View {
     @ViewBuilder
     private func pendingCellContent(_ att: PendingAttachment) -> some View {
         if att.isImage {
-            if let data = att.localPreviewData, let image = UIImage(data: data) {
-                Image(uiImage: image)
+            if let data = att.localPreviewData, let image = PlatformImage.decode(data) {
+                Image(platformImage: image)
                     .resizable()
                     .scaledToFill()
                     .frame(width: 64, height: 64)
@@ -307,7 +308,7 @@ struct ComposerView: View {
 private extension View {
     @ViewBuilder
     func floatingComposerSurface<S: InsettableShape>(shape: S) -> some View {
-        if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, macOS 26.0, *) {
             self
                 .background(shape.fill(Color.white))
                 .glassEffect(.regular, in: shape)
@@ -337,6 +338,7 @@ private extension View {
 /// Used directly (as a UIView) by ComposerBarContainerView, which pins it to
 /// the full accessory bounds so it covers the home-indicator strip — see
 /// ChatComposerAccessory.swift.
+#if os(iOS)
 final class ProgressiveBlurBackdropView: UIView {
     private let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterial))
     private let gradient = CAGradientLayer()
@@ -529,6 +531,53 @@ final class ComposerUITextView: UITextView {
             return
         }
         super.pressesBegan(presses, with: event)
+    }
+}
+#elseif os(macOS)
+
+// ── Composer text input (macOS twin) ───────────────────────────────────────
+
+/// Plain SwiftUI multiline input standing in for the UIKit-backed
+/// `ComposerTextField` on macOS. No keyboard-frame tracking or hardware-
+/// Return interception here — the Mac composer is hosted via a normal
+/// `.safeAreaInset` (the ConversationView macOS path), not a UIKit
+/// `inputAccessoryView`, so the elaborate first-responder/height dance the
+/// iOS version performs isn't needed. Same init signature so `ComposerView`'s
+/// body compiles unchanged; `onHardwareReturn` is wired to the Return key via
+/// `.onSubmit`, and the vertical-axis `TextField` grows 1–6 lines like the
+/// iOS version (⌥/⇧+Return inserts a newline).
+struct ComposerTextField: View {
+    @Binding var text: String
+    let placeholder: String
+    @Binding var isFocused: Bool
+    let onHardwareReturn: () -> Void
+
+    @FocusState private var fieldFocused: Bool
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            if text.isEmpty {
+                Text(placeholder)
+                    .font(.system(size: Theme.Fonts.scaled(16)))
+                    .foregroundStyle(Theme.Palette.inkMuted.opacity(0.6))
+                    .padding(.vertical, 6)
+                    .allowsHitTesting(false)
+            }
+            TextField("", text: $text, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(.system(size: Theme.Fonts.scaled(16)))
+                .foregroundStyle(Theme.Palette.ink)
+                .lineLimit(1...6)
+                .padding(.vertical, 6)
+                .focused($fieldFocused)
+                .onSubmit(onHardwareReturn)
+        }
+        .onChange(of: isFocused) { _, want in
+            if fieldFocused != want { fieldFocused = want }
+        }
+        .onChange(of: fieldFocused) { _, focused in
+            if isFocused != focused { isFocused = focused }
+        }
     }
 }
 #endif

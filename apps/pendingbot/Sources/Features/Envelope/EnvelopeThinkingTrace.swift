@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 /// Per-turn "thinking process" trace shown on the Envelope detail page.
@@ -170,4 +169,3 @@ struct EnvelopeThinkingTrace: View {
         return trimmed.count > 80 ? String(trimmed.prefix(80)) + "…" : trimmed
     }
 }
-#endif

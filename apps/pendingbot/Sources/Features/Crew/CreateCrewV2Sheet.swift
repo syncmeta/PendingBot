@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 /// T4.6 — iOS 简化版的 "新建 crew" sheet。
@@ -63,7 +62,7 @@ struct CreateCrewV2Sheet: View {
             Form {
                 Section {
                     TextField("例如：重构鉴权模块", text: $title)
-                        .textInputAutocapitalization(.never)
+                        .platformAutocapitalization()
                         .autocorrectionDisabled()
                 } header: {
                     Text("标题")
@@ -110,7 +109,7 @@ struct CreateCrewV2Sheet: View {
 
                 Section {
                     TextField("/Users/me/repo (可选)", text: $workingDirectory)
-                        .textInputAutocapitalization(.never)
+                        .platformAutocapitalization()
                         .autocorrectionDisabled()
                 } header: {
                     Text("工作目录")
@@ -120,7 +119,7 @@ struct CreateCrewV2Sheet: View {
 
                 Section {
                     TextField("例如：重构、调研", text: $tag)
-                        .textInputAutocapitalization(.never)
+                        .platformAutocapitalization()
                         .autocorrectionDisabled()
                 } header: {
                     Text("标签 (可选)")
@@ -128,7 +127,7 @@ struct CreateCrewV2Sheet: View {
 
                 Section {
                     TextField("Captain 名称 (留空用默认)", text: $captainTemplateName)
-                        .textInputAutocapitalization(.never)
+                        .platformAutocapitalization()
                         .autocorrectionDisabled()
                 } header: {
                     Text("机长")
@@ -137,12 +136,12 @@ struct CreateCrewV2Sheet: View {
                 }
             }
             .navigationTitle("新建机组")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavTitle()
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: .platformLeading) {
                     Button("取消") { dismiss() }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .platformTrailing) {
                     Button {
                         Task { await submit() }
                     } label: {
@@ -200,4 +199,3 @@ struct CreateCrewV2Sheet: View {
         }
     }
 }
-#endif

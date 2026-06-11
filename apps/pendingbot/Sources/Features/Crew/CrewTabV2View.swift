@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 /// T4.6 — PendingBot iOS Crew Tab v2.
@@ -23,6 +22,11 @@ import SwiftUI
 ///
 /// 当 T4.1 通信规则 ship 后，CrewDetailV2View 会接上消息流 + composer，
 /// 把 §11.2 完整图景填满。
+///
+/// 跨平台:iOS 渲染既有的 `NavigationStack` 列表 → push 详情(iPhone/iPad
+/// 一致,无 sidebarLayout 分叉)。macOS 走 `FeatureSurface`,壳把 crew 列表
+/// 放中列、`CrewDetailV2View` 放右栏(详情按 crewId 自取,与中列是不同实例
+/// 也无妨)。`externalSelection` 默认 nil → iOS `body` 与改前逐字一致。
 struct CrewTabV2View: View {
     @Environment(\.api) private var api
 
@@ -38,92 +42,139 @@ struct CrewTabV2View: View {
     @State private var scanningDeviceLogin = false
     @State private var pendingDeviceLogin: DeviceLoginLink.Payload?
 
+    /// External selection sink, only set when the Mac three-column shell
+    /// reuses our crew list via `FeatureSurface.listColumn(selection:)`. When
+    /// non-nil, row taps + highlight read/write THIS binding (a crew id) instead
+    /// of pushing onto the internal `NavigationStack`, so the shell's own detail
+    /// column (a separate `NavigationSplitView` column) updates. nil for every
+    /// iOS code path — the normal `body` never sets it, so iOS behavior is
+    /// byte-identical to before.
+    var externalSelection: Binding<String?>? = nil
+    /// 列模式开关:true = body 渲染 Mac 壳的 list 列(见 body 注释)。
+    var renderAsMacListColumn = false
+
     var body: some View {
-        NavigationStack {
-            content
-                .navigationTitle("机组")
-                .navigationBarTitleDisplayMode(.large)
-                .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Menu {
-                            Button {
-                                showingCreateSheet = true
-                            } label: {
-                                Label("新建机组", systemImage: "plus.square")
+        // 列模式必须经 body 渲染(同 MessageTabView:在图外手动求值
+        // macListColumn 会让 self 拷贝的 @EnvironmentObject 永不灌注 →
+        // 首次读取断言崩溃)。
+        if renderAsMacListColumn {
+            macListColumn
+        } else {
+            chrome(
+                NavigationStack {
+                    content
+                        .navigationTitle("机组")
+                        .toolbar {
+                            ToolbarItem(placement: .platformTrailing) {
+                                crewMenu
                             }
-                            .disabled(subject == nil)
-
-                            Divider()
-
-                            Button {
-                                scanningDeviceLogin = true
-                            } label: {
-                                Label("扫码授权桌面端", systemImage: "qrcode.viewfinder")
-                            }
-
-                            Button {
-                                Task { await loadAll() }
-                            } label: {
-                                Label("刷新", systemImage: "arrow.clockwise")
-                            }
-                            .disabled(loading)
-                        } label: {
-                            Image(systemName: "ellipsis.circle")
                         }
-                    }
+                        .refreshable { await loadAll() }
+                        .navigationDestination(for: CrewSummaryV2.self) { crew in
+                            CrewDetailV2View(crewId: crew.id, fallbackTitle: crew.title)
+                        }
                 }
-                .refreshable { await loadAll() }
-        }
-        .task { await loadAll() }
-        .sheet(isPresented: $showingCreateSheet, onDismiss: {
-            // Sheet dismiss path also covers "created" — refresh either way
-            // so a successful create immediately surfaces in the list.
-            Task { await loadAll() }
-        }) {
-            CreateCrewV2Sheet(
-                defaultSubject: subject,
-                onCreated: { _ in showingCreateSheet = false }
             )
         }
-        .sheet(isPresented: $scanningDeviceLogin) {
-            QRScannerView { value in
-                scanningDeviceLogin = false
-                if let payload = DeviceLoginLink.parse(value) {
-                    pendingDeviceLogin = payload
-                } else {
-                    error = "这不是 PendingCrew 登录二维码"
-                }
-            } onError: { err in
-                error = err.localizedDescription
+    }
+
+    /// Wraps a root view with the tab's shared chrome — the `.task { loadAll() }`,
+    /// the create / device-login sheet stack, and the error / notice alerts.
+    /// Pulled out of `body` so the Mac three-column shell's `listColumn` and the
+    /// `compactRoot` can each be self-contained: every entry point that hosts the
+    /// crew list carries the same actions + loading, regardless of which SwiftUI
+    /// container it's planted in. The iOS `body` calls this with the exact same
+    /// content it used to inline, so its behavior is unchanged.
+    @ViewBuilder
+    private func chrome(_ content: some View) -> some View {
+        content
+            .task { await loadAll() }
+            .sheet(isPresented: $showingCreateSheet, onDismiss: {
+                // Sheet dismiss path also covers "created" — refresh either way
+                // so a successful create immediately surfaces in the list.
+                Task { await loadAll() }
+            }) {
+                CreateCrewV2Sheet(
+                    defaultSubject: subject,
+                    onCreated: { _ in showingCreateSheet = false }
+                )
             }
-            .ignoresSafeArea()
-        }
-        .sheet(item: $pendingDeviceLogin) { payload in
-            SubjectPickerSheet(
-                payload: payload,
-                defaultSubject: subject,
-                onApprove: { selected in
-                    pendingDeviceLogin = nil
-                    Task {
-                        await approveDeviceLogin(
-                            payload: payload,
-                            subjectId: selected.id,
-                            label: selected.label
-                        )
+            #if os(iOS)
+            .sheet(isPresented: $scanningDeviceLogin) {
+                QRScannerView { value in
+                    scanningDeviceLogin = false
+                    if let payload = DeviceLoginLink.parse(value) {
+                        pendingDeviceLogin = payload
+                    } else {
+                        error = "这不是 PendingCrew 登录二维码"
                     }
-                },
-                onCancel: { pendingDeviceLogin = nil }
-            )
-        }
-        .alert("出错", isPresented: .constant(error != nil)) {
-            Button("好") { error = nil }
-        } message: {
-            Text(error ?? "")
-        }
-        .alert("完成", isPresented: .constant(notice != nil)) {
-            Button("好") { notice = nil }
-        } message: {
-            Text(notice ?? "")
+                } onError: { err in
+                    error = err.localizedDescription
+                }
+                .ignoresSafeArea()
+            }
+            #endif
+            .sheet(item: $pendingDeviceLogin) { payload in
+                SubjectPickerSheet(
+                    payload: payload,
+                    defaultSubject: subject,
+                    onApprove: { selected in
+                        pendingDeviceLogin = nil
+                        Task {
+                            await approveDeviceLogin(
+                                payload: payload,
+                                subjectId: selected.id,
+                                label: selected.label
+                            )
+                        }
+                    },
+                    onCancel: { pendingDeviceLogin = nil }
+                )
+            }
+            .alert("出错", isPresented: .constant(error != nil)) {
+                Button("好") { error = nil }
+            } message: {
+                Text(error ?? "")
+            }
+            .alert("完成", isPresented: .constant(notice != nil)) {
+                Button("好") { notice = nil }
+            } message: {
+                Text(notice ?? "")
+            }
+    }
+
+    /// Top-right "…" menu — shared by the iOS toolbar and the Mac list column.
+    private var crewMenu: some View {
+        Menu {
+            Button {
+                showingCreateSheet = true
+            } label: {
+                Label("新建机组", systemImage: "plus.square")
+            }
+            .disabled(subject == nil)
+
+            #if os(iOS)
+            // 扫码授权桌面端 needs the camera (QRScannerView /
+            // AVFoundation) — iOS-only. Mac has no camera, so
+            // the scan entry is hidden there (a Mac user
+            // approves device-login from a different surface).
+            Divider()
+
+            Button {
+                scanningDeviceLogin = true
+            } label: {
+                Label("扫码授权桌面端", systemImage: "qrcode.viewfinder")
+            }
+            #endif
+
+            Button {
+                Task { await loadAll() }
+            } label: {
+                Label("刷新", systemImage: "arrow.clockwise")
+            }
+            .disabled(loading)
+        } label: {
+            Image(systemName: "ellipsis.circle")
         }
     }
 
@@ -151,14 +202,26 @@ struct CrewTabV2View: View {
             }
         } else {
             List(sortedCrews) { crew in
-                NavigationLink(value: crew) {
+                // iOS (externalSelection == nil): push onto the NavigationStack
+                // via NavigationLink — the iPhone/iPad path, unchanged.
+                // Mac (externalSelection != nil): write the shell's binding so
+                // its separate detail column swaps in place; the row also tints
+                // when it's the current selection.
+                if externalSelection != nil {
                     CrewRowV2(crew: crew)
+                        .contentShape(Rectangle())
+                        .listRowBackground(
+                            externalSelection?.wrappedValue == crew.id
+                                ? Color.accentColor.opacity(0.12) : nil
+                        )
+                        .onTapGesture { open(crew) }
+                } else {
+                    NavigationLink(value: crew) {
+                        CrewRowV2(crew: crew)
+                    }
                 }
             }
-            .listStyle(.insetGrouped)
-            .navigationDestination(for: CrewSummaryV2.self) { crew in
-                CrewDetailV2View(crewId: crew.id, fallbackTitle: crew.title)
-            }
+            .platformListStyle()
         }
     }
 
@@ -166,6 +229,15 @@ struct CrewTabV2View: View {
     /// 数据量小（list cap 200 in edge）一次性排即可。
     private var sortedCrews: [CrewSummaryV2] {
         crews.sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    /// Route a tapped crew to the right surface: the Mac shell's detail column
+    /// via the external binding (when hosted there). Only reachable from the
+    /// Mac `listColumn` — the iOS `body` uses `NavigationLink` directly and
+    /// leaves `externalSelection` nil, so iPhone / iPad keep their push path.
+    private func open(_ crew: CrewSummaryV2) {
+        externalSelection?.wrappedValue = crew.id
+        Haptics.tap()
     }
 
     // MARK: - Loading
@@ -223,6 +295,79 @@ struct CrewTabV2View: View {
         } catch {
             self.error = error.localizedDescription
         }
+    }
+}
+
+// MARK: - FeatureSurface (Mac three-column shell)
+
+/// Exposes the crew LIST and the crew DETAIL as separate columns so the macOS
+/// `WideRootView` can drop them into one shared `NavigationSplitView` (list =
+/// middle column, detail = right column) — no nested split views. The iOS
+/// `body` above is untouched; these methods are additive and only the Mac
+/// shell calls them.
+///
+/// Selection plumbing: the shell owns the `Binding<String?>` (a crew id) and
+/// passes it into `listColumn`. We build a `CrewTabV2View` instance with its
+/// `externalSelection` set to that binding, so the (otherwise unchanged)
+/// `content` routes row taps + highlight through the shell's selection instead
+/// of pushing onto the internal `NavigationStack`. `detailColumn` renders the
+/// same `CrewDetailV2View` the iOS push shows, which self-fetches the crew by
+/// id (`getCrewV2`) — so the shell only needs to carry the id, not the full
+/// summary row. `fallbackTitle` is "" because the detail overwrites the nav
+/// title with `detail.crew.title` once the fetch lands.
+extension CrewTabV2View: FeatureSurface {
+    typealias Selection = String
+
+    func listColumn(selection: Binding<String?>) -> some View {
+        // A fresh instance bound to the shell's selection. Its body is the crew
+        // list alone (no NavigationStack — on Mac the shell owns navigation),
+        // carrying the shared chrome so the create / device-login actions and
+        // `loadAll()` all work from this column.
+        var view = self
+        view.externalSelection = selection
+        // 返回配置过的 view 本体让 SwiftUI 装图(见 body 注释),渲染分支
+        // 在 body 里走 macListColumn。
+        view.renderAsMacListColumn = true
+        return view
+    }
+
+    func detailColumn(selection: String?) -> some View {
+        Group {
+            if let crewId = selection {
+                CrewDetailV2View(crewId: crewId, fallbackTitle: "")
+                    // .id forces a fresh detail view (and a fresh crew socket)
+                    // when the user picks a different crew — without it the
+                    // existing view would just rebind, leaking the prior crew's
+                    // chat store / realtime subscription state.
+                    .id(crewId)
+            } else {
+                EmptyDetailHint(text: "选择一个机组查看", systemImage: "command")
+            }
+        }
+    }
+
+    func compactRoot() -> some View {
+        // The iOS NavigationStack list → push, made self-contained by wrapping
+        // the same content the iOS `body` uses in the shared chrome.
+        body
+    }
+}
+
+private extension CrewTabV2View {
+    /// The crew list as a standalone column for the Mac shell: the shared
+    /// `content` (no NavigationStack) on canvas, carrying the full chrome so
+    /// create / device-login / `loadAll()` work from this column. A "+/…" menu
+    /// rides the toolbar since there's no NavigationStack to host one.
+    var macListColumn: some View {
+        chrome(
+            content
+                .navigationTitle("机组")
+                .toolbar {
+                    ToolbarItem(placement: .platformTrailing) {
+                        crewMenu
+                    }
+                }
+        )
     }
 }
 
@@ -285,4 +430,3 @@ private struct CrewRowV2: View {
         }
     }
 }
-#endif

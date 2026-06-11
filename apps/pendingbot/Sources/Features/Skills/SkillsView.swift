@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 import Supabase
 
@@ -46,14 +45,14 @@ struct SkillsView: View {
             }
             .refreshable { await load() }
         }
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavTitle()
         .toolbar {
             ToolbarItem(placement: .principal) {
                 Text("Skills · \(provider.displayName)")
                     .font(Theme.Fonts.serif(size: 17, weight: .semibold))
                     .foregroundStyle(Theme.Palette.ink)
             }
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .platformTrailing) {
                 Button {
                     creatingNew = true
                     Haptics.tap()
@@ -65,17 +64,17 @@ struct SkillsView: View {
         .sheet(item: $editingSkill) { detail in
             SkillEditorSheet(mode: .edit(detail), provider: provider) { Task { await load() } }
                 .tint(Theme.Palette.accent)
-                .presentationDragIndicator(.visible)
+                .platformDragIndicator()
         }
         .sheet(item: $forkingFrom) { source in
             SkillEditorSheet(mode: .fork(source), provider: provider) { Task { await load() } }
                 .tint(Theme.Palette.accent)
-                .presentationDragIndicator(.visible)
+                .platformDragIndicator()
         }
         .sheet(isPresented: $creatingNew) {
             SkillEditorSheet(mode: .create, provider: provider) { Task { await load() } }
                 .tint(Theme.Palette.accent)
-                .presentationDragIndicator(.visible)
+                .platformDragIndicator()
         }
         .alert("出错", isPresented: .constant(error != nil)) {
             Button("好") { error = nil }
@@ -391,7 +390,7 @@ struct SkillEditorSheet: View {
                     .padding(.bottom, 32)
                 }
             }
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavTitle()
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     Text(titleText)
@@ -430,7 +429,7 @@ struct SkillEditorSheet: View {
     private var nameCard: some View {
         labeledCard(title: "名称", footer: "小写 + 连字符，例如 my-skill") {
             TextField("my-skill", text: $name)
-                .textInputAutocapitalization(.never)
+                .platformAutocapitalization()
                 .autocorrectionDisabled(true)
                 .font(Theme.Fonts.rounded(size: 15, weight: .regular))
                 .foregroundStyle(Theme.Palette.ink)
@@ -623,4 +622,3 @@ struct SkillEditorSheet: View {
         }
     }
 }
-#endif

@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 /// Layout switch driven by horizontal size class.
@@ -15,7 +14,13 @@ extension EnvironmentValues {
     var useSidebarLayout: Bool {
         // Single source of truth: callers don't have to redo the size-class
         // check at every site. Read this in tab views via @Environment.
-        horizontalSizeClass == .regular
+        #if os(iOS)
+        return horizontalSizeClass == .regular
+        #else
+        // macOS windows are always "wide" — there is no compact size class,
+        // so the desktop split layout is always the right choice.
+        return true
+        #endif
     }
 }
 
@@ -51,4 +56,3 @@ extension View {
         navigationSplitViewColumnWidth(min: 280, ideal: 340, max: 420)
     }
 }
-#endif

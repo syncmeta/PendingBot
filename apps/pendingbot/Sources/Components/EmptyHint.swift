@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 /// Quiet, icon-less empty state. Used in place of `ContentUnavailableView`
@@ -22,4 +21,3 @@ struct EmptyHint: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
-#endif

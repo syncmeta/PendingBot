@@ -1,6 +1,4 @@
-#if os(iOS)
 import SwiftUI
-import UIKit
 
 /// T4.6 — crew 详情页。**P1：群聊 UI 为主体**。
 ///
@@ -26,7 +24,6 @@ struct CrewDetailV2View: View {
     @State private var loading = false
     @State private var error: String?
     @State private var notice: String?
-    @State private var showingShareSheet = false
     @State private var showingDetailSheet = false
     @State private var showingSessionsSheet = false
 
@@ -42,9 +39,9 @@ struct CrewDetailV2View: View {
             }
         }
         .navigationTitle(detail?.crew.title ?? fallbackTitle)
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavTitle()
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .platformTrailing) {
                 Button {
                     showingSessionsSheet = true
                 } label: {
@@ -52,7 +49,7 @@ struct CrewDetailV2View: View {
                 }
                 .accessibilityLabel("查看服务端 session")
             }
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .platformTrailing) {
                 Button {
                     showingDetailSheet = true
                 } label: {
@@ -69,22 +66,23 @@ struct CrewDetailV2View: View {
             // races the teardown.
             if let store { Task { await store.stop() } }
         }
-        .sheet(isPresented: $showingShareSheet) {
-            CrewDeepLinkShareSheet(url: pendingCrewDeepLink)
-        }
         .sheet(isPresented: $showingDetailSheet) {
             if let detail {
                 CrewDetailSheet(
                     detail: detail,
                     crewId: crewId,
-                    onOpenInPendingCrew: { showingDetailSheet = false; showingShareSheet = true },
                     onCopyDeepLink: {
-                        UIPasteboard.general.string = pendingCrewDeepLink.absoluteString
+                        Clipboard.copy(pendingCrewDeepLink.absoluteString)
                         showingDetailSheet = false
                         notice = "深链已复制到剪贴板"
                     }
                 )
             }
+        }
+        // 服务端 session 列表(终端按钮)。原本只置位 showingSessionsSheet
+        // 却没有对应的 .sheet 接它,按钮是死的 —— 补上 presenter。
+        .sheet(isPresented: $showingSessionsSheet) {
+            RemoteSessionsView(crewId: crewId, crewTitle: detail?.crew.title ?? fallbackTitle)
         }
         .alert("出错", isPresented: .constant(error != nil)) {
             Button("好") { error = nil }
@@ -157,10 +155,14 @@ struct CrewDetailV2View: View {
 private struct CrewDetailSheet: View {
     let detail: CrewDetailV2
     let crewId: String
-    let onOpenInPendingCrew: () -> Void
     let onCopyDeepLink: () -> Void
 
     @Environment(\.dismiss) private var dismiss
+
+    /// spec v2 §11.3 — `pendingcrew://crew/<crew-id>`. ShareLink hands this
+    /// to the system share sheet (cross-platform; replaces the iOS-only
+    /// UIActivityViewController bridge).
+    private var deepLink: URL { URL(string: "pendingcrew://crew/\(crewId)")! }
 
     var body: some View {
         NavigationStack {
@@ -255,7 +257,7 @@ private struct CrewDetailSheet: View {
                 }
 
                 Section {
-                    Button(action: onOpenInPendingCrew) {
+                    ShareLink(item: deepLink) {
                         Label("在 PendingCrew 中打开", systemImage: "square.and.arrow.up")
                     }
                     Button(action: onCopyDeepLink) {
@@ -267,11 +269,11 @@ private struct CrewDetailSheet: View {
                     Text("PendingCrew Mac / iPad 打开深链后会自动跳到这个机组。")
                 }
             }
-            .listStyle(.insetGrouped)
+            .platformListStyle()
             .navigationTitle("机组详情")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavTitle()
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .platformTrailing) {
                     Button("完成") { dismiss() }
                 }
             }
@@ -359,4 +361,3 @@ private struct LabeledRow: View {
         }
     }
 }
-#endif

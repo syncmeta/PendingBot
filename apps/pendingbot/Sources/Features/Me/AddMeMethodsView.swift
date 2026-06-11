@@ -1,29 +1,36 @@
-#if os(iOS)
 import SwiftUI
 import Supabase
 
 /// 加我为好友的方式 — 两部分:
 ///   1. 二维码名片 — QR-kind handle,卡片内同时显示预置 ID (kind='id')
+///      (iOS 限定 — `MyQRBusinessCard` 重度依赖 UIKit / Photos,Mac 端无此入口)
 ///   2. 我的隐私号 — 用户自定义的 handle (kind='number'), 最多 3 个
 struct AddMeMethodsView: View {
     var body: some View {
         List {
+            #if os(iOS)
+            // 二维码名片是 iOS-only:`MyQRBusinessCard` 走 CoreImage QR 生成 +
+            // PHPhotoLibrary 长按存图 + UIScreen,Mac 上没有对应路径,所以该 section
+            // 在 macOS 整段缺席(隐私号管理仍跨平台可用)。
             QRCardSection()
+            #endif
             HandlesSection()
         }
-        .listStyle(.insetGrouped)
+        .platformListStyle()
         .scrollContentBackground(.hidden)
         .background(Theme.Palette.canvas.ignoresSafeArea())
         .navigationTitle("加我为好友的方式")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavTitle()
     }
 }
 
 // MARK: - QR card section
 
+#if os(iOS)
 /// Embeds the shared `MyQRBusinessCard` so the inline section here
 /// matches the Friends-tab QR sheet exactly. No section header /
-/// footer — the card is self-explanatory.
+/// footer — the card is self-explanatory. iOS-only: `MyQRBusinessCard`
+/// is UIKit/Photos-heavy and has no macOS path.
 private struct QRCardSection: View {
     var body: some View {
         Section {
@@ -36,6 +43,7 @@ private struct QRCardSection: View {
         }
     }
 }
+#endif
 
 // MARK: - Handles (number-kind) section — API-key-management style
 
@@ -253,7 +261,7 @@ private struct MintHandleSheet: View {
             Form {
                 Section {
                     TextField("自定义隐私号（留空则随机生成）", text: $newValue)
-                        .textInputAutocapitalization(.never)
+                        .platformAutocapitalization()
                         .autocorrectionDisabled(true)
                         .font(Theme.Fonts.monoSmall)
                     TextField("备注（如 'blog'）", text: $newLabel)
@@ -274,15 +282,15 @@ private struct MintHandleSheet: View {
                 }
             }
             .navigationTitle("新建隐私号")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavTitle()
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: .platformLeading) {
                     Button("取消") {
                         onClose(false)
                         dismiss()
                     }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .platformTrailing) {
                     Button(submitTitle) {
                         Task { await mint() }
                     }
@@ -364,7 +372,7 @@ private struct HandleContactsView: View {
                         .textSelection(.enabled)
                         .lineLimit(1)
                     Button {
-                        UIPasteboard.general.string = handle.value
+                        Clipboard.copy(handle.value)
                         Haptics.tap()
                         copied = true
                         Task {
@@ -425,11 +433,11 @@ private struct HandleContactsView: View {
                 Text("通过此号加你的好友")
             }
         }
-        .listStyle(.insetGrouped)
+        .platformListStyle()
         .scrollContentBackground(.hidden)
         .background(Theme.Palette.canvas.ignoresSafeArea())
         .navigationTitle(titleText)
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavTitle()
         .task { await load() }
         .confirmationDialog(
             "撤销「\(titleText)」?",
@@ -455,4 +463,3 @@ private struct HandleContactsView: View {
         }
     }
 }
-#endif

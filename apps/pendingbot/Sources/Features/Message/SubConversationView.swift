@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 import Supabase
 
@@ -75,7 +74,7 @@ struct SubConversationView: View {
                     }
                 }
             }
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavTitle()
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     VStack(spacing: 1) {
@@ -194,4 +193,3 @@ struct SubConversationView: View {
         }
     }
 }
-#endif

@@ -1,4 +1,3 @@
-#if os(iOS)
 import Foundation
 import OSLog
 import Supabase
@@ -173,7 +172,6 @@ extension ConversationView {
         // path where senders weren't pre-hydrated. The network refresh below
         // then overwrites with the authoritative roster.
         hydrateGroupSendersFromCache()
-        let cached = CacheRepository.cachedGroupMembers(conversationId: conversation.id)
         do {
             struct PartRow: Decodable {
                 let participant_type: String
@@ -213,13 +211,6 @@ extension ConversationView {
                 (try await botResp).map { ($0.id, $0.display_name) })
             let userMap = await userInfoMap
 
-            // Preserve any frozen flags the settings page previously
-            // wrote — chat-side load doesn't query group_member_billing,
-            // so without this we'd clobber that bit back to false and
-            // the frozen badge would flash off on the next settings
-            // open until the next billing-fetch round-trip.
-            let priorFrozen: [String: Bool] = Dictionary(uniqueKeysWithValues:
-                cached.map { ("\($0.participant_type):\($0.participant_id)", $0.frozen) })
             var lookup: [String: GroupBubbleSender] = [:]
             var cacheRows: [LocalDatabase.GroupMemberRow] = []
             for p in parts {
@@ -251,8 +242,7 @@ extension ConversationView {
                     role: p.role,
                     display_name: resolvedName,
                     avatar_path: info?.1,
-                    avatar_seed: avatarSeed,
-                    frozen: priorFrozen[key] ?? false
+                    avatar_seed: avatarSeed
                 ))
             }
             self.groupSenders = lookup
@@ -260,40 +250,6 @@ extension ConversationView {
                 conversationId: conversation.id, cacheRows)
         } catch {
             loadingLog.warning("group senders load failed: \(error.localizedDescription, privacy: .public)")
-        }
-    }
-
-    /// Group conv only — read the caller's group_member_billing row to
-    /// learn whether they've crossed their per-group cap or run out of
-    /// wallet balance (migration 0066 unifies both into `overdrawn`).
-    /// When true, `frozen_at` carries the wall-clock moment of the flip
-    /// — used by `displayedMessages` to hide post-freeze rows and by
-    /// `iAmFrozen` to lock the composer + show the banner.
-    func loadGroupFreezeIfNeeded() async {
-        guard conversation.conversation_type == "group" else { return }
-        guard !conversation.id.isEmpty else { return }
-        guard let me = AccountStore.shared.current?.id else { return }
-        do {
-            struct Row: Decodable {
-                let overdrawn: Bool
-                let frozen_at: String?
-            }
-            let rows: [Row] = try await SupabaseStack.shared
-                .from("group_member_billing")
-                .select("overdrawn, frozen_at")
-                .eq("conversation_id", value: conversation.id)
-                .eq("user_id", value: me)
-                .limit(1)
-                .execute()
-                .value
-            if let row = rows.first, row.overdrawn,
-               let raw = row.frozen_at, let parsed = ServerTimestamp.parse(raw) {
-                self.groupFreezeAt = parsed
-            } else {
-                self.groupFreezeAt = nil
-            }
-        } catch {
-            loadingLog.warning("group freeze load failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -324,6 +280,64 @@ extension ConversationView {
             }
         } catch {
             loadingLog.warning("pending continue load failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Fetch the full `Bot` record when the caller didn't supply one but
+    /// the conversation IS a bot conversation. The Mac 3-column shell
+    /// renders the list and the detail as *separate* MessageTabView /
+    /// FriendsTabView instances with disjoint `@State`, so the detail's
+    /// `bot(for:)` reads an empty `@State bots` and hands us `bot: nil`.
+    /// Without the record the header drops its `· <model>` suffix and the
+    /// in-chat BotConfigView entry disappears (both read `effectiveBot`).
+    /// Resolving it here makes the shared view robust regardless of how it
+    /// was constructed.
+    ///
+    /// Gated on `bot == nil`, so on iOS — where the list always passes a
+    /// real bot — this never fires and behaviour is byte-identical. Runs at
+    /// most once (early-returns when `resolvedBot` is already set). For
+    /// human-human convs there is no bot id to resolve and it no-ops.
+    ///
+    /// Same query shape as `MessageTabView.load()` / `BotManagement` — the
+    /// `bots` columns that map 1:1 onto the `Bot` model — so there's one
+    /// select to keep in sync, no new endpoint.
+    func resolveBotIfNeeded() async {
+        guard bot == nil, resolvedBot == nil else { return }
+        // Resolve the bot id: a materialized bot conv carries it on
+        // `conversation.bot_id`; a not-yet-materialized one carries it on
+        // the pending peer (only when the peer is a bot, not a human).
+        let botId: String? = {
+            if !conversation.bot_id.isEmpty { return conversation.bot_id }
+            if let p = pendingPeer, p.kind == "bot" { return p.peerId }
+            return nil
+        }()
+        guard let botId else { return }
+        struct BotRow: Decodable {
+            let id: String
+            let display_name: String
+            let model_id: String?
+            let visibility: String?
+            let creator_id: String?
+            let voice_call_enabled: Bool?
+        }
+        do {
+            let row: BotRow = try await SupabaseStack.shared
+                .from("bots")
+                .select("id, display_name, model_id, visibility, creator_id, voice_call_enabled")
+                .eq("id", value: botId)
+                .single()
+                .execute()
+                .value
+            self.resolvedBot = Bot(
+                id: row.id, display_name: row.display_name,
+                access_mode: nil, model: row.model_id,
+                visibility: row.visibility, creator_id: row.creator_id,
+                voice_call_enabled: row.voice_call_enabled
+            )
+        } catch {
+            // Decoration-only — the conversation works fully without it,
+            // so a miss just leaves the header suffix / settings entry off.
+            loadingLog.warning("bot self-resolve failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -572,4 +586,3 @@ func decodeLogPayload<T: Decodable>(_ any: AnyJSON, as type: T.Type) -> T? {
         return nil
     }
 }
-#endif

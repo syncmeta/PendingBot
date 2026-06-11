@@ -155,9 +155,9 @@ function need(k: string): string {
 }
 // Fixture mode skips Supabase entirely — convs/messages/bots not touched.
 const SUPABASE_URL = fixtureFile ? env.SUPABASE_URL ?? '' : need('SUPABASE_URL');
-const SUPABASE_SERVICE_ROLE_KEY = fixtureFile
-  ? env.SUPABASE_SERVICE_ROLE_KEY ?? ''
-  : need('SUPABASE_SERVICE_ROLE_KEY');
+const SUPABASE_SECRET_KEY = fixtureFile
+  ? env.SUPABASE_SECRET_KEY ?? ''
+  : need('SUPABASE_SECRET_KEY');
 const OPENROUTER_API_KEY = need('OPENROUTER_API_KEY');
 const BRAVE_API_KEY = stubSearch ? '' : need('BRAVE_API_KEY');
 const FIRECRAWL_API_KEY = stubFetch ? '' : need('FIRECRAWL_API_KEY');
@@ -226,7 +226,7 @@ async function main(): Promise<void> {
     if (botId) console.log(`bot_id (override): ${C.cyan(botId)}`);
   } else {
     // Real-conv mode: pull from Supabase.
-    const supa = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    const supa = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY, {
       auth: { autoRefreshToken: false, persistSession: false },
       db: { schema: 'pendingbot' },
     });

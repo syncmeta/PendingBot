@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 /// T4.5 viewer side — watch a crew's server sessions (including ones running on
@@ -30,7 +29,7 @@ struct RemoteSessionsView: View {
         NavigationStack {
             content
                 .navigationTitle("服务端 session")
-                .navigationBarTitleDisplayMode(.inline)
+                .inlineNavTitle()
                 .toolbar {
                     ToolbarItem(placement: .principal) {
                         VStack(spacing: 1) {
@@ -78,7 +77,7 @@ struct RemoteSessionsView: View {
                     }
                 }
             }
-            .listStyle(.insetGrouped)
+            .platformListStyle()
         }
     }
 
@@ -177,10 +176,10 @@ struct RemoteSessionTranscriptView: View {
             transcriptBody
         }
         .navigationTitle(brief)
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavTitle()
         .toolbar {
             if SessionStatusStyle.isStoppable(currentStatus) {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .platformTrailing) {
                     Button(role: .destructive) {
                         guard let client = liveClient else { return }
                         sentCancel = true
@@ -233,7 +232,7 @@ struct RemoteSessionTranscriptView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 7)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemBackground))
+        .background(Theme.Palette.surfaceMuted)
     }
 
     private var transcript: some View {
@@ -329,4 +328,3 @@ struct RemoteSessionTranscriptView: View {
 
 // `SessionStatusStyle` moved to the cross-platform `CrewSessionPresentation.swift`
 // so the macOS viewer shares the same status/event labels + colors.
-#endif

@@ -1,9 +1,14 @@
-#if os(iOS)
 import PhotosUI
 import SwiftUI
-import UIKit
 import UniformTypeIdentifiers
 import CoreTransferable
+import CoreGraphics
+import ImageIO
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
 // Attachment upload helpers extracted from ConversationView. Photos,
 // camera captures and arbitrary files all end at the same place: append
@@ -72,24 +77,45 @@ extension ConversationView {
     /// library/camera photos run 10–48 MP — uploading them whole is slow
     /// and can push past the edge's 5 MB inline-vision cap. 2048 px keeps
     /// ample detail for the model while landing well under 1 MB.
-    private func encodeImageForUpload(_ image: UIImage) -> Data? {
+    ///
+    /// Cross-platform: the downscale runs through CoreGraphics on the
+    /// underlying CGImage (works identically on iOS/macOS), and the final
+    /// JPEG encode goes through `PlatformImage.jpegData` (UIImage.jpegData on
+    /// iOS, NSBitmapImageRep on macOS).
+    private func encodeImageForUpload(_ image: PlatformImage) -> Data? {
         let maxEdge: CGFloat = 2048
-        let longEdge = max(image.size.width, image.size.height)
+        guard let cg = image.uploadCGImage else { return nil }
+        let pxWidth = CGFloat(cg.width)
+        let pxHeight = CGFloat(cg.height)
+        let longEdge = max(pxWidth, pxHeight)
         guard longEdge > 0 else { return nil }
-        let scaled: UIImage
-        if longEdge > maxEdge {
-            let factor = maxEdge / longEdge
-            let newSize = CGSize(width: image.size.width * factor,
-                                 height: image.size.height * factor)
-            let fmt = UIGraphicsImageRendererFormat.default()
-            fmt.scale = 1
-            scaled = UIGraphicsImageRenderer(size: newSize, format: fmt).image { _ in
-                image.draw(in: CGRect(origin: .zero, size: newSize))
-            }
-        } else {
-            scaled = image
+
+        if longEdge <= maxEdge {
+            // No downscale needed — encode the original bitmap straight.
+            return image.jpegData(quality: 0.85)
         }
-        return scaled.jpegData(compressionQuality: 0.85)
+
+        let factor = maxEdge / longEdge
+        let newW = Int((pxWidth * factor).rounded())
+        let newH = Int((pxHeight * factor).rounded())
+        guard newW > 0, newH > 0,
+              let ctx = CGContext(
+                data: nil,
+                width: newW,
+                height: newH,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              )
+        else { return image.jpegData(quality: 0.85) }
+
+        ctx.interpolationQuality = .high
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: newW, height: newH))
+        guard let scaledCG = ctx.makeImage() else {
+            return image.jpegData(quality: 0.85)
+        }
+        return PlatformImage.fromCGImage(scaledCG).jpegData(quality: 0.85)
     }
 
     /// PhotosPicker callback. Each picked item is loaded as raw Data,
@@ -129,7 +155,7 @@ extension ConversationView {
             let uploadData: Data
             let mime: String
             let ext: String
-            if let image = UIImage(data: data),
+            if let image = PlatformImage.decode(data),
                let jpeg = encodeImageForUpload(image) {
                 uploadData = jpeg
                 mime = "image/jpeg"
@@ -170,9 +196,12 @@ extension ConversationView {
         photoPickerItems = []
     }
 
+    #if os(iOS)
     /// Same upload flow as `ingestPhotos`, but for one-shot camera captures.
     /// JPEG-encode at 0.85 (same balance the rest of the app uses) so the
-    /// upload size matches what users get from the library picker.
+    /// upload size matches what users get from the library picker. iOS-only —
+    /// camera capture (CameraPicker / UIImagePickerController) doesn't exist
+    /// on macOS.
     func ingestCameraImage(_ image: UIImage) async {
         defer { cameraImage = nil }
         guard let api, let data = encodeImageForUpload(image) else { return }
@@ -204,6 +233,7 @@ extension ConversationView {
             Haptics.error()
         }
     }
+    #endif
 
     /// Document-picker callback — uploads arbitrary files (any type). The
     /// picked URLs are security-scoped, so each read is bracketed by
@@ -260,4 +290,3 @@ extension ConversationView {
         }
     }
 }
-#endif

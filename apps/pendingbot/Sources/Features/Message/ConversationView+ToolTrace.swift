@@ -1,4 +1,3 @@
-#if os(iOS)
 import Foundation
 import Supabase
 
@@ -83,4 +82,3 @@ private struct ToolTraceMetadata: Decodable {
     let tool_trace: [ToolTraceEvent]?
     let tool_citations: [MessageCitation]?
 }
-#endif

@@ -50,8 +50,28 @@
     "LANGFUSE_ENABLED": "false"
   },
 
+  // Board admin console (apps/admin SPA) served same-origin under /board so
+  // the Cloudflare Access cookie covers both the page and /v1/board/* (a
+  // cross-origin Pages deploy can't carry the Access cookie on API fetches).
+  // run_worker_first: the Hono app owns ALL routing; /board/* explicitly
+  // proxies into this binding (src/index.ts), nothing else touches assets.
+  // NOTE: `wrangler deploy` uploads ../admin/dist — build apps/admin first
+  // (the deploy script chains it).
+  "assets": {
+    "directory": "../admin/dist",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "not_found_handling": "single-page-application"
+  },
+
   "env": {
     "production": {
+      "assets": {
+        "directory": "../admin/dist",
+        "binding": "ASSETS",
+        "run_worker_first": true,
+        "not_found_handling": "single-page-application"
+      },
       "vars": {
         "ENVIRONMENT": "production",
         // Kill-switches (lib/feature-flags.ts). Default OFF: only "true"
@@ -69,8 +89,14 @@
         // (not just metrics) — see #247/#248. Flip to "true" then.
         "LANGFUSE_ENABLED": "false",
         "SUPABASE_URL": "https://zafhoiwwpanpuashtnxy.supabase.co",
+        // Publishable API key — public by design (ships in the iOS binary
+        // too), so a plain var, not a secret. Pairs with the caller's JWT
+        // in userClient; RLS does the gating.
+        "SUPABASE_PUBLISHABLE_KEY": "sb_publishable_DobbxW0fIrpb21noFfMdXg_3xPrbm1d",
         "POSTHOG_HOST": "https://eu.i.posthog.com",
         "LANGFUSE_BASE_URL": "https://cloud.langfuse.com",
+        // Comma-separated allowlist. The board console lives same-origin
+        // under /board, so it needs no extra entry here.
         "ALLOWED_ORIGIN": "https://bot.pendingname.com",
         // AI Gateway coordinates — the worker reads the gateway's
         // computed per-request cost from the Logs API when a provider
@@ -283,8 +309,10 @@
   // or in `.dev.vars` for local `wrangler dev`):
   //
   //   --- supabase + LLM gateway ---
-  //   SUPABASE_ANON_KEY
-  //   SUPABASE_SERVICE_ROLE_KEY
+  //   SUPABASE_SECRET_KEY    (sb_secret_… — service_role privileges,
+  //                           BYPASSRLS. The publishable counterpart is a
+  //                           plain var above; legacy anon/service_role
+  //                           JWTs are no longer read by the worker.)
   //   CF_AIG_RUN_TOKEN       (AI Gateway "Authenticated Gateway" run token,
   //                           created in the gateway Settings. Sent as the
   //                           cf-aig-authorization header on every LLM

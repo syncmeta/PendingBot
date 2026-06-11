@@ -1,7 +1,9 @@
-#if os(iOS)
 import SwiftUI
 import Supabase
 import OSLog
+// PhotosUI + CoreImage are cross-platform (PhotosPicker is macOS-13+,
+// CIImage/CIDetector are CoreImage). The "扫相册里的码" path works on both;
+// only the live-camera `QRScannerView` below is iOS-only.
 import PhotosUI
 import CoreImage
 
@@ -34,13 +36,15 @@ struct MessageTabView: View {
     @Environment(\.api) private var api
     @Environment(\.useSidebarLayout) private var sidebarLayout
     @Environment(\.topTabSelection) private var topTabSelection
-    @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var unread: UnreadStore
     /// Store fed by CallKitManager when the user accepts an incoming
     /// voice call. The .onChange below drives the navigation step;
     /// ConversationView reads `pendingAutoJoinConversationId` on appear
     /// to auto-open GroupCallView (no second tap to enter the call).
+    /// Call slice is iOS-only — macOS has no CallKit / incoming-call nav.
+    #if os(iOS)
     @State private var incomingCall = IncomingCallStore.shared
+    #endif
     @State private var conversations: [Conversation] = []
     @State private var bots: [Bot] = []
     /// Peer profile keyed by user_user conv id. Populated alongside the
@@ -79,22 +83,70 @@ struct MessageTabView: View {
     @State private var path: [ChatDest] = []
     // Selection-driven detail for regular size class.
     @State private var selected: ChatDest?
+    /// External selection sink, only set when the Mac three-column shell
+    /// reuses our list via `FeatureSurface.listColumn(selection:)`. When
+    /// non-nil, the selection-driven nav + row highlight read/write THIS
+    /// binding instead of the internal `selected` @State, so the shell's own
+    /// detail column (a separate `NavigationSplitView` column) updates. nil
+    /// for every iOS code path — the normal `body` never sets it, so iOS
+    /// behavior is byte-identical to before.
+    var externalSelection: Binding<ChatDest?>? = nil
+    /// 列模式开关:true = body 渲染 Mac 壳的 list 列(见 body 注释)。
+    var renderAsMacListColumn = false
+
+    /// The selection the row highlight reads + the regular-layout nav writes:
+    /// the shell's binding when our list is hosted by the Mac shell, otherwise
+    /// the internal @State. This is the single seam that lets the shared
+    /// `sidebarBody` serve both the iOS `regularBody` (internal state) and the
+    /// Mac `listColumn` (external binding). When `externalSelection` is nil
+    /// (every iOS path) this is exactly `selected`.
+    private var effectiveSelected: ChatDest? {
+        externalSelection?.wrappedValue ?? selected
+    }
 
     var body: some View {
-        Group {
-            if sidebarLayout {
-                regularBody
-            } else {
-                compactBody
-            }
+        // Mac/iPad 三列壳的 list 列也必须经由 `body` 渲染:`listColumn` 若在
+        // 图外手动求值 `macListColumn`,捕获进 `.task` 闭包的那份 self 拷贝
+        // 永远不会被 SwiftUI 装入视图图 → @EnvironmentObject 不灌注,首次
+        // 读取(load() 里的 unread)直接断言崩溃。所以列模式作为 body 的
+        // 一个分支存在,由 `renderAsMacListColumn` 切换。
+        if renderAsMacListColumn {
+            macListColumn
+        } else {
+            chrome(
+                Group {
+                    if sidebarLayout {
+                        regularBody
+                    } else {
+                        compactBody
+                    }
+                }
+            )
         }
+    }
+
+    /// Wraps a root view with the tab's shared chrome — the `.task` (load +
+    /// voice-call refresh + user-channel subscribe), the incoming-call nav
+    /// modifier, the group deep-link consumer, the error alert, and the full
+    /// sheet stack (join-group / add-friend / scan-QR / add-bot / chooser).
+    /// Pulled out of `body` so the Mac three-column shell's `listColumn` and
+    /// the `compactRoot` can each be self-contained: every entry point that
+    /// hosts the conversation list carries the same actions + loading,
+    /// regardless of which SwiftUI container it's planted in. The iOS `body`
+    /// calls this with the exact same content it used to inline, so its
+    /// behavior is unchanged.
+    @ViewBuilder
+    private func chrome(_ content: some View) -> some View {
+        content
         .task {
             await load()
             // Pull the active-voice-calls snapshot so the row-level phone
             // icon paints right away. The store also self-updates from
             // conv-channel voice_call frames whenever the user opens a
-            // conversation that's live.
+            // conversation that's live. iOS-only — macOS shows no call indicators.
+            #if os(iOS)
             await ActiveVoiceCallStore.shared.refresh()
+            #endif
             // Subscribe to user-level Realtime — every unread-counts row
             // change (new bot/cron message anywhere) triggers a reload so
             // last_activity_at + preview + ordering refresh without a pull.
@@ -106,38 +158,14 @@ struct MessageTabView: View {
                 }
             }
         }
-        .onChange(of: scenePhase) { _, new in
-            if new == .active {
-                Task { await ActiveVoiceCallStore.shared.refresh() }
-            }
-        }
-        // React to a CallKit-accepted incoming call — navigate to the
-        // conversation so ConversationView mounts and its onAppear
-        // consumes `pendingAutoJoinConversationId` to open the call view
-        // directly. Two separate slots: this one is the navigation
-        // trigger, the auto-join slot is read by ConversationView.
-        .onChange(of: incomingCall.pendingNavConversationId) { _, convId in
-            guard let convId, !convId.isEmpty else { return }
-            incomingCall.pendingNavConversationId = nil
-            let userId = AccountStore.shared.current?.id ?? ""
-            let stub = Conversation(
-                id: convId, bot_id: "", user_id: userId,
-                title: nil, feature_type: "message",
-                conversation_type: "group",
-                last_activity_at: Int(Date().timeIntervalSince1970),
-                round_count: 0, bot_name: nil,
-                last_message_content: nil, last_message_sender_type: nil
-            )
-            if sidebarLayout {
-                selected = .existing(stub)
-            } else {
-                path.append(.existing(stub))
-            }
-        }
+        .modifier(IncomingCallNav(sidebarLayout: sidebarLayout,
+                                  externalSelection: externalSelection,
+                                  selected: $selected, path: $path))
         .alert("出错了", isPresented: .constant(error != nil), actions: {
             Button("好") { error = nil }
         }, message: { Text(error ?? "") })
         .sheet(isPresented: $joiningGroup, onDismiss: { groupJoinPrefill = "" }) {
+            #if os(iOS)
             GroupJoinView(prefilledToken: groupJoinPrefill) { convId in
                 // After successful join, refresh the conv list and
                 // navigate into the new group conv.
@@ -153,14 +181,13 @@ struct MessageTabView: View {
                     round_count: 0, bot_name: nil,
                     last_message_content: nil, last_message_sender_type: nil
                 )
-                if sidebarLayout {
-                    selected = .existing(stub)
-                } else {
-                    path.append(.existing(stub))
-                }
+                route(.existing(stub))
             }
             .presentationDetents([.medium])
             .presentationDragIndicator(.visible)
+            #else
+            EmptyView()
+            #endif
         }
         .onAppear { consumeGroupDeepLink() }
         .onChange(of: deepLink.pendingJoinGroupToken) { _, _ in consumeGroupDeepLink() }
@@ -169,9 +196,12 @@ struct MessageTabView: View {
                 onAdded: { Task { await load() } },
                 prefilledHandle: addFriendPrefill
             )
-            .presentationDetents([.medium])
-            .presentationDragIndicator(.visible)
+            .platformDetents([.medium])
+            .platformDragIndicator()
         }
+        // 扫码 (camera QR) is iOS-only — depends on AVFoundation camera +
+        // PhotosUI; macOS keeps the manual 加好友 / 加群 paths instead.
+        #if os(iOS)
         .sheet(isPresented: $scanning, onDismiss: {
             if let token = pendingScannedFriendHandle {
                 pendingScannedFriendHandle = nil
@@ -200,12 +230,13 @@ struct MessageTabView: View {
                 }
             )
         }
+        #endif
         .sheet(isPresented: $addingBot, onDismiss: { addBotPrefill = "" }) {
             AddBotSheet(
                 onAdded: { _ in Task { await load() } },
                 prefilledToken: addBotPrefill
             )
-            .presentationDragIndicator(.visible)
+            .platformDragIndicator()
         }
         .sheet(isPresented: $addFriendChooser) {
             AddFriendChooserSheet(
@@ -222,8 +253,25 @@ struct MessageTabView: View {
                     }
                 }
             )
-            .presentationDetents([.fraction(0.32)])
-            .presentationDragIndicator(.visible)
+            .platformDetents([.fraction(0.32)])
+            .platformDragIndicator()
+        }
+    }
+
+    /// Route a destination to the right surface: the Mac shell's detail
+    /// column via the external binding (when hosted there), the regular-size
+    /// detail pane via the internal `selected` @State (iPad-landscape / Mac
+    /// Catalyst), or a compact nav-stack push (iPhone). The `externalSelection`
+    /// branch is only reachable when the Mac three-column shell built this
+    /// instance — the iOS `body` leaves it nil, so iPhone/iPad take exactly
+    /// the same `sidebarLayout ? selected = : path.append` path as before.
+    private func route(_ dest: ChatDest) {
+        if let externalSelection {
+            externalSelection.wrappedValue = dest
+        } else if sidebarLayout {
+            selected = dest
+        } else {
+            path.append(dest)
         }
     }
 
@@ -233,12 +281,14 @@ struct MessageTabView: View {
         NavigationStack(path: $path) {
             sidebarBody
                 .background(Theme.Palette.canvas.ignoresSafeArea())
+                #if os(iOS)
                 .toolbar(.hidden, for: .navigationBar)
+                #endif
                 .navigationDestination(for: ChatDest.self) { dest in
                     destinationView(for: dest)
                 }
         }
-        .toolbar(path.isEmpty ? .visible : .hidden, for: .tabBar)
+        .platformTabBarVisibility(path.isEmpty)
     }
 
     // ── Regular (iPad landscape, Mac Catalyst) ──────────────────────────────
@@ -252,7 +302,9 @@ struct MessageTabView: View {
                 }
             }
             .background(Theme.Palette.canvas.ignoresSafeArea())
+            #if os(iOS)
             .toolbar(.hidden, for: .navigationBar)
+            #endif
             .sidebarColumnWidth()
         } detail: {
             if let dest = selected {
@@ -332,6 +384,30 @@ struct MessageTabView: View {
 
     // ── Sidebar (shared) ────────────────────────────────────────────────────
 
+    /// "+" menu actions. 扫码 (camera QR) is iOS-only; macOS keeps the
+    /// manual 加好友 / 拉群 / 加群 paths.
+    private var plusActionItems: [PlusActionItem] {
+        var items: [PlusActionItem] = [
+            PlusActionItem(title: "加好友", systemImage: "person.badge.plus") {
+                addFriendChooser = true
+            },
+        ]
+        #if os(iOS)
+        items.append(PlusActionItem(title: "扫码", systemImage: "qrcode.viewfinder") {
+            scanning = true
+        })
+        #endif
+        items.append(contentsOf: [
+            PlusActionItem(title: "拉群", systemImage: "person.3") {
+                openCreateGroup()
+            },
+            PlusActionItem(title: "加群", systemImage: "person.3.sequence") {
+                joiningGroup = true
+            },
+        ])
+        return items
+    }
+
     private var sidebarBody: some View {
         VStack(spacing: 0) {
             TabHeaderBar(
@@ -357,20 +433,7 @@ struct MessageTabView: View {
                             CircleComposeButton()
                         }
                     } trailing: {
-                        PlusActionPopover(items: [
-                            PlusActionItem(title: "加好友", systemImage: "person.badge.plus") {
-                                addFriendChooser = true
-                            },
-                            PlusActionItem(title: "扫码", systemImage: "qrcode.viewfinder") {
-                                scanning = true
-                            },
-                            PlusActionItem(title: "拉群", systemImage: "person.3") {
-                                openCreateGroup()
-                            },
-                            PlusActionItem(title: "加群", systemImage: "person.3.sequence") {
-                                joiningGroup = true
-                            },
-                        ])
+                        PlusActionPopover(items: plusActionItems)
                     }
                 }
             )
@@ -482,7 +545,7 @@ struct MessageTabView: View {
     /// NavigationLink/Button here, or a sideways swipe will trigger it.
     private func rowVisual(_ conv: Conversation) -> some View {
         let isSelected: Bool = {
-            guard sidebarLayout, case .existing(let s) = selected else { return false }
+            guard sidebarLayout, case .existing(let s) = effectiveSelected else { return false }
             return s.id == conv.id
         }()
         return ConversationListRow(
@@ -495,20 +558,12 @@ struct MessageTabView: View {
 
     private func openConversation(_ conv: Conversation) {
         Haptics.tap()
-        if sidebarLayout {
-            selected = .existing(conv)
-        } else {
-            path.append(.existing(conv))
-        }
+        route(.existing(conv))
     }
 
     private func openCreateGroup() {
         Haptics.tap()
-        if sidebarLayout {
-            selected = .composeGroup
-        } else {
-            path.append(.composeGroup)
-        }
+        route(.composeGroup)
     }
 
     /// Build a [participantId: rank] map so the create-group picker can
@@ -549,7 +604,11 @@ struct MessageTabView: View {
             last_message_content: nil, last_message_sender_type: nil
         )
         Task { await load() }
-        if sidebarLayout {
+        if let externalSelection {
+            // Mac shell owns the detail column — just point it at the new
+            // group conv (the compose page lived in that same column).
+            externalSelection.wrappedValue = .existing(stub)
+        } else if sidebarLayout {
             selected = .existing(stub)
         } else {
             if !path.isEmpty, case .composeGroup = path.last {
@@ -864,11 +923,7 @@ struct MessageTabView: View {
         let peer = PendingPeer(kind: "bot",
                                peerId: bot.id,
                                displayName: bot.display_name)
-        if sidebarLayout {
-            selected = .pending(peer)
-        } else {
-            path.append(.pending(peer))
-        }
+        route(.pending(peer))
         Haptics.tap()
     }
 
@@ -890,27 +945,139 @@ struct MessageTabView: View {
     }
 }
 
-/// Resolved peer for a user_user conv shown in the list. Built once during
-/// `load()` from the participants embed + the friends list so each row can
-/// render the other person's name + avatar without per-row worker calls.
-struct UserUserPeer: Hashable {
-    let userId: String
-    let alias: String?
-    let displayName: String
-    let avatarPath: String?
-    /// Server-supplied placeholder-emoji seed (mirrored from the friends
-    /// list HumanPick.avatarSeed) so the conv row renders the same emoji
-    /// every viewer of this peer sees.
-    let avatarSeed: String
+// MARK: - FeatureSurface (Mac three-column shell)
 
-    /// Title shown on the row + carried into ConversationView's pendingPeer
-    /// so opening the chat doesn't re-flicker the header label.
-    var rowName: String {
-        if let a = alias, !a.isEmpty { return a }
-        if !displayName.isEmpty { return displayName }
-        return String(userId.prefix(8))
+/// Exposes the conversation LIST and the chat DETAIL as separate columns so
+/// the macOS `WideRootView` can drop them into one shared
+/// `NavigationSplitView` (list = middle column, detail = right column) — no
+/// nested split views. The iOS `body` above is untouched; these methods are
+/// additive and only the Mac shell calls them.
+///
+/// Selection plumbing: the shell owns the `Binding<ChatDest?>` and passes it
+/// into `listColumn`. We build a `MessageTabView` instance with its
+/// `externalSelection` set to that binding, so the (otherwise unchanged)
+/// `sidebarBody` routes row taps + highlight through the shell's selection
+/// instead of the internal `@State selected`. `detailColumn` renders the same
+/// `destinationView` the iOS `regularBody` shows for a selected destination.
+extension MessageTabView: FeatureSurface {
+    typealias Selection = ChatDest
+
+    func listColumn(selection: Binding<ChatDest?>) -> some View {
+        // A fresh instance bound to the shell's selection. Its body is the
+        // conversation list alone (no SidebarTabBar — on Mac the tab strip is
+        // the shell's own first column), carrying the shared chrome so the
+        // +/add-friend/scan/join-group actions and `load()` all work from it.
+        var view = self
+        view.externalSelection = selection
+        // 返回配置过的 view 本体(而非图外求值的 `view.macListColumn`),
+        // 让 SwiftUI 把 MessageTabView 装进视图图 —— 否则它的 property
+        // wrapper(@EnvironmentObject/@State)永不灌注,`.task` 里第一次
+        // 读 `unread` 就 fatalError。渲染分支在 body 里走 macListColumn。
+        view.renderAsMacListColumn = true
+        return view
+    }
+
+    func detailColumn(selection: ChatDest?) -> some View {
+        Group {
+            if let dest = selection {
+                destinationView(for: dest)
+                    .id(destinationKey(dest))
+            } else {
+                EmptyDetailHint(text: "选择一个会话开始",
+                                systemImage: "bubble.left.and.bubble.right")
+            }
+        }
+    }
+
+    func compactRoot() -> some View {
+        // The iPhone NavigationStack, made self-contained by wrapping it in
+        // the same chrome the iOS `body` applies (sheets + `.task` load).
+        chrome(compactBody)
     }
 }
+
+private extension MessageTabView {
+    /// The conversation list as a standalone column for the Mac shell: the
+    /// shared `sidebarBody` (no SidebarTabBar) on canvas, carrying the full
+    /// chrome so its actions + loading work from this column.
+    var macListColumn: some View {
+        chrome(
+            sidebarBody
+                .background(Theme.Palette.canvas.ignoresSafeArea())
+        )
+    }
+}
+
+
+/// Call slice is iOS-only. This bundles the scenePhase-driven
+/// active-voice-call refresh plus the CallKit-accepted incoming-call
+/// navigation into one fenced modifier so the cross-platform `body`
+/// above stays clean. On macOS it's a pass-through (no CallKit, no
+/// incoming-call nav).
+private struct IncomingCallNav: ViewModifier {
+    let sidebarLayout: Bool
+    /// Mac shell's detail-column selection sink; nil on every iOS path (the
+    /// CallKit nav is iOS-only, so this is always nil where the body runs).
+    let externalSelection: Binding<ChatDest?>?
+    @Binding var selected: ChatDest?
+    @Binding var path: [ChatDest]
+
+    func body(content: Content) -> some View {
+        #if os(iOS)
+        content
+            .modifier(IncomingCallNavBody(sidebarLayout: sidebarLayout,
+                                          externalSelection: externalSelection,
+                                          selected: $selected, path: $path))
+        #else
+        content
+        #endif
+    }
+}
+
+#if os(iOS)
+private struct IncomingCallNavBody: ViewModifier {
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var incomingCall = IncomingCallStore.shared
+    let sidebarLayout: Bool
+    let externalSelection: Binding<ChatDest?>?
+    @Binding var selected: ChatDest?
+    @Binding var path: [ChatDest]
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: scenePhase) { _, new in
+                if new == .active {
+                    Task { await ActiveVoiceCallStore.shared.refresh() }
+                }
+            }
+            // React to a CallKit-accepted incoming call — navigate to the
+            // conversation so ConversationView mounts and its onAppear
+            // consumes `pendingAutoJoinConversationId` to open the call view
+            // directly. Two separate slots: this one is the navigation
+            // trigger, the auto-join slot is read by ConversationView.
+            .onChange(of: incomingCall.pendingNavConversationId) { _, convId in
+                guard let convId, !convId.isEmpty else { return }
+                incomingCall.pendingNavConversationId = nil
+                let userId = AccountStore.shared.current?.id ?? ""
+                let stub = Conversation(
+                    id: convId, bot_id: "", user_id: userId,
+                    title: nil, feature_type: "message",
+                    conversation_type: "group",
+                    last_activity_at: Int(Date().timeIntervalSince1970),
+                    round_count: 0, bot_name: nil,
+                    last_message_content: nil, last_message_sender_type: nil
+                )
+                if let externalSelection {
+                    externalSelection.wrappedValue = .existing(stub)
+                } else if sidebarLayout {
+                    selected = .existing(stub)
+                } else {
+                    path.append(.existing(stub))
+                }
+            }
+    }
+}
+#endif
 
 private struct ConversationListRow: View {
     let conv: Conversation
@@ -999,12 +1166,15 @@ private struct ConversationListRow: View {
                             rowTitleIsPlaceholder ? Theme.Palette.inkMuted : Theme.Palette.ink
                         )
                         .lineLimit(1)
+                    // Live-call indicator — iOS-only (macOS has no call slice).
+                    #if os(iOS)
                     if ActiveVoiceCallStore.shared.calls[conv.id] != nil {
                         Image(systemName: "phone.fill")
                             .font(Theme.Fonts.glyph(size: 12, weight: .semibold))
                             .foregroundStyle(.green)
                             .accessibilityLabel("通话中")
                     }
+                    #endif
                     Spacer(minLength: 8)
                     if conv.last_activity_at > 0 {
                         // Preset preseeded conversations are stamped with a
@@ -1106,6 +1276,7 @@ private struct ConversationListRow: View {
 /// fans out the same way as the camera path.
 private struct ScanQRSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
     var onAdded: () -> Void = {}
     /// Called with the bare token when the scanned QR points at a user
     /// handle (resolved via /v1/friend-requests/lookup). Caller dismisses
@@ -1137,6 +1308,7 @@ private struct ScanQRSheet: View {
                         .padding(.vertical, 32)
                         .textSelection(.enabled)
                 } else if scannedValue == nil {
+                    #if os(iOS)
                     QRScannerView { value in
                         scannedValue = value
                         Haptics.tap()
@@ -1145,6 +1317,16 @@ private struct ScanQRSheet: View {
                         error = err.localizedDescription
                     }
                     .ignoresSafeArea()
+                    #else
+                    // macOS: 无摄像头实时扫码 —— 引导走「扫相册里的码」(下方按钮)。
+                    VStack(spacing: 12) {
+                        Image(systemName: "qrcode.viewfinder")
+                            .font(Theme.Fonts.glyph(size: 44))
+                            .foregroundStyle(.white.opacity(0.7))
+                        Text("从相册选择二维码图片")
+                            .foregroundStyle(.white.opacity(0.8))
+                    }
+                    #endif
                 } else if submitting {
                     VStack(spacing: 12) {
                         ProgressView().tint(.white).controlSize(.large)
@@ -1190,10 +1372,10 @@ private struct ScanQRSheet: View {
                 }
             }
             .navigationTitle("扫码")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarColorScheme(.dark, for: .navigationBar)
+            .inlineNavTitle()
+            .platformToolbarColorScheme(.dark)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .platformTrailing) {
                     Button("取消") { dismiss() }
                         .foregroundStyle(.white)
                 }
@@ -1231,6 +1413,10 @@ private struct ScanQRSheet: View {
             onScannedBotToken(BotShareLink.token(fromScanned: trimmed))
             return
         }
+        #if os(iOS)
+        // PendingBotQR lives in the iOS-only QRScannerView slice; the
+        // contact-share QR decode path is only reachable from the camera,
+        // which macOS doesn't build.
         if PendingBotQR.isPendingBotQR(trimmed) {
             submitting = true
             defer { submitting = false }
@@ -1241,11 +1427,12 @@ private struct ScanQRSheet: View {
             onScannedUserHandle(token)
             return
         }
+        #endif
         if let url = URL(string: trimmed),
            let scheme = url.scheme?.lowercased(),
            scheme == "http" || scheme == "https",
            url.host?.isEmpty == false {
-            await UIApplication.shared.open(url)
+            openURL(url)
             dismiss()
             return
         }
@@ -1304,9 +1491,9 @@ private struct AddFriendChooserSheet: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .background(Theme.Palette.canvas.ignoresSafeArea())
             .navigationTitle("加好友")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavTitle()
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .platformTrailing) {
                     Button("取消") { dismiss() }
                 }
             }
@@ -1348,8 +1535,7 @@ private struct AddFriendChooserSheet: View {
 /// iOS 16+ only, which matches the app's deployment target.
 private func decodeQRFromPhoto(_ item: PhotosPickerItem) async -> String? {
     guard let data = try? await item.loadTransferable(type: Data.self),
-          let uiImage = UIImage(data: data),
-          let ciImage = CIImage(image: uiImage) else { return nil }
+          let ciImage = CIImage(data: data) else { return nil }
     let detector = CIDetector(
         ofType: CIDetectorTypeQRCode,
         context: nil,
@@ -1424,7 +1610,7 @@ private struct CreateGroupView: View {
             Section("群名") {
                 HStack(spacing: 8) {
                     TextField("起个名字", text: $title)
-                        .textInputAutocapitalization(.never)
+                        .platformAutocapitalization()
                     Button {
                         Task { await regenerateTitle() }
                     } label: {
@@ -1454,9 +1640,9 @@ private struct CreateGroupView: View {
             }
         }
         .navigationTitle("发起群聊")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavTitle()
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .platformTrailing) {
                 Button("创建") { Task { await create() } }
                     .disabled(creating
                               || title.trimmingCharacters(in: .whitespaces).isEmpty
@@ -1584,10 +1770,9 @@ private struct CreateGroupView: View {
         let selectedHumans = members.filter { $0.kind == .human && selectedIds.contains($0.id) }.map(\.id)
         do {
             // Worker /v1/groups (open_group_conv RPC). Direct INSERTs would
-            // skip conversation_group_meta + group_billing_config +
-            // group_member_billing seeding, leave the 30-member cap
+            // skip conversation_group_meta seeding, leave the 30-member cap
             // unenforced, and let private bots through. The RPC is the
-            // single contract that keeps all those side-tables consistent.
+            // single contract that keeps those side-tables consistent.
             struct Body: Encodable {
                 let title: String?
                 let memberUserIds: [String]
@@ -1631,4 +1816,3 @@ private struct CreateGroupView: View {
         }
     }
 }
-#endif

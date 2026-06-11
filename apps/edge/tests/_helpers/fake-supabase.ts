@@ -129,7 +129,7 @@ export function makeFakeEnv(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const env: any = {
     SUPABASE_URL: 'https://example.supabase.co',
-    SUPABASE_SERVICE_ROLE_KEY: 'service-key',
+    SUPABASE_SECRET_KEY: 'service-key',
     // Billing tests exercise the live gate/debit path — enable the kill-switch.
     BILLING_ENABLED: 'true',
     WALLET: walletBinding,

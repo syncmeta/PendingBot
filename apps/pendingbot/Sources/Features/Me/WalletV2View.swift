@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 /// 钱包 v2 — PNC 余额 + 包列表（像运营商流量包）+ 近期账本。
@@ -19,11 +18,11 @@ struct WalletV2View: View {
                 ledgerSection(w.recentLedger)
             }
         }
-        .listStyle(.insetGrouped)
+        .platformListStyle()
         .scrollContentBackground(.hidden)
         .background(Theme.Palette.canvas.ignoresSafeArea())
         .navigationTitle("钱包")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavTitle()
         .refreshable { await reload() }
         .task { await reload() }
     }
@@ -156,4 +155,3 @@ struct WalletV2View: View {
         }
     }
 }
-#endif

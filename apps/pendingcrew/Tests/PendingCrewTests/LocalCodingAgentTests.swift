@@ -12,14 +12,19 @@ final class LocalCodingAgentTests: XCTestCase {
         let env = LocalCodingAgentEnv.build(additionalEnv: [
             "ANTHROPIC_API_KEY": "sk-test",
             // 防御：caller 误传 PendingCrew 自己的 secret 也应被丢弃。
+            // SUPABASE_ 是前缀封禁——新旧 key 命名都不许过。
             "PENDINGBOT_DEVICE_GRANT": "leaked",
             "PENDINGCREW_KEYCHAIN_TOKEN": "leaked",
             "SUPABASE_SERVICE_ROLE_KEY": "leaked",
+            "SUPABASE_SECRET_KEY": "leaked",
+            "SUPABASE_PUBLISHABLE_KEY": "leaked",
         ])
         XCTAssertEqual(env["ANTHROPIC_API_KEY"], "sk-test")
         XCTAssertNil(env["PENDINGBOT_DEVICE_GRANT"])
         XCTAssertNil(env["PENDINGCREW_KEYCHAIN_TOKEN"])
         XCTAssertNil(env["SUPABASE_SERVICE_ROLE_KEY"])
+        XCTAssertNil(env["SUPABASE_SECRET_KEY"])
+        XCTAssertNil(env["SUPABASE_PUBLISHABLE_KEY"])
         // 白名单基础项必在
         XCTAssertNotNil(env["PATH"], "PATH must always be set for child process")
     }

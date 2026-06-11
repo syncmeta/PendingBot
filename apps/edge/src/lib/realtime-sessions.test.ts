@@ -23,7 +23,7 @@ function makeFakeEnv(state: { rows: FakeRow[]; updates: Array<{ id: string; ende
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const env: any = {
     SUPABASE_URL: 'https://example.supabase.co',
-    SUPABASE_SERVICE_ROLE_KEY: 'service-key',
+    SUPABASE_SECRET_KEY: 'service-key',
     __fake: { state },
   };
   return env as Env;

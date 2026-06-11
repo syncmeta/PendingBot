@@ -46,7 +46,6 @@ struct ComposerAccessoryContent: View {
     @Binding var showPhotoPicker: Bool
     @Binding var showCamera: Bool
 
-    let iAmFrozen: Bool
     let pendingContinue: ConversationView.PendingContinue?
     let continueDeciding: Bool
     let conversationType: String
@@ -63,10 +62,6 @@ struct ComposerAccessoryContent: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if iAmFrozen {
-                FrozenComposerBannerView()
-                    .readableColumnWidth()
-            }
             if let pc = pendingContinue {
                 ContinueRequestBannerView(pc: pc, deciding: continueDeciding, onDecide: onDecideContinue)
                     .readableColumnWidth()
@@ -97,29 +92,6 @@ struct ComposerAccessoryContent: View {
 // MARK: - Banners (parameterized copies of the old ConversationView+Group
 // view-builders, which read @State directly and so couldn't cross the
 // hosting boundary).
-
-private struct FrozenComposerBannerView: View {
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(Theme.Palette.amber)
-                .padding(.top, 1)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("已达本群 PND 上限,新消息和发送已暂停")
-                    .font(Theme.Fonts.footnote.weight(.semibold))
-                    .foregroundStyle(Theme.Palette.ink)
-                Text("提高上限或为账户充值后会自动恢复")
-                    .font(Theme.Fonts.caption)
-                    .foregroundStyle(Theme.Palette.inkMuted)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, Theme.Metrics.gutter)
-        .padding(.vertical, 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.Palette.amberBg)
-    }
-}
 
 private struct ContinueRequestBannerView: View {
     let pc: ConversationView.PendingContinue
@@ -227,7 +199,6 @@ final class ComposerAccessoryModel: ObservableObject {
     var showFileImporter: Binding<Bool> = .constant(false)
     var showPhotoPicker: Binding<Bool> = .constant(false)
     var showCamera: Binding<Bool> = .constant(false)
-    var iAmFrozen = false
     var pendingContinue: ConversationView.PendingContinue?
     var continueDeciding = false
     var conversationType = ""
@@ -250,7 +221,6 @@ final class ComposerAccessoryModel: ObservableObject {
         showFileImporter = c.$showFileImporter
         showPhotoPicker = c.$showPhotoPicker
         showCamera = c.$showCamera
-        iAmFrozen = c.iAmFrozen
         pendingContinue = c.pendingContinue
         continueDeciding = c.continueDeciding
         conversationType = c.conversationType
@@ -285,7 +255,6 @@ struct ComposerAccessoryRoot: View {
             showFileImporter: model.showFileImporter,
             showPhotoPicker: model.showPhotoPicker,
             showCamera: model.showCamera,
-            iAmFrozen: model.iAmFrozen,
             pendingContinue: model.pendingContinue,
             continueDeciding: model.continueDeciding,
             conversationType: model.conversationType,

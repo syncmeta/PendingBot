@@ -1,7 +1,5 @@
-#if os(iOS)
 import SwiftUI
-import CoreImage.CIFilterBuiltins
-import UIKit
+import CoreImage
 
 /// Group-side counterpart to `MyQRBusinessCard`. Renders the group's
 /// active QR-handle as a deep-green QR with the brand mark in the
@@ -37,7 +35,6 @@ struct GroupQRCard: View {
     }
 
     private let api = APIClient()
-    private let context = CIContext()
 
     private func shareURL(_ token: String) -> String { GroupShareLink.url(forToken: token) }
 
@@ -57,7 +54,7 @@ struct GroupQRCard: View {
             if case .loaded(let token) = state {
                 HStack(spacing: 12) {
                     Button {
-                        UIPasteboard.general.string = shareURL(token)
+                        Clipboard.copy(shareURL(token))
                         copied = true
                         Haptics.tap()
                     } label: {
@@ -104,7 +101,7 @@ struct GroupQRCard: View {
                 ProgressView().controlSize(.large)
             case .loaded(let token):
                 if let qr = qrImage(for: shareURL(token)) {
-                    Image(uiImage: qr)
+                    Image(platformImage: qr)
                         .interpolation(.none)
                         .resizable()
                         .scaledToFit()
@@ -137,7 +134,7 @@ struct GroupQRCard: View {
     @ViewBuilder
     private func background(size: CGFloat) -> some View {
         let shape = RoundedRectangle(cornerRadius: 28, style: .continuous)
-        if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, macOS 26.0, *) {
             Color.clear
                 .frame(width: size, height: size)
                 .glassEffect(.regular, in: shape)
@@ -174,42 +171,18 @@ struct GroupQRCard: View {
         }
     }
 
-    // Mirrors MyQRBusinessCard.qrImage — kept in sync intentionally
-    // (CIQRCodeGenerator + recolour + manual quiet-zone padding). The
-    // alternative is extracting a shared helper, which would need
-    // pbxproj juggling; this 25-line copy is cheaper for v1.
-    private func qrImage(for payload: String) -> UIImage? {
-        let filter = CIFilter.qrCodeGenerator()
-        filter.message = Data(payload.utf8)
-        filter.correctionLevel = "H"
-        guard let raw = filter.outputImage else { return nil }
-        let recolour = CIFilter.falseColor()
-        recolour.inputImage = raw
-        recolour.color0 = CIColor(red: 4 / 255.0, green: 71 / 255.0, blue: 53 / 255.0)
-        recolour.color1 = CIColor(red: 253 / 255.0, green: 252 / 255.0, blue: 250 / 255.0)
-        guard let coloured = recolour.outputImage else { return nil }
-        let scale: CGFloat = 10
-        let scaled = coloured.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-        guard let cg = context.createCGImage(scaled, from: scaled.extent) else { return nil }
-        let inner = CGFloat(cg.width)
-        let quiet = scale * 4
-        let total = inner + quiet * 2
-        let renderer = UIGraphicsImageRenderer(
-            size: CGSize(width: total, height: total),
-            format: {
-                let f = UIGraphicsImageRendererFormat.default()
-                f.scale = 1
-                f.opaque = true
-                return f
-            }(),
+    // Deep-green-on-cream QR with a baked-in 4-module quiet zone, matching
+    // MyQRBusinessCard's look. Generation runs through the cross-platform
+    // `QRCode.image` shim (CoreImage on iOS + macOS) so this card renders
+    // on both platforms.
+    private func qrImage(for payload: String) -> PlatformImage? {
+        QRCode.image(
+            payload,
+            scale: 10,
+            correctionLevel: "H",
+            dark: CIColor(red: 4 / 255.0, green: 71 / 255.0, blue: 53 / 255.0),
+            light: CIColor(red: 253 / 255.0, green: 252 / 255.0, blue: 250 / 255.0),
+            quietModules: 4,
         )
-        return renderer.image { ctx in
-            UIColor(red: 253 / 255.0, green: 252 / 255.0, blue: 250 / 255.0, alpha: 1).setFill()
-            ctx.fill(CGRect(x: 0, y: 0, width: total, height: total))
-            ctx.cgContext.translateBy(x: 0, y: total)
-            ctx.cgContext.scaleBy(x: 1, y: -1)
-            ctx.cgContext.draw(cg, in: CGRect(x: quiet, y: quiet, width: inner, height: inner))
-        }
     }
 }
-#endif

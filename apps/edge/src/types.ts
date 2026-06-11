@@ -98,6 +98,17 @@ export interface Env {
   LANGFUSE_ENABLED?: string;
   SUPABASE_URL: string;
   ALLOWED_ORIGIN: string;
+  /// Cloudflare Access coordinates for the board console gate
+  /// (lib/cf-access.ts). Team domain like `<team>.cloudflareaccess.com` and
+  /// the Access application AUD tag. The /v1/board/* gate is FAIL-CLOSED:
+  /// unset vars reject every board request, so only set them together with a
+  /// live Access app in front of the route.
+  CF_ACCESS_TEAM_DOMAIN?: string;
+  CF_ACCESS_AUD?: string;
+  /// Workers static assets (apps/admin SPA served under /board). Optional so
+  /// test harnesses without the binding still typecheck; the /board route
+  /// 404s when absent.
+  ASSETS?: Fetcher;
   /// AI Gateway coordinates for the Logs API cost lookup (lib/ai-gateway.ts).
   /// Optional so `wrangler dev` without these set still typechecks/runs.
   CF_ACCOUNT_ID?: string;
@@ -112,9 +123,16 @@ export interface Env {
   /// Unified Billing). Not a secret — just the alias name.
   GOOGLE_BYOK_ALIAS?: string;
 
+  /// Publishable API key (`sb_publishable_…`). Public by design — plain var
+  /// in wrangler.jsonc, not a secret. userClient pairs it with the caller's
+  /// JWT so RLS runs as `authenticated`.
+  SUPABASE_PUBLISHABLE_KEY: string;
+
   // ── Secrets (set via `wrangler secret put --env <env>`) ────────
-  SUPABASE_ANON_KEY: string;
-  SUPABASE_SERVICE_ROLE_KEY: string;
+  /// Secret API key (`sb_secret_…`). Maps to the `service_role` Postgres
+  /// role (BYPASSRLS) — same privileges as the legacy service_role JWT,
+  /// but independently rotatable/revocable.
+  SUPABASE_SECRET_KEY: string;
   /// Cloudflare API token (AI Gateway Read). persistAuditMessage uses it
   /// to read the gateway's computed per-request cost from the Logs API
   /// when a provider doesn't report its own. Optional — unset means
