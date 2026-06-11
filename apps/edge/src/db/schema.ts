@@ -4600,6 +4600,16 @@ export type Database = {
         }
         Returns: string
       }
+      crew_add_member_for_subject: {
+        Args: {
+          p_actor_user_id: string
+          p_bot_id?: string
+          p_crew_conversation_id: string
+          p_member_kind: string
+          p_user_id?: string
+        }
+        Returns: Json
+      }
       crew_approve_share_change: {
         Args: { p_change_id: string; p_subject_id: string }
         Returns: string
