@@ -48,6 +48,7 @@
 		6942FF0B2E3D04AF1005374B /* PendingCrewApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C09067E3C1637408FEED8F2 /* PendingCrewApp.swift */; };
 		69933D16E7836C959E8DD675 /* CrewRosterBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D4475F4F6F662461F71C1B9 /* CrewRosterBar.swift */; };
 		6ACBB093D8F44B8F81B6F5DB /* claude_stream.jsonl in Resources */ = {isa = PBXBuildFile; fileRef = DA26B3AE2AB22AA26494B7EB /* claude_stream.jsonl */; };
+		6AD5BB1B6ADE7861673B3436 /* CrewRelaySyncLogic.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68229C444C6E759D51FB09BB /* CrewRelaySyncLogic.swift */; };
 		6FC755AFB9D2D4ADD5EA6744 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5857EBAF956D4104D4FBCBB2 /* KeychainStore.swift */; };
 		762062D45355B2DC8F789559 /* crew-captain.zh.md in Resources */ = {isa = PBXBuildFile; fileRef = 776119CB43783D02F23AD06E /* crew-captain.zh.md */; };
 		797555301B1D57CE5DBCE75C /* AgentTerminalSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD0F5E7501DDF890EA04C5EA /* AgentTerminalSession.swift */; };
@@ -104,6 +105,7 @@
 		E1FEE4113B4234EA1E96F238 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = F64F6B1C6E9879C1F323E372 /* SwiftTerm */; };
 		E30F72A5A481F3B7D6D0C3C2 /* FamilyCredentialStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9ABA828277E44B7E7CABDDB /* FamilyCredentialStoreTests.swift */; };
 		E3B57B0AF2B50AB0FC654335 /* CrewSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0BCE95B8A380020947CB207 /* CrewSidebarView.swift */; };
+		E516AADDB9ED8727F67B7D3E /* CrewRelayAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64939E9C459FD69C7E2993FA /* CrewRelayAgent.swift */; };
 		E532EC788C623C8B7A3448ED /* SessionConfigTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF848E30878BD9A462B2ABD4 /* SessionConfigTests.swift */; };
 		E78F604D88C1BEAB7FB96C0C /* LocalPromptLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF6AF2AE2C93EB875D8DBFF8 /* LocalPromptLoader.swift */; };
 		EA0A4A8A6688901245AF283A /* CrewDetailInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF2A5D7FFEA710FBD8771B72 /* CrewDetailInspector.swift */; };
@@ -156,7 +158,9 @@
 		5D4475F4F6F662461F71C1B9 /* CrewRosterBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewRosterBar.swift; sourceTree = "<group>"; };
 		5D74B1C537C235EFB0E69DCB /* PromptTemplate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptTemplate.swift; sourceTree = "<group>"; };
 		60202465DF374BE31614C151 /* GitInspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitInspector.swift; sourceTree = "<group>"; };
+		64939E9C459FD69C7E2993FA /* CrewRelayAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewRelayAgent.swift; sourceTree = "<group>"; };
 		653E5262E263AED9996AF100 /* CrewTimeSeparator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewTimeSeparator.swift; sourceTree = "<group>"; };
+		68229C444C6E759D51FB09BB /* CrewRelaySyncLogic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewRelaySyncLogic.swift; sourceTree = "<group>"; };
 		68DED4864DF441E88BAC0A24 /* LocalCodingAgentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalCodingAgentTests.swift; sourceTree = "<group>"; };
 		69B4AFC537A8402CC846122F /* SessionConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionConfig.swift; sourceTree = "<group>"; };
 		6A12EB1BACBB13838365C685 /* DeviceLogin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceLogin.swift; sourceTree = "<group>"; };
@@ -263,6 +267,7 @@
 		1257D295E906E25E1E39DA26 /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				64939E9C459FD69C7E2993FA /* CrewRelayAgent.swift */,
 				C19AB68BF7E4D689CEAF0A0F /* CrewSessionRunner.swift */,
 			);
 			path = Services;
@@ -351,6 +356,7 @@
 		74CD4A35459628AAE9D32D6E /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				68229C444C6E759D51FB09BB /* CrewRelaySyncLogic.swift */,
 				4452E801174262B66265E9B7 /* PendingCrewAPI.swift */,
 				3431B4DF325BB67DBBFAFA45 /* PendingCrewBackend.swift */,
 			);
@@ -621,6 +627,8 @@
 				EA0A4A8A6688901245AF283A /* CrewDetailInspector.swift in Sources */,
 				4A6CD3FE34267E982D109A47 /* CrewImageLoader.swift in Sources */,
 				C96A57C6587DC58D7BFE6BBF /* CrewInteractionCard.swift in Sources */,
+				E516AADDB9ED8727F67B7D3E /* CrewRelayAgent.swift in Sources */,
+				6AD5BB1B6ADE7861673B3436 /* CrewRelaySyncLogic.swift in Sources */,
 				69933D16E7836C959E8DD675 /* CrewRosterBar.swift in Sources */,
 				5A4B3F20021A2BB44D06D629 /* CrewSenderResolver.swift in Sources */,
 				FEE0191AC90276DAE288B646 /* CrewSessionRunner.swift in Sources */,

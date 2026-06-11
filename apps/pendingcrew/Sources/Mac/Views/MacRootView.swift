@@ -14,6 +14,9 @@ struct MacThreePaneView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var crewStore: CrewStore
     @StateObject private var sessionRunner = CrewSessionRunner()
+    /// edge 信箱同步代理（接合 v2 block 3）—— window 级常驻，登录态下对已
+    /// 接入 PendingBot 的 crew 跑 5s 拉/推循环。
+    @StateObject private var relayAgent = CrewRelayAgent()
 
     var body: some View {
         NavigationSplitView {
@@ -33,6 +36,8 @@ struct MacThreePaneView: View {
             // crew sheet 的 picker，提前 prefetch 避免 sheet 打开时空。
             await crewStore.refreshList()
             await crewStore.refreshSubjects()
+            // relay 同步代理常开（幂等启动）；未登录时 tick 是 no-op。
+            relayAgent.start(appModel: model)
         }
     }
 }

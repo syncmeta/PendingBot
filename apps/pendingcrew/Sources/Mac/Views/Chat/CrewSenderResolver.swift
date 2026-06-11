@@ -23,12 +23,15 @@ enum CrewSenderResolver {
         switch entry.senderKind {
         case "user", "human":
             let uid = entry.senderUserId
-            let mine = uid != nil ? (uid == localUserId) : true   // 缺 id 时 BYOK 单人 → 当我
+            // relay 搬进来的消息（senderDisplayName 非 nil）是远端他人的话语，
+            // 缺 user id 也绝不能当成"我"（右对齐）。
+            let mine = entry.senderDisplayName == nil
+                && (uid != nil ? (uid == localUserId) : true)   // 缺 id 时 BYOK 单人 → 当我
             let m = members.first { $0.userId != nil && $0.userId == uid }
             return CrewSender(
                 kind: .human,
-                displayName: m?.displayName ?? "我",
-                avatarSeed: uid ?? "me",
+                displayName: entry.senderDisplayName ?? m?.displayName ?? "我",
+                avatarSeed: uid ?? entry.senderDisplayName ?? "me",
                 isCaptain: false, sessionStatus: nil, isMine: mine
             )
 
@@ -44,12 +47,15 @@ enum CrewSenderResolver {
 
         case "bot":
             let bid = entry.senderBotId
+            // captain 兜底只对 bid == nil 生效 —— relay 进来的远端 bot
+            // （senderDisplayName 非 nil、bid 不在本地 members）不能误判成机长。
             let m = members.first { $0.botId != nil && $0.botId == bid }
-                ?? members.first { $0.memberKind == "captain" }   // null 兜底 captain
+                ?? (bid == nil && entry.senderDisplayName == nil
+                    ? members.first { $0.memberKind == "captain" } : nil)   // null 兜底 captain
             let isCaptain = (bid != nil && bid == captainBotId) || m?.memberKind == "captain"
             return CrewSender(
                 kind: .bot,
-                displayName: m?.displayName ?? (isCaptain ? "机长" : "bot"),
+                displayName: entry.senderDisplayName ?? m?.displayName ?? (isCaptain ? "机长" : "bot"),
                 avatarSeed: bid ?? captainBotId ?? "bot",
                 isCaptain: isCaptain, sessionStatus: nil, isMine: false
             )

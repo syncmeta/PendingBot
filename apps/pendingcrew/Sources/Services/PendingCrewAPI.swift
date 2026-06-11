@@ -376,6 +376,24 @@ struct PendingCrewAPI {
         return resp.whiteboard
     }
 
+    /// `GET /v1/crews/:crewId/messages?since=<cursor>` — 带游标的分页拉取
+    /// （接合 v2 block 3：CrewRelayAgent 轮询用）。`since` = 上次响应的
+    /// `lastCursor`（ISO8601，**闭区间** —— 边界条目会重复出现，调用方按
+    /// entry id 去重）。Needs `crew:read`。
+    func listCrewWhiteboardPage(crewId: String, since: String?) async throws -> CrewWhiteboardPage {
+        // `appendingPathComponent` 会把 "?" 转义,query 走 URLComponents
+        // (同 pollDeviceLoginChallenge 的做法)。
+        let url = baseURL.appendingPathComponent("v1/crews/\(crewId)/messages")
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+        if let since, !since.isEmpty {
+            components.queryItems = [URLQueryItem(name: "since", value: since)]
+        }
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "GET"
+        attachAuth(to: &request)
+        return try await perform(request)
+    }
+
     /// `POST /v1/crews/:crewId/messages` — drop a message on the crew
     /// whiteboard. `mentions` routes it: `@session <id>` → that session's
     /// mailbox; `@captain`; empty/`@broadcast` → all sessions. `attachmentIds`
@@ -383,16 +401,24 @@ struct PendingCrewAPI {
     /// `{ ids: [...] }` and hydrated → renderable objects on read. Needs
     /// `crew:write`.
     @discardableResult
+    /// `senderLabel` / `localSessionId`（接合 v2 block 3）：Mac relay 代发本地
+    /// captain / session 话语时的来源标注 —— 任一非 nil 时 edge 会给消息打
+    /// `origin:'mac_relay'`，Mac 拉取侧据此防回环。**relay 上行必须至少带
+    /// senderLabel**，否则消息不会被标记、会被自己拉回来。
     func postCrewMessage(
         crewId: String,
         text: String,
         mentions: [CrewMention] = [],
-        attachmentIds: [String] = []
+        attachmentIds: [String] = [],
+        senderLabel: String? = nil,
+        localSessionId: String? = nil
     ) async throws -> String? {
         struct Body: Encodable {
             let content: String
             let mentions: [CrewMention]
             let attachmentIds: [String]?
+            let senderLabel: String?
+            let localSessionId: String?
         }
         // The handler returns `{ messageId }`; `announcementId` stays nil (this
         // endpoint never emitted one). Decode both leniently so neither shape
@@ -403,7 +429,9 @@ struct PendingCrewAPI {
             body: Body(
                 content: text,
                 mentions: mentions,
-                attachmentIds: attachmentIds.isEmpty ? nil : attachmentIds
+                attachmentIds: attachmentIds.isEmpty ? nil : attachmentIds,
+                senderLabel: senderLabel,
+                localSessionId: localSessionId
             )
         )
         return resp.messageId ?? resp.announcementId
@@ -696,6 +724,20 @@ struct CrewWhiteboardEntry: Decodable, Identifiable, Equatable {
     /// `url` is the auth-gated `/v1/uploads/<id>` path `CrewRemoteImage`
     /// fetches with the device-grant bearer token.
     let attachments: [CrewAttachment]?
+    /// Mac relay 上行的来源标注（接合 v2 block 3）。非 nil 且 `origin ==
+    /// "mac_relay"` = 这条是 Mac 自己推上去的 —— 拉取侧据此过滤防回环。
+    /// edge 老消息 / 非 relay 消息为 nil。
+    let relay: Relay?
+    /// 发送者显示名。**edge 不下发这个字段**（恒 nil）；`LocalBackend` 把
+    /// relay 搬进本地白板的消息映射成 entry 时回填 edge 侧名字，
+    /// `CrewSenderResolver` 优先用它。
+    let senderDisplayName: String?
+
+    struct Relay: Decodable, Equatable {
+        let origin: String
+        let senderLabel: String?
+        let localSessionId: String?
+    }
 
     struct Payload: Decodable, Equatable {
         let text: String?
@@ -721,12 +763,21 @@ struct CrewWhiteboardEntry: Decodable, Identifiable, Equatable {
         case createdAt = "created_at"
         case payload
         case attachments
+        case relay
+        case senderDisplayName = "sender_display_name"
     }
 
     /// Best display text: explicit payload text → summary → empty.
     var displayText: String { payload?.text ?? summary ?? "" }
     /// True if this row is an ask_human interaction card.
     var isInteraction: Bool { payload?.kind == "interaction" }
+}
+
+/// `listCrewWhiteboardPage` 的响应：白板条目 + 续传游标（接合 v2 block 3）。
+/// `lastCursor` = 本批最大 created_at；空批为 nil（游标原地不动）。
+struct CrewWhiteboardPage: Decodable {
+    let whiteboard: [CrewWhiteboardEntry]
+    let lastCursor: String?
 }
 
 /// The crew roster (`listCrewMembers`). `captainBotId` lets the UI tag which
