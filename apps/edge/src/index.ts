@@ -120,6 +120,21 @@ app.onError((err, c) => {
   });
 });
 
+// Board admin console — apps/admin SPA served same-origin from the assets
+// binding so the Cloudflare Access cookie covers both the page and the
+// /v1/board/* API (a cross-origin host couldn't carry it). The built SPA
+// uses base /board/, the binding's directory is the bare dist/, so strip the
+// prefix before asset lookup; unknown paths fall through to index.html
+// (assets.not_found_handling = single-page-application).
+app.get('/board', (c) => c.redirect('/board/'));
+app.get('/board/*', (c) => {
+  const assets = c.env.ASSETS;
+  if (!assets) return jsonError(c, 404, 'not_found');
+  const url = new URL(c.req.url);
+  url.pathname = url.pathname.replace(/^\/board/, '') || '/';
+  return assets.fetch(new Request(url.toString(), c.req.raw));
+});
+
 // Routes — mounted under /v1/
 const v1 = new Hono<AppBindings>();
 v1.route('/health', healthRoutes);
