@@ -44,6 +44,7 @@
 		5BBFB39FEFADFBC3E3A905C8 /* LocalCodingAgentSpec.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF8E8FC64275B7932540FB17 /* LocalCodingAgentSpec.swift */; };
 		64DFD174BA2ABA14F434358D /* GitInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60202465DF374BE31614C151 /* GitInspector.swift */; };
 		67F1A713B214BE38547CFBA4 /* McpPermissionHook.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53FB4DF079945BBB34443F32 /* McpPermissionHook.swift */; };
+		69326FB0AECEA6EACFBA3A2E /* SessionUnreadStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C2809602DDEF4A750138A88 /* SessionUnreadStore.swift */; };
 		6942FF0B2E3D04AF1005374B /* PendingCrewApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C09067E3C1637408FEED8F2 /* PendingCrewApp.swift */; };
 		69933D16E7836C959E8DD675 /* CrewRosterBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D4475F4F6F662461F71C1B9 /* CrewRosterBar.swift */; };
 		6ACBB093D8F44B8F81B6F5DB /* claude_stream.jsonl in Resources */ = {isa = PBXBuildFile; fileRef = DA26B3AE2AB22AA26494B7EB /* claude_stream.jsonl */; };
@@ -151,6 +152,7 @@
 		53FB4DF079945BBB34443F32 /* McpPermissionHook.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = McpPermissionHook.swift; sourceTree = "<group>"; };
 		5606C4F79E94AFA8F76F6273 /* codex_stream.jsonl */ = {isa = PBXFileReference; path = codex_stream.jsonl; sourceTree = "<group>"; };
 		5857EBAF956D4104D4FBCBB2 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
+		5C2809602DDEF4A750138A88 /* SessionUnreadStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionUnreadStore.swift; sourceTree = "<group>"; };
 		5D4475F4F6F662461F71C1B9 /* CrewRosterBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewRosterBar.swift; sourceTree = "<group>"; };
 		5D74B1C537C235EFB0E69DCB /* PromptTemplate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptTemplate.swift; sourceTree = "<group>"; };
 		60202465DF374BE31614C151 /* GitInspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitInspector.swift; sourceTree = "<group>"; };
@@ -480,6 +482,7 @@
 				8F1C7822F4F8AFCC1F3AC147 /* LocalSessionWorldModel.swift */,
 				E09E12D071816B5362AD7626 /* LocalWhiteboardStore.swift */,
 				5D74B1C537C235EFB0E69DCB /* PromptTemplate.swift */,
+				5C2809602DDEF4A750138A88 /* SessionUnreadStore.swift */,
 			);
 			path = Stores;
 			sourceTree = "<group>";
@@ -662,6 +665,7 @@
 				D9D094DE3C39F9662B62B800 /* SessionConfig.swift in Sources */,
 				B858CC99627C040B235AAC22 /* SessionProxyClient.swift in Sources */,
 				405AD24AAB26662F93045B6E /* SessionProxyProtocol.swift in Sources */,
+				69326FB0AECEA6EACFBA3A2E /* SessionUnreadStore.swift in Sources */,
 				20910C5E08E0D1DDD4323FA5 /* SessionWorkspace.swift in Sources */,
 				DE7E6AD7E1FBFD63657A6BF6 /* Subject.swift in Sources */,
 				189C932299F51BD2E7CE8E6F /* WelcomeView.swift in Sources */,

@@ -27,6 +27,8 @@ struct CrewSessionWindowView: View {
     /// 跨进程轮询（helper 写 LocalApprovalStore 文件、本进程读）—— 2s 检查
     /// 新待决策并注入 captain PTY。与 SessionApprovalCardsView 的 1.5s 同套路。
     private let captainTick = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
+    /// 未读角标的轻量刷新计数（chunk2 T6）—— 每个 tick 自增，逼 badgeCount 重算。
+    @State private var badgeTick = 0
 
     /// spec §9.3 + 用户心智：右栏是**常驻**和 claude/codex 交互的面（像 Codex
     /// Desktop）。没有 session 时就地给一个 composer —— **第一条消息即开始
@@ -63,7 +65,16 @@ struct CrewSessionWindowView: View {
         .task(id: crewStore.selectedDetail?.crew.id) { await autoClaimLoop() }
         // chunk2 T5：captain 唤醒 = app 注入。本地 BYOK 模式下轮询待决策，
         // 有新的（非 captain 自己 raise 的）就把提示注入 captain 的 PTY。
-        .onReceive(captainTick) { _ in notifyCaptainOfNewDecisions() }
+        .onReceive(captainTick) { _ in
+            notifyCaptainOfNewDecisions()
+            badgeTick &+= 1 // 未读角标随同一拍刷新（T6）
+        }
+        // 切前台 = 看过了：清掉新选中 run 的未读（T6）。
+        .onChange(of: sessionRunner.selectedRunId) { _, newId in
+            if let run = sessionRunner.runs.first(where: { $0.runID == newId }) {
+                SessionUnreadStore.shared.markViewed(run.sessionId)
+            }
+        }
     }
 
     /// chunk2 T5：发现新待决策 → 注入运行中的 captain session（spec §2 唤醒=app 注入）。
@@ -97,8 +108,16 @@ struct CrewSessionWindowView: View {
         return runs.filter { $0.role == .captain } + runs.filter { $0.role != .captain }
     }
 
-    /// 未读消息数占位 —— chunk2 T6 接真未读（白板/@提及），先恒 0 不渲染。
-    private func badgeCount(for run: CrewSessionRun) -> Int { 0 }
+    /// 未读数（chunk2 T6）：本 session 的 pending 待办 + 上次查看后该 session
+    /// 发的白板消息。`badgeTick` 由 2s 轮询 bump，强制重算（store 数据在文件里，
+    /// 没有 ObservableObject 推送）。前台选中的 run 不显角标（看着呢）。
+    private func badgeCount(for run: CrewSessionRun) -> Int {
+        _ = badgeTick // 依赖 tick，让 SwiftUI 每 2s 重算一次
+        if run.runID == sessionRunner.selectedRunId { return 0 }
+        return SessionUnreadStore.shared.unreadCount(
+            crewId: run.crewId, sessionId: run.sessionId,
+            approvals: .shared, whiteboard: .shared)
+    }
 
     /// 横向滚动的 session 切换条：每个 run 一个 capsule（名字 + 状态点 +
     /// 未读 badge 占位），点击切前台；已退出的带 ✕ 可移除。

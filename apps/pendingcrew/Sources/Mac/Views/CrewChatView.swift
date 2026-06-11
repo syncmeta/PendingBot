@@ -14,6 +14,9 @@ struct CrewChatView: View {
     let crewTitle: String
 
     @EnvironmentObject private var appModel: AppModel
+    /// MacThreePaneView 注入（经 CrewCenterView）—— session 发的消息点击可
+    /// 跳到右栏对应 session（chunk2 T6 中栏跳转）。
+    @EnvironmentObject private var sessionRunner: CrewSessionRunner
 
     @State private var entries: [CrewWhiteboardEntry] = []
     @State private var draft = ""
@@ -93,7 +96,19 @@ struct CrewChatView: View {
         } else {
             let sender = CrewSenderResolver.resolve(entry, members: members,
                                                     captainBotId: captainBotId, localUserId: localUserId)
-            CrewBubbleRow(entry: entry, sender: sender)
+            // session 发的消息可点 → 右栏切到对应 session（chunk2 T6 中栏跳转）。
+            // 找不到对应 run（已移除/别的 crew）则点击无事发生。
+            if let senderSessionId = entry.senderSessionId {
+                CrewBubbleRow(entry: entry, sender: sender)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        if let run = sessionRunner.runs.first(where: { $0.sessionId == senderSessionId }) {
+                            sessionRunner.select(run.runID)
+                        }
+                    }
+            } else {
+                CrewBubbleRow(entry: entry, sender: sender)
+            }
         }
     }
 
