@@ -18,11 +18,10 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
     /// The `UserDefaults` / `@AppStorage` key shared by the scenes and the picker.
     static let storageKey = "appearance_mode"
 
-    /// Default when nothing is stored. Held at `.light` while the dark long-tail
-    /// (D3 裸色/阴影清理、D4 markdown 主题) is in flight, so dark-system users
-    /// don't see a half-polished dark UI by surprise — flip to `.system` once
-    /// D3/D4 land and pass visual QA.
-    static let `default`: AppearanceMode = .light
+    /// Default when nothing is stored: follow the system. (Held at `.light`
+    /// during the dark-mode rollout; flipped after D3/D4 landed and the dark
+    /// UI passed visual QA on 2026-06-12.)
+    static let `default`: AppearanceMode = .system
 
     /// What `.preferredColorScheme(_:)` wants — `nil` = follow system.
     var colorScheme: ColorScheme? {

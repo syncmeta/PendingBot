@@ -1,6 +1,6 @@
 # 深色模式调色板 spec(已与用户定稿 2026-06-11,实施待排期)
 
-状态:**定色完成,未实施**。用户拍板"差不多就这样";v1 优先级让位于 #290 真机验证等,实施另起任务。
+状态:**已实施并验收(2026-06-12,task #296)**。D1 Palette 16 token 自适应化(`Color.adaptive`)→ D2 三态外观开关(跟随/浅/深,我→设置;默认跟随系统)→ D3 语义色收编(`danger/dangerBg/success/gold/onAccent` 五个新 token,散落硬编码清干净;QR 白底/照片查看器/Call UI/品牌按钮按设计钉死)→ D4 数学位图按 colorScheme 渲染+缓存(修了缓存 key 不分模式的隐形 bug;markdown/代码块本就走 token 自动适配)。用户 Mac 深色实测通过。
 
 ## 定色原则
 

@@ -1,6 +1,8 @@
 # PendingBot / PendingCrew 进度账本 (Progress Ledger)
 
-**最近对账：2026-06-11**（对照实际代码 / 迁移 / git，不是看 task 标记）
+**最近对账：2026-06-12**（对照实际代码 / 迁移 / git，不是看 task 标记）
+
+> **2026-06-12 深色模式落地（feat/dark-mode,#296,D1–D4 全完成,用户 Mac 实测验收)**:调色板 spec 见 `docs/superpowers/specs/2026-06-11-dark-mode-palette.md`(已更新为"已实施")。D1 `Color.adaptive(light:dark:)` + Palette 16 token 自适应化;D2 三态外观开关(跟随/浅/深,我→设置分段控件,@AppStorage appearance_mode,默认跟随系统);D3 语义色收编(新 token `danger/dangerBg/success/gold/onAccent`,20 处裸 hex + accent 上白字清干净;QR 白底/照片查看器/Call UI/品牌按钮设计性钉死);D4 数学位图按 colorScheme 渲染+缓存(原缓存 key 不分模式,深色下会出深墨隐形位图;markdown/代码块本就走 token)。**尾巴**:深色下阴影偏弱(31 处 .shadow,浅色无回归,深色里只是存在感低,非破相)与 147 处 .opacity 水洗未逐一审——留给日常使用发现再修;iPad 深色实测随 #290。
 
 > **2026-06-10 接合 v2 定调 + chunk 2 captain-session 全落（`feat/session-crew-comms`，未合）**
 > - **接合 v2 定调（spec `2026-06-10-pendingcrew-pendingbot-integration-v2.md`，commit `6c326adf`）**：用户推翻旧 §8 —— **本地为家、edge 是邮差**（对标 cc/codex remote control）。captain 唯一形态 = 本地 session（edge-bot captain 作废，#241 删、#242 重定义为遥控队列通道）；登录 PendingBot 只叠加两能力：遥控 + bot/人类账号经 edge 信箱作为成员加入 crew（store-and-forward，远端成员间不依赖 Mac 在线）；"毕业"、双轨 BackendMode 作废（拆双轨 = 下一块）。
