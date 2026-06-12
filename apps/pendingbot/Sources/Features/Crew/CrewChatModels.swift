@@ -143,6 +143,8 @@ struct CrewChatAdapter {
         let sender: GroupBubbleSender?
         var permission: PermissionRequestPayload? = nil
         var permissionSessionLabel: String? = nil
+        /// Non-nil ⇒ render the task-dispatch card (#242 遥控 v1).
+        var taskRequest: CrewTaskRequestPayload? = nil
     }
 
     func adapt(_ rows: [CrewAnnouncementRow]) -> [Adapted] {
@@ -173,6 +175,26 @@ struct CrewChatAdapter {
             )
             return Adapted(message: msg, sender: nil,
                            permission: payload, permissionSessionLabel: label)
+        }
+
+        // Task-dispatch card (#242 遥控 v1) — message_kind=='task_request'
+        // rows render the small card instead of a bubble. `summary` is the
+        // task brief; the payload (when present) refines brief + runner.
+        if row.message_kind == "task_request" {
+            let task = row.payload?.task
+                ?? CrewTaskRequestPayload(action: "run_session",
+                                          task_brief: row.summary,
+                                          runner_kind: nil)
+            let msg = ChatMessage(
+                id: row.id,
+                conversation_id: crewId,
+                sender_type: "user",
+                sender_id: "",
+                content: row.summary,
+                created_at: epoch,
+                attachments: nil
+            )
+            return Adapted(message: msg, sender: nil, taskRequest: task)
         }
 
         // Agent / session post → bot side.

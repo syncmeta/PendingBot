@@ -250,9 +250,36 @@ struct CrewAnnouncementRow: Decodable, Identifiable, Hashable {
 /// can't blank the entire crew chat on cold load.
 struct LenientPermissionPayload: Decodable, Hashable {
     let value: PermissionRequestPayload?
-    init(value: PermissionRequestPayload?) { self.value = value }
+    /// #242 遥控 v1 — the same payload cell, leniently decoded as a
+    /// task-request body. Only consulted for `message_kind=='task_request'`
+    /// rows (both structs share an optional-everything shape, so a decode
+    /// "success" on the wrong kind is harmless).
+    let task: CrewTaskRequestPayload?
+    init(value: PermissionRequestPayload?, task: CrewTaskRequestPayload? = nil) {
+        self.value = value
+        self.task = task
+    }
     init(from decoder: Decoder) throws {
         self.value = try? PermissionRequestPayload(from: decoder)
+        self.task = try? CrewTaskRequestPayload(from: decoder)
+    }
+}
+
+/// #242 遥控 v1 — the `payload` body of a `message_kind=='task_request'`
+/// crew message: `{ action: 'run_session', task_brief, runner_kind? }`.
+/// Encodable for the send path (property names == wire keys, no key
+/// strategy) and Decodable for rendering the task card on read.
+struct CrewTaskRequestPayload: Codable, Hashable {
+    let action: String?
+    let task_brief: String?
+    /// `'claude_code' | 'codex'` — which local runner the Mac should use.
+    let runner_kind: String?
+
+    var runnerLabel: String {
+        switch runner_kind {
+        case "codex": return "Codex"
+        default:      return "Claude Code"
+        }
     }
 }
 
@@ -332,15 +359,22 @@ extension APIClient {
     func postCrewMessage(
         crewId: String,
         content: String,
-        mentions: [CrewMentionInput] = []
+        mentions: [CrewMentionInput] = [],
+        messageKind: String? = nil,
+        payload: CrewTaskRequestPayload? = nil
     ) async throws -> CrewPostMessageResponse {
         struct Body: Encodable {
             let content: String
             let mentions: [CrewMentionInput]
+            // Optionals are encodeIfPresent under synthesized Encodable, so
+            // a plain text post sends neither key (server defaults apply).
+            let message_kind: String?
+            let payload: CrewTaskRequestPayload?
         }
         return try await post(
             "v1/crews/\(crewId)/messages",
-            body: Body(content: content, mentions: mentions)
+            body: Body(content: content, mentions: mentions,
+                       message_kind: messageKind, payload: payload)
         )
     }
 }
