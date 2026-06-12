@@ -278,6 +278,70 @@ describe('POST /v1/crews/:crewId/messages — mac_relay 上行标注 (接合 v2 
   });
 });
 
+// #242 遥控 v1:iOS 发结构化 task_request,Mac relay 拉取后本地起 session。
+describe('POST /v1/crews/:crewId/messages — message_kind=task_request (#242)', () => {
+  beforeEach(() => dispatchGroupTurnMock.mockClear());
+
+  function seed(db: FakeDb) {
+    db.rows.temporary_group_meta = [
+      { conversation_id: CREW_ID, responsible_subject_id: SUBJECT, captain_bot_id: CAPTAIN_BOT_ID },
+    ];
+    db.rpcs = { can_view_temporary_group: () => ({ data: true, error: null }) };
+  }
+
+  it('stores payload on log_kind/log_payload and roundtrips through GET', async () => {
+    const db = makeFakeDb();
+    seed(db);
+    const payload = { action: 'run_session', runner_kind: 'claude_code', task_brief: '修登录 bug' };
+    const post = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-user-id': USER },
+      body: JSON.stringify({ content: '远程起一个 session', message_kind: 'task_request', payload }),
+    });
+    expect(post.status).toBe(200);
+    const msgInsert = db.inserts.find((i) => i.table === 'messages');
+    expect(msgInsert?.row).toMatchObject({
+      conversation_id: CREW_ID,
+      role: 'user',
+      content: '远程起一个 session',
+      log_kind: 'task_request',
+      log_payload: payload,
+    });
+
+    const get = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
+      headers: { 'x-test-user-id': USER },
+    });
+    expect(get.status).toBe(200);
+    const body = (await get.json()) as {
+      whiteboard: Array<{ message_kind: string; payload: Record<string, unknown>; summary: string | null }>;
+    };
+    expect(body.whiteboard.length).toBe(1);
+    expect(body.whiteboard[0].message_kind).toBe('task_request');
+    expect(body.whiteboard[0].payload).toMatchObject({ text: '远程起一个 session', ...payload });
+  });
+
+  it('plain text messages keep log_kind null and payload = { text }', async () => {
+    const db = makeFakeDb();
+    seed(db);
+    const post = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-user-id': USER },
+      body: JSON.stringify({ content: 'just chatting' }),
+    });
+    expect(post.status).toBe(200);
+    const msgInsert = db.inserts.find((i) => i.table === 'messages');
+    expect(msgInsert?.row.log_kind ?? null).toBeNull();
+    const get = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
+      headers: { 'x-test-user-id': USER },
+    });
+    const body = (await get.json()) as {
+      whiteboard: Array<{ message_kind: string; payload: Record<string, unknown> }>;
+    };
+    expect(body.whiteboard[0].message_kind).toBe('text');
+    expect(body.whiteboard[0].payload).toEqual({ text: 'just chatting' });
+  });
+});
+
 describe('POST /v1/crews/:crewId/members (接合 v2 block 3)', () => {
   const BOT_ID = '99999999-9999-4999-8999-000000000003';
 

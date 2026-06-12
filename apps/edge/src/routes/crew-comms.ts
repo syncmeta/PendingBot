@@ -174,7 +174,10 @@ export function mapMessageToEntry(
     : m.role === 'log' ? 'session'
     : m.role;
   // For log rows (cards) the payload IS the card; for prose the text is content.
-  const payload = m.role === 'log' ? lp : { text: m.content ?? '' };
+  // 非 log 行也可能挂结构化 payload(#242 task_request:role='user' +
+  // log_kind='task_request' + log_payload=指令体)—— 合并透出,text 保底。
+  const payload =
+    m.role === 'log' ? lp : { text: m.content ?? '', ...lp };
   const sessionId = typeof lp.session_id === 'string' ? lp.session_id : null;
   return {
     id: m.id,
@@ -241,7 +244,10 @@ const MentionItem = z.object({
 const CrewMessageBody = z.object({
   content: z.string().trim().min(1).max(4_000),
   mentions: z.array(MentionItem).max(64).default([]),
-  message_kind: z.enum(['text', 'system']).default('text'),
+  // 'task_request'(#242 遥控 v1):iOS 在 relay crew 里发结构化指令
+  // ({ action:'run_session', runner_kind?, task_brief })。落 messages 行的
+  // log_kind/log_payload(role 仍 'user'),Mac CrewRelayAgent 拉取后本地起 session。
+  message_kind: z.enum(['text', 'system', 'task_request']).default('text'),
   // Optional opaque payload that the caller wants delivered alongside the
   // text (e.g. attachment refs, structured action data). Kept under the
   // hood as crew_announcements.payload.
@@ -387,6 +393,10 @@ crewMessagesRoutes.post('/:crewId/messages', requireSubjectAuth(['crew:write']),
       ...(parsed.localSessionId ? { localSessionId: parsed.localSessionId } : {}),
     };
   }
+  // task_request:kind 落 log_kind、结构化指令落 log_payload(role 仍 'user',
+  // 在群聊时间线上以发送者本人的气泡呈现)。读取侧 mapMessageToEntry 把
+  // log_payload 合并进 entry.payload,Mac 拉取后据此本地起 session。
+  const isTaskRequest = parsed.message_kind === 'task_request';
   const { error: insErr } = await svc.from('messages').insert({
     id: messageId,
     client_message_id: crypto.randomUUID(),
@@ -395,6 +405,9 @@ crewMessagesRoutes.post('/:crewId/messages', requireSubjectAuth(['crew:write']),
     role: 'user',
     content: parsed.content,
     status: 'done',
+    ...(isTaskRequest
+      ? { log_kind: 'task_request', log_payload: (parsed.payload ?? {}) as Json }
+      : {}),
     // Mirror routes/messages.ts: persist attachment refs as `{ ids: [...] }`
     // (null when none) so hydrateCrewAttachments can resolve them on read.
     attachments: attachmentsCell,
