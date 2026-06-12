@@ -38,6 +38,7 @@
 		200B3559BF2D8C7D099031CD /* ShareLinks.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCF2947C27201853497DCE56 /* ShareLinks.swift */; };
 		20489485A894E69287ADEEFF /* APIModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1D36E9865F8E358AD4A1B49 /* APIModels.swift */; };
 		22DC73D9B52F654B9610BCB3 /* CrewSessionStatusCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4F92F6F520EC1E69BFB6426 /* CrewSessionStatusCard.swift */; };
+		232CB5FD82ABC5A3C6724863 /* AppearanceMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38FE558CFE957C64782A15FA /* AppearanceMode.swift */; };
 		24DE7D404DE3727CE2B2ABA7 /* PendingBotBigScreenApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 354501BAEAAACDD5E92D3C3F /* PendingBotBigScreenApp.swift */; };
 		26BF32DE6C12E211FC91F64E /* CodeRunnerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F74C5B9B7D89D583C48817E /* CodeRunnerSheet.swift */; };
 		275EBB90F22BDCDFEE0D5F84 /* ToolTraceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAB29CAABC38BF9B5380C3DE /* ToolTraceView.swift */; };
@@ -239,6 +240,7 @@
 		30A4F6059E2AA9AF9E1CF05E /* WelcomeViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeViewModel.swift; sourceTree = "<group>"; };
 		354501BAEAAACDD5E92D3C3F /* PendingBotBigScreenApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingBotBigScreenApp.swift; sourceTree = "<group>"; };
 		3717FA37BE983343D22F54C1 /* ChatComposerAccessory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatComposerAccessory.swift; sourceTree = "<group>"; };
+		38FE558CFE957C64782A15FA /* AppearanceMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppearanceMode.swift; sourceTree = "<group>"; };
 		398ED7C99CCFD9735C8B9480 /* UserUserPeer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserUserPeer.swift; sourceTree = "<group>"; };
 		3A4E9EE25926BD0C0327F5F9 /* Platform.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Platform.swift; sourceTree = "<group>"; };
 		3BD3256170D29AD9138939C3 /* PendingBotApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingBotApp.swift; sourceTree = "<group>"; };
@@ -568,6 +570,7 @@
 			isa = PBXGroup;
 			children = (
 				9203CD5A29F63BF0D4B5B9B7 /* AccountStore.swift */,
+				38FE558CFE957C64782A15FA /* AppearanceMode.swift */,
 				845FA89DD759E5A037387300 /* FamilyCredentialWriter.swift */,
 				3D0542BAF8BA5245F4DD6FA1 /* Keychain.swift */,
 				5EFE46C6B281742A271B9202 /* LocalDatabase.swift */,
@@ -831,6 +834,7 @@
 				8C5BA9B67A199694684F4D25 /* AddMeMethodsView.swift in Sources */,
 				1816ED8661FB6122D66EA671 /* AppCommands.swift in Sources */,
 				D981A37D61DA1B2B0EDF9F14 /* AppEnvironment.swift in Sources */,
+				232CB5FD82ABC5A3C6724863 /* AppearanceMode.swift in Sources */,
 				3F6C2CE574F1B2E1D65677E9 /* AppleSignIn.swift in Sources */,
 				12A200D2EF7DE9FE9E8C436C /* BillingService.swift in Sources */,
 				B5B71DE9781BE668FF81DE91 /* BlinkingCursor.swift in Sources */,

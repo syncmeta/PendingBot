@@ -8,6 +8,9 @@ struct PendingBotApp: App {
     @StateObject private var unreadStore = UnreadStore.shared
     @StateObject private var modelCatalog = ModelCatalog.shared
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    /// App-wide appearance override (跟随系统/浅/深), set in 设置. `.system`
+    /// resolves to nil → follow the OS. Replaces the old hard-forced `.light`.
+    @AppStorage(AppearanceMode.storageKey) private var appearanceRaw = AppearanceMode.default.rawValue
 
     init() {
         // Swap URLCache.shared for one whose backing dir is marked
@@ -66,10 +69,10 @@ struct PendingBotApp: App {
                 // tab) so the session survives navigation and the
                 // floating-pill / cover hosted on TabRoot can read it.
                 .environment(CallCenter.shared)
-                // Two-color brand (#044735 + #fdfcfa) — light theme only.
-                // Following system would force us to design + maintain a
-                // dark variant we don't actually want.
-                .preferredColorScheme(.light)
+                // Appearance honors the 设置 override: 跟随系统/浅/深.
+                // `.system` → nil → follow the OS. The brand's dark variant
+                // (2026-06-11 spec) is carried by the adaptive `Theme.Palette`.
+                .preferredColorScheme((AppearanceMode(rawValue: appearanceRaw) ?? .default).colorScheme)
                 .tint(Theme.Palette.accent)
                 .background(Theme.Palette.canvas.ignoresSafeArea())
                 // Universal links (applinks:bot.pendingname.com). SwiftUI
@@ -217,6 +220,8 @@ struct PendingBotApp: App {
     // 共享 feature 视图(MessageTab/Envelope/SidebarTabBar)都声明了
     // @EnvironmentObject UnreadStore — 不注入会在首屏 load() 即断言崩溃。
     @StateObject private var unreadStore = UnreadStore.shared
+    // 外观覆盖(跟随系统/浅/深),设置里改;`.system`→nil→跟随系统。
+    @AppStorage(AppearanceMode.storageKey) private var appearanceRaw = AppearanceMode.default.rawValue
 
     init() {
         // 跟 iOS 入口对齐:首帧前 init 观测/计费身份 SDK(空 key 自动 no-op)。
@@ -233,9 +238,9 @@ struct PendingBotApp: App {
                 .environmentObject(accountStore)
                 .environmentObject(modelCatalog)
                 .environmentObject(unreadStore)
-                // 跟 iOS 一致:双色品牌(#044735 + #fdfcfa)只有浅色设计,
-                // 锁 light,不跟随系统深色。
-                .preferredColorScheme(.light)
+                // 跟 iOS 一致:外观跟随设置(跟随系统/浅/深)。深色变体由
+                // 自适应 Theme.Palette 承载(2026-06-11 spec)。
+                .preferredColorScheme((AppearanceMode(rawValue: appearanceRaw) ?? .default).colorScheme)
                 // 跟 iOS 一致:登录态变化时同步观测/计费身份。
                 .onChange(of: accountStore.current) { _, new in
                     unreadStore.bind(account: new)
@@ -272,6 +277,9 @@ struct PendingBotApp: App {
             SettingsRootView()
                 .environmentObject(accountStore)
                 .environmentObject(modelCatalog)
+                // 独立场景不继承主窗的 preferredColorScheme —— 单独绑同一个
+                // 设置,这样在 ⌘, 窗里改外观时它本身也即时重绘。
+                .preferredColorScheme((AppearanceMode(rawValue: appearanceRaw) ?? .default).colorScheme)
         }
     }
 }

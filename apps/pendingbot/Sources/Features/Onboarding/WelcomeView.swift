@@ -452,11 +452,11 @@ struct WelcomeView: View {
             Group {
                 if vm.isBusy {
                     ProgressView()
-                        .tint(.white)
+                        .tint(Theme.Palette.onAccent)
                 } else {
                     Image(systemName: "arrow.right")
                         .font(Theme.Fonts.glyph(size: 15, weight: .bold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Theme.Palette.onAccent)
                 }
             }
             .frame(width: 38, height: 38)

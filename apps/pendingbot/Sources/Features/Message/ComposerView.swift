@@ -329,12 +329,12 @@ private extension View {
     func floatingComposerSurface<S: InsettableShape>(shape: S) -> some View {
         if #available(iOS 26.0, macOS 26.0, *) {
             self
-                .background(shape.fill(Color.white))
+                .background(shape.fill(Theme.Palette.surface))
                 .glassEffect(.regular, in: shape)
                 .shadow(color: Color.black.opacity(0.06), radius: 6, x: 0, y: 1)
         } else {
             self
-                .background(shape.fill(Color.white))
+                .background(shape.fill(Theme.Palette.surface))
                 .overlay(shape.strokeBorder(Color.black.opacity(0.04), lineWidth: 0.5))
                 .shadow(color: Color.black.opacity(0.08), radius: 6, x: 0, y: 2)
         }

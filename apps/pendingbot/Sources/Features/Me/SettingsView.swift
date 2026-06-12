@@ -35,12 +35,36 @@ struct SettingsView: View {
     /// edge push fan-out picks it up.
     @AppStorage("notification_preview_mode") private var previewModeRaw = NotificationPreviewMode.generic.rawValue
 
+    /// App-wide appearance override (跟随系统/浅/深). Device-local, not synced.
+    /// Both `@main` scenes read the same key and drive `.preferredColorScheme`.
+    @AppStorage(AppearanceMode.storageKey) private var appearanceRaw = AppearanceMode.default.rawValue
+
     private var previewMode: NotificationPreviewMode {
         NotificationPreviewMode(rawValue: previewModeRaw) ?? .generic
     }
 
+    private var appearance: AppearanceMode {
+        AppearanceMode(rawValue: appearanceRaw) ?? .default
+    }
+
     var body: some View {
         Form {
+            Section {
+                Picker("外观", selection: Binding(
+                    get: { appearance },
+                    set: { appearanceRaw = $0.rawValue }
+                )) {
+                    ForEach(AppearanceMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+            } header: {
+                Text("外观")
+            } footer: {
+                Text("「跟随系统」随设备的浅色/深色自动切换；也可固定为浅色或深色。")
+            }
+
             Section {
                 Picker("锁屏通知预览", selection: Binding(
                     get: { previewMode },
