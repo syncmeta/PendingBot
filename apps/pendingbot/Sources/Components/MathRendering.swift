@@ -241,13 +241,39 @@ final class MathImageRenderer {
     static let shared = MathImageRenderer()
     private var cache: [String: PlatformImage] = [:]
 
-    func image(latex: String, display: Bool, color: Color, fontSize: CGFloat) -> PlatformImage {
-        let platformColor = PlatformColor(color)
-        let key = "\(display)|\(Int(fontSize * 2))|\(String(describing: color))|\(latex)"
+    func image(latex: String, display: Bool, color: Color, fontSize: CGFloat, scheme: ColorScheme) -> PlatformImage {
+        // The palette colors are appearance-adaptive, so both the cache key and
+        // the rasterised color must be pinned to an explicit scheme — keying on
+        // `String(describing: color)` (identical for both variants of a dynamic
+        // color) would serve light-ink bitmaps in dark mode.
+        let platformColor = Self.resolve(color, for: scheme)
+        let key = "\(display)|\(Int(fontSize * 2))|\(scheme == .dark ? "dark" : "light")|\(latex)"
         if let cached = cache[key] { return cached }
         let image = Self.render(latex: latex, display: display, color: platformColor, fontSize: fontSize)
         cache[key] = image
         return image
+    }
+
+    /// Resolve a (possibly dynamic) Color to the concrete variant for `scheme`,
+    /// independent of whatever appearance is ambient on the calling thread.
+    private static func resolve(_ color: Color, for scheme: ColorScheme) -> PlatformColor {
+        #if canImport(UIKit)
+        return PlatformColor(color).resolvedColor(
+            with: UITraitCollection(userInterfaceStyle: scheme == .dark ? .dark : .light)
+        )
+        #elseif canImport(AppKit)
+        let dynamic = PlatformColor(color)
+        guard let appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua) else {
+            return dynamic
+        }
+        var resolved = dynamic
+        appearance.performAsCurrentDrawingAppearance {
+            // `.cgColor` resolves a dynamic NSColor against the appearance that
+            // is current at access time.
+            resolved = PlatformColor(cgColor: dynamic.cgColor) ?? dynamic
+        }
+        return resolved
+        #endif
     }
 
     private static func render(latex: String, display: Bool, color: PlatformColor, fontSize: CGFloat) -> PlatformImage {
@@ -297,6 +323,10 @@ final class MathImageRenderer {
 struct MathInlineImageProvider: InlineImageProvider {
     let textColor: Color
     let fontSize: CGFloat
+    /// Pinned by the hosting view (MarkdownText reads `\.colorScheme`); the
+    /// provider value changing on a mode flip is what re-triggers MarkdownUI
+    /// to re-request inline images in the new ink color.
+    let scheme: ColorScheme
 
     func image(with url: URL, label: String) async throws -> Image {
         if let math = MathMarkup.parse(url) {
@@ -304,7 +334,8 @@ struct MathInlineImageProvider: InlineImageProvider {
                 latex: math.latex,
                 display: math.display,
                 color: textColor,
-                fontSize: fontSize
+                fontSize: fontSize,
+                scheme: scheme
             )
             return Image(platformImage: platformImage)
         }
@@ -361,7 +392,8 @@ private struct MathBlockImage: View {
                 latex: latex,
                 display: true,
                 color: textColor,
-                fontSize: fontSize
+                fontSize: fontSize,
+                scheme: colorScheme
             )
         }
     }

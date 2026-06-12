@@ -38,6 +38,9 @@ struct MarkdownText: View {
     enum Variant { case chat, article }
 
     @State private var presentedCitation: PresentedCitation?
+    /// Math formulas are rasterised to bitmaps; pin the renderer to the live
+    /// scheme so dark mode gets dark-variant ink (and its own cache entries).
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         Markdown(rewrittenText)
@@ -60,7 +63,7 @@ struct MarkdownText: View {
                 MathBlockImageProvider(textColor: AppTheme.Palette.ink, fontSize: mathFontSize)
             )
             .markdownInlineImageProvider(
-                MathInlineImageProvider(textColor: AppTheme.Palette.ink, fontSize: mathFontSize)
+                MathInlineImageProvider(textColor: AppTheme.Palette.ink, fontSize: mathFontSize, scheme: colorScheme)
             )
             .textSelection(.enabled)
             .environment(\.openURL, OpenURLAction { url in
