@@ -27,13 +27,13 @@ enum WalletV2Format {
         switch state {
         case "low":
             return Notice(text: "余额偏低，建议充值。", icon: "exclamationmark.circle",
-                          color: Color(hex: 0xB8862B))
+                          color: Theme.Palette.gold)
         case "throttle":
             return Notice(text: "余额不足，已切换到经济模式（只用便宜模型）。",
-                          icon: "tortoise.fill", color: Color(hex: 0xB14B3C))
+                          icon: "tortoise.fill", color: Theme.Palette.danger)
         case "exhausted":
             return Notice(text: "余额花完了，请充值后继续。", icon: "xmark.octagon.fill",
-                          color: Color(hex: 0xB14B3C))
+                          color: Theme.Palette.danger)
         default:
             return nil
         }

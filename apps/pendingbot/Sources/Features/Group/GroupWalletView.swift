@@ -95,7 +95,7 @@ struct GroupWalletView: View {
             Text("群池与我的份额")
         } footer: {
             if let loadError {
-                Text(loadError).font(Theme.Fonts.monoSmall).foregroundStyle(Color(hex: 0xB14B3C))
+                Text(loadError).font(Theme.Fonts.monoSmall).foregroundStyle(Theme.Palette.danger)
             } else {
                 Text("占比 = 你的份额 / S,同时是分摊比例与实缴可取出比例。")
                     .font(Theme.Fonts.monoSmall).foregroundStyle(Theme.Palette.inkMuted)
@@ -165,11 +165,11 @@ struct GroupWalletView: View {
             actionButton("充值(注资进群)", icon: "plus.circle") { activeForm = .topup }
             actionButton("设 / 改认缴额度", icon: "hand.raised") { activeForm = .pledge(current: wallet?.me.pledgePnc ?? 0) }
             actionButton("部分取出", icon: "arrow.down.circle") { activeForm = .withdraw(max: wallet?.me.contributionShareNowPnc ?? 0) }
-            actionButton("退群(全额退款)", icon: "rectangle.portrait.and.arrow.right", tint: Color(hex: 0xB14B3C)) {
+            actionButton("退群(全额退款)", icon: "rectangle.portrait.and.arrow.right", tint: Theme.Palette.danger) {
                 confirmingLeave = true
             }
             if isOwner {
-                actionButton("解散群(全员退款)", icon: "trash", tint: Color(hex: 0xB14B3C)) {
+                actionButton("解散群(全员退款)", icon: "trash", tint: Theme.Palette.danger) {
                     confirmingDissolve = true
                 }
             }
@@ -177,7 +177,7 @@ struct GroupWalletView: View {
             Text("操作")
         } footer: {
             if let actionNotice {
-                Text(actionNotice).font(Theme.Fonts.monoSmall).foregroundStyle(Color(hex: 0x2E7D5B))
+                Text(actionNotice).font(Theme.Fonts.monoSmall).foregroundStyle(Theme.Palette.success)
             } else {
                 Text("金额按整数 PNC。认缴填 0 = 撤销认缴。")
                     .font(Theme.Fonts.monoSmall).foregroundStyle(Theme.Palette.inkMuted)

@@ -55,7 +55,7 @@ struct WalletV2View: View {
             if let loadError {
                 Text(loadError)
                     .font(Theme.Fonts.monoSmall)
-                    .foregroundStyle(Color(hex: 0xB14B3C))
+                    .foregroundStyle(Theme.Palette.danger)
             } else {
                 Text("PNC: Pending Name Credits")
                     .font(Theme.Fonts.monoSmall)
@@ -98,7 +98,7 @@ struct WalletV2View: View {
             if let expiry = WalletV2Format.expiryNotice(pack.expiresAt) {
                 Text(expiry.text)
                     .font(Theme.Fonts.monoSmall)
-                    .foregroundStyle(expiry.urgent ? Color(hex: 0xB14B3C) : Theme.Palette.inkMuted)
+                    .foregroundStyle(expiry.urgent ? Theme.Palette.danger : Theme.Palette.inkMuted)
             } else {
                 Text("永不过期")
                     .font(Theme.Fonts.monoSmall)
@@ -136,7 +136,7 @@ struct WalletV2View: View {
             Spacer()
             Text("\(entry.deltaPncMicros > 0 ? "+" : "")\(WalletV2Format.formatPnc(entry.deltaPncMicros))")
                 .font(Theme.Fonts.body)
-                .foregroundStyle(entry.deltaPncMicros > 0 ? Color(hex: 0x2E7D5B) : Theme.Palette.ink)
+                .foregroundStyle(entry.deltaPncMicros > 0 ? Theme.Palette.success : Theme.Palette.ink)
                 .monospacedDigit()
         }
         .padding(.vertical, 2)

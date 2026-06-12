@@ -29,6 +29,6 @@ struct BrandAvatar: View {
                 .font(.system(size: size * 0.55))
         }
         .frame(width: size, height: size)
-        .overlay(Circle().strokeBorder(Color(hex: 0xE2E0D7), lineWidth: 0.5))
+        .overlay(Circle().strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
     }
 }

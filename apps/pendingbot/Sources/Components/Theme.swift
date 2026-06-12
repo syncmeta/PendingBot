@@ -74,6 +74,22 @@ enum Theme {
         /// "not yet acknowledged"; flips to `userBubble` the moment the
         /// server returns 200.
         static let userBubbleSending = Color.adaptive(light: 0xF1F6F3, dark: 0x182A23)
+
+        /// Text/icon sitting ON an `accent` fill (发送按钮、selected pill)。
+        /// Light: white on deep forest. Dark: the accent flips to bright jade
+        /// (a *light* source), so the ink on it flips to deep green — plain
+        /// white would wash out against jade.
+        static let onAccent = Color.adaptive(light: 0xFFFFFF, dark: 0x0E2A20)
+
+        /// Destructive / error fg — terracotta. Was 12 scattered `0xB14B3C`
+        /// literals; centralised so dark mode lifts them in one place.
+        static let danger   = Color.adaptive(light: 0xB14B3C, dark: 0xE08D7A)
+        /// Washed terracotta fill behind danger content (tool-trace error chip).
+        static let dangerBg = Color.adaptive(light: 0xF4DDD6, dark: 0x3C241E)
+        /// Positive-delta / success fg(钱包入账、群钱包动作成功提示).
+        static let success  = Color.adaptive(light: 0x2E7D5B, dark: 0x6FBF99)
+        /// Wallet-tier gold(钱包档位/预警色,亮度寄存同 amber 但更金).
+        static let gold     = Color.adaptive(light: 0xB8862B, dark: 0xD9B45F)
     }
 
     // ── Typography ──────────────────────────────────────────────────────────

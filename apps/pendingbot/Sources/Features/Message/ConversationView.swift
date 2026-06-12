@@ -2463,7 +2463,7 @@ private struct PreChatActionButton: View {
             .frame(width: 92, height: 92)
             .background(
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(Color.white)
+                    .fill(Theme.Palette.surface)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 22, style: .continuous)

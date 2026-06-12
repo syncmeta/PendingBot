@@ -27,7 +27,7 @@ struct GroupAvatar: View {
     var body: some View {
         ZStack {
             Circle()
-                .fill(Color.white)
+                .fill(Theme.Palette.surface)
                 .overlay(
                     Circle().strokeBorder(
                         Theme.Palette.hairline.opacity(1),

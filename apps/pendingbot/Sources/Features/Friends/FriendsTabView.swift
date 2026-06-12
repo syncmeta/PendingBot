@@ -1313,7 +1313,7 @@ private struct FriendRequestRow: View {
                 Button(action: onAccept) {
                     Text("同意")
                         .font(Theme.Fonts.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Theme.Palette.onAccent)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
                         .background(Capsule().fill(Theme.Palette.accent))
@@ -1363,7 +1363,7 @@ private struct GroupInvitationRow: View {
                 Button(action: onAccept) {
                     Text("同意")
                         .font(Theme.Fonts.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Theme.Palette.onAccent)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
                         .background(Capsule().fill(Theme.Palette.accent))

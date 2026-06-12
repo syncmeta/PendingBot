@@ -435,11 +435,11 @@ struct MacWelcomeView: View {
                 if vm.isBusy {
                     ProgressView()
                         .controlSize(.small)
-                        .tint(.white)
+                        .tint(Theme.Palette.onAccent)
                 } else {
                     Image(systemName: "arrow.right")
                         .font(Theme.Fonts.glyph(size: 14, weight: .bold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Theme.Palette.onAccent)
                 }
             }
             .frame(width: 35, height: 35)

@@ -92,7 +92,7 @@ struct CodeRunnerSheet: View {
                     ForEach(lines) { line in
                         Text(line.text)
                             .font(Theme.Fonts.monospaced(size: 13))
-                            .foregroundStyle(line.isError ? Color(hex: 0xB14B3C) : Theme.Palette.ink)
+                            .foregroundStyle(line.isError ? Theme.Palette.danger : Theme.Palette.ink)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .textSelection(.enabled)
                     }

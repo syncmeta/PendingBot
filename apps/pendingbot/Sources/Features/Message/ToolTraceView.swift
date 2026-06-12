@@ -169,10 +169,10 @@ struct ToolTraceView: View {
                 HStack(alignment: .top, spacing: 9) {
                     Image(systemName: ev.iconName)
                         .font(Theme.Fonts.glyph(size: 12, weight: .semibold))
-                        .foregroundStyle(ev.resultError == nil ? Theme.Palette.accent : Color(hex: 0xB14B3C))
+                        .foregroundStyle(ev.resultError == nil ? Theme.Palette.accent : Theme.Palette.danger)
                         .frame(width: 24, height: 24)
                         .background(
-                            (ev.resultError == nil ? Theme.Palette.accentBg : Color(hex: 0xF4DDD6)),
+                            (ev.resultError == nil ? Theme.Palette.accentBg : Theme.Palette.dangerBg),
                             in: Circle()
                         )
                     VStack(alignment: .leading, spacing: 6) {
@@ -182,7 +182,7 @@ struct ToolTraceView: View {
                                 .foregroundStyle(Theme.Palette.ink)
                             Text(ev.stateText)
                                 .font(Theme.Fonts.rounded(size: 10, weight: .semibold))
-                                .foregroundStyle(ev.resultError == nil ? Theme.Palette.inkMuted : Color(hex: 0xB14B3C))
+                                .foregroundStyle(ev.resultError == nil ? Theme.Palette.inkMuted : Theme.Palette.danger)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
                                 .background(Theme.Palette.surfaceMuted.opacity(0.8), in: Capsule())
@@ -255,7 +255,7 @@ struct ToolTraceView: View {
                 .foregroundStyle(Theme.Palette.inkMuted)
             Text(softWrapped(text))
                 .font(mono ? Theme.Fonts.monoSmall : Theme.Fonts.footnote)
-                .foregroundStyle(isError ? Color(hex: 0xB14B3C) : (isMuted ? Theme.Palette.inkMuted : Theme.Palette.ink))
+                .foregroundStyle(isError ? Theme.Palette.danger : (isMuted ? Theme.Palette.inkMuted : Theme.Palette.ink))
                 .lineLimit(mono ? 4 : 3)
                 .truncationMode(.tail)
                 .textSelection(.enabled)

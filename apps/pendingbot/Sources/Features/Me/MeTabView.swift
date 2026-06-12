@@ -393,7 +393,7 @@ struct OptionRow: View {
             Text(title)
                 .font(Theme.Fonts.system(size: 15, weight: .medium))
                 .foregroundStyle(role == .destructive
-                                 ? Color(hex: 0xB14B3C)
+                                 ? Theme.Palette.danger
                                  : Theme.Palette.ink)
             Spacer(minLength: 0)
             if showsChevron {
@@ -416,7 +416,7 @@ extension View {
     func meGlassGroup() -> some View {
         let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
         return self
-            .background(shape.fill(Color.white))
+            .background(shape.fill(Theme.Palette.surface))
             .clipShape(shape)
             .overlay(
                 shape.strokeBorder(Color.black.opacity(0.08), lineWidth: 0.5)

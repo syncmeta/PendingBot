@@ -1253,7 +1253,7 @@ private struct ConversationListRow: View {
         if unreadCount > 0 {
             Text(unreadCount > 99 ? "99+" : "\(unreadCount)")
                 .font(Theme.Fonts.system(size: 11, weight: .bold))
-                .foregroundStyle(.white)
+                .foregroundStyle(Theme.Palette.onAccent)
                 .padding(.horizontal, 5)
                 .frame(minWidth: 18)
                 .frame(height: 18)

@@ -133,7 +133,7 @@ struct SkillsView: View {
                     Task { await delete(skill) }
                 }
                 .font(Theme.Fonts.rounded(size: 12, weight: .medium))
-                .foregroundStyle(Color(hex: 0xB14B3C))
+                .foregroundStyle(Theme.Palette.danger)
                 .buttonStyle(.plain)
             }
         }
