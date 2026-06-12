@@ -15,6 +15,7 @@ import { grantSignupBonus, creditRedemptionToPolar } from '../lib/billing-grant'
 import { billingEnabled } from '../lib/feature-flags';
 import { safeWaitUntil } from '../lib/safe-wait-until';
 import { jsonError } from '../lib/http-error';
+import { randomToken, sha256Hex } from '../lib/device-grant-scopes';
 import type { AppBindings } from '../types';
 
 export const meRoutes = new Hono<AppBindings>();
@@ -26,6 +27,7 @@ meRoutes.use('/billing/*', requireSession());
 meRoutes.use('/subjects', requireSession());
 meRoutes.use('/wallet/*', requireSession());
 meRoutes.use('/account-deletion', requireSession());
+meRoutes.use('/family-credential', requireSession());
 
 function billingCategory(taskType: string, metadata: unknown): { key: string; label: string } {
   const source = metadata && typeof metadata === 'object'
@@ -348,6 +350,61 @@ meRoutes.get('/subjects', async (c) => {
   }
 
   return c.json({ subjects: items });
+});
+
+// POST /v1/me/family-credential — 登录态直接签发家族 SSO 凭据(pfa_*)。
+// 与 device-login consume 路径(A3)互补:PendingBot Mac 自己登录后没有
+// challenge/consume 这一拍,走这里拿凭据写进共享 keychain 组,供同 team
+// 的 PendingCrew 调 POST /v1/device-grant/mint 静默换 scoped grant。
+// RPC 是 insert-only(per-credential 行,90 天过期),重复调用 = 多发一张,
+// 旧的留待过期/撤销 —— 与 consume 路径语义一致。返回形状对齐 device-login
+// 的 familyCredential + subjectId(凭据绑定的默认 mint 目标 = 个人主体)。
+const FamilyCredentialBody = z.object({
+  deviceName: z.string().trim().min(1).max(120).default('Mac'),
+});
+meRoutes.post('/family-credential', async (c) => {
+  const userId = c.var.userId!;
+  const userJwt = c.var.userJwt!;
+  let body: z.infer<typeof FamilyCredentialBody>;
+  try {
+    body = FamilyCredentialBody.parse(await c.req.json().catch(() => ({})));
+  } catch (err) {
+    return jsonError(c, 400, 'invalid_body', { detail: String(err) });
+  }
+
+  // 个人 user_account 主体 —— silent mint 的默认目标(同 /subjects 的读法)。
+  const supa = userClient(c.env, userJwt);
+  const { data: personal, error: subjectErr } = await supa
+    .from('subjects')
+    .select('id')
+    .eq('subject_type', 'user_account')
+    .eq('user_id', userId)
+    .eq('status', 'active')
+    .maybeSingle();
+  if (subjectErr) {
+    console.error('[me/family-credential] subject read failed', subjectErr);
+    return jsonError(c, 500, 'internal_error');
+  }
+  if (!personal) {
+    return jsonError(c, 404, 'subject_not_found', {
+      message: '个人责任主体尚未初始化',
+    });
+  }
+
+  const token = randomToken('pfa');
+  const svc = serviceClient(c.env);
+  const { error: famErr } = await svc.rpc('issue_family_sso_credential', {
+    p_id: crypto.randomUUID(),
+    p_user_id: userId,
+    p_token_hash: await sha256Hex(token),
+    p_device_name: body.deviceName,
+  });
+  if (famErr) {
+    console.error('[me/family-credential] issue rpc failed', famErr);
+    return jsonError(c, 500, 'internal_error');
+  }
+
+  return c.json({ familyCredential: { token, subjectId: personal.id } });
 });
 
 // POST /v1/me/redeem — trade a redemption code for credits. Atomic in
