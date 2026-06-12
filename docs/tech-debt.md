@@ -130,6 +130,14 @@
 
 ## 🟡 拆东墙补西墙
 
+### 🟡 本地白板 app↔helper 并发读写同一 JSON（无锁，last-write-wins 偶丢消息）
+- **发现**: 2026-06-08 · feat/session-crew-comms（chunk 4 实装 L7）
+- **位置**: `apps/pendingcrew/Sources/Stores/LocalWhiteboardStore.swift`（`append` = load→mutate→atomic write）
+- **问题**: chunk 4 把 `LocalWhiteboardStore` 去了 `@MainActor` 改 `@unchecked Sendable`，因为 `pendingcrew-mcp` helper（claude 子进程）要和 PendingCrew app **两个进程**读写同一份 `<dir>/<crewId>.json`。`append` 是 read-modify-write + 整文件 `atomic` 覆盖写，**无跨进程锁**。app（中栏 3s poll/发消息）与 helper（session `post_to_crew`）若几乎同时写，后写覆盖前写 → 丢一条消息。
+- **影响**: 单用户本地、写频率低（人打字 + session 偶尔 post），命中概率小；但"session 上报"和"人发指令"挤到一起时**理论可丢**，且无任何告警。属数据一致性隐患（非根基级，因为白板是通信缓冲不是事实源，丢一条不致命）。
+- **建议**: v1 接受。后续二选一：① 改 **append-only**（每条消息一个文件 / 一行 NDJSON 追加，避免整文件 RMW）；② 跨进程**文件锁**（`flock`）。append-only 更顺（读时合并排序）。
+- **状态**: 待办（v1 故意接受）
+
 ### 🟡 T2 边缘读 cutover 只 build 验、runtime 从未跑过 + 两处边缘 vs Supabase 精度差
 - **发现**: 2026-06-07 · feat/edge-read-cutover（T2 Phase3b）
 - **位置**: `apps/pendingbot/Sources/Networking/EdgeReadSource.swift`、`ConversationFetch.list`、`MessagesFetch.latest`；edge 端 `routes/projections.ts` + 两个投影 DO
@@ -799,6 +807,8 @@
   - **编排仍是两套(iOS 在 `ConversationView+Loading`/`MessageTabView` 里内联,Mac 在 `ChatDataSource` 里镜像)**:本 session **刻意未动 iOS shipping 代码**(避免无真机回归时改已验证的 iOS View)。把两端的 cache-first 编排抽成一个**完全共享的 store**(读+网络+diff/merge+写回一处,两端只接 UI)是正经的下一步,但那是重构 iOS 已验证路径,**必须等用户在场做 iOS 真机回归**再动。当前镜像有结构性重复:cache 写回的 row 映射、error 抑制策略、sender 解析在 iOS 与 Mac 各写了一遍,column/policy 改了要两处同步。
   - **未读数 cached 首屏为 0**:`cachedConversations` 缓存行不带 unread(iOS 的未读真源是 server-truth unread store / `user_unread_counts`,不在 conversations 表),所以纯缓存首屏的红点要等网络刷新才出。可接受(和 preview/排序一拍 settle),但和 iOS 完全一致需把未读也落进某个 Mac 可读的缓存通道。
   - **缓存消息无附件**:`LocalDatabase.messages` 没有附件列,cached 行是纯文字,图片/文件 chip 等 `loadMessages` 网络往返解析——与 iOS 缓存 hydrate(`attachments: nil`)一致,非 Mac 独有缺口。
+
+- 🟡 **本地 Swift 单测 / 交互式二进制 smoke 在"超长 session"末段被宿主 PTY 耗尽卡住 —— 验证方法学缺口,非代码缺陷** — `feat/session-crew-comms`(2026-06-08,#274)。`xcodebuild test`(macOS)报 `Pseudo Terminal Setup Error / IDEPseudoTerminalDomain ErrorCode 7 Errno 6 (Device not configured)`。根因经只读诊断坐实:`kern.tty.ptmx_max=511`,而托管本 agent 的宿主进程(`Claude` app,本次 PID 1321)在长 session 里**泄漏 ptmx master fd**,单进程占满 **510/511**,xctest runner 分不到新 PTY → 启动失败;同源地,直接 `--mcp-serve` 跑**阻塞读 stdin** 的真二进制也卡(harness 后台化下 stdin 不绑文件 EOF + PTY 退化)。**不能** kill 宿主(=断 session),**不擅自** `sudo sysctl -w kern.tty.ptmx_max=…`(改系统设置需用户授权)。**当前 workaround**:自包含 Foundation 模块(`LocalApprovalStore`/`LocalWhiteboardStore`/`McpServer` 等)用 `swiftc <真实源文件> + 断言 main` 编 CLI driver 直接跑(不读 stdin、不需 PTY),step ① 已 21 断言全绿;XCTest 文件保留为 Xcode GUI / CI(PTY 充足)下的 canonical 验证。**待用户在场时**:在新鲜 session(或重启宿主 app 释放 ptmx fd)下跑一次完整 `xcodebuild test` 收口,或评估给宿主 app 修 PTY fd 泄漏。**影响**:长 session 末段无法用 xctest 自验 Swift,只能 swiftc-driver 兜底——验证仍真实,但不是 canonical runner。
 
 - 🟡 **Mac 附件:无相机;composer 文本框是简化 SwiftUI 孪生(无硬件 Return-as-send / 无键盘帧跟踪)** — `feat/tri-platform-ui`(2026-06-08)。把 `ComposerView`/`ChatActionSheet`/`ConversationView+Attachments` 去 fence 跨平台:相册(PhotosPicker,macOS 13+)+ 文件上传两端共用,图片编码加了 `PlatformImage.jpegData(quality:)`(iOS UIImage.jpegData / macOS NSBitmapImageRep)+ CoreGraphics 降采样。**有意 iOS-only 的缺口**:
   - **相机**:`CameraPicker`(UIImagePickerController)+ ChatActionSheet 的"拍照"tile + `ingestCameraImage(UIImage)` 全 `#if os(iOS)`。Mac 无摄像头,合理;但若以后要 Mac 端"从 Continuity Camera / 截图"取图,需另接(非本 task 范畴)。

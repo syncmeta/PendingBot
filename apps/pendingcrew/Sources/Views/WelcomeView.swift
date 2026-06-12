@@ -59,15 +59,15 @@ struct WelcomeView: View {
             choiceButton(
                 icon: "qrcode",
                 title: "登录 PendingBot 账号",
-                subtitle: "扫码授权这台机器,享 unified billing + Fly 云端 crew"
+                subtitle: "扫码授权这台机器,解锁云端 crew"
             ) {
                 onChoose(.login)
             }
             #if os(macOS)
             choiceButton(
-                icon: "key.fill",
-                title: "不登录直接用 (BYOK)",
-                subtitle: "填自己的 Anthropic / OpenAI / Gemini key,只在本机跑 crew"
+                icon: "laptopcomputer",
+                title: "用本机的 claude / codex",
+                subtitle: "驱动本机已登录的 claude code / codex，无需 key，只在本机跑 crew"
             ) {
                 onChoose(.localSetup)
             }

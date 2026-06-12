@@ -105,6 +105,9 @@ final class AccountStore: ObservableObject {
         avatarSeed = nil
         avatarAttachmentId = nil
         profileDisplayName = nil
+        #if os(macOS)
+        FamilyCredentialWriter.clear()
+        #endif
         try? await SupabaseStack.shared.auth.signOut(scope: .local)
     }
 
@@ -148,6 +151,12 @@ final class AccountStore: ObservableObject {
     /// (when a persisted session is found) and right after sign-in.
     func refreshProfileFlags() async {
         guard let userId = current?.id else { return }
+        #if os(macOS)
+        // 家族 SSO：Mac 上有有效会话且共享 keychain 组还没凭据时，向 worker
+        // 签发一张写进去（PendingCrew 静默登录用）。幂等 + best-effort，
+        // 不阻塞 profile 刷新。
+        Task { await FamilyCredentialWriter.syncIfNeeded() }
+        #endif
         do {
             // Pull as raw JSON so we don't fight Codable over the variant
             // shape of the custom_fields jsonb (we write it as a string map
@@ -232,6 +241,11 @@ final class AccountStore: ObservableObject {
             log.error("signOut error: \(String(describing: error), privacy: .public)")
         }
         LocalDatabase.shared.wipeForSignOut()
+        #if os(macOS)
+        // 主动登出也清掉共享组里的家族凭据 —— 凭据是账号级的，下个登录者
+        // 不能继承上个账号的 PendingCrew 静默登录能力。
+        FamilyCredentialWriter.clear()
+        #endif
         #if os(iOS)
         // AvatarCache lives in Sources/Components/UserAvatar.swift, which
         // is whole-file gated behind #if os(iOS) (UIImage-based).

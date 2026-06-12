@@ -44,6 +44,11 @@ struct ComposerView: View {
     /// entirely. Crew chat (T4.6 P1) has no attachments, so it passes false
     /// rather than surfacing a "+" that opens tiles wired to dead pickers.
     var showsAttachments: Bool = true
+    /// #242 遥控 v1 — optional「派任务」entry. Non-nil renders a terminal
+    /// glyph button in the leading accessory slot (where "+" sits for
+    /// attachment-enabled hosts); crew chat passes a closure that opens the
+    /// task-dispatch sheet. Default nil → no button (all other hosts).
+    var onTask: (() -> Void)? = nil
 
     @State private var showActions = false
     // Plain Bool, not @FocusState: the actual first responder is the
@@ -88,6 +93,20 @@ struct ComposerView: View {
                         .floatingComposerSurface(shape: Circle())
                 }
                 .buttonStyle(.plain)
+                }
+
+                if let onTask {
+                    Button {
+                        Haptics.tap()
+                        onTask()
+                    } label: {
+                        Image(systemName: "terminal")
+                            .font(Theme.Fonts.glyph(size: 17, weight: .medium))
+                            .foregroundStyle(Theme.Palette.inkMuted)
+                            .frame(width: 38, height: 38)
+                            .floatingComposerSurface(shape: Circle())
+                    }
+                    .buttonStyle(.plain)
                 }
 
                 HStack(alignment: .bottom, spacing: 6) {

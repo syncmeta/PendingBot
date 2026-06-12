@@ -1,6 +1,8 @@
 import SwiftUI
 
-@main
+/// GUI 入口。`@main` 挪到 `PendingCrewEntry` —— 它先看 argv：带 `--mcp-serve` /
+/// `--mcp-hook` 时本进程当 crew-comms helper 跑（re-exec self，spec local-first
+/// chunk 4：app 二进制兼当 MCP server/hook，最自包含、免 embed），否则起 GUI。
 struct PendingCrewApp: App {
     @StateObject private var model: AppModel
     @StateObject private var crewStore: CrewStore
@@ -101,6 +103,8 @@ struct RootView: View {
                 }
             }
         }
+        // 家族 SSO 不在启动时静默登录（用户定调：登录必须是用户显式动作）——
+        // 入口在侧栏身份菜单「用本机 PendingBot 身份登录」，点一下才 mint。
         // 凭据消失(签出)时清 crew 缓存 + flow 回 welcome。
         .onChange(of: model.isConfigured) { _, configured in
             if !configured {
@@ -108,17 +112,18 @@ struct RootView: View {
                 flow = .welcome
             }
         }
-        // mode 切换时(BYOK → logged 等)也要清缓存,避免上一态的
-        // crew / subject 残留在 UI 上。`saveDeviceGrantToken` 会在登录后
-        // 清掉 BYOK config,但 `isConfigured` 一直为 true,上面那个 onChange
-        // 不会触发 —— 用 mode 作为第二条触发线。
+        // 登录/登出时清缓存重拉 —— 接合 v2 后 macOS backend 恒为本地,
+        // 这里的 reset+refresh 只是重载本地列表 + subject(能力叠加态变了,
+        // subject 展示要跟上),**不会**让本地 crew 消失。
+        // `isConfigured` 在 macOS 上恒 true,上面那个 onChange 不触发 ——
+        // 用 isAuthenticated 作为登录态翻转的触发线。
         //
         // 重置后让 MacThreePaneView 的 `.task` 自然在下一帧重跑 list /
-        // subjects —— 但 `.task` 只在 view 出现时跑,mode 切换不重建视图,
-        // 所以这里显式拉一次。WelcomeView 时态(mode == nil)跳过。
-        .onChange(of: model.mode) { _, newMode in
+        // subjects —— 但 `.task` 只在 view 出现时跑,登录态切换不重建视图,
+        // 所以这里显式拉一次。
+        .onChange(of: model.isAuthenticated) { _, _ in
             crewStore.reset()
-            if newMode != nil {
+            if model.isConfigured {
                 Task {
                     await crewStore.refreshList()
                     await crewStore.refreshSubjects()

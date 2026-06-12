@@ -63,6 +63,8 @@ final class CrewChatStore {
         /// Non-nil ⇒ render the permission card instead of a bubble.
         var permission: PermissionRequestPayload? = nil
         var permissionSessionLabel: String? = nil
+        /// Non-nil ⇒ render the task-dispatch card (#242 遥控 v1).
+        var taskRequest: CrewTaskRequestPayload? = nil
         var id: String { message.id }
         var isPermission: Bool { permission != nil }
     }
@@ -96,7 +98,8 @@ final class CrewChatStore {
             var adapted = adapter.adapt(anns).map {
                 CrewChatRow(message: $0.message, sender: $0.sender,
                             permission: $0.permission,
-                            permissionSessionLabel: $0.permissionSessionLabel)
+                            permissionSessionLabel: $0.permissionSessionLabel,
+                            taskRequest: $0.taskRequest)
             }
             // Drop pending rows that the server has now echoed back.
             let serverIds = Set(adapted.map(\.id))
@@ -157,7 +160,8 @@ final class CrewChatStore {
         let adapted = adapter.adapt(row)
         let newRow = CrewChatRow(message: adapted.message, sender: adapted.sender,
                                  permission: adapted.permission,
-                                 permissionSessionLabel: adapted.permissionSessionLabel)
+                                 permissionSessionLabel: adapted.permissionSessionLabel,
+                                 taskRequest: adapted.taskRequest)
         if let idx = rows.firstIndex(where: { $0.id == newRow.id }) {
             rows[idx] = newRow
         } else {
@@ -197,6 +201,11 @@ final class CrewChatStore {
         let payload: PermissionRequestPayload? = r["payload"].flatMap {
             decodeLogPayload($0, as: PermissionRequestPayload.self)
         }
+        // Same cell, leniently decoded as a task-request body — only
+        // message_kind=='task_request' rows ever read it (#242 遥控 v1).
+        let task: CrewTaskRequestPayload? = r["payload"].flatMap {
+            decodeLogPayload($0, as: CrewTaskRequestPayload.self)
+        }
         return CrewAnnouncementRow(
             id: id,
             crew_conversation_id: r["crew_conversation_id"]?.stringValue ?? "",
@@ -208,7 +217,9 @@ final class CrewChatStore {
             message_kind: r["message_kind"]?.stringValue ?? "text",
             board_visible: r["board_visible"]?.boolValue ?? true,
             summary: r["summary"]?.stringValue ?? "",
-            payload: payload.map(LenientPermissionPayload.init(value:)),
+            payload: (payload != nil || task != nil)
+                ? LenientPermissionPayload(value: payload, task: task)
+                : nil,
             created_at: r["created_at"]?.stringValue ?? "",
             mentions: []
         )
@@ -267,6 +278,35 @@ final class CrewChatStore {
         } catch {
             mark(localId, status: "failed")
             self.error = error.localizedDescription
+        }
+    }
+
+    /// #242 遥控 v1 — queue a task for the crew's Mac: posts a
+    /// `message_kind='task_request'` crew message whose payload the Mac
+    /// relay picks up (`{ action: 'run_session', task_brief, runner_kind }`).
+    /// No optimistic bubble — the dispatch sheet stays up until this
+    /// returns, then the reload folds in the canonical card row.
+    /// Returns true on success (the sheet dismisses on that).
+    func sendTaskRequest(brief: String, runnerKind: String, detail: CrewDetailV2?) async -> Bool {
+        let trimmed = brief.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        do {
+            _ = try await api.postCrewMessage(
+                crewId: crewId,
+                content: trimmed,
+                mentions: [],
+                messageKind: "task_request",
+                payload: CrewTaskRequestPayload(
+                    action: "run_session",
+                    task_brief: trimmed,
+                    runner_kind: runnerKind
+                )
+            )
+            await load(detail: detail)
+            return true
+        } catch {
+            self.error = error.localizedDescription
+            return false
         }
     }
 

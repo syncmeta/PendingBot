@@ -52,12 +52,12 @@ struct LocalSetupView: View {
 
     private var header: some View {
         VStack(spacing: 6) {
-            Image(systemName: "key.fill")
+            Image(systemName: "laptopcomputer")
                 .font(.system(size: 36))
                 .foregroundStyle(.tint)
-            Text("配置 LLM provider key")
+            Text("用本机的 claude / codex")
                 .font(.title3.weight(.semibold))
-            Text("BYOK 模式:provider 凭据存本机 keychain。至少填一个即可。")
+            Text("PendingCrew 直接驱动你本机**已登录**的 claude code / codex —— 用它们自己的订阅额度，**不需要 API key**。直接进入即可。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -69,6 +69,9 @@ struct LocalSetupView: View {
     private var form: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
+                Text("API key（选填 · 默认用本机已登录的订阅，不需要填）")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
                 keyField(
                     label: "Anthropic",
                     hint: "sk-ant-...",
@@ -87,7 +90,7 @@ struct LocalSetupView: View {
                     text: $geminiKey,
                     description: "Gemini 系列模型。控制台:aistudio.google.com"
                 )
-                Text("说明:本次配置后 mode 锁定为 BYOK。\n切回登录态需要重启 app 并清掉 BYOK 配置(下次重启再选)。")
+                Text("以上 key 仅用于未来的 API-key 额度池路径（SDK / `-p`）；留空就用本机订阅。\n本次选定后 mode 锁定为本机模式;切回登录态需重启 app 并退出本机模式。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(.top, 4)
@@ -133,23 +136,18 @@ struct LocalSetupView: View {
                 if saving {
                     ProgressView().controlSize(.small)
                 } else {
-                    Text("完成")
+                    Text("进入")
                 }
             }
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.defaultAction)
-            .disabled(!canSubmit || saving)
+            .disabled(saving)
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 14)
     }
 
     // MARK: - actions
-
-    private var canSubmit: Bool {
-        let any = [anthropicKey, openaiKey, geminiKey].contains { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-        return any
-    }
 
     private func save() {
         saving = true
@@ -159,13 +157,11 @@ struct LocalSetupView: View {
             openaiKey: trimNil(openaiKey),
             geminiKey: trimNil(geminiKey)
         )
-        do {
-            try model.saveByokConfig(config)
-            // 写完不需要手动 dismiss —— RootView 会因为 model.mode 切换
-            // 自动跳到 MacThreePaneView。
-        } catch {
-            errorMessage = "保存到 Keychain 失败:\(error.localizedDescription)"
-        }
+        // key 选填、best-effort 存；失败也不挡进入（本机模式不需要 key）。
+        do { try model.saveByokConfig(config) }
+        catch { print("[local-setup] save optional key failed: \(error)") }
+        // 进入本机模式（与有没有 key 无关）—— RootView 监听 mode 切换自动跳主界面。
+        model.enterLocalMode()
         saving = false
     }
 

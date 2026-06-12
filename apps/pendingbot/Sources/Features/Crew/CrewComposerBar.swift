@@ -33,6 +33,9 @@ struct CrewComposerBar: View {
     @State private var showPhotoPicker = false
     @State private var showCamera = false
 
+    /// #242 遥控 v1 —「派任务」sheet presenter.
+    @State private var showTaskSheet = false
+
     /// Exposed so the list can re-send a failed bubble with the same
     /// mention set the composer currently has staged.
     var stagedMentions: [CrewMentionInput] { staged.map(\.mentionInput) }
@@ -59,8 +62,12 @@ struct CrewComposerBar: View {
                 showCamera: $showCamera,
                 canSend: canSend,
                 onSend: send,
-                showsAttachments: false
+                showsAttachments: false,
+                onTask: { showTaskSheet = true }
             )
+        }
+        .sheet(isPresented: $showTaskSheet) {
+            CrewTaskDispatchSheet(store: store, detail: detail)
         }
         .onChange(of: input) { _, newValue in
             // Reveal the picker while the caret sits right after a bare `@`.

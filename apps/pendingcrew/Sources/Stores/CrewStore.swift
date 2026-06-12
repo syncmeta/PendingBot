@@ -42,16 +42,6 @@ final class CrewStore: ObservableObject {
         return details[id]
     }
 
-    /// 当前 backend mode(给 view 层做禁用/提示判定用)。
-    /// nil 表示 WelcomeView 阶段 —— 不应当走到任何数据方法。
-    var mode: BackendMode? { appModel.mode }
-
-    /// view 层快捷判定 —— Fly / cloud 入口该不该灰显。
-    /// nil mode 也按 "不支持"处理(WelcomeView 时态)。
-    var supportsCloudRuntime: Bool {
-        appModel.backend?.supportsCloudRuntime ?? false
-    }
-
     // MARK: - Selection
 
     func selectCrew(_ id: String?) {

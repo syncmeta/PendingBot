@@ -1,0 +1,173 @@
+import XCTest
+// McpServer.swift + LocalWhiteboardStore.swift + LocalApprovalStore.swift 编进 test
+// bundle（见 project.yml）；main / McpHelperMain 顶层不进 bundle。
+
+final class McpServerTests: XCTestCase {
+    private func tempDir() -> URL {
+        let d = FileManager.default.temporaryDirectory.appendingPathComponent("mcp-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        return d
+    }
+    private func server(_ dir: URL, isCaptain: Bool = false) -> McpServer {
+        McpServer(store: LocalWhiteboardStore(directory: dir),
+                  approvals: LocalApprovalStore(directory: dir),
+                  crewId: "c", sessionId: "sess-1", isCaptain: isCaptain)
+    }
+    private func callAnswerDecision(_ s: McpServer, reqId: String, reply: String) -> String {
+        s.handleLine("""
+        {"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"answer_decision","arguments":{"reqId":"\(reqId)","reply":"\(reply)"}}}
+        """) ?? ""
+    }
+
+    func testInitializeReturnsCapabilities() {
+        let r = server(tempDir()).handleLine(#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#)
+        XCTAssertNotNil(r)
+        XCTAssertTrue(r!.contains("\"protocolVersion\""))
+        XCTAssertTrue(r!.contains("pendingcrew"))
+    }
+
+    func testToolsListHasPostReadAsk() {
+        let r = server(tempDir()).handleLine(#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#)!
+        XCTAssertTrue(r.contains("post_to_crew"))
+        XCTAssertTrue(r.contains("read_whiteboard"))
+        XCTAssertTrue(r.contains("\"ask\""))
+    }
+
+    func testPostToCrewWritesWhiteboard() {
+        let s = server(tempDir())
+        _ = s.handleLine(#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"post_to_crew","arguments":{"message":"hi crew","category":"progress"}}}"#)
+        let msgs = s.store.list(crewId: "c")
+        XCTAssertEqual(msgs.count, 1)
+        XCTAssertEqual(msgs[0].text, "hi crew")
+        XCTAssertEqual(msgs[0].senderKind, "session")
+        XCTAssertEqual(msgs[0].senderSessionId, "sess-1")
+        XCTAssertEqual(msgs[0].category, "progress")
+    }
+
+    func testPostToCrewEmptyMessageRejected() {
+        let s = server(tempDir())
+        let r = s.handleLine(#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"post_to_crew","arguments":{"message":"   "}}}"#)!
+        XCTAssertTrue(r.contains("ERROR"))
+        XCTAssertTrue(s.store.list(crewId: "c").isEmpty)
+    }
+
+    func testReadWhiteboardReturnsEntries() {
+        let s = server(tempDir())
+        s.store.appendUserMessage(crewId: "c", text: "人类说嗨")
+        let r = s.handleLine(#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"read_whiteboard","arguments":{}}}"#)!
+        XCTAssertTrue(r.contains("人类说嗨"))
+    }
+
+    func testUnknownToolReturnsError() {
+        let r = server(tempDir()).handleLine(#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"nope","arguments":{}}}"#)!
+        XCTAssertTrue(r.contains("ERROR"))
+    }
+
+    func testNotificationInitializedNoResponse() {
+        XCTAssertNil(server(tempDir()).handleLine(#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#))
+    }
+
+    func testUnknownMethodWithIdReturnsError() {
+        let r = server(tempDir()).handleLine(#"{"jsonrpc":"2.0","id":9,"method":"bogus/method"}"#)!
+        XCTAssertTrue(r.contains("-32601"))
+    }
+
+    func testGarbageLineReturnsNil() {
+        XCTAssertNil(server(tempDir()).handleLine("not json"))
+        XCTAssertNil(server(tempDir()).handleLine(""))
+    }
+
+    // MARK: - ask（待决策 raise + long-poll 答复）
+
+    func testAskEmptyQuestionRejected() {
+        let r = server(tempDir()).handleLine(#"{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"ask","arguments":{"question":"  "}}}"#)!
+        XCTAssertTrue(r.contains("ERROR"))
+    }
+
+    func testAwaitReplyReturnsAnswerOnFirstPoll() {
+        let s = server(tempDir())
+        let id = s.approvals.raise(crewId: "c", kind: "decision", sessionId: "sess-1", summary: "q")
+        s.approvals.answer(crewId: "c", id: id, reply: "选 A")
+        XCTAssertEqual(s.awaitReply(reqId: id, pollInterval: 0.01), "选 A")
+    }
+
+    func testAwaitReplyTimeoutText() {
+        let s = server(tempDir())
+        let id = s.approvals.raise(crewId: "c", kind: "decision", sessionId: "sess-1", summary: "q")
+        XCTAssertTrue(s.awaitReply(reqId: id, pollInterval: 0.01, maxWaits: 2).contains("自行判断"))
+    }
+
+    // ask 在 raise 后把问题贴到本地白板（spec §6 通知半边），答复仍走待办列表。
+    func testAskPostsWhiteboardNotificationAndReturnsReply() {
+        let s = server(tempDir())
+        DispatchQueue.global().async {   // 后台答复，解 ask 的阻塞 long-poll
+            for _ in 0..<500 {
+                if let it = s.approvals.pending(crewId: "c").first {
+                    s.approvals.answer(crewId: "c", id: it.id, reply: "选 A"); break
+                }
+                Thread.sleep(forTimeInterval: 0.01)
+            }
+        }
+        let r = s.handleLine(#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ask","arguments":{"question":"选 A 还是 B?"}}}"#)
+        XCTAssertTrue(r?.contains("选 A") ?? false, "ask 应拿到答复返回")
+        XCTAssertTrue(s.store.list(crewId: "c").contains { $0.text.contains("🔔 待决策") && $0.text.contains("选 A 还是 B?") },
+                      "ask 应往白板贴一条待决策通知")
+    }
+
+    // MARK: - answer_decision（机长专用，chunk2 T4）
+
+    func testNonCaptainToolsListLacksAnswerDecision() {
+        let r = server(tempDir()).handleLine(#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#)!
+        XCTAssertFalse(r.contains("answer_decision"))
+    }
+
+    func testCaptainToolsListHasAnswerDecision() {
+        let r = server(tempDir(), isCaptain: true).handleLine(#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#)!
+        XCTAssertTrue(r.contains("answer_decision"))
+    }
+
+    func testNonCaptainAnswerDecisionRejected() {
+        let s = server(tempDir())
+        let id = s.approvals.raise(crewId: "c", kind: "decision", sessionId: "w", summary: "q")
+        XCTAssertTrue(callAnswerDecision(s, reqId: id, reply: "选 A").contains("仅机长可用"))
+        XCTAssertEqual(s.approvals.item(crewId: "c", id: id)?.status, "pending")
+    }
+
+    func testCaptainAnswerDecisionAnswersAndUnblocksAsk() {
+        let s = server(tempDir(), isCaptain: true)
+        let id = s.approvals.raise(crewId: "c", kind: "decision", sessionId: "w", summary: "选 A 还是 B?")
+        let r = callAnswerDecision(s, reqId: id, reply: "选 A")
+        XCTAssertTrue(r.contains("已答复"))
+        let item = s.approvals.item(crewId: "c", id: id)
+        XCTAssertEqual(item?.status, "answered")
+        XCTAssertEqual(item?.reply, "选 A")
+        // 发起方 ask 的 long-poll（已预先答复）立刻拿到答复
+        XCTAssertEqual(s.awaitReply(reqId: id, pollInterval: 0.01), "选 A")
+    }
+
+    func testAnswerDecisionWrongReqId() {
+        let s = server(tempDir(), isCaptain: true)
+        XCTAssertTrue(callAnswerDecision(s, reqId: "nope", reply: "x").contains("找不到待决策"))
+    }
+
+    func testAnswerDecisionAlreadyAnswered() {
+        let s = server(tempDir(), isCaptain: true)
+        let id = s.approvals.raise(crewId: "c", kind: "decision", sessionId: "w", summary: "q")
+        s.approvals.answer(crewId: "c", id: id, reply: "first")
+        XCTAssertTrue(callAnswerDecision(s, reqId: id, reply: "second").contains("已被答复"))
+        XCTAssertEqual(s.approvals.item(crewId: "c", id: id)?.reply, "first")
+    }
+
+    func testAnswerDecisionPermissionKindRejected() {
+        let s = server(tempDir(), isCaptain: true)
+        let id = s.approvals.raise(crewId: "c", kind: "permission", sessionId: "w", summary: "rm?")
+        XCTAssertTrue(callAnswerDecision(s, reqId: id, reply: "allow").contains("不是待决策"))
+        XCTAssertEqual(s.approvals.item(crewId: "c", id: id)?.status, "pending")
+    }
+
+    func testAnswerDecisionEmptyReplyRejected() {
+        let s = server(tempDir(), isCaptain: true)
+        let id = s.approvals.raise(crewId: "c", kind: "decision", sessionId: "w", summary: "q")
+        XCTAssertTrue(callAnswerDecision(s, reqId: id, reply: "  ").contains("reply 不能为空"))
+    }
+}

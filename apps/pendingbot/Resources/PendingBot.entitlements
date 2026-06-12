@@ -15,6 +15,10 @@
   <key>keychain-access-groups</key>
   <array>
     <string>$(AppIdentifierPrefix)com.pendingname.pendingbot</string>
+    <!-- 家族 SSO 共享组：与 PendingCrew 同组，双方经 kSecAttrAccessGroup 显式
+         读写家族凭据(pfa_)。keychain group 无需 portal 配置(profile 自动允许
+         TEAMID.* 下所有组)。spec: 2026-06-08-pendingcrew-login-sso-design.md -->
+    <string>$(AppIdentifierPrefix)com.pendingname.shared</string>
   </array>
 </dict>
 </plist>

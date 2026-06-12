@@ -172,6 +172,303 @@ describe('POST /v1/crews/:crewId/messages', () => {
   });
 });
 
+// 接合 v2 block 3 — relay 信箱:lastCursor / mac_relay 上行标注 / 成员邀请。
+
+// device-grant 路径:seed 一行 subject_device_grants,token_hash 用与
+// lib/device-grants.ts 相同的 sha256(hex)。
+const DEVICE_TOKEN = 'pdg_test_token';
+async function seedDeviceGrant(db: FakeDb, subjectId: string) {
+  const bytes = new TextEncoder().encode(DEVICE_TOKEN);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  const tokenHash = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+  db.rows.subject_device_grants = [
+    {
+      id: 'grant-1',
+      token_hash: tokenHash,
+      subject_id: subjectId,
+      granted_by_user_id: USER,
+      grant_kind: 'mac_app',
+      scopes: ['crew:read', 'crew:write'],
+      app_kind: 'pendingcrew',
+      status: 'active',
+      expires_at: null,
+    },
+  ];
+}
+
+describe('GET /v1/crews/:crewId/messages — lastCursor (接合 v2 block 3)', () => {
+  function seed(db: FakeDb) {
+    db.rows.temporary_group_meta = [
+      { conversation_id: CREW_ID, responsible_subject_id: SUBJECT, captain_bot_id: CAPTAIN_BOT_ID },
+    ];
+    db.rpcs = { can_view_temporary_group: () => ({ data: true, error: null }) };
+  }
+
+  it('returns lastCursor = max created_at among returned rows', async () => {
+    const db = makeFakeDb();
+    seed(db);
+    db.rows.messages = [
+      { id: 'm1', conversation_id: CREW_ID, role: 'user', content: 'a', user_id: USER, log_kind: null, log_payload: null, attachments: null, status: 'done', created_at: '2026-06-11T00:00:01Z' },
+      { id: 'm2', conversation_id: CREW_ID, role: 'bot', content: 'b', user_id: null, sender_bot_id: CAPTAIN_BOT_ID, log_kind: null, log_payload: null, attachments: null, status: 'done', created_at: '2026-06-11T00:00:02Z' },
+    ];
+    const res = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
+      headers: { 'x-test-user-id': USER },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { whiteboard: unknown[]; lastCursor: string | null };
+    expect(body.whiteboard.length).toBe(2);
+    expect(body.lastCursor).toBe('2026-06-11T00:00:02Z');
+  });
+
+  it('returns lastCursor = null when no rows', async () => {
+    const db = makeFakeDb();
+    seed(db);
+    const res = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
+      headers: { 'x-test-user-id': USER },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { whiteboard: unknown[]; lastCursor: string | null };
+    expect(body.whiteboard.length).toBe(0);
+    expect(body.lastCursor).toBeNull();
+  });
+});
+
+describe('POST /v1/crews/:crewId/messages — mac_relay 上行标注 (接合 v2 block 3)', () => {
+  beforeEach(() => dispatchGroupTurnMock.mockClear());
+
+  function seed(db: FakeDb) {
+    db.rows.temporary_group_meta = [
+      { conversation_id: CREW_ID, responsible_subject_id: SUBJECT, captain_bot_id: CAPTAIN_BOT_ID },
+    ];
+    db.rpcs = { can_view_temporary_group: () => ({ data: true, error: null }) };
+  }
+
+  it('device-grant uplink with senderLabel/localSessionId carries origin mac_relay and still wakes captain', async () => {
+    const db = makeFakeDb();
+    seed(db);
+    await seedDeviceGrant(db, SUBJECT);
+    const res = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${DEVICE_TOKEN}` },
+      body: JSON.stringify({ content: 'relayed from mac', senderLabel: '机长', localSessionId: 'local-sess-1' }),
+    });
+    expect(res.status).toBe(200);
+    const msgInsert = db.inserts.find((i) => i.table === 'messages');
+    expect(msgInsert?.row).toMatchObject({
+      conversation_id: CREW_ID,
+      role: 'user',
+      content: 'relayed from mac',
+      attachments: { origin: 'mac_relay', senderLabel: '机长', localSessionId: 'local-sess-1' },
+    });
+    // relay 上行也必须能唤醒 captain(bot 要能回 relay 来的消息)。
+    expect(dispatchGroupTurnMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('JWT callers cannot set the mac_relay marker (senderLabel ignored)', async () => {
+    const db = makeFakeDb();
+    seed(db);
+    const res = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-user-id': USER },
+      body: JSON.stringify({ content: 'hello', senderLabel: 'spoof' }),
+    });
+    expect(res.status).toBe(200);
+    const msgInsert = db.inserts.find((i) => i.table === 'messages');
+    expect(msgInsert?.row.attachments ?? null).toBeNull();
+  });
+});
+
+// #242 遥控 v1:iOS 发结构化 task_request,Mac relay 拉取后本地起 session。
+describe('POST /v1/crews/:crewId/messages — message_kind=task_request (#242)', () => {
+  beforeEach(() => dispatchGroupTurnMock.mockClear());
+
+  function seed(db: FakeDb) {
+    db.rows.temporary_group_meta = [
+      { conversation_id: CREW_ID, responsible_subject_id: SUBJECT, captain_bot_id: CAPTAIN_BOT_ID },
+    ];
+    db.rpcs = { can_view_temporary_group: () => ({ data: true, error: null }) };
+  }
+
+  it('stores payload on log_kind/log_payload and roundtrips through GET', async () => {
+    const db = makeFakeDb();
+    seed(db);
+    const payload = { action: 'run_session', runner_kind: 'claude_code', task_brief: '修登录 bug' };
+    const post = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-user-id': USER },
+      body: JSON.stringify({ content: '远程起一个 session', message_kind: 'task_request', payload }),
+    });
+    expect(post.status).toBe(200);
+    const msgInsert = db.inserts.find((i) => i.table === 'messages');
+    expect(msgInsert?.row).toMatchObject({
+      conversation_id: CREW_ID,
+      role: 'user',
+      content: '远程起一个 session',
+      log_kind: 'task_request',
+      log_payload: payload,
+    });
+
+    const get = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
+      headers: { 'x-test-user-id': USER },
+    });
+    expect(get.status).toBe(200);
+    const body = (await get.json()) as {
+      whiteboard: Array<{ message_kind: string; payload: Record<string, unknown>; summary: string | null }>;
+    };
+    expect(body.whiteboard.length).toBe(1);
+    expect(body.whiteboard[0].message_kind).toBe('task_request');
+    expect(body.whiteboard[0].payload).toMatchObject({ text: '远程起一个 session', ...payload });
+  });
+
+  it('plain text messages keep log_kind null and payload = { text }', async () => {
+    const db = makeFakeDb();
+    seed(db);
+    const post = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-user-id': USER },
+      body: JSON.stringify({ content: 'just chatting' }),
+    });
+    expect(post.status).toBe(200);
+    const msgInsert = db.inserts.find((i) => i.table === 'messages');
+    expect(msgInsert?.row.log_kind ?? null).toBeNull();
+    const get = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
+      headers: { 'x-test-user-id': USER },
+    });
+    const body = (await get.json()) as {
+      whiteboard: Array<{ message_kind: string; payload: Record<string, unknown> }>;
+    };
+    expect(body.whiteboard[0].message_kind).toBe('text');
+    expect(body.whiteboard[0].payload).toEqual({ text: 'just chatting' });
+  });
+});
+
+describe('POST /v1/crews/:crewId/members (接合 v2 block 3)', () => {
+  const BOT_ID = '99999999-9999-4999-8999-000000000003';
+
+  function seed(db: FakeDb) {
+    db.rows.temporary_group_meta = [
+      { conversation_id: CREW_ID, responsible_subject_id: SUBJECT, temporary_kind: 'crew' },
+    ];
+  }
+
+  it('JWT caller adds a bot — 201 with member summary, RPC args pinned', async () => {
+    const db = makeFakeDb();
+    seed(db);
+    let seenArgs: Record<string, unknown> | undefined;
+    db.rpcs = {
+      crew_add_member_for_subject: (args) => {
+        seenArgs = args;
+        return { data: { id: 'tm-1', member_kind: 'registered_bot', bot_id: BOT_ID, already_member: false }, error: null };
+      },
+    };
+    const res = await appFor(db).request(`/v1/crews/${CREW_ID}/members`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-user-id': USER },
+      body: JSON.stringify({ kind: 'bot', botId: BOT_ID }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { crewId: string; member: { id: string } };
+    expect(body.crewId).toBe(CREW_ID);
+    expect(body.member.id).toBe('tm-1');
+    expect(seenArgs).toMatchObject({
+      p_actor_user_id: USER,
+      p_crew_conversation_id: CREW_ID,
+      p_member_kind: 'registered_bot',
+      p_bot_id: BOT_ID,
+      p_user_id: null,
+    });
+  });
+
+  it('device-grant caller with mismatched subject gets 403', async () => {
+    const db = makeFakeDb();
+    seed(db);
+    await seedDeviceGrant(db, OTHER_SUBJECT);
+    const res = await appFor(db).request(`/v1/crews/${CREW_ID}/members`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${DEVICE_TOKEN}` },
+      body: JSON.stringify({ kind: 'bot', botId: BOT_ID }),
+    });
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('forbidden');
+  });
+
+  it('device-grant caller with matching subject reaches the RPC with grantedByUserId as actor', async () => {
+    const db = makeFakeDb();
+    seed(db);
+    await seedDeviceGrant(db, SUBJECT);
+    let seenArgs: Record<string, unknown> | undefined;
+    db.rpcs = {
+      crew_add_member_for_subject: (args) => {
+        seenArgs = args;
+        return { data: { id: 'tm-2', member_kind: 'human', user_id: 'friend-1', already_member: true }, error: null };
+      },
+    };
+    const res = await appFor(db).request(`/v1/crews/${CREW_ID}/members`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${DEVICE_TOKEN}` },
+      body: JSON.stringify({ kind: 'human', userId: '12121212-1212-4121-8121-000000000004' }),
+    });
+    expect(res.status).toBe(201);
+    expect(seenArgs).toMatchObject({
+      p_actor_user_id: USER,
+      p_member_kind: 'human',
+      p_user_id: '12121212-1212-4121-8121-000000000004',
+    });
+  });
+
+  it('rejects kind=bot without botId with 400 invalid_body', async () => {
+    const db = makeFakeDb();
+    seed(db);
+    const res = await appFor(db).request(`/v1/crews/${CREW_ID}/members`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-user-id': USER },
+      body: JSON.stringify({ kind: 'bot' }),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('invalid_body');
+  });
+
+  it('maps RPC 42501/forbidden to 403', async () => {
+    const db = makeFakeDb();
+    seed(db);
+    db.rpcs = {
+      crew_add_member_for_subject: () => ({ data: null, error: { code: '42501', message: 'forbidden: bot not visible to caller' } }),
+    };
+    const res = await appFor(db).request(`/v1/crews/${CREW_ID}/members`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-user-id': USER },
+      body: JSON.stringify({ kind: 'bot', botId: BOT_ID }),
+    });
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('forbidden');
+  });
+
+  it('returns 404 when the crew does not exist', async () => {
+    const db = makeFakeDb();
+    const res = await appFor(db).request(`/v1/crews/${CREW_ID}/members`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-user-id': USER },
+      body: JSON.stringify({ kind: 'bot', botId: BOT_ID }),
+    });
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('mapMessageToEntry relay marker (接合 v2 block 3)', () => {
+  const base = { id: 'm1', conversation_id: 'c1', created_at: '2026-06-11T00:00:00Z', log_kind: null, log_payload: null };
+
+  it('exposes relay metadata from attachments jsonb', () => {
+    const e = mapMessageToEntry({ ...base, role: 'user', content: 'hi', user_id: 'u1', sender_bot_id: null,
+      attachments: { origin: 'mac_relay', senderLabel: '机长', localSessionId: 'ls-1' } } as any);
+    expect(e.relay).toEqual({ origin: 'mac_relay', senderLabel: '机长', localSessionId: 'ls-1' });
+  });
+
+  it('relay is null for ordinary messages (including plain attachment ids)', () => {
+    const plain = mapMessageToEntry({ ...base, role: 'user', content: 'hi', user_id: 'u1', sender_bot_id: null, attachments: { ids: ['a-1'] } } as any);
+    expect(plain.relay).toBeNull();
+  });
+});
+
 describe('mapMessageToEntry sender identity', () => {
   const base = { id: 'm1', conversation_id: 'c1', created_at: '2026-06-04T00:00:00Z', log_kind: null, log_payload: null };
 

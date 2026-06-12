@@ -23,6 +23,9 @@ struct DeviceLoginChallenge: Decodable, Equatable {
 /// - `expired` / `rejected`：终态，UI 给出错误
 ///
 /// `deviceGrantToken` 只在 approved 那一拍非空；其它状态都是 null。
+///
+/// `familyCredential`（`pfa_*`）同样只在 consume 那一拍随 grant 一起下发 ——
+/// 存进共享 keychain 组（`FamilyCredentialStore`）供家族 app 静默 mint。
 struct DeviceLoginPollResponse: Decodable, Equatable {
     let status: String
     let deviceGrantToken: String?
@@ -30,4 +33,5 @@ struct DeviceLoginPollResponse: Decodable, Equatable {
     let subjectId: String?
     let grantKind: String?
     let scopes: [String]?
+    let familyCredential: String?
 }

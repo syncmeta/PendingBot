@@ -1,0 +1,100 @@
+#if os(macOS)
+import SwiftUI
+
+/// 右栏 session 页内联的「待决策 / 待审批」可操作卡片
+/// （spec 2026-06-08-pendingcrew-ask-approval-design §6 答复半边）。
+///
+/// 用户定调：**不另开面板** —— session 页本来就是「和这个 session 单聊」，待办就地答。
+/// 这一层轮询本地 `LocalApprovalStore`（MCP helper 子进程写、本 app 进程读，跨进程；
+/// 每 ~1.5s）过滤出**本 session**（sessionId）的 pending：
+/// - decision（`ask` 工具）→ 回复输入框 → `answer` → 解 helper 的 long-poll，agent 续跑。
+/// - permission（权限 PreToolUse hook）→ `允许` / `拒绝` → `decide`。
+///
+/// 只在 BYOK 本地路径有内容（logged 模式 ask/审批走 edge interactions，那是另一条路）。
+/// 多 session 单聊 + 未读角标 + 专门 reporter/captain session 是 chunk 2；这里是 v1 内核。
+struct SessionApprovalCardsView: View {
+    let crewId: String
+    let sessionId: String
+
+    private let store = LocalApprovalStore.shared
+    @State private var pending: [ApprovalItem] = []
+    @State private var drafts: [String: String] = [:]   // reqId → 回复草稿
+
+    // 跨进程：helper 写文件、本进程轮询读。1.5s 够灵敏又不烧 IO。
+    private let tick = Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        Group {
+            if !pending.isEmpty {
+                VStack(spacing: 8) {
+                    ForEach(pending, id: \.id) { card($0) }
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.yellow.opacity(0.07))
+            }
+        }
+        .onAppear(perform: refresh)
+        .onReceive(tick) { _ in refresh() }
+    }
+
+    @ViewBuilder
+    private func card(_ item: ApprovalItem) -> some View {
+        let isPermission = item.kind == "permission"
+        VStack(alignment: .leading, spacing: 6) {
+            Label(isPermission ? "待审批" : "待决策",
+                  systemImage: isPermission ? "lock.shield" : "questionmark.bubble")
+                .font(.caption).foregroundStyle(.secondary)
+            Text(item.summary)
+                .font(.callout)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            if isPermission {
+                HStack(spacing: 8) {
+                    Spacer()
+                    Button("拒绝") { decide(item, "deny") }
+                        .buttonStyle(.bordered)
+                    Button("允许") { decide(item, "allow") }
+                        .buttonStyle(.borderedProminent)
+                }
+            } else {
+                HStack(spacing: 6) {
+                    TextField("答复…（agent 在等）", text: draftBinding(item.id), axis: .vertical)
+                        .textFieldStyle(.roundedBorder)
+                        .lineLimit(1...4)
+                        .onSubmit { answer(item) }
+                    Button("发送") { answer(item) }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(draftEmpty(item.id))
+                }
+            }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color(NSColor.controlBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.yellow.opacity(0.5), lineWidth: 1))
+    }
+
+    // MARK: - state
+
+    private func draftBinding(_ id: String) -> Binding<String> {
+        Binding(get: { drafts[id] ?? "" }, set: { drafts[id] = $0 })
+    }
+    private func draftEmpty(_ id: String) -> Bool {
+        (drafts[id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+    private func refresh() {
+        pending = store.pending(crewId: crewId).filter { $0.sessionId == sessionId }
+    }
+    private func answer(_ item: ApprovalItem) {
+        let reply = (drafts[item.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !reply.isEmpty else { return }
+        store.answer(crewId: crewId, id: item.id, reply: reply)
+        drafts[item.id] = nil
+        refresh()
+    }
+    private func decide(_ item: ApprovalItem, _ decision: String) {
+        store.decide(crewId: crewId, id: item.id, decision: decision)
+        refresh()
+    }
+}
+#endif

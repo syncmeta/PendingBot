@@ -3,6 +3,16 @@ import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
 import { serviceClient } from '../lib/supabase';
 import { jsonError } from '../lib/http-error';
+import {
+  AppKind,
+  GrantKind,
+  Scope,
+  sha256Hex,
+  randomToken,
+  appGrantCompatible,
+  allowedScopesForGrant,
+  scopesSubsetOf,
+} from '../lib/device-grant-scopes';
 import type { Json } from '../db/schema';
 import type { AppBindings } from '../types';
 
@@ -31,16 +41,6 @@ type UntypedDb = {
 function untypedDb(env: AppBindings['Bindings']): UntypedDb {
   return serviceClient(env) as unknown as UntypedDb;
 }
-
-const AppKind = z.enum(['pendingbot_macos', 'pendingcrew_macos']);
-const GrantKind = z.enum(['pendingbot_client', 'pendingcrew_control', 'pendingcrew_runner']);
-const Scope = z.enum([
-  'subject:read',
-  'crew:read',
-  'crew:write',
-  'runner:read',
-  'runner:write',
-]);
 
 const CreateChallengeBody = z.object({
   appKind: AppKind,
@@ -71,38 +71,8 @@ function randomText(length: number): string {
   return Array.from(bytes, (byte) => byteAlphabet[byte % byteAlphabet.length]).join('');
 }
 
-function randomToken(prefix: string): string {
-  return `${prefix}_${randomText(48)}`;
-}
-
 function challengeCode(): string {
   return randomText(8).toUpperCase();
-}
-
-async function sha256Hex(input: string): Promise<string> {
-  const bytes = new TextEncoder().encode(input);
-  const digest = await crypto.subtle.digest('SHA-256', bytes);
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-function appGrantCompatible(appKind: z.infer<typeof AppKind>, grantKind: z.infer<typeof GrantKind>): boolean {
-  if (appKind === 'pendingbot_macos') return grantKind === 'pendingbot_client';
-  return grantKind === 'pendingcrew_control' || grantKind === 'pendingcrew_runner';
-}
-
-function allowedScopesForGrant(grantKind: z.infer<typeof GrantKind>): Set<z.infer<typeof Scope>> {
-  switch (grantKind) {
-    case 'pendingbot_client':
-      return new Set(['subject:read', 'crew:read', 'crew:write']);
-    case 'pendingcrew_control':
-      return new Set(['subject:read', 'crew:read', 'crew:write', 'runner:read', 'runner:write']);
-    case 'pendingcrew_runner':
-      return new Set(['subject:read', 'runner:read', 'runner:write']);
-  }
-}
-
-function scopesSubsetOf(requested: readonly z.infer<typeof Scope>[], allowed: ReadonlySet<string>): boolean {
-  return requested.every((scope) => allowed.has(scope));
 }
 
 function normalizeStoredScopes(value: unknown): Set<string> {
@@ -218,6 +188,33 @@ deviceLoginRoutes.get('/challenges/:id', async (c) => {
   const grantRow = grant && typeof grant === 'object' ? grant as Record<string, unknown> : {};
   const scopes = Array.isArray(grantRow.scopes) ? grantRow.scopes : [];
 
+  // Best-effort: mint a per-user family SSO credential for the approving
+  // user and hand it back so the app can stash it in the shared keychain
+  // group for future silent logins (POST /device-grant/mint). The consume
+  // RPC surfaces the approver via `granted_by_user_id`. If minting fails we
+  // log and continue — a missing family credential must never fail a login
+  // the device grant already succeeded for.
+  let familyCredential: string | null = null;
+  const grantedByUserId = typeof grantRow.granted_by_user_id === 'string' ? grantRow.granted_by_user_id : '';
+  if (grantedByUserId) {
+    const deviceName = typeof grantRow.device_name === 'string' && grantRow.device_name.length > 0
+      ? grantRow.device_name
+      : 'Mac';
+    const famToken = randomToken('pfa');
+    const famId = crypto.randomUUID();
+    const { error: famErr } = await svc.rpc('issue_family_sso_credential', {
+      p_id: famId,
+      p_user_id: grantedByUserId,
+      p_token_hash: await sha256Hex(famToken),
+      p_device_name: deviceName,
+    });
+    if (famErr) {
+      console.error('issue_family_sso_credential failed', rpcMessage(famErr));
+    } else {
+      familyCredential = famToken;
+    }
+  }
+
   return c.json({
     status: 'approved',
     deviceGrantToken: grantToken,
@@ -225,6 +222,7 @@ deviceLoginRoutes.get('/challenges/:id', async (c) => {
     subjectId: typeof grantRow.subject_id === 'string' ? grantRow.subject_id : null,
     grantKind: typeof grantRow.grant_kind === 'string' ? grantRow.grant_kind : null,
     scopes,
+    familyCredential,
   });
 });
 

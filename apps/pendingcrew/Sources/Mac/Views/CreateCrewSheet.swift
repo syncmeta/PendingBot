@@ -22,8 +22,8 @@ struct CreateCrewSheet: View {
     @State private var runtimeLocation: String = "local_host"
     @State private var workingDirectory: URL?
     @State private var captainTemplateName: String = ""
-    /// BYOK 模式下选中的本机 captain 模板。nil = 用 "新建 captain" 路径
-    /// (templateName field 自填名字)。这个 picker 只在 BYOK 模式渲染。
+    /// 选中的本机 captain 模板。nil = 用 "现场新建 captain" 路径
+    /// (templateName field 自填名字)。
     @State private var selectedTemplateId: String?
     @State private var showingTemplateEditor: Bool = false
     @State private var creating: Bool = false
@@ -134,19 +134,16 @@ struct CreateCrewSheet: View {
             Picker("", selection: $runtimeLocation) {
                 Text("本机（local_host）").tag("local_host")
                 Text("peer 设备（待 Phase 4）").tag("peer_device")
-                // Fly machine 在 BYOK 模式禁用 —— 加 "(需登录)" 后缀让用户
-                // 一眼看出原因。Picker.disabled 的 case 在 macOS 上跟正常
-                // case 视觉差异不明显,通过文字补强。
-                Text(crewStore.supportsCloudRuntime
-                     ? "Fly machine（待 Phase 4）"
-                     : "Fly machine（需登录 PendingBot 解锁）")
-                    .tag("fly_machine")
+                // 接合 v2:crew 恒为本地,云端 Fly machine 是登录后的未来能力
+                // (v1.1)。Picker.disabled 的 case 在 macOS 上跟正常 case 视觉
+                // 差异不明显,通过文字补强。
+                Text("Fly machine（待 v1.1·登录解锁）").tag("fly_machine")
             }
             .labelsHidden()
             .pickerStyle(.menu)
-            if runtimeLocation == "fly_machine", !crewStore.supportsCloudRuntime {
+            if runtimeLocation == "fly_machine" {
                 Label(
-                    "BYOK 模式不支持云端 runtime。登录 PendingBot 账号后可用 Fly machine。",
+                    "本地 crew 暂不支持云端 runtime;Fly machine 随登录能力在 v1.1 接通。",
                     systemImage: "lock.fill"
                 )
                 .font(.caption)
@@ -200,20 +197,9 @@ struct CreateCrewSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("机长（captain bot）")
                 .font(.callout.weight(.medium))
-            // BYOK 模式:本机 captain 模板池 + 新建。
-            // 登录模式:沿用旧的"自动新建 captain"路径(真 bot 库待接通)。
-            if crewStore.mode == .byok {
-                captainPoolPicker
-            } else {
-                Text("将自动创建一个新的 captain bot 代表本 crew。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                TextField("Captain 名称(留空则用默认)", text: $captainTemplateName)
-                    .textFieldStyle(.roundedBorder)
-                Text("注:复用已有 bot 作 captain 留下次(需要 GET /v1/me/bots 接通)。")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
+            // 接合 v2:crew 恒为本地,本机 captain 模板池就是唯一的建 crew
+            // 路径(旧"登录模式自动新建 captain"分叉已删)。
+            captainPoolPicker
         }
         .sheet(isPresented: $showingTemplateEditor) {
             CaptainTemplateEditorSheet { newTemplate in
@@ -225,7 +211,7 @@ struct CreateCrewSheet: View {
         }
     }
 
-    /// BYOK 模式的 captain 选择 UI:从本机模板池挑一个,或现场新建。
+    /// captain 选择 UI:从本机模板池挑一个,或现场新建。
     /// 选中模板后把 displayName 灌到 captainTemplateName(走 systemGenerated
     /// 的 templateName 字段);新建路径 push 一个 sheet 让用户填字段。
     @ViewBuilder
@@ -267,7 +253,7 @@ struct CreateCrewSheet: View {
             if selectedTemplateId == nil {
                 TextField("Captain 名称(留空则用默认)", text: $captainTemplateName)
                     .textFieldStyle(.roundedBorder)
-                Text("BYOK 模式:也可以从本机 captain 池里选一个已存的模板。模板保存在本机,不上传 PendingBot。")
+                Text("也可以从本机 captain 池里选一个已存的模板。模板保存在本机,不上传 PendingBot。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else if let t = list.first(where: { $0.id == selectedTemplateId }) {
@@ -323,11 +309,6 @@ struct CreateCrewSheet: View {
         // 工作目录对 local_host 是强烈推荐而非硬性必填（edge 允许 null），
         // 但 MVP 阶段 session 起来需要它，所以强制要求。
         guard workingDirectory != nil else { return false }
-        // BYOK 模式不接受 fly_machine —— 上面 picker 已禁用,这里防御一下
-        // 万一 picker 状态绕过。
-        if !crewStore.supportsCloudRuntime, runtimeLocation == "fly_machine" {
-            return false
-        }
         return true
     }
 

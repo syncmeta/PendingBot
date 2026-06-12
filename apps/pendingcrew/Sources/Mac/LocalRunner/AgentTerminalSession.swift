@@ -22,9 +22,9 @@ final class AgentTerminalSession: ObservableObject {
     private let delegate = Delegate()
 
     /// `executable` = 已 resolve 的 claude/codex 绝对路径；`workdir` = 工作目录。
-    init(kind: LocalCodingAgentKind, executable: String, workdir: String,
-         model: String? = nil, resumeSessionId: String? = nil, env: [String: String]) {
-        self.kind = kind
+    /// argv（含首条指令的 positional prompt、auto mode、effort）由 `config.argv()` 构建。
+    init(config: SessionConfig, executable: String, workdir: String, env: [String: String]) {
+        self.kind = config.kind
         self.terminalView = LocalProcessTerminalView(frame: .zero)
         self.terminalView.processDelegate = delegate
         delegate.onExit = { [weak self] code in
@@ -34,27 +34,10 @@ final class AgentTerminalSession: ObservableObject {
         if !envArr.contains(where: { $0.hasPrefix("TERM=") }) { envArr.append("TERM=xterm-256color") }
         terminalView.startProcess(
             executable: executable,
-            args: Self.argv(kind: kind, model: model, resumeSessionId: resumeSessionId),
+            args: config.argv(),
             environment: envArr,
             currentDirectory: workdir
         )
-    }
-
-    /// 交互式 + 自动审批 argv（flag 本机实测 2026-06-04：claude 2.1.156 / codex 0.133.0）。
-    static func argv(kind: LocalCodingAgentKind, model: String?, resumeSessionId: String?) -> [String] {
-        switch kind {
-        case .claudeCode:
-            var a: [String] = []
-            if let id = resumeSessionId { a += ["--resume", id] }
-            a += ["--dangerously-skip-permissions"]
-            if let m = model { a += ["--model", m] }
-            return a
-        case .codex:
-            if let id = resumeSessionId { return ["resume", id, "-a", "never", "--sandbox", "workspace-write"] }
-            var a = ["-a", "never", "--sandbox", "workspace-write"]
-            if let m = model { a += ["--model", m] }
-            return a
-        }
     }
 
     /// 程序化发文本(prompt / steer)：写文本 + 回车。

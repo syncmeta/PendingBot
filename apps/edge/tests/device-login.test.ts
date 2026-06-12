@@ -7,6 +7,7 @@ import {
   makeFakeEnv,
   type FakeDb,
 } from './_helpers/fake-supabase';
+import { sha256Hex } from '../src/lib/device-grant-scopes';
 import type { AppBindings } from '../src/types';
 
 vi.mock('@pendingbot/identity', () => ({
@@ -351,5 +352,77 @@ describe('GET /v1/device-login/challenges/:id', () => {
       status: 'consumed',
       issued_grant_id: body.grantId,
     });
+  });
+
+  it('also issues a family SSO credential for the approver and returns it on poll', async () => {
+    const db = makeFakeDb();
+    const challenge = await createChallenge(db);
+    const subjectId = '11111111-1111-4111-8111-111111111111';
+    const grantedByUserId = '22222222-2222-4222-8222-222222222222';
+    let familyArgs: Record<string, unknown> | null = null;
+    db.rpcs = {
+      subject_can_authorize_device_grant: () => ({ data: true, error: null }),
+      consume_subject_device_login_challenge: (args) => {
+        const row = db.rows.subject_device_login_challenges[0];
+        row.status = 'consumed';
+        row.issued_grant_id = args.p_grant_id;
+        return {
+          data: {
+            grant_id: args.p_grant_id,
+            subject_id: subjectId,
+            grant_kind: 'pendingcrew_control',
+            scopes: ['subject:read', 'crew:read'],
+            granted_by_user_id: grantedByUserId,
+            device_name: 'Mac',
+          },
+          error: null,
+        };
+      },
+      issue_family_sso_credential: (args) => {
+        familyArgs = args;
+        db.rows.family_sso_credentials ??= [];
+        db.rows.family_sso_credentials.push({
+          id: args.p_id,
+          user_id: args.p_user_id,
+          token_hash: args.p_token_hash,
+          device_name: args.p_device_name,
+        });
+        return { data: args.p_id, error: null };
+      },
+    };
+
+    await appFor(db).request(`/v1/device-login/challenges/${challenge.challengeId}/approve`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-test-user-id': 'user-1',
+      },
+      body: JSON.stringify({
+        secret: challenge.secret,
+        subjectId,
+        grantKind: 'pendingcrew_control',
+        scopes: ['subject:read', 'crew:read'],
+      }),
+    });
+
+    const poll = await appFor(db).request(
+      `/v1/device-login/challenges/${challenge.challengeId}?secret=${encodeURIComponent(challenge.secret)}`,
+    );
+    expect(poll.status).toBe(200);
+    const body = await poll.json() as { familyCredential: string | null };
+    expect(body.familyCredential).toMatch(/^pfa_/);
+
+    // The credential was minted for the *approving* user, hashed (never raw).
+    expect(familyArgs).not.toBeNull();
+    const args = familyArgs as unknown as Record<string, unknown>;
+    expect(args.p_user_id).toBe(grantedByUserId);
+    expect(args.p_device_name).toBe('Mac');
+    expect(typeof args.p_id).toBe('string');
+    const expectedHash = await sha256Hex(body.familyCredential as string);
+    expect(args.p_token_hash).toBe(expectedHash);
+    expect(args.p_token_hash).not.toBe(body.familyCredential);
+
+    expect(db.rows.family_sso_credentials).toHaveLength(1);
+    expect(db.rows.family_sso_credentials[0].token_hash).not.toBe(body.familyCredential);
   });
 });

@@ -54,6 +54,18 @@ struct CrewMessageListView: View {
     /// shared module still compiles (Crew chat is an iOS-first surface).
     @ViewBuilder
     private func rowView(_ row: CrewChatStore.CrewChatRow) -> some View {
+        if let task = row.taskRequest {
+            // #242 遥控 v1 — task_request rows render the dispatch card
+            // (cross-platform, no iOS-only dependency).
+            CrewTaskRequestCardView(payload: task, summary: row.message.content)
+                .padding(.vertical, 4)
+        } else {
+            cardOrBubble(row)
+        }
+    }
+
+    @ViewBuilder
+    private func cardOrBubble(_ row: CrewChatStore.CrewChatRow) -> some View {
         #if os(iOS)
         if let payload = row.permission {
             PermissionRequestCardView(

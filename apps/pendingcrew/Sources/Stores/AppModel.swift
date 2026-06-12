@@ -13,22 +13,24 @@ import SwiftUI
 /// （那是 codex 留下的待重构债务）。新增状态应归并成结构化 model
 /// （如 `CrewDetail` 容器），见 spec v2 §6.2 / roadmap §11。
 ///
-/// **双轨 backend(T5.1 + T5.2)**:
-/// - 登录态(`credential.kind == .deviceGrant`)→ `backend.mode == .logged`,
-///   走 PendingBot edge,unified billing。
-/// - 未登录 BYOK 态(`byokConfig.hasAnyKey`)→ `backend.mode == .byok`,
-///   全本地,JSON crew store + 本机 captain。
-/// - 两态都没有 → `RootView` 显示 WelcomeView 让用户选。
-///
-/// 本次 scope 内 mode 选定后不可在 app 内切换;签出走 `clearAuth()`/`clearByok()`
-/// 重启回 WelcomeView。
+/// **接合 v2(spec 2026-06-10):双轨 backend 作废,本地为家**:
+/// - macOS 上 `backend` **恒为 `LocalBackend`** —— 本地 crew 永远在、永远显示。
+/// - 登录(`credential.kind == .deviceGrant`)只是账号级**能力叠加**
+///   (遥控 / 未来信箱 + 邀请),不再切换 crew 数据来源。能力判定用
+///   `isAuthenticated`,不要再用 `mode` 路由数据。
+/// - iOS 暂无本地后端(LocalRunner 是 macOS-only),仍走 EdgeBackend,
+///   等本地后端跨平台后统一。
 @MainActor
 final class AppModel: ObservableObject {
     @Published var apiBaseURL: String
     @Published private(set) var credential: PendingCrewAuthCredential?
-    /// 当前 BYOK 配置快照。nil = 未配过(走登录路径或 WelcomeView)。
-    /// 任意一个 key 非空即认为"已配 BYOK"。
+    /// 当前 BYOK 配置快照。nil = 没填 key。**注意**：本机模式不需要 key，这里
+    /// 只是给未来 SDK/`-p` API-key 额度池路径用的选填凭据，不再决定 mode。
     @Published private(set) var byokConfig: BYOKConfig?
+
+    /// 用户是否显式选了**本机模式**（驱动本机已登录的 claude/codex，不需要 key）。
+    /// 与 `byokConfig` 解耦 —— 进本机模式不再被"有没有 key"门禁。
+    @Published private(set) var localModeSelected: Bool
 
     /// 登录这台机的 PendingCrew 用户(auth.users.id)。best-effort:在
     /// subject 解析出来(`CrewStore.refreshSubjects` → `/v1/me/subject` 回
@@ -40,52 +42,63 @@ final class AppModel: ObservableObject {
 
     private let defaults: UserDefaults
 
-    /// 两条 backend 实例,启动时一次性构造,mode 切换只是切引用。
+    /// 两条 backend 实例,启动时一次性构造。
     /// 不在 each-call 时 new (避免 EdgeBackend 内每次重新解析 credential
     /// 但 instance 不复用的浪费;LocalBackend.store 是 shared singleton)。
     private lazy var edgeBackend: EdgeBackend = EdgeBackend(appModel: self)
-    private lazy var localBackend: LocalBackend = LocalBackend(store: .shared)
+    private lazy var localBackend: LocalBackend = LocalBackend(store: .shared, whiteboard: .shared)
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         self.apiBaseURL = defaults.string(forKey: DefaultsKey.apiBaseURL) ?? "https://api.pendingname.com"
-        self.credential = PendingCrewAuthCredential.resolveDeviceGrant(
+        // 用局部变量算，避免 init 里在所有 stored 属性赋值前读 self.x（definite-init）。
+        let cred = PendingCrewAuthCredential.resolveDeviceGrant(
             KeychainStore.get(account: KeychainAccount.deviceGrant)
         )
-        // BYOK 启动时只在没有 device grant 的情况下读 —— 登录态优先,避免
-        // 用户切回登录后还残留旧 BYOK key 误导 mode 判定。
-        if self.credential == nil {
+        self.credential = cred
+        // BYOK key 启动时只在没有 device grant 的情况下读 —— 登录态优先。
+        let loadedByok: BYOKConfig?
+        if cred == nil {
             let snapshot = BYOKConfig.load()
-            self.byokConfig = snapshot.hasAnyKey ? snapshot : nil
+            loadedByok = snapshot.hasAnyKey ? snapshot : nil
         } else {
-            self.byokConfig = nil
+            loadedByok = nil
         }
+        self.byokConfig = loadedByok
+        // 本机模式标记：登录态优先（登录时不进本机模式）。向后兼容 —— 老用户填过
+        // key（loadedByok 非 nil）也视为选过本机模式，不至于重启后退回 Welcome。
+        self.localModeSelected = cred == nil
+            && (defaults.bool(forKey: DefaultsKey.localModeSelected) || loadedByok?.hasAnyKey == true)
     }
 
-    /// 当前生效的 backend。WelcomeView 阶段(没凭据)返回 nil —— UI 层
-    /// 不应当在那个 phase 调任何数据方法。
+    /// 当前生效的 backend(接合 v2:**不再按 mode 路由**)。
+    /// - macOS:恒为 `LocalBackend` —— 本地 crew 是常驻 home,登录只叠加能力。
+    /// - iOS:暂无本地后端(LocalRunner 是 macOS-only),登录态走 EdgeBackend,
+    ///   未登录返回 nil(WelcomeView 时态)。等本地后端跨平台后统一成恒本地。
     var backend: PendingCrewBackend? {
-        switch mode {
-        case .logged: return edgeBackend
-        case .byok: return localBackend
-        case .none: return nil
-        }
+        #if os(macOS)
+        return localBackend
+        #else
+        return credential != nil ? edgeBackend : nil
+        #endif
     }
 
-    /// 是否已具备任一可用凭据(登录 grant 或 BYOK key)。
     /// `RootView` 用它决定显 WelcomeView 还是直接进主界面。
-    var isConfigured: Bool { credential != nil || byokConfig?.hasAnyKey == true }
-
-    /// 兼容老代码 —— `isAuthenticated` 现在仅指"登录态(device grant)",
-    /// **不**包含 BYOK。BYOK 态判定用 `mode == .byok` 或 `byokConfig?.hasAnyKey`。
-    var isAuthenticated: Bool { credential != nil }
-
-    /// 当前 backend mode。两种凭据都没有时返回 nil(WelcomeView 时态)。
-    var mode: BackendMode? {
-        if credential != nil { return .logged }
-        if byokConfig?.hasAnyKey == true { return .byok }
-        return nil
+    /// **Mac 默认进本机模式**（驱动本机已登录的 claude/codex），不开屏让人选模式 ——
+    /// 登录是可选附加功能（侧栏入口）。iOS 仍需先登录（无本机后端）。
+    var isConfigured: Bool {
+        if credential != nil { return true }
+        #if os(macOS)
+        return true
+        #else
+        return localModeSelected
+        #endif
     }
+
+    /// `isAuthenticated` 仅指"登录态(device grant)",**不**包含 BYOK key
+    /// (那个用 `byokConfig?.hasAnyKey` 判)。接合 v2 后这是唯一的能力门:
+    /// 登录 = 账号级能力叠加(遥控/未来信箱),不再有 `mode` 路由。
+    var isAuthenticated: Bool { credential != nil }
 
     func saveAPIBaseURL(_ url: String) {
         let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -106,9 +119,53 @@ final class AppModel: ObservableObject {
     }
 
     func clearAuth() {
+        // 注意：这里**不**清 FamilyCredentialStore —— 家族凭据是账号级、跨 app
+        // 共享的（PendingBot / 其它家族成员都靠它静默 mint），签出本 app 的
+        // device grant 不该连坐。真要吊销家族凭据走 PendingBot 端的管理入口。
         KeychainStore.delete(account: KeychainAccount.deviceGrant)
         credential = nil
         currentUserId = nil
+    }
+
+    // MARK: - 家族 SSO（登录 SSO B4）
+
+    /// QR 登录 consume 时随 grant 下发的家族凭据（`pfa_*`）落到共享 keychain
+    /// 组，供家族 app（含本 app 重装后）静默 mint。LoginView poll 成功分支调。
+    func saveFamilyCredential(token: String, subjectId: String) {
+        FamilyCredentialStore.set(FamilyCredential(token: token, subjectId: subjectId))
+    }
+
+    /// 共享 keychain 组里是否有家族凭据 —— 侧栏据此决定显不显示
+    /// 「用本机 PendingBot 身份登录」入口。
+    var familySSOAvailable: Bool { FamilyCredentialStore.get() != nil }
+
+    /// 家族 SSO 登录：用共享 keychain 组里的家族凭据调 `POST /v1/device-grant/mint`
+    /// 换本 app 自己的 scoped device grant，免扫码。**不在启动时自动跑** ——
+    /// 登录必须是用户显式动作（侧栏菜单点一下）。返回是否成功，失败留在本机模式。
+    @discardableResult
+    func tryFamilySSO() async -> Bool {
+        guard credential == nil else { return true }
+        guard let cred = FamilyCredentialStore.get() else { return false }
+        guard let url = URL(string: apiBaseURL) else { return false }
+        // mint 不需要本 app 的 grant —— 鉴权是家族凭据本身作 bearer，
+        // 所以跟 LoginView 的 device-login 一样用无 token 的 client。
+        let api = PendingCrewAPI(baseURL: url)
+        do {
+            let resp = try await api.mintGrant(
+                familyCredential: cred.token,
+                subjectId: cred.subjectId,
+                grantKind: "pendingcrew_control",
+                scopes: ["subject:read", "crew:read", "crew:write", "runner:read", "runner:write"]
+            )
+            if let token = resp.deviceGrantToken {
+                try saveDeviceGrantToken(token)   // isAuthenticated 翻 true
+                return true
+            }
+            return false
+        } catch {
+            print("[family-sso] login failed: \(error)")
+            return false
+        }
     }
 
     /// 由 `CrewStore.refreshSubjects` 在解析到 subject 时回填(best-effort)。
@@ -119,18 +176,26 @@ final class AppModel: ObservableObject {
         currentUserId = userId
     }
 
-    /// 把 BYOK 配置写到 keychain 并落地到内存态。
-    /// `LocalSetupView` "完成" 按钮调。
+    /// 进入**本机模式**（驱动本机已登录的 claude/codex，不需要 key）。
+    /// `LocalSetupView` 的"进入"按钮调 —— 与有没有填 key 无关。
+    func enterLocalMode() {
+        localModeSelected = true
+        defaults.set(true, forKey: DefaultsKey.localModeSelected)
+    }
+
+    /// 把（选填的）BYOK key 写到 keychain 并落地到内存态。
+    /// 不再决定 mode —— 进本机模式走 `enterLocalMode()`。空 config 也合法（清空 key）。
     func saveByokConfig(_ config: BYOKConfig) throws {
         try config.save()
         byokConfig = config.hasAnyKey ? config : nil
     }
 
-    /// 清掉 BYOK 配置(三个 provider account 一并删)。
-    /// 切回 WelcomeView / 退出 BYOK 模式时调。
+    /// 退出本机模式 + 清掉 BYOK key。切回 WelcomeView / 登录态时调。
     func clearByokConfig() {
         BYOKConfig.clear()
         byokConfig = nil
+        localModeSelected = false
+        defaults.set(false, forKey: DefaultsKey.localModeSelected)
     }
 
     // MARK: - T4.5 crew-session server lifecycle
@@ -177,17 +242,10 @@ final class AppModel: ObservableObject {
     }
 }
 
-/// PendingCrewBackend 的 mode 标记。
-/// 放在 AppModel 文件里因为初始化路由就要用,不想为了一个 enum 起新 file。
-enum BackendMode: Equatable {
-    /// 走 PendingBot edge,扫码登录,unified billing。
-    case logged
-    /// BYOK 本地态,JSON store,只本机 crew。
-    case byok
-}
-
 private enum DefaultsKey {
     static let apiBaseURL = "PendingCrew.apiBaseURL"
+    /// 用户显式选了"本机模式"（与有没有 BYOK key 解耦）。
+    static let localModeSelected = "PendingCrew.localModeSelected"
 }
 
 enum KeychainAccount {

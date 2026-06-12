@@ -72,6 +72,42 @@ struct PendingCrewAPI {
         return try await perform(request)
     }
 
+    // MARK: - Family SSO mint
+
+    /// `POST /v1/device-grant/mint` — 用家族凭据（`pfa_*`，来自共享 keychain
+    /// 组 `FamilyCredentialStore`）静默换本 app 自己的 scoped device grant，
+    /// 免扫码。鉴权用 `familyCredential` 作 bearer（不是实例的
+    /// `bearerToken` —— 此时本 app 还没有 grant）。
+    func mintGrant(
+        familyCredential: String,
+        subjectId: String,
+        grantKind: String,
+        scopes: [String],
+        deviceName: String = currentDeviceName(),
+        devicePublicKey: String = "scaffold-placeholder-key-0123456789abcdef"
+    ) async throws -> MintGrantResponse {
+        struct Body: Encodable {
+            let subjectId: String
+            let grantKind: String
+            let scopes: [String]
+            let appKind: String
+            let deviceName: String
+            let devicePublicKey: String
+        }
+        return try await post(
+            path: "v1/device-grant/mint",
+            body: Body(
+                subjectId: subjectId,
+                grantKind: grantKind,
+                scopes: scopes,
+                appKind: "pendingcrew_macos",
+                deviceName: deviceName,
+                devicePublicKey: devicePublicKey
+            ),
+            bearer: familyCredential
+        )
+    }
+
     // MARK: - Subjects
 
     /// 返回 caller 能代表/登录的 subject(目前固定 1 个,即 grant 绑定的那个)。
@@ -340,6 +376,24 @@ struct PendingCrewAPI {
         return resp.whiteboard
     }
 
+    /// `GET /v1/crews/:crewId/messages?since=<cursor>` — 带游标的分页拉取
+    /// （接合 v2 block 3：CrewRelayAgent 轮询用）。`since` = 上次响应的
+    /// `lastCursor`（ISO8601，**闭区间** —— 边界条目会重复出现，调用方按
+    /// entry id 去重）。Needs `crew:read`。
+    func listCrewWhiteboardPage(crewId: String, since: String?) async throws -> CrewWhiteboardPage {
+        // `appendingPathComponent` 会把 "?" 转义,query 走 URLComponents
+        // (同 pollDeviceLoginChallenge 的做法)。
+        let url = baseURL.appendingPathComponent("v1/crews/\(crewId)/messages")
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+        if let since, !since.isEmpty {
+            components.queryItems = [URLQueryItem(name: "since", value: since)]
+        }
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "GET"
+        attachAuth(to: &request)
+        return try await perform(request)
+    }
+
     /// `POST /v1/crews/:crewId/messages` — drop a message on the crew
     /// whiteboard. `mentions` routes it: `@session <id>` → that session's
     /// mailbox; `@captain`; empty/`@broadcast` → all sessions. `attachmentIds`
@@ -347,16 +401,24 @@ struct PendingCrewAPI {
     /// `{ ids: [...] }` and hydrated → renderable objects on read. Needs
     /// `crew:write`.
     @discardableResult
+    /// `senderLabel` / `localSessionId`（接合 v2 block 3）：Mac relay 代发本地
+    /// captain / session 话语时的来源标注 —— 任一非 nil 时 edge 会给消息打
+    /// `origin:'mac_relay'`，Mac 拉取侧据此防回环。**relay 上行必须至少带
+    /// senderLabel**，否则消息不会被标记、会被自己拉回来。
     func postCrewMessage(
         crewId: String,
         text: String,
         mentions: [CrewMention] = [],
-        attachmentIds: [String] = []
+        attachmentIds: [String] = [],
+        senderLabel: String? = nil,
+        localSessionId: String? = nil
     ) async throws -> String? {
         struct Body: Encodable {
             let content: String
             let mentions: [CrewMention]
             let attachmentIds: [String]?
+            let senderLabel: String?
+            let localSessionId: String?
         }
         // The handler returns `{ messageId }`; `announcementId` stays nil (this
         // endpoint never emitted one). Decode both leniently so neither shape
@@ -367,7 +429,9 @@ struct PendingCrewAPI {
             body: Body(
                 content: text,
                 mentions: mentions,
-                attachmentIds: attachmentIds.isEmpty ? nil : attachmentIds
+                attachmentIds: attachmentIds.isEmpty ? nil : attachmentIds,
+                senderLabel: senderLabel,
+                localSessionId: localSessionId
             )
         )
         return resp.messageId ?? resp.announcementId
@@ -415,6 +479,23 @@ struct PendingCrewAPI {
         try await get(path: "v1/crews/\(crewId)/members")
     }
 
+    /// `POST /v1/crews/:crewId/members` — 把 PendingBot 侧的 bot / 人类账号
+    /// 拉进 relay crew conversation（接合 v2 block 3）。`kind` ∈ bot / human，
+    /// bot 须 caller 可用、human 须好友/同 subject 成员（校验在 edge RPC）。
+    /// 幂等：已是成员也回 201。Needs `crew:write` + grant subject 匹配。
+    func addCrewMember(crewId: String, kind: String, botId: String? = nil, userId: String? = nil) async throws {
+        struct Body: Encodable {
+            let kind: String
+            let botId: String?
+            let userId: String?
+        }
+        struct Response: Decodable { let crewId: String }
+        let _: Response = try await post(
+            path: "v1/crews/\(crewId)/members",
+            body: Body(kind: kind, botId: botId, userId: userId)
+        )
+    }
+
     // MARK: - Session inbox (runner per-turn context: whiteboard + mailbox)
 
     /// `GET /v1/sessions/:sessionId/inbox` — the per-turn context bundle the
@@ -448,16 +529,23 @@ struct PendingCrewAPI {
         return try await perform(request)
     }
 
+    /// `bearer` 非 nil 时用它覆盖实例的 `bearerToken`（mintGrant 用家族凭据
+    /// 鉴权，此时还没有本 app 的 grant）；nil 保持原行为。
     private func post<Body: Encodable, Response: Decodable>(
         path: String,
         body: Body,
-        authenticated: Bool = true
+        authenticated: Bool = true,
+        bearer: String? = nil
     ) async throws -> Response {
         var request = URLRequest(url: baseURL.appendingPathComponent(path))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(body)
-        if authenticated { attachAuth(to: &request) }
+        if let bearer {
+            request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
+        } else if authenticated {
+            attachAuth(to: &request)
+        }
         return try await perform(request)
     }
 
@@ -636,6 +724,20 @@ struct CrewWhiteboardEntry: Decodable, Identifiable, Equatable {
     /// `url` is the auth-gated `/v1/uploads/<id>` path `CrewRemoteImage`
     /// fetches with the device-grant bearer token.
     let attachments: [CrewAttachment]?
+    /// Mac relay 上行的来源标注（接合 v2 block 3）。非 nil 且 `origin ==
+    /// "mac_relay"` = 这条是 Mac 自己推上去的 —— 拉取侧据此过滤防回环。
+    /// edge 老消息 / 非 relay 消息为 nil。
+    let relay: Relay?
+    /// 发送者显示名。**edge 不下发这个字段**（恒 nil）；`LocalBackend` 把
+    /// relay 搬进本地白板的消息映射成 entry 时回填 edge 侧名字，
+    /// `CrewSenderResolver` 优先用它。
+    let senderDisplayName: String?
+
+    struct Relay: Decodable, Equatable {
+        let origin: String
+        let senderLabel: String?
+        let localSessionId: String?
+    }
 
     struct Payload: Decodable, Equatable {
         let text: String?
@@ -643,10 +745,18 @@ struct CrewWhiteboardEntry: Decodable, Identifiable, Equatable {
         let question: String?
         let status: String?
         let permissionRequestId: String?
+        // #242 遥控 v1 — messageKind == "task_request" 的结构化指令体
+        // ({ action:'run_session', runner_kind?, task_brief })。全 optional →
+        // 老消息 / 非指令消息照常解码。
+        let action: String?
+        let taskBrief: String?
+        let runnerKind: String?
 
         enum CodingKeys: String, CodingKey {
-            case text, kind, question, status
+            case text, kind, question, status, action
             case permissionRequestId = "permission_request_id"
+            case taskBrief = "task_brief"
+            case runnerKind = "runner_kind"
         }
     }
 
@@ -661,12 +771,21 @@ struct CrewWhiteboardEntry: Decodable, Identifiable, Equatable {
         case createdAt = "created_at"
         case payload
         case attachments
+        case relay
+        case senderDisplayName = "sender_display_name"
     }
 
     /// Best display text: explicit payload text → summary → empty.
     var displayText: String { payload?.text ?? summary ?? "" }
     /// True if this row is an ask_human interaction card.
     var isInteraction: Bool { payload?.kind == "interaction" }
+}
+
+/// `listCrewWhiteboardPage` 的响应：白板条目 + 续传游标（接合 v2 block 3）。
+/// `lastCursor` = 本批最大 created_at；空批为 nil（游标原地不动）。
+struct CrewWhiteboardPage: Decodable {
+    let whiteboard: [CrewWhiteboardEntry]
+    let lastCursor: String?
 }
 
 /// The crew roster (`listCrewMembers`). `captainBotId` lets the UI tag which
@@ -807,6 +926,17 @@ struct CreateCrewRequest: Encodable {
 struct CreateCrewResponse: Decodable {
     let crewId: String
     let captainBotId: String?
+}
+
+/// `POST /v1/device-grant/mint` 的响应（家族凭据静默换 grant）。形状对齐
+/// device-login consume：grant token + 元数据。字段全 optional 解耦 edge 端
+/// 演进，调用方只硬依赖 `deviceGrantToken`。
+struct MintGrantResponse: Decodable {
+    let deviceGrantToken: String?
+    let grantId: String?
+    let subjectId: String?
+    let grantKind: String?
+    let scopes: [String]?
 }
 
 // MARK: - Error envelope

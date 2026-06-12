@@ -1,0 +1,102 @@
+#if os(macOS)
+import Foundation
+import Security
+import OSLog
+
+private let log = Logger.category("family-sso")
+
+/// 家族 SSO 凭据（`pfa_*`）—— **PendingBot 写入侧**。
+///
+/// PendingCrew 的 `FamilyCredentialStore`（apps/pendingcrew/Sources/Support/
+/// FamilyCredentialStore.swift）从共享 keychain 组读这条凭据，拿去调
+/// `POST /v1/device-grant/mint` 静默换自己的 scoped device grant，免扫码。
+/// 这里是缺的另一半：PendingBot Mac 登录后把凭据写进去、登出时清掉。
+///
+/// ⚠️ 字节级契约：service / access group / JSON 字段名必须与 PendingCrew 的
+/// FamilyCredentialStore 完全一致 —— 改任何一边都要同步另一边。
+///
+/// 所有查询必设 `kSecUseDataProtectionKeychain: true`（理由同
+/// `DataProtectionKeychainStorage`：macOS 默认 legacy 登录钥匙串会反复弹
+/// 授权框，且共享 access group 只在 data-protection 钥匙串里生效）。
+///
+/// ⚠️ headless / ad-hoc 签名构建下 `keychain-access-groups` entitlement 不被
+/// 认可，所有调用得 `errSecMissingEntitlement`（-34018）→ 静默失败。共享组
+/// 读写只能在正常签名（Xcode GUI / 有证书环境）下验证。
+struct FamilyCredential: Codable, Equatable {
+    let token: String        // pfa_*
+    let subjectId: String    // 凭据绑定的默认 mint 目标（个人主体）
+}
+
+enum FamilyCredentialWriter {
+    static let sharedGroup = "M42BKJN82S.com.pendingname.shared"
+    static let service = "com.pendingname.family-sso"
+
+    static func get() -> FamilyCredential? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccessGroup as String: sharedGroup,
+            kSecUseDataProtectionKeychain as String: true,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        guard status == errSecSuccess,
+              let data = item as? Data,
+              let cred = try? JSONDecoder().decode(FamilyCredential.self, from: data) else {
+            return nil
+        }
+        return cred
+    }
+
+    static func set(_ cred: FamilyCredential) {
+        guard let data = try? JSONEncoder().encode(cred) else { return }
+        // delete-then-add：与 PendingCrew 侧一致（共享组下 SecItemUpdate 的
+        // 匹配语义跨 app 容易踩坑；写入频率极低，不在乎两次调用）。
+        clear()
+        let add: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccessGroup as String: sharedGroup,
+            kSecUseDataProtectionKeychain as String: true,
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        ]
+        let status = SecItemAdd(add as CFDictionary, nil)
+        if status != errSecSuccess {
+            log.error("family credential write failed: \(status)")
+        }
+    }
+
+    static func clear() {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccessGroup as String: sharedGroup,
+            kSecUseDataProtectionKeychain as String: true
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+
+    // MARK: - 签发同步
+
+    /// 有有效会话但共享组里还没有凭据时，找 worker 签发一张并写入。
+    /// 幂等（已有就跳过）；失败只 log —— 缺凭据只影响 PendingCrew 静默登录，
+    /// 不能反过来影响 PendingBot 自己的登录流。
+    static func syncIfNeeded() async {
+        guard get() == nil else { return }
+        struct Body: Encodable { let deviceName: String }
+        struct Response: Decodable { let familyCredential: FamilyCredential }
+        let deviceName = Host.current().localizedName ?? "Mac"
+        do {
+            let res: Response = try await APIClient()
+                .post("v1/me/family-credential", body: Body(deviceName: deviceName))
+            set(res.familyCredential)
+            log.info("family credential issued and stored")
+        } catch {
+            log.error("family credential issuance failed: \(String(describing: error), privacy: .public)")
+        }
+    }
+}
+#endif
