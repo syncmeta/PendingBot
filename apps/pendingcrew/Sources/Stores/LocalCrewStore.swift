@@ -138,6 +138,25 @@ final class LocalCrewStore {
         persistToDisk()
     }
 
+    /// 已处理过的 task_request 远端消息 id（#242 遥控 v1）。持久化 →
+    /// 重启 / 游标回拉后不会重复起 session。
+    func processedTaskRequestIds(crewId: String) -> Set<String> {
+        Set(crews[crewId]?.processedTaskRequestIds ?? [])
+    }
+
+    /// 标记一条 task_request 已处理。FIFO 裁剪只留最近 200 条 ——
+    /// edge `?since=` 游标本来只会重放边界附近的条目，200 绰绰有余。
+    func markTaskRequestProcessed(crewId: String, remoteId: String) {
+        guard var crew = crews[crewId] else { return }
+        var ids = crew.processedTaskRequestIds ?? []
+        guard !ids.contains(remoteId) else { return }
+        ids.append(remoteId)
+        if ids.count > 200 { ids.removeFirst(ids.count - 200) }
+        crew.processedTaskRequestIds = ids
+        crews[crewId] = crew
+        persistToDisk()
+    }
+
     /// 单条 crew 的 relay 绑定快照（UI / 同步代理读）。crew 不存在或未绑定
     /// remote conversation → nil。
     func relayBinding(for crewId: String) -> LocalCrewRelayBinding? {
@@ -147,7 +166,8 @@ final class LocalCrewStore {
             remoteConversationId: remoteId,
             relayCursor: crew.relayCursor,
             relayPushedThroughId: crew.relayPushedThroughId,
-            captainName: crew.captainName
+            captainName: crew.captainName,
+            workingDirectory: crew.workingDirectory
         )
     }
 
@@ -222,6 +242,8 @@ private struct LocalCrew: Codable, Equatable {
     var relayCursor: String? = nil
     /// 上行推送水位 —— 最后一条已推送到 edge 的本地白板消息 id。
     var relayPushedThroughId: String? = nil
+    /// 已处理过的 task_request 远端消息 id（#242 遥控 v1，FIFO 裁剪留 200）。
+    var processedTaskRequestIds: [String]? = nil
 
     var summary: CrewSummary {
         CrewSummary(
@@ -281,6 +303,8 @@ struct LocalCrewRelayBinding: Equatable {
     let relayPushedThroughId: String?
     /// 本地 captain 名字 —— relay 上行 captain 话语时作 senderLabel。
     let captainName: String?
+    /// crew 的工作目录 —— relay task_request 自动起 session 时用（#242）。
+    let workingDirectory: String?
 }
 
 private struct LocalCrewFile: Codable {

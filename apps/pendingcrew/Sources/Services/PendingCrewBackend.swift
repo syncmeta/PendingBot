@@ -197,7 +197,8 @@ final class LocalBackend: PendingCrewBackend {
                 summary: m.text,
                 createdAt: m.createdAt,
                 payload: CrewWhiteboardEntry.Payload(
-                    text: m.text, kind: nil, question: nil, status: nil, permissionRequestId: nil),
+                    text: m.text, kind: nil, question: nil, status: nil, permissionRequestId: nil,
+                    action: nil, taskBrief: nil, runnerKind: nil),
                 attachments: nil,
                 relay: nil,
                 // relay 搬进来的消息带 edge 侧发送者名字,resolver 优先显示它

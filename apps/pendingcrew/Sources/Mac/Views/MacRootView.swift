@@ -37,7 +37,9 @@ struct MacThreePaneView: View {
             await crewStore.refreshList()
             await crewStore.refreshSubjects()
             // relay 同步代理常开（幂等启动）；未登录时 tick 是 no-op。
-            relayAgent.start(appModel: model)
+            // sessionRunner 一并注入 —— relay 拉到 task_request 时在本机自动
+            // 起 session（#242 遥控 v1），与右栏手动起的 run 同一个切换条。
+            relayAgent.start(appModel: model, sessionRunner: sessionRunner)
         }
     }
 }

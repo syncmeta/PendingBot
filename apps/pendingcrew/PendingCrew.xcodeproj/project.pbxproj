@@ -13,6 +13,7 @@
 		0C31AC70A7AF296381A05716 /* LocalApprovalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 266E200D180EDF283E63D525 /* LocalApprovalStore.swift */; };
 		1145C1D461877987C934E9A8 /* AgentTerminalSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD0F5E7501DDF890EA04C5EA /* AgentTerminalSession.swift */; };
 		1146ACFD9CB88120EB1D7A84 /* PromptTemplateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76C210B9708141CE1293B918 /* PromptTemplateTests.swift */; };
+		117F27D658153ED0F2566672 /* LocalSessionLaunch.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE16EE932E2CBB87B2A7D691 /* LocalSessionLaunch.swift */; };
 		158F52EEED3AA21F5E5C0B09 /* CrewChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F8AC2EF59379DA98FD38630 /* CrewChatView.swift */; };
 		189C932299F51BD2E7CE8E6F /* WelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08C7D3AFEE8F6C3E6596F75D /* WelcomeView.swift */; };
 		1B589D3E34E44113BF5781F4 /* CrewBubbleRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9489F57858CE1A21C2ABB71E /* CrewBubbleRow.swift */; };
@@ -108,6 +109,7 @@
 		E516AADDB9ED8727F67B7D3E /* CrewRelayAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64939E9C459FD69C7E2993FA /* CrewRelayAgent.swift */; };
 		E532EC788C623C8B7A3448ED /* SessionConfigTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF848E30878BD9A462B2ABD4 /* SessionConfigTests.swift */; };
 		E78F604D88C1BEAB7FB96C0C /* LocalPromptLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF6AF2AE2C93EB875D8DBFF8 /* LocalPromptLoader.swift */; };
+		E8A4CD9994C8276834D659F3 /* LocalSessionLaunch.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE16EE932E2CBB87B2A7D691 /* LocalSessionLaunch.swift */; };
 		EA0A4A8A6688901245AF283A /* CrewDetailInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF2A5D7FFEA710FBD8771B72 /* CrewDetailInspector.swift */; };
 		EB82BC6650DAEA2D09DD9785 /* PendingCrewBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3431B4DF325BB67DBBFAFA45 /* PendingCrewBackend.swift */; };
 		ED3F0EA75BCAE992784BAEEE /* codex_stream.jsonl in Resources */ = {isa = PBXBuildFile; fileRef = 5606C4F79E94AFA8F76F6273 /* codex_stream.jsonl */; };
@@ -199,6 +201,7 @@
 		DA26B3AE2AB22AA26494B7EB /* claude_stream.jsonl */ = {isa = PBXFileReference; path = claude_stream.jsonl; sourceTree = "<group>"; };
 		DB1B368878F5794ADB109327 /* SessionProxyClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionProxyClient.swift; sourceTree = "<group>"; };
 		DB97F9F0E2E939FEA9FEFE63 /* CrewDetail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewDetail.swift; sourceTree = "<group>"; };
+		DE16EE932E2CBB87B2A7D691 /* LocalSessionLaunch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalSessionLaunch.swift; sourceTree = "<group>"; };
 		DF848E30878BD9A462B2ABD4 /* SessionConfigTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionConfigTests.swift; sourceTree = "<group>"; };
 		DF8E8FC64275B7932540FB17 /* LocalCodingAgentSpec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalCodingAgentSpec.swift; sourceTree = "<group>"; };
 		DF8FE15162B5E527F4765346 /* GitWorktreeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitWorktreeService.swift; sourceTree = "<group>"; };
@@ -246,6 +249,7 @@
 				ECFF7155D04A3862EC79E34B /* LocalCodingAgentKind.swift */,
 				DF8E8FC64275B7932540FB17 /* LocalCodingAgentSpec.swift */,
 				2CC4D38A8ADADF050411F604 /* LocalRunnerPlaceholder.swift */,
+				DE16EE932E2CBB87B2A7D691 /* LocalSessionLaunch.swift */,
 				69B4AFC537A8402CC846122F /* SessionConfig.swift */,
 				DB1B368878F5794ADB109327 /* SessionProxyClient.swift */,
 				8659160BA978CA311E9673E2 /* SessionProxyProtocol.swift */,
@@ -652,6 +656,7 @@
 				A6CB5E9580950D91CF149907 /* LocalCrewStore.swift in Sources */,
 				8A23157D010EB9F45781BDE6 /* LocalPromptLoader.swift in Sources */,
 				945CD4E64E68F0005D687FBC /* LocalRunnerPlaceholder.swift in Sources */,
+				E8A4CD9994C8276834D659F3 /* LocalSessionLaunch.swift in Sources */,
 				4AB17DC5C8411A562B83A090 /* LocalSessionWorldModel.swift in Sources */,
 				9DC9AF0EDD6D37A556A534B6 /* LocalSetupView.swift in Sources */,
 				5ACC0A7A8AA165B111990C18 /* LocalWhiteboardStore.swift in Sources */,
@@ -702,6 +707,7 @@
 				E78F604D88C1BEAB7FB96C0C /* LocalPromptLoader.swift in Sources */,
 				D8DBE57ED52A2F8086158FC6 /* LocalPromptLoaderTests.swift in Sources */,
 				F406C388A44A3EBBA538E929 /* LocalRunnerPlaceholder.swift in Sources */,
+				117F27D658153ED0F2566672 /* LocalSessionLaunch.swift in Sources */,
 				D24B6CB2DDE226254E98869D /* LocalSessionWorldModel.swift in Sources */,
 				2972982A1E1CCB1EFB30F5A5 /* LocalSessionWorldModelTests.swift in Sources */,
 				229AB9E4ED3AA7757C607159 /* LocalWhiteboardStore.swift in Sources */,

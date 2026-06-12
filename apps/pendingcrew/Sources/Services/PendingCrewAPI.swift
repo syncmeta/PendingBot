@@ -745,10 +745,18 @@ struct CrewWhiteboardEntry: Decodable, Identifiable, Equatable {
         let question: String?
         let status: String?
         let permissionRequestId: String?
+        // #242 遥控 v1 — messageKind == "task_request" 的结构化指令体
+        // ({ action:'run_session', runner_kind?, task_brief })。全 optional →
+        // 老消息 / 非指令消息照常解码。
+        let action: String?
+        let taskBrief: String?
+        let runnerKind: String?
 
         enum CodingKeys: String, CodingKey {
-            case text, kind, question, status
+            case text, kind, question, status, action
             case permissionRequestId = "permission_request_id"
+            case taskBrief = "task_brief"
+            case runnerKind = "runner_kind"
         }
     }
 

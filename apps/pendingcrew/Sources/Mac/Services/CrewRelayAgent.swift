@@ -25,6 +25,9 @@ import Foundation
 @MainActor
 final class CrewRelayAgent: ObservableObject {
     private weak var appModel: AppModel?
+    /// task_request 自动起 session 用（#242）。MacThreePaneView 注入（与右栏
+    /// 手动起 session 是同一个 runner —— 自动起的 run 直接出现在切换条上）。
+    private weak var sessionRunner: CrewSessionRunner?
     private var timer: Timer?
     /// tick 重入保护 —— 上一轮还在网络 IO 时跳过本轮。
     private var ticking = false
@@ -39,8 +42,9 @@ final class CrewRelayAgent: ObservableObject {
 
     /// 启动轮询（MacThreePaneView `.task` 调，幂等）。未登录时 tick 是 no-op，
     /// 登录后无需重启 —— 下个 tick 自动开始干活。
-    func start(appModel: AppModel) {
+    func start(appModel: AppModel, sessionRunner: CrewSessionRunner? = nil) {
         self.appModel = appModel
+        self.sessionRunner = sessionRunner
         guard timer == nil else { return }
         let t = Timer(timeInterval: 5, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in await self?.tick() }
@@ -94,8 +98,91 @@ final class CrewRelayAgent: ObservableObject {
             if let cursor = page.lastCursor {
                 crewStore.setRelayCursor(crewId: b.crewId, cursor: cursor)
             }
+            // #242 遥控 v1：本批里的新 task_request 指令 → 本地起 session。
+            // 白板写入在上面照常发生（用户能看到这条指令本身）。
+            let requests = CrewRelaySyncLogic.newTaskRequests(
+                pulled: page.whiteboard.map {
+                    .init(remoteId: $0.id,
+                          isMacRelayOrigin: $0.relay?.origin == "mac_relay",
+                          isTaskRequest: $0.messageKind == "task_request",
+                          action: $0.payload?.action,
+                          taskBrief: $0.payload?.taskBrief,
+                          runnerKind: $0.payload?.runnerKind)
+                },
+                processed: crewStore.processedTaskRequestIds(crewId: b.crewId))
+            for req in requests {
+                await handleTaskRequest(req, binding: b, api: api)
+            }
         } catch {
             NSLog("[CrewRelayAgent] pull \(b.crewId) failed: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - task_request → 本地起 session（#242 遥控 v1）
+
+    /// 处理一条远程 task_request：成功 / 明确不可行（无 runner / 无工作目录 /
+    /// session 满）都标记 processed —— 不可行时上行一条 mac_relay 说明，用户
+    /// 看到后可调整再发一条新指令；不做静默重试（避免每 tick 反复尝试 + 刷屏）。
+    private func handleTaskRequest(
+        _ req: CrewRelaySyncLogic.RelayTaskRequest,
+        binding b: LocalCrewRelayBinding,
+        api: PendingCrewAPI
+    ) async {
+        // 先落 processed —— start 是 async，防极端情况下（本 tick 内异常）重复处理。
+        crewStore.markTaskRequestProcessed(crewId: b.crewId, remoteId: req.remoteId)
+
+        func reportBack(_ text: String) async {
+            do {
+                // senderLabel 必带 → edge 打 origin:mac_relay，拉取侧不会拉回。
+                _ = try await api.postCrewMessage(
+                    crewId: b.remoteConversationId, text: text, senderLabel: "Mac")
+            } catch {
+                NSLog("[CrewRelayAgent] task_request report-back failed: \(error.localizedDescription)")
+            }
+        }
+
+        guard let runner = sessionRunner else {
+            NSLog("[CrewRelayAgent] task_request \(req.remoteId) skipped: no sessionRunner injected")
+            return
+        }
+        guard runner.runs.filter({ $0.status == .running }).count < CrewSessionRunner.maxConcurrentRuns else {
+            await reportBack("📥 任务已收到，但本机同时运行的 session 已满（\(CrewSessionRunner.maxConcurrentRuns)）—— 先停掉一些再重新发一次指令。")
+            return
+        }
+        guard let wd = b.workingDirectory, !wd.isEmpty else {
+            await reportBack("📥 任务已收到，但这个 crew 没有工作目录 —— 在 Mac 上设置后重新发一次指令。")
+            return
+        }
+        let dir = URL(fileURLWithPath: (wd as NSString).expandingTildeInPath)
+
+        // 镜像 CrewSessionWindowView 手动起 worker session 的工序：
+        // kind → isolation workdir → 世界观 → 本地 comms（MCP + hooks）。
+        let kind: LocalCodingAgentKind =
+            (req.runnerKind?.contains("codex") == true) ? .codex : .claudeCode
+        var cfg = SessionConfig(kind: kind, initialPrompt: req.taskBrief)
+        let workdir = SessionWorkspace.resolve(
+            crewDirectory: dir, isolation: cfg.isolation, hint: req.taskBrief)
+        let localSessionId = UUID().uuidString.lowercased()
+        if let detail = crewStore.getCrew(b.crewId), let backend = appModel?.backend {
+            let members = (try? await backend.listCrewMembers(crewId: b.crewId))?.members ?? []
+            cfg.appendSystemPromptFile = LocalSessionLaunch.renderWorldModelFile(
+                detail: detail, members: members, taskBrief: req.taskBrief,
+                workdir: workdir, sessionId: localSessionId, runnerKind: kind)
+        }
+        let comms = LocalSessionLaunch.prepareLocalCommsConfig(
+            crewId: b.crewId, sessionId: localSessionId)
+        cfg.settingsFile = comms.settings
+        cfg.mcpConfigFile = comms.mcp
+        do {
+            try await runner.start(
+                crewId: b.crewId,
+                sessionId: localSessionId,
+                config: cfg,
+                workingDirectory: workdir,
+                taskBrief: req.taskBrief)
+            await reportBack("🚀 已在 Mac 上启动 \(kind.displayName) session（\(localSessionId.prefix(8))），任务：\(req.taskBrief)")
+        } catch {
+            await reportBack("⚠️ 任务已收到，但本机起 session 失败：\(error.localizedDescription)")
         }
     }
 
