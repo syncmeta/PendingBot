@@ -98,6 +98,11 @@
         // Comma-separated allowlist. The board console lives same-origin
         // under /board, so it needs no extra entry here.
         "ALLOWED_ORIGIN": "https://bot.pendingname.com",
+        // Cloudflare Access gate for /v1/board/* (lib/cf-access.ts). Both
+        // values are public identifiers, not secrets — the AUD tag names the
+        // Access app "pendingbot-board" (destinations /board* + /v1/board*).
+        "CF_ACCESS_TEAM_DOMAIN": "round-morning-7b95.cloudflareaccess.com",
+        "CF_ACCESS_AUD": "788b20ee56e8a9fa927cbaa04b6189caee63ee3c08a0334f61021e61de4b900a",
         // AI Gateway coordinates — the worker reads the gateway's
         // computed per-request cost from the Logs API when a provider
         // doesn't report its own (see lib/ai-gateway.ts). Account id +
