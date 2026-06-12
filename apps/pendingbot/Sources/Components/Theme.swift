@@ -7,8 +7,10 @@ import UIKit
 /// the PendingBot reference + the web `tokens.css`: deep-jade accent on
 /// warm-ink neutrals, editorial serif for titles, rounded sans for chrome.
 ///
-/// Light-only theme — the brand is two anchor colors (#044735 + #fdfcfa)
-/// and we intentionally don't ship a dark variant for v1.
+/// Dual-mode theme — the brand is two anchor colors (#044735 + #fdfcfa) in
+/// light; the dark variant (2026-06-11 spec) swaps the light source rather than
+/// inverting. Every `Palette` token is `Color.adaptive(light:dark:)`, so the
+/// whole app repaints from this one definition when the appearance flips.
 ///
 /// **Cross-platform:** the palette, the `Font`-based typography, and the
 /// spacing/radii are pure SwiftUI and compile on both iOS and the native
@@ -19,48 +21,59 @@ enum Theme {
 
     // ── Palette ─────────────────────────────────────────────────────────────
 
+    /// Every token is appearance-adaptive (`Color.adaptive(light:dark:)`).
+    /// Light values are the original warm-cream palette; dark values are the
+    /// 2026-06-11 dark spec (`docs/superpowers/specs/2026-06-11-dark-mode-palette.md`).
+    ///
+    /// Dark-mode design intent (see spec): dark is a *light-source swap*, not an
+    /// inversion. The brand green flips from "ink" (deep forest on cream) to
+    /// "light" (bright jade glowing on warm near-black); color temperature stays
+    /// warm throughout; the surface ladder keeps the same "closer-to-user =
+    /// brighter" direction; the three tag pairs (green/amber/plum) hold one
+    /// brightness register in both modes.
     enum Palette {
-        /// Brand accent — #044735 (deep forest green).
-        static let accent      = Color(hex: 0x044735)
+        /// Brand accent — deep forest green / bright jade.
+        static let accent      = Color.adaptive(light: 0x044735, dark: 0x57B690)
         /// Hover/pressed — slightly lighter so it reads as "lit up".
-        static let accentHover = Color(hex: 0x0A6049)
+        static let accentHover = Color.adaptive(light: 0x0A6049, dark: 0x6CC6A1)
         /// Soft accent fill — used for the user bubble + selected pills.
-        /// Tinted from #044735, washed toward the cream surface.
-        static let accentBg    = Color(hex: 0xE3EEEA)
+        /// Light: tinted from accent, washed toward cream. Dark: green-dyed
+        /// deep surface so the bubble still reads as "belongs to green".
+        static let accentBg    = Color.adaptive(light: 0xE3EEEA, dark: 0x1C3A2F)
 
         /// Warm amber — public-bot tag fg. Sits in the same brightness
         /// register as the deep accent green so the two pills feel paired.
-        static let amber       = Color(hex: 0x6F5A0B)
-        /// Pale buttery yellow — public-bot tag bg, washed from `amber`.
-        static let amberBg     = Color(hex: 0xFAEDC2)
+        static let amber       = Color.adaptive(light: 0x6F5A0B, dark: 0xE0BD55)
+        /// Public-bot tag bg, washed from `amber` (fg/bg swap direction in dark).
+        static let amberBg     = Color.adaptive(light: 0xFAEDC2, dark: 0x3B3110)
 
         /// Plum — private-bot tag fg. Same brightness register as the
         /// accent green and amber so all three tag pills feel paired.
-        static let plum        = Color(hex: 0x5B3D8A)
-        /// Pale lavender — private-bot tag bg, washed from `plum`.
-        static let plumBg      = Color(hex: 0xECE3F7)
+        static let plum        = Color.adaptive(light: 0x5B3D8A, dark: 0xB9A0E3)
+        /// Private-bot tag bg, washed from `plum`.
+        static let plumBg      = Color.adaptive(light: 0xECE3F7, dark: 0x322546)
 
-        /// Page canvas — #fdfcfa (warm off-white).
-        static let canvas        = Color(hex: 0xFDFCFA)
-        /// Cards / sheets — pure white sits a hair above canvas.
-        static let surface       = Color(hex: 0xFFFFFF)
+        /// Page canvas — warm off-white / warm near-black.
+        static let canvas        = Color.adaptive(light: 0xFDFCFA, dark: 0x161512)
+        /// Cards / sheets — sits a hair above canvas (brighter in both modes).
+        static let surface       = Color.adaptive(light: 0xFFFFFF, dark: 0x201E1A)
         /// Subtler than surface — chips / pills / muted bg fills.
-        static let surfaceMuted  = Color(hex: 0xEFEEE9)
+        static let surfaceMuted  = Color.adaptive(light: 0xEFEEE9, dark: 0x2A2823)
 
-        /// Primary ink — keep close to true black but warm.
-        static let ink       = Color(hex: 0x1B1A14)
-        /// Secondary — used for labels, timestamps, descriptions.
-        static let inkMuted  = Color(hex: 0x6E6A5C)
+        /// Primary ink — warm near-black / warm white.
+        static let ink       = Color.adaptive(light: 0x1B1A14, dark: 0xECE9E0)
+        /// Secondary — labels, timestamps, descriptions (≈6:1 either way).
+        static let inkMuted  = Color.adaptive(light: 0x6E6A5C, dark: 0xA8A294)
         /// Hairline borders — barely-there separators.
-        static let hairline  = Color(hex: 0xE2E0D7)
+        static let hairline  = Color.adaptive(light: 0xE2E0D7, dark: 0x383530)
 
         /// User-message bubble — same as accentBg, named for clarity.
         static let userBubble = accentBg
         /// Optimistic user bubble while the send request is in flight (no
-        /// HTTP response yet). Washed further toward canvas so the bubble
-        /// reads as "not yet acknowledged"; flips to `userBubble` the
-        /// moment the server returns 200.
-        static let userBubbleSending = Color(hex: 0xF1F6F3)
+        /// HTTP response yet). Washed toward canvas so the bubble reads as
+        /// "not yet acknowledged"; flips to `userBubble` the moment the
+        /// server returns 200.
+        static let userBubbleSending = Color.adaptive(light: 0xF1F6F3, dark: 0x182A23)
     }
 
     // ── Typography ──────────────────────────────────────────────────────────
