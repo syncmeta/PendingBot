@@ -1,5 +1,4 @@
 import { EDGE_API_URL } from '../env';
-import { getAccessToken } from '../supabase';
 
 // Mirrors apps/edge/src/lib/http-error.ts wire shape:
 //   { error: { code: string, message?: string, detail?: unknown } }
@@ -41,21 +40,35 @@ function buildUrl(path: string, query?: RequestOpts['query']): string {
   return url.toString();
 }
 
-// Single choke point for every edge call. Attaches the Supabase JWT, parses
-// the typed error envelope, and throws EdgeApiError on non-2xx.
+// Single choke point for every edge call. Auth is handled entirely by
+// Cloudflare Access: the board is served same-origin under /board, so the
+// CF_Authorization cookie rides along on every same-origin request and the
+// edge injects/verifies the Access JWT. No Bearer token here.
+//
+// `credentials: 'include'` makes the cookie explicit (same-origin would send
+// it by default, but being explicit survives any base-URL change). If the
+// Access session has expired, the edge bounces the request to the Access
+// login page; we detect that redirect and reload so the top-level nav
+// re-authenticates.
 export async function edgeFetch<T = unknown>(opts: RequestOpts): Promise<T> {
-  const token = await getAccessToken();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'X-Client-Platform': 'admin-console',
   };
-  if (token) headers.Authorization = `Bearer ${token}`;
 
   const res = await fetch(buildUrl(opts.path, opts.query), {
     method: opts.method ?? 'GET',
     headers,
+    credentials: 'include',
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
   });
+
+  // Access session expired → request was redirected to the CF login page.
+  // Reload the top-level document so Access re-challenges in the browser.
+  if (res.redirected && /cloudflareaccess\.com/.test(res.url)) {
+    window.location.reload();
+    throw new EdgeApiError(401, 'access_expired', 'Access 会话已过期,正在重新登录');
+  }
 
   const text = await res.text();
   let parsed: unknown = undefined;

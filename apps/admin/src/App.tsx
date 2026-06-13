@@ -1,16 +1,18 @@
-import { Refine, Authenticated } from '@refinedev/core';
+import { Refine } from '@refinedev/core';
 import { ThemedLayout, RefineThemes, useNotificationProvider } from '@refinedev/antd';
-import routerProvider, { NavigateToResource, CatchAllNavigate } from '@refinedev/react-router';
-import { BrowserRouter, Routes, Route, Outlet } from 'react-router';
+import routerProvider, { NavigateToResource } from '@refinedev/react-router';
+import { BrowserRouter, Routes, Route } from 'react-router';
 import { ConfigProvider, App as AntdApp } from 'antd';
 import '@refinedev/antd/dist/reset.css';
 
 import { dataProvider } from './providers/data-provider';
-import { authProvider } from './providers/auth-provider';
-import { LoginPage } from './pages/login';
 import { PresetBotList, PresetBotCreate, PresetBotEdit } from './pages/preset-bots';
 import { FeatureFlagsPage } from './pages/feature-flags';
 
+// No authProvider / login route: the board is served same-origin under /board
+// behind Cloudflare Access, which is the sole identity gate (the edge verifies
+// the Access JWT on /v1/board/*). The SPA only renders once Access has already
+// authenticated the user, so there is nothing to gate client-side.
 export default function App() {
   return (
     <BrowserRouter basename="/board">
@@ -19,7 +21,6 @@ export default function App() {
           <Refine
             routerProvider={routerProvider}
             dataProvider={dataProvider}
-            authProvider={authProvider}
             notificationProvider={useNotificationProvider}
             options={{ disableTelemetry: true, warnWhenUnsavedChanges: true }}
             resources={[
@@ -37,25 +38,16 @@ export default function App() {
               },
             ]}
           >
-            <Routes>
-              <Route path="/login" element={<LoginPage />} />
-              <Route
-                element={
-                  <Authenticated key="protected" fallback={<CatchAllNavigate to="/login" />}>
-                    <ThemedLayout Title={() => <strong>PendingBot Board</strong>}>
-                      <Outlet />
-                    </ThemedLayout>
-                  </Authenticated>
-                }
-              >
+            <ThemedLayout Title={() => <strong>PendingBot Board</strong>}>
+              <Routes>
                 <Route index element={<NavigateToResource resource="preset_bots" />} />
                 <Route path="/preset-bots" element={<PresetBotList />} />
                 <Route path="/preset-bots/create" element={<PresetBotCreate />} />
                 <Route path="/preset-bots/edit/:id" element={<PresetBotEdit />} />
                 <Route path="/feature-flags" element={<FeatureFlagsPage />} />
-              </Route>
-              <Route path="*" element={<CatchAllNavigate to="/login" />} />
-            </Routes>
+                <Route path="*" element={<NavigateToResource resource="preset_bots" />} />
+              </Routes>
+            </ThemedLayout>
           </Refine>
         </AntdApp>
       </ConfigProvider>
