@@ -16,7 +16,9 @@ import Supabase
 ///     feed as a sidebar and the article on the right detail pane.
 struct EnvelopeTabView: View {
     @EnvironmentObject private var store: AccountStore
-    @EnvironmentObject private var unread: UnreadStore
+    // unread 一律走 UnreadStore.shared 单例,不用 @EnvironmentObject:本视图所有
+    // unread 访问都在脱离 view body 的逃逸/async 上下文(open/load/subscribe),
+    // 那里 wrapper 解析到 placeholder 会 fatalError。详见 MessageTabView 同款注释。
     @Environment(\.api) private var api
     @Environment(\.useSidebarLayout) private var sidebarLayout
     @Environment(\.topTabSelection) private var topTabSelection
@@ -211,7 +213,7 @@ struct EnvelopeTabView: View {
     /// iPad take exactly the push / detail path they always did.
     private func open(_ run: EnvelopeRun) {
         guard run.isDone || run.isRunning else { return }
-        unread.markEnvelopeRead(run.id)
+        UnreadStore.shared.markEnvelopeRead(run.id)
         if let externalSelection {
             externalSelection.wrappedValue = run.id
         } else if sidebarLayout {
@@ -250,7 +252,7 @@ struct EnvelopeTabView: View {
             // any stuck "pending" rows (initial INSERT before the runner
             // updates to running). The feed is meant to read as articles.
             runs = rows.filter { $0.status != "cancelled" }
-            unread.setCurrentEnvelopes(Set(runs.map(\.id)))
+            UnreadStore.shared.setCurrentEnvelopes(Set(runs.map(\.id)))
             await refreshBotNames(for: runs)
             refreshAuthorNames(for: runs)
         } catch is CancellationError {
@@ -334,7 +336,7 @@ struct EnvelopeTabView: View {
                 guard let id = record["id"]?.stringValue else { return }
                 Task { @MainActor in
                     runs.removeAll { $0.id == id }
-                    unread.removeCurrentEnvelope(id)
+                    UnreadStore.shared.removeCurrentEnvelope(id)
                 }
             }
         )
@@ -344,7 +346,7 @@ struct EnvelopeTabView: View {
     private func upsert(run: EnvelopeRun) {
         if run.status == "cancelled" {
             runs.removeAll { $0.id == run.id }
-            unread.removeCurrentEnvelope(run.id)
+            UnreadStore.shared.removeCurrentEnvelope(run.id)
             return
         }
         if let idx = runs.firstIndex(where: { $0.id == run.id }) {
@@ -352,7 +354,7 @@ struct EnvelopeTabView: View {
         } else {
             runs.insert(run, at: 0)
         }
-        unread.addCurrentEnvelope(run.id)
+        UnreadStore.shared.addCurrentEnvelope(run.id)
         if run.kind == "human" {
             refreshAuthorNames(for: [run])
         } else if let botId = run.bot_id, botNames[botId] == nil {
