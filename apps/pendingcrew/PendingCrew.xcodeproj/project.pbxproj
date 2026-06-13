@@ -24,6 +24,7 @@
 		155A969673BC235EEFD4341A /* PendingAttachment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1CE57B2DC05BB140D205C1 /* PendingAttachment.swift */; };
 		158F52EEED3AA21F5E5C0B09 /* CrewChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F8AC2EF59379DA98FD38630 /* CrewChatView.swift */; };
 		189C932299F51BD2E7CE8E6F /* WelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08C7D3AFEE8F6C3E6596F75D /* WelcomeView.swift */; };
+		1A74275EA6388320AAD94686 /* CrewAvatarBadges.swift in Sources */ = {isa = PBXBuildFile; fileRef = 269AFDA6030BA0078188CAF2 /* CrewAvatarBadges.swift */; };
 		1B589D3E34E44113BF5781F4 /* CrewBubbleRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9489F57858CE1A21C2ABB71E /* CrewBubbleRow.swift */; };
 		1DDF75A3BEC87A059F736366 /* CrewAvatar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 205020EC08904EEB811F2C56 /* CrewAvatar.swift */; };
 		20910C5E08E0D1DDD4323FA5 /* SessionWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10C395014B9A67808D52E7A /* SessionWorkspace.swift */; };
@@ -86,6 +87,7 @@
 		8A23157D010EB9F45781BDE6 /* LocalPromptLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF6AF2AE2C93EB875D8DBFF8 /* LocalPromptLoader.swift */; };
 		8A2B9FDE0D3BA69BF4DA487F /* CrewTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED91D58BD8A51F3136517F8E /* CrewTheme.swift */; };
 		8A2E0ED4E2DCD8D29C657CBB /* AgentTerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10CE71B99772AB7C3D2086DA /* AgentTerminalView.swift */; };
+		8ADF5E91A5CF2743821A9B3B /* CrewAvatarBadges.swift in Sources */ = {isa = PBXBuildFile; fileRef = 269AFDA6030BA0078188CAF2 /* CrewAvatarBadges.swift */; };
 		8B6B6CF7A0462571DAC5D0E0 /* SessionWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10C395014B9A67808D52E7A /* SessionWorkspace.swift */; };
 		8B9B3E46762C048F69D333A7 /* ServerImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = D75149E56C43DE393B0F774D /* ServerImage.swift */; };
 		8BAE00F15D98D768928BCF42 /* Platform.swift in Sources */ = {isa = PBXBuildFile; fileRef = D13CB4287864AEB5C5A8FECC /* Platform.swift */; };
@@ -182,6 +184,7 @@
 		25C60304AA7A9C4591A0B591 /* SessionProxyProtocolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionProxyProtocolTests.swift; sourceTree = "<group>"; };
 		25D842DC2A5B89B482EDF888 /* CrewComposer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewComposer.swift; sourceTree = "<group>"; };
 		266E200D180EDF283E63D525 /* LocalApprovalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalApprovalStore.swift; sourceTree = "<group>"; };
+		269AFDA6030BA0078188CAF2 /* CrewAvatarBadges.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewAvatarBadges.swift; sourceTree = "<group>"; };
 		2C78204BFE04404235068547 /* ModelCatalogEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelCatalogEntry.swift; sourceTree = "<group>"; };
 		2CC4D38A8ADADF050411F604 /* LocalRunnerPlaceholder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalRunnerPlaceholder.swift; sourceTree = "<group>"; };
 		2DFC0F15C2EF325530543B30 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
@@ -336,6 +339,7 @@
 		0856CB3EFC9A568EC592C50C /* Adapter */ = {
 			isa = PBXGroup;
 			children = (
+				269AFDA6030BA0078188CAF2 /* CrewAvatarBadges.swift */,
 				B201B1F85B5578B8544DCA69 /* CrewChatAdapter.swift */,
 				ED731B9FBC4FCAABA1696C82 /* CrewChatMessage.swift */,
 				E042008387A9E1B1B2C97A52 /* GroupBubbleSender.swift */,
@@ -757,6 +761,7 @@
 				902AF2700BDF817359CF22CB /* CreateCrewSheet.swift in Sources */,
 				B74AC2B8E37057C84D9DA5E6 /* CrewAttachmentView.swift in Sources */,
 				1DDF75A3BEC87A059F736366 /* CrewAvatar.swift in Sources */,
+				8ADF5E91A5CF2743821A9B3B /* CrewAvatarBadges.swift in Sources */,
 				1B589D3E34E44113BF5781F4 /* CrewBubbleRow.swift in Sources */,
 				50E92F718E5EC71E96ECD0F8 /* CrewCenterView.swift in Sources */,
 				CD478DB6A5F0A7917027EBE6 /* CrewChatAdapter.swift in Sources */,
@@ -841,6 +846,7 @@
 			files = (
 				1145C1D461877987C934E9A8 /* AgentTerminalSession.swift in Sources */,
 				7A64F53E8D085D3A9ECE9879 /* AgentTerminationTests.swift in Sources */,
+				1A74275EA6388320AAD94686 /* CrewAvatarBadges.swift in Sources */,
 				D1DD2B27650D223B37D4B295 /* CrewChatAdapter.swift in Sources */,
 				00384409C41B8F5886C8313E /* CrewChatAdapterTests.swift in Sources */,
 				B094D64B0509EF9E543C90F7 /* CrewChatMessage.swift in Sources */,
