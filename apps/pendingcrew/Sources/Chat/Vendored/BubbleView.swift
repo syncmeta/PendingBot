@@ -91,13 +91,9 @@ struct BubbleView<Menu: View>: View {
             HStack(alignment: .top, spacing: 8) {
             Group {
                 if let g = groupSender {
-                    // Group conv — sender resolved per-message.
-                    switch g.kind {
-                    case .bot:
-                        BotAvatar(emojiSeed: g.id, colorSeed: g.id, size: 30)
-                    case .user:
-                        UserAvatar(seed: g.avatarSeed, attachmentId: g.avatarPath, size: 30)
-                    }
+                    // PENDINGCREW SHIM: crew messages use CrewAvatarBadges (captain star /
+                    // session status dot / terminal-icon) instead of bare BotAvatar/UserAvatar.
+                    CrewAvatarBadges(sender: g, size: 30)
                 } else if let peer = peerProfile, message.sender_type == "user" {
                     // user_user / group peer — use UserAvatar so it matches
                     // the same person's avatar in the friends list.

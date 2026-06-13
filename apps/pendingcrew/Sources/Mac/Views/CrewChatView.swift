@@ -90,12 +90,26 @@ struct CrewChatView: View {
                 reply: Binding(get: { replyDrafts[reqId] ?? "" }, set: { replyDrafts[reqId] = $0 })
             ) { Task { await answer(reqId) } }
         } else {
-            let sender = CrewSenderResolver.resolve(entry, members: members,
-                                                    captainBotId: captainBotId, localUserId: localUserId)
+            let (msg, sender) = CrewChatAdapter.adapt(
+                entry,
+                members: members,
+                captainBotId: captainBotId,
+                localUserId: localUserId
+            )
+            let bubble = BubbleView(
+                message: msg,
+                botName: sender?.displayName ?? "机组",
+                conversationID: crewId,
+                currentUserId: localUserId,
+                groupSender: sender,
+                serverURL: appModel.imageAuth?.baseURL,
+                onRetry: nil,
+                menu: { EmptyView() }
+            )
             // session 发的消息可点 → 右栏切到对应 session（chunk2 T6 中栏跳转）。
             // 找不到对应 run（已移除/别的 crew）则点击无事发生。
             if let senderSessionId = entry.senderSessionId {
-                CrewBubbleRow(entry: entry, sender: sender)
+                bubble
                     .contentShape(Rectangle())
                     .onTapGesture {
                         if let run = sessionRunner.runs.first(where: { $0.sessionId == senderSessionId }) {
@@ -103,7 +117,7 @@ struct CrewChatView: View {
                         }
                     }
             } else {
-                CrewBubbleRow(entry: entry, sender: sender)
+                bubble
             }
         }
     }
