@@ -58,16 +58,18 @@ struct CrewChatMessage: Identifiable, Hashable {
 
     // ── Mine-detection ────────────────────────────────────────────────────────
 
+    /// Single source of truth for mine-ness, set at construction time by
+    /// `CrewChatAdapter` via `CrewSenderResolver`. Stored so relay messages
+    /// (whose `senderDisplayName != nil`) are never incorrectly treated as
+    /// "mine" even when the uid matches the local user.
+    let mine: Bool
+
     /// BubbleView calls `message.isMine(currentUserId: currentUserId)`.
-    /// Logic mirrors PendingBot's: non-"user" rows are never mine; empty
-    /// `currentUserId` or empty `sender_id` defaults to "mine" (optimistic
-    /// local bubble before the server echoes back an id).
-    func isMine(currentUserId: String?) -> Bool {
-        guard sender_type == "user" else { return false }
-        guard let me = currentUserId, !me.isEmpty else { return true }
-        if sender_id.isEmpty { return true }   // optimistic bubble pre-id
-        return sender_id == me
-    }
+    /// Delegates entirely to the stored `mine` flag — `CrewSenderResolver`
+    /// is the single source of truth (handles relay messages correctly).
+    /// The `currentUserId` parameter is accepted for API compatibility with
+    /// the vendored BubbleView call-site but is not used here.
+    func isMine(currentUserId: String?) -> Bool { mine }
 
     // ── Memberwise init ───────────────────────────────────────────────────────
 
@@ -77,7 +79,8 @@ struct CrewChatMessage: Identifiable, Hashable {
         sender_id: String,
         content: String,
         attachments: [Attachment]? = nil,
-        status: String? = nil
+        status: String? = nil,
+        mine: Bool = false
     ) {
         self.id = id
         self.sender_type = sender_type
@@ -85,6 +88,7 @@ struct CrewChatMessage: Identifiable, Hashable {
         self.content = content
         self.attachments = attachments
         self.status = status
+        self.mine = mine
     }
 }
 
