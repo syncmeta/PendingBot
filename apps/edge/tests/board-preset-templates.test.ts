@@ -98,6 +98,50 @@ describe('preset groups', () => {
   });
 });
 
+describe('tools (P3 · edit-only)', () => {
+  const seed = () =>
+    makeFakeDb({
+      tools: [
+        { id: 't1', key: 'web_search', kind: 'native', enabled: true, scopes: ['chat'], model_description: null, description: null, notes: null, mcp_server_id: null, updated_at: 't' },
+      ],
+    });
+
+  it('lists + patch toggles enabled and writes a tool audit', async () => {
+    const db = seed();
+    const list = await appFor(db).request('/v1/board/tools', { headers: ADMIN });
+    expect(list.status).toBe(200);
+
+    const res = await appFor(db).request('/v1/board/tools/t1', {
+      method: 'PATCH',
+      headers: ADMIN_JSON,
+      body: JSON.stringify({ enabled: false, scopes: ['chat', 'envelope'] }),
+    });
+    expect(res.status).toBe(200);
+    const audits = db.inserts.filter((i) => i.table === 'admin_audit');
+    expect(audits.at(-1)?.row.target_kind).toBe('tool');
+    expect(audits.at(-1)?.row.action).toBe('update');
+  });
+
+  it('rejects create (POST) — tools are not board-creatable (404)', async () => {
+    const db = seed();
+    const res = await appFor(db).request('/v1/board/tools', {
+      method: 'POST',
+      headers: ADMIN_JSON,
+      body: JSON.stringify({ key: 'evil', kind: 'native' }),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it('rejects delete — tools are not board-deletable (404)', async () => {
+    const db = seed();
+    const res = await appFor(db).request('/v1/board/tools/t1', {
+      method: 'DELETE',
+      headers: ADMIN,
+    });
+    expect(res.status).toBe(404);
+  });
+});
+
 describe('preset letters', () => {
   it('lists letters + create writes a preset_letter audit', async () => {
     const db = makeFakeDb({
