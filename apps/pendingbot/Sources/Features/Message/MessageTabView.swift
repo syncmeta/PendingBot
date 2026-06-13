@@ -36,7 +36,14 @@ struct MessageTabView: View {
     @Environment(\.api) private var api
     @Environment(\.useSidebarLayout) private var sidebarLayout
     @Environment(\.topTabSelection) private var topTabSelection
-    @EnvironmentObject private var unread: UnreadStore
+    // NOTE: unread 一律走 UnreadStore.shared 单例,**不要**用
+    // @EnvironmentObject。本视图对 unread 的所有访问都发生在脱离 view body
+    // 的逃逸/async 上下文里(navigationDestination 的 .onAppear、reload()、
+    // delete()),那里 SwiftUI 的 @EnvironmentObject wrapper 解析到
+    // placeholder 会直接 fatalError —— macOS 上点会话即崩(EXC_BREAKPOINT
+    // in EnvironmentObject.error)。注入的环境对象本就是 UnreadStore.shared,
+    // 直接打单例行为等价。红点订阅由独立 subscriber 视图负责,本视图无需
+    // 在 body 里响应式读 unread。
     /// Store fed by CallKitManager when the user accepts an incoming
     /// voice call. The .onChange below drives the navigation step;
     /// ConversationView reads `pendingAutoJoinConversationId` on appear
@@ -340,7 +347,7 @@ struct MessageTabView: View {
             ConversationView(conversation: conv, bot: bot(for: conv), pendingPeer: pending) {
                 reload()
             }
-            .onAppear { unread.markRead(conv.id, throughLastMessageId: conv.last_message_id) }
+            .onAppear { UnreadStore.shared.markRead(conv.id, throughLastMessageId: conv.last_message_id) }
         case .pending(let peer):
             ConversationView(
                 conversation: pendingConversation(for: peer),
@@ -750,7 +757,7 @@ struct MessageTabView: View {
                     lastMessageIds[row.id] = lastMessageId
                 }
             }
-            unread.setServerCounts(counts, lastMessageIds: lastMessageIds)
+            UnreadStore.shared.setServerCounts(counts, lastMessageIds: lastMessageIds)
 
             // Build the user_user peer map. Only convs of that type carry
             // a meaningful peer; bot/group/self rows skip the lookup.
@@ -936,7 +943,7 @@ struct MessageTabView: View {
                 .execute()
             conversations.removeAll { $0.id == conv.id }
             LocalDatabase.shared.deleteConversation(id: conv.id)
-            unread.markRead(conv.id)
+            UnreadStore.shared.markRead(conv.id)
             Haptics.success()
         } catch {
             self.error = error.localizedDescription
