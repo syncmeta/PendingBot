@@ -49,5 +49,54 @@ boardRoutes.route(
   }),
 );
 
+// ── 预设会话模板(signup bootstrap 物化用) ─────────────────
+// pendingbot.preset_conversation_templates(slug 主键)。整表都是模板,无 scope。
+const presetConvCreate = z.object({
+  slug: z.string().min(1),
+  bot_slug: z.string().min(1),
+  title: z.string().min(1),
+  // 起始时间锚点;省略走表 DEFAULT。
+  base_ts: z.string().optional(),
+  // 消息数组:元素可为字符串(纯文本)或对象(富结构),由 seed 端解释。
+  messages: z.array(z.unknown()).default([]),
+  sort_order: z.number().int().default(100),
+  enabled: z.boolean().default(true),
+});
+boardRoutes.route(
+  '/preset-conversations',
+  boardResource({
+    table: 'preset_conversation_templates',
+    pk: 'slug',
+    targetKind: 'preset_conversation',
+    cols: 'slug, bot_slug, title, base_ts, messages, sort_order, enabled, updated_at',
+    orderBy: { col: 'sort_order', ascending: true },
+    createSchema: presetConvCreate,
+    updateSchema: presetConvCreate.partial(),
+  }),
+);
+
+// ── 预设群模板 ───────────────────────────────────────────────
+// pendingbot.preset_group_templates(slug 主键)。
+const presetGroupCreate = z.object({
+  slug: z.string().min(1),
+  title: z.string().min(1),
+  bot_slugs: z.array(z.string()).default([]),
+  messages: z.array(z.unknown()).default([]),
+  sort_order: z.number().int().default(100),
+  enabled: z.boolean().default(true),
+});
+boardRoutes.route(
+  '/preset-groups',
+  boardResource({
+    table: 'preset_group_templates',
+    pk: 'slug',
+    targetKind: 'preset_group',
+    cols: 'slug, title, bot_slugs, messages, sort_order, enabled, updated_at',
+    orderBy: { col: 'sort_order', ascending: true },
+    createSchema: presetGroupCreate,
+    updateSchema: presetGroupCreate.partial(),
+  }),
+);
+
 // ── 功能开关(单例 KV blob,非表行) ──────────────────────────
 boardRoutes.route('/feature-flags', boardFeatureFlagsRoutes);
