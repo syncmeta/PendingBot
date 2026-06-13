@@ -310,6 +310,11 @@ struct AttachmentGrid: View {
         }
     }
 
+    // PENDINGCREW SHIM: inject AppModel so saveToAlbum can resolve imageAuth
+    // (PendingBot calls APIClient() which self-resolves auth via SupabaseStack;
+    // PendingCrew has no APIClient and uses device-grant bearer via AppModel).
+    @EnvironmentObject private var appModel: AppModel
+
     /// Download the full image through the auth-gated endpoint and write
     /// it to the system photo library. NSPhotoLibraryAddUsageDescription
     /// is already declared; iOS prompts on first use. iOS-only — the
@@ -317,7 +322,9 @@ struct AttachmentGrid: View {
     #if os(iOS)
     private func saveToAlbum(_ att: Attachment) {
         Task {
-            guard let data = try? await APIClient().download("v1/uploads/\(att.id)"),
+            // PENDINGCREW SHIM: replaced APIClient().download with CrewAttachmentDownload
+            guard let auth = appModel.imageAuth,
+                  let data = try? await CrewAttachmentDownload.data(path: "v1/uploads/\(att.id)", auth: auth),
                   let image = UIImage(data: data) else {
                 await MainActor.run { Haptics.error() }
                 return
