@@ -1,4 +1,3 @@
-#if os(macOS)
 import SwiftUI
 
 /// 居中的相对时间 pill。仅当与上一条间隔 ≥ 5 分钟时插入（由 CrewChatView 决定）。
@@ -41,4 +40,3 @@ struct CrewTimeSeparator: View {
         return md.string(from: d)
     }
 }
-#endif

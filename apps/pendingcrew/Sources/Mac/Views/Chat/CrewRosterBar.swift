@@ -1,4 +1,3 @@
-#if os(macOS)
 import SwiftUI
 
 /// 顶部 roster 头像条：一排成员头像（session 带状态点），保留 crew 特有的
@@ -58,4 +57,3 @@ struct CrewRosterBar: View {
         )
     }
 }
-#endif

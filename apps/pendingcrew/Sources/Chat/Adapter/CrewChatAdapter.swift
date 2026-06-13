@@ -1,4 +1,3 @@
-#if os(macOS)
 import Foundation
 
 /// Maps a `CrewWhiteboardEntry` into the `(CrewChatMessage, GroupBubbleSender?)`
@@ -87,4 +86,3 @@ enum CrewChatAdapter {
         return (msg, sender)
     }
 }
-#endif

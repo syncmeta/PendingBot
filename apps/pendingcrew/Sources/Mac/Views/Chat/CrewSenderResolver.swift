@@ -1,4 +1,3 @@
-#if os(macOS)
 import Foundation
 
 /// 一条消息的作者解析结果，供 CrewBubbleRow / CrewAvatar 渲染。
@@ -66,4 +65,3 @@ enum CrewSenderResolver {
         }
     }
 }
-#endif

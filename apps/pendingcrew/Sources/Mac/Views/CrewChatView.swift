@@ -1,4 +1,3 @@
-#if os(macOS)
 import SwiftUI
 import PhotosUI
 import UniformTypeIdentifiers
@@ -16,13 +15,15 @@ struct CrewChatView: View {
     let crewTitle: String
 
     @EnvironmentObject private var appModel: AppModel
+    #if os(macOS)
     /// MacThreePaneView 注入（经 CrewCenterView）—— session 发的消息点击可
     /// 跳到右栏对应 session（chunk2 T6 中栏跳转）。
     @EnvironmentObject private var sessionRunner: CrewSessionRunner
+    #endif
 
     @State private var entries: [CrewWhiteboardEntry] = []
     @State private var draft = ""
-    /// Source-of-truth attachment list (macOS file importer writes here).
+    /// Source-of-truth attachment list (file importer writes here on both platforms).
     @State private var pendingAttachments: [PendingComposerAttachment] = []
     @State private var loadError: String?
     @State private var sending = false
@@ -32,14 +33,14 @@ struct CrewChatView: View {
     @State private var members: [CrewMember] = []
     @State private var captainBotId: String?
 
-    // MARK: - ComposerView dummy bindings (macOS — no photo/camera pickers)
-    /// Forwarded to ComposerView; ChatActionSheet on macOS flips this to open
-    /// the system document picker below. Photo/camera pickers are iOS-only.
+    // MARK: - ComposerView bindings
+    /// Forwarded to ComposerView; ChatActionSheet flips this to open
+    /// the system document picker (.fileImporter works on iOS 14+ too).
     @State private var showFileImporter = false
-    @State private var photoItems: [PhotosPickerItem] = []          // never mutated on mac
-    @State private var cameraImage: PlatformImage? = nil            // never mutated on mac
-    @State private var showPhotoPicker = false                       // never mutated on mac
-    @State private var showCamera = false                            // never mutated on mac
+    @State private var photoItems: [PhotosPickerItem] = []
+    @State private var cameraImage: PlatformImage? = nil
+    @State private var showPhotoPicker = false
+    @State private var showCamera = false
 
     private let pollInterval: UInt64 = 3_000_000_000 // 3s
 
@@ -107,18 +108,38 @@ struct CrewChatView: View {
         }
         .background(Theme.Palette.canvas)
         .task(id: crewId) { await pollLoop() }
+        // File importer — .fileImporter is available on iOS 14+ and macOS 11+.
+        // On iOS the system presents a document picker; on macOS a Finder sheet.
         .fileImporter(
             isPresented: $showFileImporter,
             allowedContentTypes: [.image, .pdf, .plainText, .data],
             allowsMultipleSelection: true,
             onCompletion: handleImport
         )
+        // Photo picker — iOS only; wires the showPhotoPicker binding from ComposerView.
+        #if os(iOS)
+        .photosPicker(
+            isPresented: $showPhotoPicker,
+            selection: $photoItems,
+            matching: .images
+        )
+        .onChange(of: photoItems) { _, items in
+            Task { await handlePhotoItems(items) }
+        }
+        #endif
     }
 
     // 本机用户哨兵 id —— 接合 v2 后 macOS 白板恒为本地，本机人类消息都标
     // `LocalWhiteboardStore.localUserId`，CrewSenderResolver 据此把自己的
     // 消息识别成"自己"(右对齐、无头像)。
-    private var localUserId: String? { LocalWhiteboardStore.localUserId }
+    // iOS: 暂无本地后端 — 使用 AppModel.currentUserId。
+    private var localUserId: String? {
+        #if os(macOS)
+        return LocalWhiteboardStore.localUserId
+        #else
+        return appModel.currentUserId
+        #endif
+    }
 
     private var timeline: some View {
         ScrollViewReader { proxy in
@@ -169,6 +190,7 @@ struct CrewChatView: View {
                 onRetry: nil,
                 menu: { EmptyView() }
             )
+            #if os(macOS)
             // session 发的消息可点 → 右栏切到对应 session（chunk2 T6 中栏跳转）。
             // 找不到对应 run（已移除/别的 crew）则点击无事发生。
             if let senderSessionId = entry.senderSessionId {
@@ -182,6 +204,9 @@ struct CrewChatView: View {
             } else {
                 bubble
             }
+            #else
+            bubble
+            #endif
         }
     }
 
@@ -270,13 +295,11 @@ struct CrewChatView: View {
         }
     }
 
-    // MARK: - File import (macOS)
+    // MARK: - File import (cross-platform via .fileImporter)
 
     /// Called by the `.fileImporter` modifier bound to `showFileImporter`.
-    /// `showFileImporter` is flipped by ChatActionSheet's "文件" tile inside
-    /// ComposerView, so this is the macOS attachment pick path. Reads bytes
-    /// eagerly inside the security-scoped access window (same pattern as the
-    /// old CrewComposer.handleImport).
+    /// Works on both macOS (Finder sheet) and iOS (document picker). Reads bytes
+    /// eagerly inside the security-scoped access window.
     private func handleImport(_ result: Result<[URL], Error>) {
         guard case .success(let urls) = result else { return }
         for url in urls {
@@ -293,5 +316,34 @@ struct CrewChatView: View {
             ))
         }
     }
+
+    // MARK: - Photo picker (iOS)
+
+    #if os(iOS)
+    /// Decode PhotosPickerItems into PendingComposerAttachments and append.
+    @MainActor
+    private func handlePhotoItems(_ items: [PhotosPickerItem]) async {
+        for item in items {
+            guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
+            // Best-effort MIME detection from the supported content types.
+            let mime: String
+            if let types = item.supportedContentTypes.first,
+               let mimeType = types.preferredMIMEType {
+                mime = mimeType
+            } else {
+                mime = "image/jpeg"
+            }
+            // Generate a filename from a timestamp so the tray shows something readable.
+            let ext = mime.components(separatedBy: "/").last ?? "jpg"
+            let filename = "photo_\(Int(Date().timeIntervalSince1970)).\(ext)"
+            pendingAttachments.append(PendingComposerAttachment(
+                filename: filename,
+                mime: mime,
+                data: data
+            ))
+        }
+        // Clear selection so the same photo can be re-picked if needed.
+        photoItems = []
+    }
+    #endif
 }
-#endif

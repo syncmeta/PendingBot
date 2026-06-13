@@ -1,4 +1,3 @@
-#if os(macOS)
 import SwiftUI
 
 /// ask_human 交互卡（payload.kind == "interaction"）。操作者就地答。
@@ -45,4 +44,3 @@ struct CrewInteractionCard: View {
         .padding(.vertical, 4)
     }
 }
-#endif
