@@ -12,6 +12,7 @@
     "deploy": "echo 'admin ships with the edge worker: bun --filter=@pendingbot/edge run deploy' && exit 1"
   },
   "dependencies": {
+    "@ant-design/icons": "^5",
     "@refinedev/antd": "^6",
     "@refinedev/core": "5.0.12",
     "@refinedev/react-router": "2.0.4",
