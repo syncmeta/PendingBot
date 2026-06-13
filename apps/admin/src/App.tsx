@@ -7,6 +7,12 @@ import '@refinedev/antd/dist/reset.css';
 
 import { dataProvider } from './providers/data-provider';
 import { PresetBotList, PresetBotCreate, PresetBotEdit } from './pages/preset-bots';
+import {
+  PresetConversationList,
+  PresetConversationCreate,
+  PresetConversationEdit,
+} from './pages/preset-conversations';
+import { PresetGroupList, PresetGroupCreate, PresetGroupEdit } from './pages/preset-groups';
 import { FeatureFlagsPage } from './pages/feature-flags';
 
 // No authProvider / login route: the board is served same-origin under /board
@@ -32,6 +38,20 @@ export default function App() {
                 meta: { label: '预设机器人' },
               },
               {
+                name: 'preset_conversations',
+                list: '/preset-conversations',
+                create: '/preset-conversations/create',
+                edit: '/preset-conversations/edit/:id',
+                meta: { label: '预设会话' },
+              },
+              {
+                name: 'preset_groups',
+                list: '/preset-groups',
+                create: '/preset-groups/create',
+                edit: '/preset-groups/edit/:id',
+                meta: { label: '预设群' },
+              },
+              {
                 name: 'feature_flags',
                 list: '/feature-flags',
                 meta: { label: '功能开关' },
@@ -44,6 +64,12 @@ export default function App() {
                 <Route path="/preset-bots" element={<PresetBotList />} />
                 <Route path="/preset-bots/create" element={<PresetBotCreate />} />
                 <Route path="/preset-bots/edit/:id" element={<PresetBotEdit />} />
+                <Route path="/preset-conversations" element={<PresetConversationList />} />
+                <Route path="/preset-conversations/create" element={<PresetConversationCreate />} />
+                <Route path="/preset-conversations/edit/:id" element={<PresetConversationEdit />} />
+                <Route path="/preset-groups" element={<PresetGroupList />} />
+                <Route path="/preset-groups/create" element={<PresetGroupCreate />} />
+                <Route path="/preset-groups/edit/:id" element={<PresetGroupEdit />} />
                 <Route path="/feature-flags" element={<FeatureFlagsPage />} />
                 <Route path="*" element={<NavigateToResource resource="preset_bots" />} />
               </Routes>
