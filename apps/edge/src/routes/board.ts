@@ -150,5 +150,33 @@ boardRoutes.route(
   }),
 );
 
+// ── MCP server 注册(P4) ─────────────────────────────────────
+// pendingbot.mcp_servers(id 主键)。纯配置(url + auth),无代码 handler,可全 CRUD。
+// 改完 ≤60s 经 cfg:mcp-servers KV TTL 生效。**secret_ref 是 env var 的名字指针**
+// (运行时 env[secret_ref] 解析),不是密钥本身——板里编辑名字安全,密钥另用
+// `wrangler secret put` 配。transport=http(sse 未实现)/auth_kind=none|header。
+const mcpServerCreate = z.object({
+  name: z.string().min(1),
+  url: z.string().url(),
+  transport: z.enum(['http', 'sse']).default('http'),
+  auth_kind: z.enum(['none', 'header']).default('none'),
+  auth_header_name: z.string().nullable().optional(),
+  secret_ref: z.string().nullable().optional(),
+  enabled: z.boolean().default(true),
+  notes: z.string().nullable().optional(),
+});
+boardRoutes.route(
+  '/mcp-servers',
+  boardResource({
+    table: 'mcp_servers',
+    pk: 'id',
+    targetKind: 'mcp_server',
+    cols: 'id, name, url, transport, auth_kind, auth_header_name, secret_ref, enabled, notes, last_health_check_at, last_health_error, updated_at',
+    orderBy: { col: 'name', ascending: true },
+    createSchema: mcpServerCreate,
+    updateSchema: mcpServerCreate.partial(),
+  }),
+);
+
 // ── 功能开关(单例 KV blob,非表行) ──────────────────────────
 boardRoutes.route('/feature-flags', boardFeatureFlagsRoutes);
