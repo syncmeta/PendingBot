@@ -10,7 +10,8 @@
 - **P2 预设会话/群/来信**:已落地并部署(`b8a0ce93`)。**纠正本 spec 一处过时假设** —— 预设来信**不需要新建 `preset_letters` 表、也不需要改 `seed_example_letter()`**:该表早在 `20260517091351_preset_letter.sql` 就建好,且 `seed_example_letter()` 当时就已从 `preset_letters` 读 `slug='readme'` 物化进新用户 self 会话。所以 P2 **零迁移、不碰 signup**,三资源(会话/群/来信)全是给现成表补 board CRUD 面。下方表格/分期/开放项里"新建 preset_letters""改 seed_example_letter 读表""预设来信抽表"均已作废。
 - **认证模型已变更(BeyondCorp)**:门禁不再是本 spec 写的 `requireSession + requireAdmin(Supabase)`。board 同源服务在 `bot.pendingname.com/board`(Workers assets),身份唯一源是 **Cloudflare Access**:`requireCfAccess`(校验 Access JWT,fail-closed,取 email)→ `requireBoardAdmin`(email∈`BOARD_ADMIN_EMAILS`)。board 内**无 Supabase 登录/Turnstile**;审计 `actor` 改记 Access 邮箱(`admin_audit.actor_email`)。详见 `apps/edge/src/lib/cf-access.ts`。
 - **boardResource 前置债(#285)已修**:DB 错误 409 区分(PG 23505/23503→conflict)、LIST 真分页(`?limit/?offset`+`total/has_more`)。
-- **剩**:P3(tool 管理 #287)、P4(KV 配置类 #288)。
+- **P3 tool 管理**:已落地并部署(`ed17f515`)。tools 接 board 但**只读+改不建不删**(行映射代码 handler);为此 `boardResource` 加 `createSchema` 可选 + `disableDelete`。
+- **剩**:P4(KV 配置类 #288)。
 
 下方为原始设计,保留留档(注意上述已变更/作废处)。
 
