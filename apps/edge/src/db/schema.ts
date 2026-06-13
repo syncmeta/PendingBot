@@ -35,6 +35,7 @@ export type Database = {
       admin_audit: {
         Row: {
           action: string
+          actor_email: string | null
           actor_id: string | null
           after: Json | null
           before: Json | null
@@ -47,6 +48,7 @@ export type Database = {
         }
         Insert: {
           action: string
+          actor_email?: string | null
           actor_id?: string | null
           after?: Json | null
           before?: Json | null
@@ -59,6 +61,7 @@ export type Database = {
         }
         Update: {
           action?: string
+          actor_email?: string | null
           actor_id?: string | null
           after?: Json | null
           before?: Json | null

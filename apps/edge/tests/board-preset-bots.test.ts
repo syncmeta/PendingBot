@@ -9,30 +9,24 @@ import {
 } from './_helpers/fake-supabase';
 import type { AppBindings } from '../src/types';
 
-// 复刻 identity 中间件:requireSession 从 x-test-user-id 注入 userId;
-// requireAdmin 忠实跑传入的 lookup(于是真实 isBoardAdmin 对 fake users 表生效)。
-vi.mock('@pendingbot/identity', () => ({
-  requireSession: () => async (c: any, next: any) => {
-    const u = c.req.header('x-test-user-id');
-    if (!u) return c.json({ error: { code: 'unauthorized' } }, 401);
-    c.set('userId', u);
-    c.set('userJwt', 'test-jwt');
-    await next();
-  },
-  requireAdmin: (lookup: (c: any) => Promise<boolean>) => async (c: any, next: any) => {
-    if (!c.var.userId) return c.json({ error: 'unauthorized' }, 401);
-    const ok = await lookup(c);
-    if (!ok) return c.json({ error: 'forbidden' }, 403);
-    c.set('isAdmin', true);
-    await next();
-  },
-}));
-
-// Access 边缘门在测试环境放行(真实校验逻辑由 src/lib/cf-access.test.ts 覆盖;
-// 这里测的是门内的 board 业务逻辑)。
+// board 门禁现在全在 cf-access:requireCfAccess 校验 Access JWT 并取 email,
+// requireBoardAdmin 查 BOARD_ADMIN_EMAILS 名单。测试里把 x-test-user-id 映射成
+// email,admin-1 当唯一管理员(真实 JWT/JWKS + 名单逻辑由 cf-access.test.ts 覆盖)。
 vi.mock('../src/lib/cf-access', () => ({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  requireCfAccess: () => async (_c: any, next: any) => next(),
+  requireCfAccess: () => async (c: any, next: any) => {
+    const u = c.req.header('x-test-user-id');
+    if (!u) return c.json({ error: { code: 'forbidden' } }, 403);
+    c.set('boardEmail', `${u}@board.test`);
+    await next();
+  },
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  requireBoardAdmin: () => async (c: any, next: any) => {
+    if (c.var.boardEmail !== 'admin-1@board.test') {
+      return c.json({ error: { code: 'forbidden' } }, 403);
+    }
+    await next();
+  },
 }));
 
 installFakeSupabaseMock();
@@ -109,7 +103,8 @@ describe('POST /v1/board/preset-bots', () => {
     expect(audits).toHaveLength(1);
     expect(audits[0].row.action).toBe('create');
     expect(audits[0].row.target_kind).toBe('preset_bot');
-    expect(audits[0].row.actor_id).toBe('admin-1');
+    expect(audits[0].row.actor_email).toBe('admin-1@board.test');
+    expect(audits[0].row.actor_id).toBeNull();
   });
 
   it('rejects an invalid body with 400 invalid_body', async () => {

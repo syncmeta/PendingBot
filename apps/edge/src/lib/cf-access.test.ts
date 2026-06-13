@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Hono } from 'hono';
-import { requireCfAccess } from './cf-access';
+import { requireCfAccess, requireBoardAdmin } from './cf-access';
 import type { AppBindings } from '../types';
 
 function appWithGate() {
@@ -34,6 +34,76 @@ describe('requireCfAccess', () => {
       { headers: { 'Cf-Access-Jwt-Assertion': 'not-a-jwt' } },
       ENV_CONFIGURED,
     );
+    expect(res.status).toBe(403);
+  });
+});
+
+// Authorization gate. requireCfAccess (verified above) populates boardEmail;
+// here we drive boardEmail directly via a stub middleware to isolate the
+// allowlist logic from JWT verification.
+function appWithAdminGate(email?: string) {
+  const app = new Hono<AppBindings>();
+  app.use('*', async (c, next) => {
+    if (email) c.set('boardEmail', email);
+    await next();
+  });
+  app.use('*', requireBoardAdmin());
+  app.get('/x', (c) => c.json({ ok: true }));
+  return app;
+}
+
+const withAllowlist = (list?: string) =>
+  ({ BOARD_ADMIN_EMAILS: list }) as Parameters<Hono<AppBindings>['request']>[2];
+
+describe('requireBoardAdmin', () => {
+  it('admits an email on the allowlist', async () => {
+    const res = await appWithAdminGate('me@x.com').request(
+      '/x',
+      {},
+      withAllowlist('me@x.com'),
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it('is case-insensitive on the email', async () => {
+    const res = await appWithAdminGate('Me@X.com').request(
+      '/x',
+      {},
+      withAllowlist('me@x.com'),
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it('admits one of several comma-separated emails', async () => {
+    const res = await appWithAdminGate('b@x.com').request(
+      '/x',
+      {},
+      withAllowlist('a@x.com, b@x.com'),
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it('rejects an email not on the allowlist', async () => {
+    const res = await appWithAdminGate('nope@x.com').request(
+      '/x',
+      {},
+      withAllowlist('me@x.com'),
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it('fail-closed: rejects when the allowlist is empty', async () => {
+    const res = await appWithAdminGate('me@x.com').request('/x', {}, withAllowlist(''));
+    expect(res.status).toBe(403);
+  });
+
+  it('fail-closed: rejects when the allowlist is unset', async () => {
+    const res = await appWithAdminGate('me@x.com').request('/x', {}, withAllowlist(undefined));
+    expect(res.status).toBe(403);
+  });
+
+  it('rejects when no boardEmail was set (Access gate skipped)', async () => {
+    const res = await appWithAdminGate(undefined).request('/x', {}, withAllowlist('me@x.com'));
     expect(res.status).toBe(403);
   });
 });
