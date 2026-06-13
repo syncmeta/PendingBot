@@ -75,9 +75,16 @@ describe('GET /v1/board/preset-bots', () => {
       headers: { 'x-test-user-id': 'admin-1' },
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { items: Array<Record<string, unknown>> };
+    const body = (await res.json()) as {
+      items: Array<Record<string, unknown>>;
+      total: number;
+      has_more: boolean;
+    };
     expect(body.items).toHaveLength(1);
     expect(body.items[0].id).toBe('b-tpl');
+    // total reflects the scoped exact count (only template rows), not the page.
+    expect(body.total).toBe(1);
+    expect(body.has_more).toBe(false);
   });
 });
 
@@ -117,5 +124,33 @@ describe('POST /v1/board/preset-bots', () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe('invalid_body');
+  });
+
+  it('maps a unique-violation (slug 撞车) to 409 conflict, not 500', async () => {
+    const db = adminDb();
+    // 模拟 Postgres 唯一约束冲突(slug 已占用)。
+    db.errors = {
+      insert: () => ({
+        code: '23505',
+        message: 'duplicate key value violates unique constraint "bots_slug_key"',
+        details: 'Key (slug)=(novum) already exists.',
+      }),
+    };
+    const res = await appFor(db).request('/v1/board/preset-bots', {
+      method: 'POST',
+      headers: { 'x-test-user-id': 'admin-1', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        slug: 'novum',
+        display_name: 'Novum',
+        model_id: 'claude-opus-4.7',
+        output_mode: 'single',
+      }),
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: { code: string; detail?: string } };
+    expect(body.error.code).toBe('conflict');
+    expect(body.error.detail).toContain('slug');
+    // 冲突时不落审计(写没成功)。
+    expect(db.inserts.filter((i) => i.table === 'admin_audit')).toHaveLength(0);
   });
 });
