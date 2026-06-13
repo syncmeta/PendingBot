@@ -97,3 +97,25 @@ describe('preset groups', () => {
     expect(res.status).toBe(403);
   });
 });
+
+describe('preset letters', () => {
+  it('lists letters + create writes a preset_letter audit', async () => {
+    const db = makeFakeDb({
+      preset_letters: [
+        { slug: 'readme', title: '读我', summary: '欢迎', body_md: '# hi', version: 1, updated_at: 't' },
+      ],
+    });
+    const list = await appFor(db).request('/v1/board/preset-letters', { headers: ADMIN });
+    expect(list.status).toBe(200);
+    expect(((await list.json()) as { items: unknown[] }).items).toHaveLength(1);
+
+    const res = await appFor(db).request('/v1/board/preset-letters', {
+      method: 'POST',
+      headers: ADMIN_JSON,
+      body: JSON.stringify({ slug: 'tips', title: '小贴士', summary: 's', body_md: '内容' }),
+    });
+    expect(res.status).toBe(200);
+    const audits = db.inserts.filter((i) => i.table === 'admin_audit');
+    expect(audits.at(-1)?.row.target_kind).toBe('preset_letter');
+  });
+});

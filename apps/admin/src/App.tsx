@@ -13,6 +13,7 @@ import {
   PresetConversationEdit,
 } from './pages/preset-conversations';
 import { PresetGroupList, PresetGroupCreate, PresetGroupEdit } from './pages/preset-groups';
+import { PresetLetterList, PresetLetterCreate, PresetLetterEdit } from './pages/preset-letters';
 import { FeatureFlagsPage } from './pages/feature-flags';
 
 // No authProvider / login route: the board is served same-origin under /board
@@ -52,6 +53,13 @@ export default function App() {
                 meta: { label: '预设群' },
               },
               {
+                name: 'preset_letters',
+                list: '/preset-letters',
+                create: '/preset-letters/create',
+                edit: '/preset-letters/edit/:id',
+                meta: { label: '预设来信' },
+              },
+              {
                 name: 'feature_flags',
                 list: '/feature-flags',
                 meta: { label: '功能开关' },
@@ -70,6 +78,9 @@ export default function App() {
                 <Route path="/preset-groups" element={<PresetGroupList />} />
                 <Route path="/preset-groups/create" element={<PresetGroupCreate />} />
                 <Route path="/preset-groups/edit/:id" element={<PresetGroupEdit />} />
+                <Route path="/preset-letters" element={<PresetLetterList />} />
+                <Route path="/preset-letters/create" element={<PresetLetterCreate />} />
+                <Route path="/preset-letters/edit/:id" element={<PresetLetterEdit />} />
                 <Route path="/feature-flags" element={<FeatureFlagsPage />} />
                 <Route path="*" element={<NavigateToResource resource="preset_bots" />} />
               </Routes>

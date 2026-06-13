@@ -98,5 +98,29 @@ boardRoutes.route(
   }),
 );
 
+// ── 预设来信 ─────────────────────────────────────────────────
+// pendingbot.preset_letters(slug 主键)。signup 的 seed_example_letter() 早已
+// 从此表读 slug='readme' 那封来信物化进新用户 self 会话(无需改函数,这里只补
+// board 管理面)。body_md 是 markdown 长文。
+const presetLetterCreate = z.object({
+  slug: z.string().min(1),
+  title: z.string().min(1),
+  summary: z.string().min(1),
+  body_md: z.string().min(1),
+  version: z.number().int().default(1),
+});
+boardRoutes.route(
+  '/preset-letters',
+  boardResource({
+    table: 'preset_letters',
+    pk: 'slug',
+    targetKind: 'preset_letter',
+    cols: 'slug, title, summary, body_md, version, updated_at',
+    orderBy: { col: 'slug', ascending: true },
+    createSchema: presetLetterCreate,
+    updateSchema: presetLetterCreate.partial(),
+  }),
+);
+
 // ── 功能开关(单例 KV blob,非表行) ──────────────────────────
 boardRoutes.route('/feature-flags', boardFeatureFlagsRoutes);
