@@ -122,5 +122,33 @@ boardRoutes.route(
   }),
 );
 
+// ── tool 管理(P3) ───────────────────────────────────────────
+// pendingbot.tools(id 主键)。**只读+改,不建不删**:每行映射一个代码 handler
+// (key→实现),board 凭空建行会造出无 handler 的死工具。可改的是运行时配置:
+// enabled(kill-switch,≤60s 经 cfg:tools-registry KV TTL 生效)、scopes
+// (chat/envelope)、model_description(模型实际看到的描述)、人读 description/notes、
+// mcp_server_id 绑定。key/kind 是身份,不可改。
+const presetToolUpdate = z.object({
+  enabled: z.boolean().optional(),
+  scopes: z.array(z.enum(['chat', 'envelope'])).optional(),
+  model_description: z.string().nullable().optional(),
+  description: z.string().nullable().optional(),
+  notes: z.string().nullable().optional(),
+  mcp_server_id: z.string().uuid().nullable().optional(),
+});
+boardRoutes.route(
+  '/tools',
+  boardResource({
+    table: 'tools',
+    pk: 'id',
+    targetKind: 'tool',
+    cols: 'id, key, kind, enabled, scopes, model_description, description, notes, mcp_server_id, updated_at',
+    orderBy: { col: 'key', ascending: true },
+    // 不传 createSchema → 不挂 POST;disableDelete → 不挂 DELETE。只 list/get/patch。
+    updateSchema: presetToolUpdate,
+    disableDelete: true,
+  }),
+);
+
 // ── 功能开关(单例 KV blob,非表行) ──────────────────────────
 boardRoutes.route('/feature-flags', boardFeatureFlagsRoutes);

@@ -83,10 +83,13 @@ export interface BoardResourceOpts {
   // scope 能看见的形状 —— 如 preset-bot 传 { creator_id: null } 显式标记模板行,
   // 而不是依赖「列恰好无 DEFAULT」这种隐式机制。
   fixedFields?: Record<string, unknown>;
-  // create body 校验(全字段)
-  createSchema: z.ZodTypeAny;
+  // create body 校验(全字段)。省略 = 不挂 POST 路由(只读+改的资源,
+  // 如 tools:每行映射代码 handler,board 不该凭空建出无 handler 的死工具)。
+  createSchema?: z.ZodTypeAny;
   // update body 校验(通常 .partial())
   updateSchema: z.ZodTypeAny;
+  // true = 不挂 DELETE 路由(同上:tools 之类不该被 board 删)。
+  disableDelete?: boolean;
 }
 
 export function boardResource(opts: BoardResourceOpts): Hono<AppBindings> {
@@ -128,9 +131,12 @@ export function boardResource(opts: BoardResourceOpts): Hono<AppBindings> {
   });
 
   // ── CREATE ──────────────────────────────────────────────
+  // Only mounted when a createSchema is provided.
+  const createSchema = opts.createSchema;
+  if (createSchema)
   app.post('/', async (c) => {
     const body = await c.req.json().catch(() => null);
-    const parsed = opts.createSchema.safeParse(body);
+    const parsed = createSchema.safeParse(body);
     if (!parsed.success) {
       return jsonError(c, 400, 'invalid_body', { detail: parsed.error.flatten() });
     }
@@ -184,6 +190,8 @@ export function boardResource(opts: BoardResourceOpts): Hono<AppBindings> {
   });
 
   // ── DELETE ──────────────────────────────────────────────
+  // Skipped when disableDelete (e.g. tools — rows map to code handlers).
+  if (!opts.disableDelete)
   app.delete('/:id', async (c) => {
     const id = c.req.param('id');
     const svc = serviceClient(c.env);
