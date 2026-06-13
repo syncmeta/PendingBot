@@ -78,13 +78,13 @@ struct CrewRemoteImage: View {
                     .aspectRatio(contentMode: contentMode)
             } else if failed {
                 ZStack {
-                    CrewTheme.Palette.surfaceMuted
+                    Theme.Palette.surfaceMuted
                     Image(systemName: "exclamationmark.triangle")
-                        .foregroundStyle(CrewTheme.Palette.inkMuted)
+                        .foregroundStyle(Theme.Palette.inkMuted)
                 }
             } else {
                 ZStack {
-                    CrewTheme.Palette.surfaceMuted
+                    Theme.Palette.surfaceMuted
                     ProgressView().controlSize(.small)
                 }
             }

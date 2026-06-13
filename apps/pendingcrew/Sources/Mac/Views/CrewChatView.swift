@@ -1,5 +1,6 @@
-#if os(macOS)
 import SwiftUI
+import PhotosUI
+import UniformTypeIdentifiers
 
 /// 中栏 = crew 群聊会话页（spec v2 §9：群聊 = 沟通渠道 + 白板）。
 ///
@@ -14,12 +15,15 @@ struct CrewChatView: View {
     let crewTitle: String
 
     @EnvironmentObject private var appModel: AppModel
+    #if os(macOS)
     /// MacThreePaneView 注入（经 CrewCenterView）—— session 发的消息点击可
     /// 跳到右栏对应 session（chunk2 T6 中栏跳转）。
     @EnvironmentObject private var sessionRunner: CrewSessionRunner
+    #endif
 
     @State private var entries: [CrewWhiteboardEntry] = []
     @State private var draft = ""
+    /// Source-of-truth attachment list (file importer writes here on both platforms).
     @State private var pendingAttachments: [PendingComposerAttachment] = []
     @State private var loadError: String?
     @State private var sending = false
@@ -29,7 +33,47 @@ struct CrewChatView: View {
     @State private var members: [CrewMember] = []
     @State private var captainBotId: String?
 
+    // MARK: - ComposerView bindings
+    /// Forwarded to ComposerView; ChatActionSheet flips this to open
+    /// the system document picker (.fileImporter works on iOS 14+ too).
+    @State private var showFileImporter = false
+    @State private var photoItems: [PhotosPickerItem] = []
+    @State private var cameraImage: PlatformImage? = nil
+    @State private var showPhotoPicker = false
+    @State private var showCamera = false
+
     private let pollInterval: UInt64 = 3_000_000_000 // 3s
+
+    /// Bridge: convert PendingComposerAttachment → PendingAttachment for ComposerView's
+    /// pending tray display. Data already in memory (eagerly read at pick time), so
+    /// uploadState = .uploaded (no async pipeline in the tray; upload happens on send).
+    private var pendingForDisplay: Binding<[PendingAttachment]> {
+        Binding(
+            get: {
+                pendingAttachments.map { a in
+                    PendingAttachment(
+                        id: a.id.uuidString,
+                        mime: a.mime,
+                        size: a.byteSize,
+                        filename: a.isImage ? nil : a.filename,
+                        uploadState: .uploaded,
+                        localPreviewData: a.isImage ? a.data : nil
+                    )
+                }
+            },
+            set: { newValue in
+                // Removals: ComposerView's tray "x" button removes by id.
+                let keptIds = Set(newValue.map { $0.id })
+                pendingAttachments.removeAll { !keptIds.contains($0.id.uuidString) }
+            }
+        )
+    }
+
+    private var canSend: Bool {
+        guard !sending else { return false }
+        return !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+               || !pendingAttachments.isEmpty
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -38,24 +82,64 @@ struct CrewChatView: View {
                 Divider()
             }
             timeline
-            Divider()
-            CrewComposer(
-                draft: $draft,
-                attachments: $pendingAttachments,
-                sending: sending,
-                errorText: loadError
-            ) {
-                Task { await send() }
+            if let errorText = loadError {
+                Text(errorText)
+                    .font(Theme.Fonts.caption)
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 4)
             }
+            Divider()
+            ComposerView(
+                input: $draft,
+                pending: pendingForDisplay,
+                photoItems: $photoItems,
+                cameraImage: $cameraImage,
+                showFileImporter: $showFileImporter,
+                showPhotoPicker: $showPhotoPicker,
+                showCamera: $showCamera,
+                canSend: canSend,
+                onSend: { Task { await send() } },
+                isStreaming: false,
+                showsAttachments: true,
+                placeholder: "发消息…（不 @ = 广播给所有 session）"
+            )
         }
-        .background(CrewTheme.Palette.canvas)
+        .background(Theme.Palette.canvas)
         .task(id: crewId) { await pollLoop() }
+        // File importer — .fileImporter is available on iOS 14+ and macOS 11+.
+        // On iOS the system presents a document picker; on macOS a Finder sheet.
+        .fileImporter(
+            isPresented: $showFileImporter,
+            allowedContentTypes: [.image, .pdf, .plainText, .data],
+            allowsMultipleSelection: true,
+            onCompletion: handleImport
+        )
+        // Photo picker — iOS only; wires the showPhotoPicker binding from ComposerView.
+        #if os(iOS)
+        .photosPicker(
+            isPresented: $showPhotoPicker,
+            selection: $photoItems,
+            matching: .images
+        )
+        .onChange(of: photoItems) { _, items in
+            Task { await handlePhotoItems(items) }
+        }
+        #endif
     }
 
     // 本机用户哨兵 id —— 接合 v2 后 macOS 白板恒为本地，本机人类消息都标
     // `LocalWhiteboardStore.localUserId`，CrewSenderResolver 据此把自己的
     // 消息识别成"自己"(右对齐、无头像)。
-    private var localUserId: String? { LocalWhiteboardStore.localUserId }
+    // iOS: 暂无本地后端 — 使用 AppModel.currentUserId。
+    private var localUserId: String? {
+        #if os(macOS)
+        return LocalWhiteboardStore.localUserId
+        #else
+        return appModel.currentUserId
+        #endif
+    }
 
     private var timeline: some View {
         ScrollViewReader { proxy in
@@ -90,12 +174,27 @@ struct CrewChatView: View {
                 reply: Binding(get: { replyDrafts[reqId] ?? "" }, set: { replyDrafts[reqId] = $0 })
             ) { Task { await answer(reqId) } }
         } else {
-            let sender = CrewSenderResolver.resolve(entry, members: members,
-                                                    captainBotId: captainBotId, localUserId: localUserId)
+            let (msg, sender) = CrewChatAdapter.adapt(
+                entry,
+                members: members,
+                captainBotId: captainBotId,
+                localUserId: localUserId
+            )
+            let bubble = BubbleView(
+                message: msg,
+                botName: sender?.displayName ?? "机组",
+                conversationID: crewId,
+                currentUserId: localUserId,
+                groupSender: sender,
+                serverURL: appModel.imageAuth?.baseURL,
+                onRetry: nil,
+                menu: { EmptyView() }
+            )
+            #if os(macOS)
             // session 发的消息可点 → 右栏切到对应 session（chunk2 T6 中栏跳转）。
             // 找不到对应 run（已移除/别的 crew）则点击无事发生。
             if let senderSessionId = entry.senderSessionId {
-                CrewBubbleRow(entry: entry, sender: sender)
+                bubble
                     .contentShape(Rectangle())
                     .onTapGesture {
                         if let run = sessionRunner.runs.first(where: { $0.sessionId == senderSessionId }) {
@@ -103,8 +202,11 @@ struct CrewChatView: View {
                         }
                     }
             } else {
-                CrewBubbleRow(entry: entry, sender: sender)
+                bubble
             }
+            #else
+            bubble
+            #endif
         }
     }
 
@@ -113,7 +215,7 @@ struct CrewChatView: View {
             Image(systemName: "bubble.left.and.bubble.right")
                 .font(.system(size: 34)).foregroundStyle(.tertiary)
             Text("群聊白板 —— 在这里给 session 留指令、看关键节点。\n@session 发给某个 session，不 @ 则广播给全部。")
-                .font(CrewTheme.Fonts.callout).foregroundStyle(CrewTheme.Palette.inkMuted)
+                .font(Theme.Fonts.callout).foregroundStyle(Theme.Palette.inkMuted)
                 .multilineTextAlignment(.center).frame(maxWidth: 420)
         }
         .frame(maxWidth: .infinity).padding(.vertical, 40)
@@ -192,5 +294,56 @@ struct CrewChatView: View {
             loadError = error.localizedDescription
         }
     }
+
+    // MARK: - File import (cross-platform via .fileImporter)
+
+    /// Called by the `.fileImporter` modifier bound to `showFileImporter`.
+    /// Works on both macOS (Finder sheet) and iOS (document picker). Reads bytes
+    /// eagerly inside the security-scoped access window.
+    private func handleImport(_ result: Result<[URL], Error>) {
+        guard case .success(let urls) = result else { return }
+        for url in urls {
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            guard let data = try? Data(contentsOf: url) else { continue }
+            let mime = (try? url.resourceValues(forKeys: [.contentTypeKey]).contentType?.preferredMIMEType)
+                ?? UTType(filenameExtension: url.pathExtension)?.preferredMIMEType
+                ?? "application/octet-stream"
+            pendingAttachments.append(PendingComposerAttachment(
+                filename: url.lastPathComponent,
+                mime: mime,
+                data: data
+            ))
+        }
+    }
+
+    // MARK: - Photo picker (iOS)
+
+    #if os(iOS)
+    /// Decode PhotosPickerItems into PendingComposerAttachments and append.
+    @MainActor
+    private func handlePhotoItems(_ items: [PhotosPickerItem]) async {
+        for item in items {
+            guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
+            // Best-effort MIME detection from the supported content types.
+            let mime: String
+            if let types = item.supportedContentTypes.first,
+               let mimeType = types.preferredMIMEType {
+                mime = mimeType
+            } else {
+                mime = "image/jpeg"
+            }
+            // Generate a filename from a timestamp so the tray shows something readable.
+            let ext = mime.components(separatedBy: "/").last ?? "jpg"
+            let filename = "photo_\(Int(Date().timeIntervalSince1970)).\(ext)"
+            pendingAttachments.append(PendingComposerAttachment(
+                filename: filename,
+                mime: mime,
+                data: data
+            ))
+        }
+        // Clear selection so the same photo can be re-picked if needed.
+        photoItems = []
+    }
+    #endif
 }
-#endif

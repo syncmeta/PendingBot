@@ -1,4 +1,3 @@
-#if os(macOS)
 import SwiftUI
 
 /// 居中的相对时间 pill。仅当与上一条间隔 ≥ 5 分钟时插入（由 CrewChatView 决定）。
@@ -7,8 +6,8 @@ struct CrewTimeSeparator: View {
 
     var body: some View {
         Text(CrewTimeSeparator.label(date))
-            .font(CrewTheme.Fonts.caption2)
-            .foregroundStyle(CrewTheme.Palette.inkMuted)
+            .font(Theme.Fonts.caption2)
+            .foregroundStyle(Theme.Palette.inkMuted)
             .padding(.vertical, 6)
             .frame(maxWidth: .infinity)
     }
@@ -41,4 +40,3 @@ struct CrewTimeSeparator: View {
         return md.string(from: d)
     }
 }
-#endif

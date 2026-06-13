@@ -1,4 +1,3 @@
-#if os(macOS)
 import SwiftUI
 
 /// ask_human 交互卡（payload.kind == "interaction"）。操作者就地答。
@@ -13,11 +12,11 @@ struct CrewInteractionCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Agent 在问你", systemImage: "person.fill.questionmark")
-                .font(CrewTheme.Fonts.caption.weight(.semibold))
-                .foregroundStyle(CrewTheme.Palette.amber)
+                .font(Theme.Fonts.caption.weight(.semibold))
+                .foregroundStyle(Theme.Palette.amber)
             Text(entry.payload?.question ?? entry.displayText)
-                .font(CrewTheme.Fonts.callout)
-                .foregroundStyle(CrewTheme.Palette.ink)
+                .font(Theme.Fonts.callout)
+                .foregroundStyle(Theme.Palette.ink)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if pending, reqId != nil {
@@ -28,21 +27,20 @@ struct CrewInteractionCard: View {
                         .onSubmit(onAnswer)
                     Button("回答", action: onAnswer)
                         .buttonStyle(.borderedProminent)
-                        .tint(CrewTheme.Palette.accent)
+                        .tint(Theme.Palette.accent)
                         .disabled(reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             } else if !pending {
-                Text("已回答").font(CrewTheme.Fonts.caption).foregroundStyle(CrewTheme.Palette.inkMuted)
+                Text("已回答").font(Theme.Fonts.caption).foregroundStyle(Theme.Palette.inkMuted)
             }
         }
-        .padding(12)
+        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: CrewTheme.Metrics.cardRadius, style: .continuous)
-            .fill(CrewTheme.Palette.amberBg.opacity(0.5)))
-        .overlay(RoundedRectangle(cornerRadius: CrewTheme.Metrics.cardRadius, style: .continuous)
-            .strokeBorder(CrewTheme.Palette.amber.opacity(0.30), lineWidth: 0.5))
-        .padding(.horizontal, CrewTheme.Metrics.gutter)
+        .background(RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
+            .fill(Theme.Palette.amberBg.opacity(0.5)))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
+            .strokeBorder(Theme.Palette.amber.opacity(0.30), lineWidth: 0.6))
+        .padding(.horizontal, 12)
         .padding(.vertical, 4)
     }
 }
-#endif

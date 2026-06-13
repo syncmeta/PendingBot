@@ -12,6 +12,25 @@
 
 ---
 
+### 🟡 PendingCrew vendored 聊天视图重拷指引 + 接缝清单（drift 风险）
+- **发现**: 2026-06-13 · `feat/crew-chat-align`（群聊对齐 PendingBot）
+- **背景**: PendingCrew 群聊为对齐 PendingBot 且两 app 保持独立，采用 **vendor 一份拷贝**（不共享 package）。`apps/pendingcrew/Sources/Chat/Vendored/` 下的文件是 PendingBot `apps/pendingbot/Sources/` 对应文件的**逐字拷贝**（顶部有 `// VENDORED from … @ <hash>` 注释）。PendingBot 改聊天 UI 后 PendingCrew **不会自动跟上** —— 这是 vendor 模式的固有代价（换来视觉一次性对齐 + iPad 几乎免费）。
+- **再对齐怎么做**: 对照 PendingBot 源**重拷** `Vendored/` 那批文件（Theme/BubbleView/ComposerView/MarkdownText 等），然后复核下面 5 类 PendingCrew 接缝是否仍成立。接缝全部打了 `// PENDINGCREW SHIM:` 注释，`git grep "PENDINGCREW SHIM"` 可一次性列出。
+- **接缝清单（重拷时必须重新套用）**:
+  1. `BubbleView.swift`：`FileAttachmentChip`/`saveToAlbum` 的 `APIClient().download` → `CrewAttachmentDownload.data(path:auth:)`（+ 注入 `@EnvironmentObject appModel`）；头像槽 `BotAvatar/UserAvatar` → `CrewAvatarBadges(sender:size:)`。
+  2. `GroupBubbleSender` 被搬出 BubbleView 到 `Adapter/GroupBubbleSender.swift`，并加了 3 个 crew 字段 `isCaptain/sessionStatus/isSession`（默认值，不破坏 vendored 用法）。
+  3. `MarkdownText.swift`：`PendingBot.Theme` → `PendingCrew.Theme` 模块限定名。
+  4. `ComposerView.swift`：`HostedConfig.environment.workerURL` → 占位 URL（ServerImage shim 忽略 serverURL）；加了 `placeholder` 参数。
+  5. 三个 shim 文件（`Shims/ServerImage.swift`、`UserAvatar.swift`、`AttachmentDownload.swift`）+ 本地 `Adapter/CrewChatMessage.swift`（`typealias ChatMessage`）是 PendingCrew 自己维护的，不在重拷范围；但若 PendingBot 改了 `BubbleView` 读取的 `message`/`Attachment` 字段或 `ServerImage`/`UserAvatar` 的 init 签名，要同步调这几个 shim/模型。
+- **test bundle 陷阱**: `PendingCrewTests` 只能纳入 `Chat/Adapter` 下的**纯 Foundation 文件**（`CrewChatAdapter/CrewChatMessage/GroupBubbleSender`），**不能整目录**（`CrewAvatarBadges`/`ThemeCrewExtras` 依赖 Vendored 的 Theme/BotAvatar，会让 bundle 编不过）。往 `Chat/Adapter` 加新 UI 文件时注意别让 test bundle 拖进去。
+- **状态**: 常驻参考（不是待办）。每次"再对齐 PendingBot"时按本条操作。
+
+### 🟢 PendingCrew iPad 群聊未做真账号端到端验证
+- **发现**: 2026-06-13 · `feat/crew-chat-align`
+- **现状**: iPad 外壳（登录→crew 列表→群聊）代码全落，macOS + iOS Simulator 双 build 绿、`PendingCrewTests` 109 绿。但**真账号端到端未验**：模拟器无登录态（device-grant 凭据），进不到 crew 聊天 —— 与 #290 三端真机验证同款约束。
+- **待验**: iPad 真机/真账号扫码登录 → 见 crew 列表 → 进群聊 → 发消息 → 看 bot 回；顺带 macOS/iPad GUI 深/浅色群聊视觉确认（气泡/markdown/composer/头像徽标/卡片对齐 PendingBot）。
+- **状态**: 待办（随 #290 真机批次或单独一次真账号 QA）。
+
 ### 🟢 Supabase legacy anon/service_role key 仍在项目里启用 — 全端已切新 key 后应停用
 - **发现**: 2026-06-10 · `chore/supabase-new-api-keys`(API key 迁新体系收尾)
 - **现状**: edge/admin/iOS/Mac 代码已全部切到 `sb_publishable_…`/`sb_secret_…`(worker 已部署并线上验证),但 Supabase 项目里 legacy `anon`/`service_role` JWT key **仍处于启用状态**(Dashboard → API Keys → Legacy tab)。两套并存是迁移期的预期形态,不是事故。

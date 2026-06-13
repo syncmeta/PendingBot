@@ -1,7 +1,6 @@
-#if os(macOS)
 import Foundation
 
-/// 一条消息的作者解析结果，供 CrewBubbleRow / CrewAvatar 渲染。
+/// 一条消息的作者解析结果，供 CrewChatAdapter → BubbleView / CrewAvatarBadges 渲染。
 struct CrewSender: Equatable {
     enum Kind: Equatable { case bot, session, human }
     let kind: Kind
@@ -66,4 +65,3 @@ enum CrewSenderResolver {
         }
     }
 }
-#endif
