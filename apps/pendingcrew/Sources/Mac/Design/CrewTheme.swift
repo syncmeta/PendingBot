@@ -39,13 +39,7 @@ enum CrewTheme {
     }
 }
 
-/// 十六进制 → Color（PendingCrew 本地，避免依赖 PendingBot 的 ColorHex.swift）。
-extension Color {
-    init(hex: UInt32) {
-        let r = Double((hex >> 16) & 0xFF) / 255
-        let g = Double((hex >> 8) & 0xFF) / 255
-        let b = Double(hex & 0xFF) / 255
-        self.init(.sRGB, red: r, green: g, blue: b, opacity: 1)
-    }
-}
+// Color(hex:) is provided by the vendored Chat/Vendored/ColorHex.swift
+// (cross-platform, superset of the old local definition). Local copy removed
+// to avoid duplicate-overload ambiguity after vendoring.
 #endif
