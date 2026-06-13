@@ -31,7 +31,7 @@ struct SessionApprovalCardsView: View {
                 }
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.yellow.opacity(0.07))
+                .background(Theme.Palette.amberBg.opacity(0.12))
             }
         }
         .onAppear(perform: refresh)
@@ -41,21 +41,28 @@ struct SessionApprovalCardsView: View {
     @ViewBuilder
     private func card(_ item: ApprovalItem) -> some View {
         let isPermission = item.kind == "permission"
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             Label(isPermission ? "待审批" : "待决策",
                   systemImage: isPermission ? "lock.shield" : "questionmark.bubble")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(Theme.Fonts.caption.weight(.semibold))
+                .foregroundStyle(Theme.Palette.amber)
             Text(item.summary)
-                .font(.callout)
+                .font(Theme.Fonts.callout)
+                .foregroundStyle(Theme.Palette.ink)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
             if isPermission {
-                HStack(spacing: 8) {
-                    Spacer()
-                    Button("拒绝") { decide(item, "deny") }
-                        .buttonStyle(.bordered)
-                    Button("允许") { decide(item, "allow") }
-                        .buttonStyle(.borderedProminent)
+                HStack(spacing: 10) {
+                    Button(role: .destructive) { decide(item, "deny") } label: {
+                        Label("拒绝", systemImage: "xmark")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    Button { decide(item, "allow") } label: {
+                        Label("允许", systemImage: "checkmark")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
             } else {
                 HStack(spacing: 6) {
@@ -69,9 +76,16 @@ struct SessionApprovalCardsView: View {
                 }
             }
         }
-        .padding(10)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color(NSColor.controlBackgroundColor)))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.yellow.opacity(0.5), lineWidth: 1))
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
+                .fill(Theme.Palette.surfaceMuted)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
+                .strokeBorder(Theme.Palette.amber.opacity(0.30), lineWidth: 0.6)
+        )
+        .padding(.horizontal, 12)
     }
 
     // MARK: - state

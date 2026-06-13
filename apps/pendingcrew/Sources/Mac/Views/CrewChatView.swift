@@ -1,5 +1,7 @@
 #if os(macOS)
 import SwiftUI
+import PhotosUI
+import UniformTypeIdentifiers
 
 /// 中栏 = crew 群聊会话页（spec v2 §9：群聊 = 沟通渠道 + 白板）。
 ///
@@ -20,6 +22,7 @@ struct CrewChatView: View {
 
     @State private var entries: [CrewWhiteboardEntry] = []
     @State private var draft = ""
+    /// Source-of-truth attachment list (macOS file importer writes here).
     @State private var pendingAttachments: [PendingComposerAttachment] = []
     @State private var loadError: String?
     @State private var sending = false
@@ -29,7 +32,47 @@ struct CrewChatView: View {
     @State private var members: [CrewMember] = []
     @State private var captainBotId: String?
 
+    // MARK: - ComposerView dummy bindings (macOS — no photo/camera pickers)
+    /// Forwarded to ComposerView; ChatActionSheet on macOS flips this to open
+    /// the system document picker below. Photo/camera pickers are iOS-only.
+    @State private var showFileImporter = false
+    @State private var photoItems: [PhotosPickerItem] = []          // never mutated on mac
+    @State private var cameraImage: PlatformImage? = nil            // never mutated on mac
+    @State private var showPhotoPicker = false                       // never mutated on mac
+    @State private var showCamera = false                            // never mutated on mac
+
     private let pollInterval: UInt64 = 3_000_000_000 // 3s
+
+    /// Bridge: convert PendingComposerAttachment → PendingAttachment for ComposerView's
+    /// pending tray display. Data already in memory (eagerly read at pick time), so
+    /// uploadState = .uploaded (no async pipeline in the tray; upload happens on send).
+    private var pendingForDisplay: Binding<[PendingAttachment]> {
+        Binding(
+            get: {
+                pendingAttachments.map { a in
+                    PendingAttachment(
+                        id: a.id.uuidString,
+                        mime: a.mime,
+                        size: a.byteSize,
+                        filename: a.isImage ? nil : a.filename,
+                        uploadState: .uploaded,
+                        localPreviewData: a.isImage ? a.data : nil
+                    )
+                }
+            },
+            set: { newValue in
+                // Removals: ComposerView's tray "x" button removes by id.
+                let keptIds = Set(newValue.map { $0.id })
+                pendingAttachments.removeAll { !keptIds.contains($0.id.uuidString) }
+            }
+        )
+    }
+
+    private var canSend: Bool {
+        guard !sending else { return false }
+        return !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+               || !pendingAttachments.isEmpty
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -38,18 +81,38 @@ struct CrewChatView: View {
                 Divider()
             }
             timeline
-            Divider()
-            CrewComposer(
-                draft: $draft,
-                attachments: $pendingAttachments,
-                sending: sending,
-                errorText: loadError
-            ) {
-                Task { await send() }
+            if let errorText = loadError {
+                Text(errorText)
+                    .font(Theme.Fonts.caption)
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 4)
             }
+            Divider()
+            ComposerView(
+                input: $draft,
+                pending: pendingForDisplay,
+                photoItems: $photoItems,
+                cameraImage: $cameraImage,
+                showFileImporter: $showFileImporter,
+                showPhotoPicker: $showPhotoPicker,
+                showCamera: $showCamera,
+                canSend: canSend,
+                onSend: { Task { await send() } },
+                isStreaming: false,
+                showsAttachments: true,
+                placeholder: "发消息…（不 @ = 广播给所有 session）"
+            )
         }
         .background(Theme.Palette.canvas)
         .task(id: crewId) { await pollLoop() }
+        .fileImporter(
+            isPresented: $showFileImporter,
+            allowedContentTypes: [.image, .pdf, .plainText, .data],
+            allowsMultipleSelection: true,
+            onCompletion: handleImport
+        )
     }
 
     // 本机用户哨兵 id —— 接合 v2 后 macOS 白板恒为本地，本机人类消息都标
@@ -204,6 +267,30 @@ struct CrewChatView: View {
             await refresh()
         } catch {
             loadError = error.localizedDescription
+        }
+    }
+
+    // MARK: - File import (macOS)
+
+    /// Called by the `.fileImporter` modifier bound to `showFileImporter`.
+    /// `showFileImporter` is flipped by ChatActionSheet's "文件" tile inside
+    /// ComposerView, so this is the macOS attachment pick path. Reads bytes
+    /// eagerly inside the security-scoped access window (same pattern as the
+    /// old CrewComposer.handleImport).
+    private func handleImport(_ result: Result<[URL], Error>) {
+        guard case .success(let urls) = result else { return }
+        for url in urls {
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            guard let data = try? Data(contentsOf: url) else { continue }
+            let mime = (try? url.resourceValues(forKeys: [.contentTypeKey]).contentType?.preferredMIMEType)
+                ?? UTType(filenameExtension: url.pathExtension)?.preferredMIMEType
+                ?? "application/octet-stream"
+            pendingAttachments.append(PendingComposerAttachment(
+                filename: url.lastPathComponent,
+                mime: mime,
+                data: data
+            ))
         }
     }
 }

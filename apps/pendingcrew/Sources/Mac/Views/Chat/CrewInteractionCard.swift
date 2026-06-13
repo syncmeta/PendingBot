@@ -35,13 +35,13 @@ struct CrewInteractionCard: View {
                 Text("已回答").font(Theme.Fonts.caption).foregroundStyle(Theme.Palette.inkMuted)
             }
         }
-        .padding(12)
+        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
             .fill(Theme.Palette.amberBg.opacity(0.5)))
         .overlay(RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
-            .strokeBorder(Theme.Palette.amber.opacity(0.30), lineWidth: 0.5))
-        .padding(.horizontal, Theme.Metrics.gutter)
+            .strokeBorder(Theme.Palette.amber.opacity(0.30), lineWidth: 0.6))
+        .padding(.horizontal, 12)
         .padding(.vertical, 4)
     }
 }

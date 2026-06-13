@@ -51,6 +51,9 @@ struct ComposerView: View {
     /// attachment-enabled hosts); crew chat passes a closure that opens the
     /// task-dispatch sheet. Default nil → no button (all other hosts).
     var onTask: (() -> Void)? = nil
+    // PENDINGCREW SHIM: custom placeholder so PendingCrew's crew chat can
+    // surface "发消息…（不 @ = 广播给所有 session）" without forking the view.
+    var placeholder: String = "发消息…"
 
     @State private var showActions = false
     // Plain Bool, not @FocusState: the actual first responder is the
@@ -114,7 +117,7 @@ struct ComposerView: View {
                 HStack(alignment: .bottom, spacing: 6) {
                     ComposerTextField(
                         text: $input,
-                        placeholder: "发消息…",
+                        placeholder: placeholder, // PENDINGCREW SHIM: forwarded from init
                         isFocused: $isFocused,
                         onHardwareReturn: {
                             // Hardware keyboard's plain Return — Mac Catalyst
