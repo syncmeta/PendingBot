@@ -149,30 +149,11 @@ struct RootView: View {
     @ViewBuilder
     private var authenticatedRoot: some View {
         #if os(iOS)
-        IPadPlaceholderView()
+        IPadShell()
         #else
         MacThreePaneView()
         #endif
     }
 }
-
-#if os(iOS)
-struct IPadPlaceholderView: View {
-    var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "rectangle.connected.to.line.below")
-                .font(.system(size: 56))
-                .foregroundStyle(.tint)
-            Text("PendingCrew iPad")
-                .font(.largeTitle)
-            Text("等待 peer / Fly machine 连接\n(scaffold — Phase 4.5 / v1.1 上线)")
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-        }
-        .padding()
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
-#endif
 
 // MacThreePaneView 实现挪到 Mac/Views/MacRootView.swift。
