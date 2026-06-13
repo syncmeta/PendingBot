@@ -9,6 +9,9 @@ struct PendingCrewApp: App {
     /// Captain 模板池(BYOK 模式的"本机 captain 池",spec v2 §5.2)。
     /// 登录态下也注入但 UI 不消费 —— 登录态走真 bot 库(后续 task)。
     @StateObject private var captainTemplates = CaptainTemplateStore.shared
+    /// App-wide appearance override (跟随系统/浅/深)，设置里改。
+    /// `.system` → nil → 跟随 OS。对齐 PendingBot #299。
+    @AppStorage(AppearanceMode.storageKey) private var appearanceRaw = AppearanceMode.default.rawValue
 
     init() {
         let appModel = AppModel()
@@ -22,11 +25,22 @@ struct PendingCrewApp: App {
                 .environmentObject(model)
                 .environmentObject(crewStore)
                 .environmentObject(captainTemplates)
+                // 外观跟随设置(跟随系统/浅/深)。`.system` → nil → 跟随 OS。
+                // 同时覆盖 macOS + iOS/iPadOS。对齐 PendingBot #299。
+                .preferredColorScheme((AppearanceMode(rawValue: appearanceRaw) ?? .default).colorScheme)
                 #if os(macOS)
                 .frame(minWidth: 1040, minHeight: 680)
                 .modifier(FirstLaunchDisclosureGate())
                 #endif
         }
+        #if os(macOS)
+        // macOS 系统设置场景：⌘, 打开。独立窗口，单独绑同一个外观 key，
+        // 这样在设置窗口改外观时它本身也即时重绘。对齐 PendingBot #299。
+        Settings {
+            CrewSettingsView()
+                .preferredColorScheme((AppearanceMode(rawValue: appearanceRaw) ?? .default).colorScheme)
+        }
+        #endif
     }
 }
 
