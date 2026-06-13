@@ -142,6 +142,32 @@ describe('tools (P3 · edit-only)', () => {
   });
 });
 
+describe('mcp servers (P4)', () => {
+  it('create writes an mcp_server audit; list returns it', async () => {
+    const db = makeFakeDb({ mcp_servers: [] });
+    const res = await appFor(db).request('/v1/board/mcp-servers', {
+      method: 'POST',
+      headers: ADMIN_JSON,
+      body: JSON.stringify({ name: 'ctx7', url: 'https://mcp.example/ctx7', transport: 'http', auth_kind: 'none' }),
+    });
+    expect(res.status).toBe(200);
+    const inserted = db.inserts.filter((i) => i.table === 'mcp_servers');
+    expect(inserted).toHaveLength(1);
+    const audits = db.inserts.filter((i) => i.table === 'admin_audit');
+    expect(audits.at(-1)?.row.target_kind).toBe('mcp_server');
+  });
+
+  it('rejects a non-url url with 400', async () => {
+    const db = makeFakeDb({ mcp_servers: [] });
+    const res = await appFor(db).request('/v1/board/mcp-servers', {
+      method: 'POST',
+      headers: ADMIN_JSON,
+      body: JSON.stringify({ name: 'bad', url: 'not-a-url', transport: 'http', auth_kind: 'none' }),
+    });
+    expect(res.status).toBe(400);
+  });
+});
+
 describe('preset letters', () => {
   it('lists letters + create writes a preset_letter audit', async () => {
     const db = makeFakeDb({

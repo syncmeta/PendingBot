@@ -70,6 +70,13 @@ export const RESOURCE_ROUTES: Record<string, ResourceRoute> = {
     listKey: 'items',
     note: 'EXISTING: /v1/board/tools list/get/patch (P3, no create/delete).',
   },
+  // MCP server 注册 —— mcp_servers(id 主键)。EXISTS (P4),全 CRUD(纯配置)。
+  mcp_servers: {
+    basePath: 'board/mcp-servers',
+    exists: true,
+    listKey: 'items',
+    note: 'EXISTING: /v1/board/mcp-servers CRUD (P4).',
+  },
 };
 
 export function routeFor(resource: string): ResourceRoute {
