@@ -1,15 +1,17 @@
 #if os(macOS)
 import SwiftUI
 
-/// Mac 三栏主视图。spec v2 §12.1。
+/// Mac 主视图：两栏 + 按需 inspector。
 ///
 /// - 左栏 CrewSidebarView ── crew 列表 + 新建 / 刷新
-/// - 中栏 CrewCenterView   ── 选中 crew 的 detail（spec v2 留作群聊位置）
-/// - 右栏 CrewSessionWindowView ── 当前 session 的 stdout/stderr
+/// - 主栏 CrewCenterView   ── 选中 crew 的群聊会话页（白板 + 沟通渠道）
+/// - inspector CrewSessionWindowView ── session 终端（切换条 + 终端 + composer +
+///   审批卡片），**不再常驻**：点群聊里的 session 头像 / 「+」/ toolbar 开关才弹出。
 ///
 /// Sidebar / Center / SessionWindow 都用 @EnvironmentObject 拿 CrewStore +
-/// AppModel；CrewSessionRunner 是 view-local（一个窗口一个 active session
-/// MVP 阶段 OK；多 session tab 留 v1.1）。
+/// AppModel；CrewSessionRunner 是 view-local（一个窗口一份，多 run 并存由它自己
+/// 管，见 chunk2 T1）。inspector 的呈现态 `inspectorPresented` 提升到这里，经
+/// binding 下传给中栏（roster 头像点击 / toolbar 开关从那里翻它）。
 struct MacThreePaneView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var crewStore: CrewStore
@@ -17,19 +19,22 @@ struct MacThreePaneView: View {
     /// edge 信箱同步代理（接合 v2 block 3）—— window 级常驻，登录态下对已
     /// 接入 PendingBot 的 crew 跑 5s 拉/推循环。
     @StateObject private var relayAgent = CrewRelayAgent()
+    /// session inspector 呈现态。中栏 roster 头像点击 / 「+」/ toolbar 开关翻它。
+    @State private var inspectorPresented = false
 
     var body: some View {
         NavigationSplitView {
             CrewSidebarView()
                 .navigationSplitViewColumnWidth(min: 240, ideal: 280)
-        } content: {
-            CrewCenterView()
-                .environmentObject(sessionRunner)
-                .navigationSplitViewColumnWidth(min: 420, ideal: 600)
         } detail: {
+            CrewCenterView(inspectorPresented: $inspectorPresented)
+                .environmentObject(sessionRunner)
+                .navigationSplitViewColumnWidth(min: 480, ideal: 760)
+        }
+        .inspector(isPresented: $inspectorPresented) {
             CrewSessionWindowView()
                 .environmentObject(sessionRunner)
-                .navigationSplitViewColumnWidth(min: 380, ideal: 520)
+                .inspectorColumnWidth(min: 380, ideal: 520, max: 900)
         }
         .task {
             // 首次进入时把列表 + subjects 都拉一遍 —— subjects 用于创建
@@ -38,7 +43,7 @@ struct MacThreePaneView: View {
             await crewStore.refreshSubjects()
             // relay 同步代理常开（幂等启动）；未登录时 tick 是 no-op。
             // sessionRunner 一并注入 —— relay 拉到 task_request 时在本机自动
-            // 起 session（#242 遥控 v1），与右栏手动起的 run 同一个切换条。
+            // 起 session（#242 遥控 v1），与 inspector 手动起的 run 同一个切换条。
             relayAgent.start(appModel: model, sessionRunner: sessionRunner)
         }
     }

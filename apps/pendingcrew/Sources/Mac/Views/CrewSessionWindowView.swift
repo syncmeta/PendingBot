@@ -21,12 +21,10 @@ struct CrewSessionWindowView: View {
     /// auto-claim loop (K: captain-created queued sessions) doesn't double-run
     /// them. Includes both manual starts and auto-claimed ones.
     @State private var handledSessionIds: Set<String> = []
-    /// chunk2 T5（captain 唤醒=app 注入）：已通知过 captain 的 decision id ——
-    /// 防止每个 tick 重复注入同一条待决策。
-    @State private var notifiedDecisionIds: Set<String> = []
-    /// 跨进程轮询（helper 写 LocalApprovalStore 文件、本进程读）—— 2s 检查
-    /// 新待决策并注入 captain PTY。与 SessionApprovalCardsView 的 1.5s 同套路。
-    private let captainTick = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
+    /// 未读角标刷新 ticker（chunk2 T6）—— 仅驱动 inspector 里切换条的角标重算
+    /// （store 数据在文件里，无 ObservableObject 推送）。captain 唤醒不在这——它
+    /// 必须不依赖 inspector 是否打开，已搬到常驻的 CrewCenterView。
+    private let badgeTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
     /// 未读角标的轻量刷新计数（chunk2 T6）—— 每个 tick 自增，逼 badgeCount 重算。
     @State private var badgeTick = 0
 
@@ -42,7 +40,11 @@ struct CrewSessionWindowView: View {
                 sessionBar
                 Divider()
             }
-            if let run = sessionRunner.current {
+            if sessionRunner.isComposingNew {
+                // 「新建 session」态：显零配置启动面（composer 在下方），下一条
+                // 消息开新 session，不动任何在跑的 run。
+                idleState
+            } else if let run = sessionRunner.current {
                 // `.id(run.runID)` 强制换 run 时整个终端视图重建 —— 否则 SwiftUI
                 // 复用同一个 NSViewRepresentable，切换条点了终端不换。
                 SessionRunContentView(run: run)
@@ -56,16 +58,15 @@ struct CrewSessionWindowView: View {
             Divider()
             composer
         }
-        .navigationTitle("Session")
+        // 无 navigationTitle —— 这是 inspector 内容,标题会漏到主窗标题栏(显成
+        // "Session" 盖掉 crew 名)。窗标题由中栏 toolbar 的 crew 名负责。
         // K (edge→Mac channel): for the selected crew, auto-claim + run sessions
         // the captain queued on the server (status='queued'). local_host = this
         // Mac is the executor; the captain just creates the queued row on edge.
         .task(id: crewStore.selectedDetail?.crew.id) { await autoClaimLoop() }
-        // chunk2 T5：captain 唤醒 = app 注入。本地 BYOK 模式下轮询待决策，
-        // 有新的（非 captain 自己 raise 的）就把提示注入 captain 的 PTY。
-        .onReceive(captainTick) { _ in
-            notifyCaptainOfNewDecisions()
-            badgeTick &+= 1 // 未读角标随同一拍刷新（T6）
+        // 未读角标随 ticker 刷新（T6）。captain 唤醒已移到 CrewCenterView。
+        .onReceive(badgeTimer) { _ in
+            badgeTick &+= 1
         }
         // 切前台 = 看过了：清掉新选中 run 的未读（T6）。
         .onChange(of: sessionRunner.selectedRunId) { _, newId in
@@ -75,26 +76,11 @@ struct CrewSessionWindowView: View {
         }
     }
 
-    /// chunk2 T5：发现新待决策 → 注入运行中的 captain session（spec §2 唤醒=app 注入）。
-    /// 没有在跑的 captain 就什么都不做（等 captain 启动后第一个 tick 再补通知）。
-    private func notifyCaptainOfNewDecisions() {
-        guard let crewId = crewStore.selectedDetail?.crew.id,
-              let captainRun = sessionRunner.runs.first(where: {
-                  $0.crewId == crewId && $0.role == .captain && $0.status == .running
-              })
-        else { return }
-        let items = LocalApprovalStore.shared.pending(crewId: crewId).filter {
-            $0.kind == "decision"
-                && $0.sessionId != captainRun.sessionId
-                && !notifiedDecisionIds.contains($0.id)
-        }
-        for item in items {
-            captainRun.send("有新的待决策 #\(item.id)（来自 session \(item.sessionId)）：\(item.summary)\n能拍板就用 answer_decision 工具答它（reqId=\(item.id)）；拍不了就用 post_to_crew 发消息 @human 说明需要人类决策的理由与你的建议。")
-            notifiedDecisionIds.insert(item.id)
-        }
+    /// composer 是否处于「续聊当前 run」态（反之 = 起新 session 态）。
+    /// 新建态、无 run、当前 run 已退出，都算起新 session。
+    private var isContinuing: Bool {
+        !sessionRunner.isComposingNew && sessionRunner.current?.status == .running
     }
-
-    private var isRunning: Bool { sessionRunner.current?.status == .running }
 
     // MARK: - session bar (chunk2 T2)
 
@@ -145,12 +131,22 @@ struct CrewSessionWindowView: View {
                 ForEach(barRuns) { run in
                     SessionBarItemView(
                         run: run,
-                        isSelected: run.runID == sessionRunner.selectedRunId,
+                        isSelected: !sessionRunner.isComposingNew && run.runID == sessionRunner.selectedRunId,
                         badgeCount: badgeCount(for: run),
                         select: { sessionRunner.select(run.runID) },
                         remove: { sessionRunner.remove(run.runID) }
                     )
                 }
+                // 「+」起一个新 session（不动在跑的 run）。选中态高亮。
+                Button { sessionRunner.composeNew() } label: {
+                    Label("新 session", systemImage: "plus")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.bordered)
+                .tint(sessionRunner.isComposingNew ? .accentColor : nil)
+                .controlSize(.small)
+                .disabled(starting)
+                .help("起一个新 session（与在跑的并存）")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -182,7 +178,7 @@ struct CrewSessionWindowView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             HStack(spacing: 8) {
-                if !isRunning {
+                if !isContinuing {
                     Picker("", selection: $selectedKind) {
                         Text("Claude Code").tag(LocalCodingAgentKind.claudeCode)
                         Text("Codex").tag(LocalCodingAgentKind.codex)
@@ -191,7 +187,7 @@ struct CrewSessionWindowView: View {
                     .frame(width: 130)
                     .disabled(starting)
                 }
-                TextField(isRunning ? "继续对 agent 说…（⌘↩ 发送）" : "下第一条指令开始…",
+                TextField(isContinuing ? "继续对 agent 说…（⌘↩ 发送）" : "下第一条指令开始…",
                           text: $draft, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
                     .lineLimit(1...6)
@@ -217,12 +213,13 @@ struct CrewSessionWindowView: View {
     private func send() async {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        if let run = sessionRunner.current, run.status == .running {
-            // Running session → inject the text straight into the embedded
-            // terminal (the agent's interactive prompt picks it up).
+        if isContinuing, let run = sessionRunner.current {
+            // Running session（且非新建态）→ inject the text straight into the
+            // embedded terminal (the agent's interactive prompt picks it up).
             run.send(text)
             draft = ""
         } else {
+            // 无 run / 已退出 / 新建态 → 开一个新 session。
             await startSession(firstPrompt: text)
         }
     }
