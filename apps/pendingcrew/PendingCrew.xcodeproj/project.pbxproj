@@ -8,6 +8,9 @@
 
 /* Begin PBXBuildFile section */
 		055DFE844FB3BA1547AEC159 /* PromptTemplate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D74B1C537C235EFB0E69DCB /* PromptTemplate.swift */; };
+		02CBF0D5893A513B40DED5F8 /* BubbleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69A1B8A1F08896B356817B32 /* BubbleView.swift */; };
+		7B6D9BB54067C92DA45BDEF2 /* ChatActionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35EDC465E911D89AD1C3DCFD /* ChatActionSheet.swift */; };
+		97D2D461514111DCCC8CC38F /* AttachmentDownload.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2B41DDB0622DDFBF3931C63 /* AttachmentDownload.swift */; };
 		092A82A123D30DFE80145B50 /* PromptTemplate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D74B1C537C235EFB0E69DCB /* PromptTemplate.swift */; };
 		09D0F549C22FD3AD4E58C632 /* SessionProxyClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB1B368878F5794ADB109327 /* SessionProxyClient.swift */; };
 		0C31AC70A7AF296381A05716 /* LocalApprovalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 266E200D180EDF283E63D525 /* LocalApprovalStore.swift */; };
@@ -166,7 +169,10 @@
 		3BAF2A68B9A8EB6894BB8AB8 /* PendingCrewTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = PendingCrewTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3F8AC2EF59379DA98FD38630 /* CrewChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewChatView.swift; sourceTree = "<group>"; };
 		4452E801174262B66265E9B7 /* PendingCrewAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingCrewAPI.swift; sourceTree = "<group>"; };
+		35EDC465E911D89AD1C3DCFD /* ChatActionSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatActionSheet.swift; sourceTree = "<group>"; };
 		45ABD06213BDA13CBF1C79EC /* BlinkingCursor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlinkingCursor.swift; sourceTree = "<group>"; };
+		69A1B8A1F08896B356817B32 /* BubbleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BubbleView.swift; sourceTree = "<group>"; };
+		C2B41DDB0622DDFBF3931C63 /* AttachmentDownload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentDownload.swift; sourceTree = "<group>"; };
 		46681CA2C4390D6C45E3101C /* ColorHash.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorHash.swift; sourceTree = "<group>"; };
 		476A276CBDA4640936A8B817 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		486ABCF7EEB8DF24CA6EDF11 /* CrewStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewStore.swift; sourceTree = "<group>"; };
@@ -512,6 +518,7 @@
 		D75BDAD62E91781E233179F4 /* Shims */ = {
 			isa = PBXGroup;
 			children = (
+				C2B41DDB0622DDFBF3931C63 /* AttachmentDownload.swift */,
 				D75149E56C43DE393B0F774D /* ServerImage.swift */,
 				A991AA4CE1E1DB8EF6FE4808 /* UserAvatar.swift */,
 			);
@@ -523,6 +530,8 @@
 			children = (
 				45ABD06213BDA13CBF1C79EC /* BlinkingCursor.swift */,
 				3B4E7D20BBF4EE8A2C7AE4C9 /* BotAvatar.swift */,
+				69A1B8A1F08896B356817B32 /* BubbleView.swift */,
+				35EDC465E911D89AD1C3DCFD /* ChatActionSheet.swift */,
 				46681CA2C4390D6C45E3101C /* ColorHash.swift */,
 				85701E0A44CE34A85B831771 /* ColorHex.swift */,
 				FE0CACBC82045E85464C0CB1 /* Haptics.swift */,
@@ -693,8 +702,10 @@
 				8A2E0ED4E2DCD8D29C657CBB /* AgentTerminalView.swift in Sources */,
 				47D83B78734AEC171EAC5853 /* AppModel.swift in Sources */,
 				9B81D3B2CDDF3ECF1488688D /* BYOKConfig.swift in Sources */,
+				97D2D461514111DCCC8CC38F /* AttachmentDownload.swift in Sources */,
 				14ADE62569F844E8CBD04954 /* BlinkingCursor.swift in Sources */,
 				BD0F787201964CD2E1F9A3ED /* BotAvatar.swift in Sources */,
+				02CBF0D5893A513B40DED5F8 /* BubbleView.swift in Sources */,
 				827AE4A12634BCEFAD3456FB /* CaptainTemplateEditorSheet.swift in Sources */,
 				7CF0B6C668567CC7BF21CEDC /* CaptainTemplateStore.swift in Sources */,
 				F59E6499F8F9A918EA384F5B /* ColorHash.swift in Sources */,
@@ -704,6 +715,7 @@
 				1DDF75A3BEC87A059F736366 /* CrewAvatar.swift in Sources */,
 				1B589D3E34E44113BF5781F4 /* CrewBubbleRow.swift in Sources */,
 				50E92F718E5EC71E96ECD0F8 /* CrewCenterView.swift in Sources */,
+				7B6D9BB54067C92DA45BDEF2 /* ChatActionSheet.swift in Sources */,
 				336192C555B6417C3568CEF8 /* CrewChatMessage.swift in Sources */,
 				158F52EEED3AA21F5E5C0B09 /* CrewChatView.swift in Sources */,
 				D461676E477353731E35A493 /* CrewColorHash.swift in Sources */,
