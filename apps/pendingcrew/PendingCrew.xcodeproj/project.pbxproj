@@ -109,7 +109,6 @@
 		B4FBE94B9E0DB131BE3327C0 /* PendingCrewEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 219AD4E22DF4542909B2067A /* PendingCrewEntry.swift */; };
 		B6354746E8966251161A34F4 /* MacRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1A9FCA930C6487C96B9A211 /* MacRootView.swift */; };
 		B6B9A37DAD1876D809A488B6 /* CrewSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D1BA79194E7AC4E6DAA2491 /* CrewSettingsView.swift */; };
-		B74AC2B8E37057C84D9DA5E6 /* CrewAttachmentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAFFC9872C878A15507A237A /* CrewAttachmentView.swift */; };
 		B858CC99627C040B235AAC22 /* SessionProxyClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB1B368878F5794ADB109327 /* SessionProxyClient.swift */; };
 		B8D158BCB29EE06FD2676213 /* SessionProxyProtocolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25C60304AA7A9C4591A0B591 /* SessionProxyProtocolTests.swift */; };
 		BA64F31E29C3BE38DA3BEEB0 /* LocalCodingAgentSpec.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF8E8FC64275B7932540FB17 /* LocalCodingAgentSpec.swift */; };
@@ -281,7 +280,6 @@
 		EF2A5D7FFEA710FBD8771B72 /* CrewDetailInspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewDetailInspector.swift; sourceTree = "<group>"; };
 		EF430C4F70179E977D3A76E5 /* CrewSenderResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewSenderResolver.swift; sourceTree = "<group>"; };
 		F7CC1FEBE8F4A567B53B0BCF /* CaptainTemplateStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptainTemplateStore.swift; sourceTree = "<group>"; };
-		FAFFC9872C878A15507A237A /* CrewAttachmentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewAttachmentView.swift; sourceTree = "<group>"; };
 		FC9681AF707411D904F2A950 /* FamilyCredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyCredentialStore.swift; sourceTree = "<group>"; };
 		FE0CACBC82045E85464C0CB1 /* Haptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Haptics.swift; sourceTree = "<group>"; };
 		FF58B04620F9FAC4489B04BC /* AgentTerminationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentTerminationTests.swift; sourceTree = "<group>"; };
@@ -486,7 +484,6 @@
 		9ABEE3B03309EFFAD6BBB583 /* Chat */ = {
 			isa = PBXGroup;
 			children = (
-				FAFFC9872C878A15507A237A /* CrewAttachmentView.swift */,
 				00A7D9CD365C5CDA21A05246 /* CrewInteractionCard.swift */,
 				5D4475F4F6F662461F71C1B9 /* CrewRosterBar.swift */,
 				EF430C4F70179E977D3A76E5 /* CrewSenderResolver.swift */,
@@ -764,7 +761,6 @@
 				A4E148969B130D4DA1A5646E /* ColorHex.swift in Sources */,
 				EC862B7770804C06765F676C /* ComposerView.swift in Sources */,
 				902AF2700BDF817359CF22CB /* CreateCrewSheet.swift in Sources */,
-				B74AC2B8E37057C84D9DA5E6 /* CrewAttachmentView.swift in Sources */,
 				8ADF5E91A5CF2743821A9B3B /* CrewAvatarBadges.swift in Sources */,
 				50E92F718E5EC71E96ECD0F8 /* CrewCenterView.swift in Sources */,
 				CD478DB6A5F0A7917027EBE6 /* CrewChatAdapter.swift in Sources */,
