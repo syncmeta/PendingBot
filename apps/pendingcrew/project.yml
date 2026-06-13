@@ -9,6 +9,14 @@ packages:
   SwiftTerm:
     url: https://github.com/migueldeicaza/SwiftTerm
     from: 1.13.0
+  MarkdownUI:
+    url: https://github.com/gonzalezreal/swift-markdown-ui
+    minVersion: 2.4.0
+    maxVersion: 3.0.0
+  SwiftMath:
+    url: https://github.com/mgriebling/SwiftMath
+    minVersion: 1.0.0
+    maxVersion: 2.0.0
 settings:
   base:
     SWIFT_VERSION: "5.0"
@@ -38,6 +46,8 @@ targets:
       gatherCoverageData: false
     dependencies:
       - package: SwiftTerm
+      - package: MarkdownUI
+      - package: SwiftMath
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.pendingname.pendingcrew
