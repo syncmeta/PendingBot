@@ -360,7 +360,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
 
   // 1.5 Vision/attachment resolution.
   //
-  // - mainHasVision: lookup llm_models.capabilities.vision for this conv's
+  // - mainHasVision: vision support from the live catalog for this conv's
   //   main model. Drives whether we send images inline on the current
   //   turn or rely on text summaries.
   // - attachmentInventory: every image visible in this conv's recent

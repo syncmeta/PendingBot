@@ -209,7 +209,7 @@ struct OpenRouterModel: Codable, Identifiable, Hashable {
     let source: String?
     /// bots.model_provider to store when this row is picked. nil → default.
     let model_provider: String?
-    /// Our canonical `llm_models.slug` when this model is curated locally;
+    /// Our canonical local slug when this model is curated locally;
     /// nil for OpenRouter rows we don't register. ModelCatalog indexes by
     /// this too so a bot storing the local slug still resolves.
     let local_slug: String?

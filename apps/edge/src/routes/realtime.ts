@@ -324,11 +324,9 @@ realtimeRoutes.post('/session', async (c) => {
   // persisted, not sent per call.
   const voiceModel = ctx.bot.voice_model ?? DEFAULT_VOICE_MODEL_SLUG;
 
-  // Route resolution keyed on the resolved voice model slug;
-  // task_routing_rules can still override at admin discretion via
-  // taskType='voice_call'. Uses the service client, not supaUser — the
-  // llm_* config tables are RLS-locked (RLS on, no policy = deny for
-  // authenticated), so a user JWT reads zero rows.
+  // Route resolution keyed on the resolved voice model slug. Routing is
+  // pure passthrough (see llm/providers.ts): the slug goes upstream
+  // verbatim and the provider is just an AI Gateway path segment.
   let route;
   try {
     route = await resolveRoute(serviceClient(c.env), c.env, {

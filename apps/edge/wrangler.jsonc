@@ -109,8 +109,8 @@
         // AI Gateway coordinates — the worker reads the gateway's
         // computed per-request cost from the Logs API when a provider
         // doesn't report its own (see lib/ai-gateway.ts). Account id +
-        // gateway name match the base_url the llm_providers rows point
-        // at; the Logs API auth token is the CF_AIG_TOKEN secret below.
+        // gateway name match the base_url used for AI Gateway requests;
+        // the Logs API auth token is the CF_AIG_TOKEN secret below.
         "CF_ACCOUNT_ID": "4c303754167f1f225e6761b5128c0d9f",
         "CF_AIG_GATEWAY": "pendingbot",
         // BYOK key alias for google-ai-studio. Gemini 3.x isn't on the

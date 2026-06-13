@@ -83,7 +83,7 @@ export const DEFAULT_TURN_CAP = 15;
 // turns + tool replies + the writer-phase article. User-tunable per bot
 // via bots.config.envelope.historyTokenBudgetPct.
 export const DEFAULT_HISTORY_TOKEN_BUDGET_PCT = 35;
-// If a bot's model_id isn't registered in llm_models we don't know its
+// If a bot's model_id isn't in the live model catalog we don't know its
 // context window. Fall through to a conservative central estimate so
 // the budget calculation still produces something sensible.
 const FALLBACK_CONTEXT_WINDOW = 200_000;

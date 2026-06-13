@@ -125,7 +125,8 @@ const PatchBody = z
     // whatever the picked source's catalog uses (an OpenRouter slug, or
     // an OpenAI model id when model_provider is 'openai').
     model_id: z.string().min(1).max(200).optional(),
-    // API route pin — an llm_providers.slug, or null for default routing.
+    // API route pin — a provider slug (openai/anthropic/google-ai-studio),
+    // or null for default OpenRouter routing.
     // Set together with model_id when the user picks from a non-default
     // catalog section (e.g. "OpenAI（原生）").
     model_provider: z.string().max(64).nullable().optional(),

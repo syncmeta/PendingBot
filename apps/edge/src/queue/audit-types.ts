@@ -29,7 +29,7 @@ export interface AuditMessage {
   // Wall-clock latency of the LLM turn, measured at enqueue time.
   latencyMs: number;
   // null when no provider could be resolved (NoRouteError) — the audit
-  // row still records status='error' with provider_id / cost left null.
+  // row still records status='error' with cost left null.
   route: StrippedRoute | null;
   opts: SerializableAuditOpts;
 }

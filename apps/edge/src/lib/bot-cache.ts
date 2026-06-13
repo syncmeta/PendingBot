@@ -22,7 +22,7 @@ export interface CachedBot {
   id: string;
   display_name: string;
   model_id: string | null;
-  /// API route pin (an llm_providers.slug, e.g. 'openai'). NULL = default
+  /// API route pin (a provider slug, e.g. 'openai'). NULL = default
   /// routing. Drives the router's preferProvider for this bot's turns.
   model_provider: string | null;
   output_mode: string;
