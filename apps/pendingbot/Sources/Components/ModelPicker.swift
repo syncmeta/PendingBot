@@ -388,8 +388,13 @@ struct ModelPickerSheet: View {
     }
 
     private func load() async {
-        guard let api else { return }
         loading = true; defer { loading = false }
+        // fail-loud:`\.api` 没注入(理应不会——iOS TabRoot / Mac @main 都注)
+        // 时报错,而不是 `return` 留 spinner 永转。
+        guard let api else {
+            error = "内部错误:API 客户端未注入"
+            return
+        }
         do {
             allModels = try await api.get("v1/models")
             error = nil
@@ -1005,8 +1010,13 @@ struct ArenaModelPoolEditor: View {
     }
 
     private func load() async {
-        guard let api else { return }
         loading = true; defer { loading = false }
+        // fail-loud:`\.api` 没注入时报错,而不是 `return` 留 spinner 永转
+        // (此前 Mac @main 漏注 \.api 就是卡在这里,一直转圈)。
+        guard let api else {
+            error = "内部错误:API 客户端未注入"
+            return
+        }
         do {
             allModels = try await api.get("v1/models")
             include = Set(selection.models)
