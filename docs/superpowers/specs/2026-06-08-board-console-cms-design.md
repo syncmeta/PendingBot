@@ -11,7 +11,8 @@
 - **认证模型已变更(BeyondCorp)**:门禁不再是本 spec 写的 `requireSession + requireAdmin(Supabase)`。board 同源服务在 `bot.pendingname.com/board`(Workers assets),身份唯一源是 **Cloudflare Access**:`requireCfAccess`(校验 Access JWT,fail-closed,取 email)→ `requireBoardAdmin`(email∈`BOARD_ADMIN_EMAILS`)。board 内**无 Supabase 登录/Turnstile**;审计 `actor` 改记 Access 邮箱(`admin_audit.actor_email`)。详见 `apps/edge/src/lib/cf-access.ts`。
 - **boardResource 前置债(#285)已修**:DB 错误 409 区分(PG 23505/23503→conflict)、LIST 真分页(`?limit/?offset`+`total/has_more`)。
 - **P3 tool 管理**:已落地并部署(`ed17f515`)。tools 接 board 但**只读+改不建不删**(行映射代码 handler);为此 `boardResource` 加 `createSchema` 可选 + `disableDelete`。
-- **剩**:P4(KV 配置类 #288)。
+- **P4 KV 配置类**:已落地(`c63d3989`)+**大幅缩水**。调研发现真走 `kvConfig` 的只有 `tools`(P3)与 `mcp_servers`,spec 原列的"模型目录/价格/i18n/place_names"多数作废:模型目录=OpenRouter 外部 API + CF 缓存(非 DB 表,不可板编辑);`model_pricing`/`i18n_strings` 表不存在;`place_names`/`task_routing`=冷参考数据(直读、极少改,需要时 DB 直编,不值一个 board 页)。**故 P4 实质 = `mcp_servers` 全 CRUD 页**(纯配置,≤60s 经 `cfg:mcp-servers` 生效;`secret_ref` 是 env var 名指针非密钥)。
+- **board CMS 全部完成(P0–P4)**:7 页 = 预设机器人/会话/群/来信 + 工具管理 + MCP 服务器 + 功能开关。
 
 下方为原始设计,保留留档(注意上述已变更/作废处)。
 
@@ -104,7 +105,7 @@ UPDATE pendingbot.users SET is_admin = true WHERE id = '<user-uuid>';
 
 ## 待实施时钉死的开放项
 
-1. **KV 配置类的确切源表**:目前只确认 `cfg:tools-registry`、`cfg:mcp-servers` 真走 `kvConfig`。models/pricing/i18n/place_names(#263 "config → KV")的源表/读路径需在 P4 计划阶段逐个核实,可能部分不在 `kvConfig` 通道而需单独接。
+1. ~~**KV 配置类的确切源表**~~ **已核实(2026-06-12):真走 `kvConfig` 的只有 `cfg:tools-registry`(tools)+ `cfg:mcp-servers`(mcp_servers),都已接 board。models/pricing/i18n/place_names 并不走 kvConfig —— #263 实际只给 `/models`(OpenRouter 外部目录)加了 CF 缓存,其余是冷参考数据或无对应表。P4 = 仅 mcp_servers。**
 2. ~~**预设来信抽表**:`seed_example_letter()` 的现有信件内容结构,决定 `preset_letters` 的列设计。~~ **作废:表/函数早已存在,无需抽表。**
 3. **KV purge 即时性**:P4 决定是否给写操作加显式 KV 删除,还是接受 ≤TTL 的传播延迟。
 
