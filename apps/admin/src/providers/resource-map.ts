@@ -42,6 +42,20 @@ export const RESOURCE_ROUTES: Record<string, ResourceRoute> = {
     listKey: 'items',
     note: 'EXISTING: /v1/board/preset-bots CRUD (requireAdmin).',
   },
+  // 预设会话模板 —— preset_conversation_templates(slug 主键)。EXISTS (P2)。
+  preset_conversations: {
+    basePath: 'board/preset-conversations',
+    exists: true,
+    listKey: 'items',
+    note: 'EXISTING: /v1/board/preset-conversations CRUD (P2).',
+  },
+  // 预设群模板 —— preset_group_templates(slug 主键)。EXISTS (P2)。
+  preset_groups: {
+    basePath: 'board/preset-groups',
+    exists: true,
+    listKey: 'items',
+    note: 'EXISTING: /v1/board/preset-groups CRUD (P2).',
+  },
 };
 
 export function routeFor(resource: string): ResourceRoute {

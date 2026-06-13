@@ -225,6 +225,8 @@ function makeClient(db: FakeDb): unknown {
     let insertError: { code?: string; message: string } | null = null;
     let orderBy: { col: string; ascending: boolean } | null = null;
     let limitCount: number | null = null;
+    let rangeFrom: number | null = null;
+    let rangeTo: number | null = null;
 
     const api = {
       select(c: string = '*', opts?: { count?: 'exact'; head?: boolean }) {
@@ -276,6 +278,11 @@ function makeClient(db: FakeDb): unknown {
       },
       limit(n: number) {
         limitCount = n;
+        return api;
+      },
+      range(from: number, to: number) {
+        rangeFrom = from;
+        rangeTo = to;
         return api;
       },
       update(p: Row) {
@@ -396,12 +403,20 @@ function makeClient(db: FakeDb): unknown {
                   return orderBy!.ascending ? cmp : -cmp;
                 });
               }
-              if (limitCount != null) rs = rs.slice(0, limitCount);
+              // count: 'exact' reports the total BEFORE pagination (supabase
+              // semantics); .range()/.limit() then slice the returned page.
+              const total = rs.length;
+              if (rangeFrom != null) {
+                rs = rs.slice(rangeFrom, (rangeTo ?? rs.length - 1) + 1);
+              } else if (limitCount != null) {
+                rs = rs.slice(0, limitCount);
+              }
+              const exactCount = rangeFrom != null ? total : rs.length;
               if (selectOpts?.count === 'exact' && selectOpts.head) {
-                return { data: null, count: rs.length, error: null };
+                return { data: null, count: exactCount, error: null };
               }
               if (selectOpts?.count === 'exact') {
-                return { data: rs.map((r) => ({ ...r })), count: rs.length, error: null };
+                return { data: rs.map((r) => ({ ...r })), count: exactCount, error: null };
               }
               return { data: rs.map((r) => ({ ...r })), error: null };
             }

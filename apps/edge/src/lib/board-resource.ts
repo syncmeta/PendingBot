@@ -28,6 +28,43 @@ function pbFrom(svc: SupabaseClient, table: string): LooseBuilder {
   return (svc.schema('pendingbot') as { from: (t: string) => LooseBuilder }).from(table);
 }
 
+// LIST pagination bounds. Default page is generous (board volumes are small)
+// but bounded so a bad ?limit can't ask for the whole table; the response
+// carries `total` so the client knows when there's more.
+const DEFAULT_LIST_LIMIT = 100;
+const MAX_LIST_LIMIT = 500;
+
+function clampInt(raw: string | undefined, fallback: number, min: number, max: number): number {
+  const n = Number.parseInt(raw ?? '', 10);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+// Postgres error → semantic HTTP status. Supabase surfaces the SQLSTATE on
+// `error.code`; map constraint violations to 409 (with the offending detail)
+// instead of flattening every DB error to an opaque 500. `error.details`
+// names the column/value for unique/fk violations — safe to echo to an
+// authenticated admin.
+type PgError = { code?: string; message?: string; details?: string } | null | undefined;
+function dbError(c: Parameters<typeof jsonError>[0], error: PgError) {
+  const code = error?.code;
+  if (code === '23505') {
+    // unique_violation
+    return jsonError(c, 409, 'conflict', {
+      message: '已存在冲突记录(唯一约束)',
+      detail: error?.details ?? error?.message,
+    });
+  }
+  if (code === '23503') {
+    // foreign_key_violation
+    return jsonError(c, 409, 'conflict', {
+      message: '关联记录不存在或被引用(外键约束)',
+      detail: error?.details ?? error?.message,
+    });
+  }
+  return jsonError(c, 500, 'database_error', { detail: error?.message });
+}
+
 export interface BoardResourceOpts {
   // pendingbot 表名(serviceClient 会 .schema('pendingbot'))
   table: string;
@@ -57,15 +94,26 @@ export function boardResource(opts: BoardResourceOpts): Hono<AppBindings> {
   const scope = opts.scope ?? (<Q>(q: Q) => q);
 
   // ── LIST ────────────────────────────────────────────────
+  // Paginated: ?limit (≤MAX) & ?offset. Returns total (exact count) + has_more
+  // so the client never silently loses the tail of a large table.
   app.get('/', async (c) => {
     const svc = serviceClient(c.env);
-    let q = pbFrom(svc, opts.table).select(opts.cols);
+    const limit = clampInt(c.req.query('limit'), DEFAULT_LIST_LIMIT, 1, MAX_LIST_LIMIT);
+    const offset = clampInt(c.req.query('offset'), 0, 0, Number.MAX_SAFE_INTEGER);
+    let q = pbFrom(svc, opts.table).select(opts.cols, { count: 'exact' });
     q = scope(q);
-    const { data, error } = await q
+    const { data, error, count } = await q
       .order(opts.orderBy.col, { ascending: opts.orderBy.ascending })
-      .limit(500);
-    if (error) return jsonError(c, 500, 'database_error', { detail: error.message });
-    return c.json({ items: data ?? [] });
+      .range(offset, offset + limit - 1);
+    if (error) return dbError(c, error);
+    const total = typeof count === 'number' ? count : (data?.length ?? 0);
+    return c.json({
+      items: data ?? [],
+      total,
+      limit,
+      offset,
+      has_more: offset + (data?.length ?? 0) < total,
+    });
   });
 
   // ── GET ONE ─────────────────────────────────────────────
@@ -74,7 +122,7 @@ export function boardResource(opts: BoardResourceOpts): Hono<AppBindings> {
     let q = pbFrom(svc, opts.table).select(opts.cols).eq(opts.pk, c.req.param('id'));
     q = scope(q);
     const { data, error } = await q.maybeSingle();
-    if (error) return jsonError(c, 500, 'database_error', { detail: error.message });
+    if (error) return dbError(c, error);
     if (!data) return jsonError(c, 404, 'not_found');
     return c.json({ data });
   });
@@ -93,7 +141,7 @@ export function boardResource(opts: BoardResourceOpts): Hono<AppBindings> {
       .insert(insertPayload as never)
       .select(opts.cols)
       .maybeSingle();
-    if (error) return jsonError(c, 500, 'database_error', { detail: error.message });
+    if (error) return dbError(c, error);
     await recordBoardAudit(c, {
       action: 'create',
       targetKind: opts.targetKind,
@@ -124,7 +172,7 @@ export function boardResource(opts: BoardResourceOpts): Hono<AppBindings> {
       .eq(opts.pk, id)
       .select(opts.cols)
       .maybeSingle();
-    if (error) return jsonError(c, 500, 'database_error', { detail: error.message });
+    if (error) return dbError(c, error);
     await recordBoardAudit(c, {
       action: 'update',
       targetKind: opts.targetKind,
@@ -145,7 +193,7 @@ export function boardResource(opts: BoardResourceOpts): Hono<AppBindings> {
     if (!before) return jsonError(c, 404, 'not_found');
 
     const { error } = await pbFrom(svc, opts.table).delete().eq(opts.pk, id);
-    if (error) return jsonError(c, 500, 'database_error', { detail: error.message });
+    if (error) return dbError(c, error);
     await recordBoardAudit(c, {
       action: 'delete',
       targetKind: opts.targetKind,
