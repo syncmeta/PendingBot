@@ -1,30 +1,15 @@
 // apps/edge/src/lib/board-audit.ts
 //
-// Board 管理台的两块公共件:
-//   1. isBoardAdmin —— requireAdmin 的 lookup:查 pendingbot.users.is_admin。
-//   2. recordBoardAudit —— 每次 board 写操作落一条 admin_audit(before/after)。
+// recordBoardAudit —— 每次 board 写操作落一条 admin_audit(before/after)。
+// 身份/授权由 cf-access.ts 的 requireCfAccess + requireBoardAdmin 负责(Cloudflare
+// Access 是唯一身份源);这里只把已验证的 actor 邮箱记进审计。
 //
-// admin_audit 表列(已存在,见 schema.ts):
-//   action / actor_id / target_kind / target_id / before / after /
-//   ip / user_agent / created_at / id
+// admin_audit 表列(见 schema.ts):
+//   action / actor_id(legacy uuid)/ actor_email / target_kind / target_id /
+//   before / after / ip / user_agent / created_at / id
 import type { Context } from 'hono';
 import { serviceClient } from './supabase';
 import type { AppBindings } from '../types';
-
-// requireAdmin 的 isAdminLookup:当前会话用户是否 is_admin。
-export async function isBoardAdmin(c: Context<AppBindings>): Promise<boolean> {
-  const userId = c.var.userId;
-  if (!userId) return false;
-  const svc = serviceClient(c.env);
-  const { data, error } = await svc
-    .schema('pendingbot')
-    .from('users')
-    .select('is_admin')
-    .eq('id', userId)
-    .maybeSingle();
-  if (error || !data) return false;
-  return data.is_admin === true;
-}
 
 export interface BoardAuditInput {
   action: 'create' | 'update' | 'delete';
@@ -43,7 +28,10 @@ export async function recordBoardAudit(
   try {
     const svc = serviceClient(c.env);
     await svc.schema('pendingbot').from('admin_audit').insert({
-      actor_id: c.var.userId ?? null,
+      // Identity comes from Cloudflare Access now, not a Supabase user — record
+      // the verified email; actor_id (uuid FK) stays null for board writes.
+      actor_id: null,
+      actor_email: c.var.boardEmail ?? null,
       action: input.action,
       target_kind: input.targetKind,
       target_id: input.targetId,

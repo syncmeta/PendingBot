@@ -105,6 +105,10 @@ export interface Env {
   /// live Access app in front of the route.
   CF_ACCESS_TEAM_DOMAIN?: string;
   CF_ACCESS_AUD?: string;
+  /// Board-admin allowlist (comma-separated emails). The Access-verified email
+  /// must be in this list — a second, origin-side authority independent of the
+  /// Access policy. FAIL-CLOSED: empty/unset denies all board access.
+  BOARD_ADMIN_EMAILS?: string;
   /// Workers static assets (apps/admin SPA served under /board). Optional so
   /// test harnesses without the binding still typecheck; the /board route
   /// 404s when absent.
@@ -243,6 +247,9 @@ export interface HonoVars {
     appKind: string;
   };
   isAdmin?: boolean;
+  /// Cloudflare Access-authenticated email for the board console
+  /// (set by requireCfAccess). Board authz/audit key off this, not userId.
+  boardEmail?: string;
   clientVersion?: ClientVersion;
   clientPlatform?: 'ios' | 'web' | 'unknown';
 }

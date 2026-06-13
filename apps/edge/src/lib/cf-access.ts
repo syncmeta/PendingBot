@@ -43,13 +43,44 @@ export function requireCfAccess(): MiddlewareHandler<AppBindings> {
     if (!assertion) {
       return jsonError(c, 403, 'forbidden', { message: '缺少 Access 凭证' });
     }
+    let email: string | null = null;
     try {
-      await jwtVerify(assertion, teamJwks(teamDomain), {
+      const { payload } = await jwtVerify(assertion, teamJwks(teamDomain), {
         issuer: `https://${teamDomain}`,
         audience: aud,
       });
+      // Access mints the JWT from the authenticated identity; `email` is the
+      // human IdP/OTP login (service-token grants carry `common_name` instead,
+      // which board doesn't allow — so a missing email is a hard reject).
+      email = typeof payload.email === 'string' ? payload.email.toLowerCase() : null;
     } catch {
       return jsonError(c, 403, 'forbidden', { message: 'Access 凭证无效' });
+    }
+    if (!email) {
+      return jsonError(c, 403, 'forbidden', { message: 'Access 凭证缺少身份' });
+    }
+    c.set('boardEmail', email);
+    await next();
+  };
+}
+
+// Authorization gate for the board console — the verified Access email must be
+// in the server-side admin allowlist (BOARD_ADMIN_EMAILS, comma-separated).
+//
+// This is a SECOND, independent authority from the Access policy: even if the
+// Access app's allow-policy is ever widened by mistake, the origin still only
+// admits emails on this list. FAIL-CLOSED — an empty/unset allowlist denies
+// everyone. Mount AFTER requireCfAccess (which populates c.var.boardEmail).
+export function requireBoardAdmin(): MiddlewareHandler<AppBindings> {
+  return async (c, next) => {
+    // Lowercase locally too — don't depend on requireCfAccess having normalized.
+    const email = c.var.boardEmail?.toLowerCase();
+    const allow = (c.env.BOARD_ADMIN_EMAILS ?? '')
+      .split(',')
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean);
+    if (!email || allow.length === 0 || !allow.includes(email)) {
+      return jsonError(c, 403, 'forbidden', { message: '非授权管理员' });
     }
     await next();
   };

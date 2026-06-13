@@ -4,19 +4,19 @@
 // 之下挂载各内容域资源子路由。P1 只有 preset-bots;P2–P4 在此 .route(...) 续挂。
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { requireSession, requireAdmin } from '@pendingbot/identity';
-import { requireCfAccess } from '../lib/cf-access';
-import { isBoardAdmin } from '../lib/board-audit';
+import { requireCfAccess, requireBoardAdmin } from '../lib/cf-access';
 import { boardResource } from '../lib/board-resource';
 import { boardFeatureFlagsRoutes } from './board-feature-flags';
 import type { AppBindings } from '../types';
 
 export const boardRoutes = new Hono<AppBindings>();
 
-// 门禁三层:Cloudflare Access(边缘身份墙,fail-closed)→ 登录 → is_admin。
+// 门禁(BeyondCorp 模型,Cloudflare Access 是唯一身份源):
+//   1. requireCfAccess —— 校验 Access JWT(team JWKS+AUD,fail-closed)+ 取 email
+//   2. requireBoardAdmin —— email ∈ 服务端 BOARD_ADMIN_EMAILS 名单(独立授权权威)
+// board 不再自带 Supabase 登录;身份/审计全部来自已验证的 Access 邮箱。
 boardRoutes.use('*', requireCfAccess());
-boardRoutes.use('*', requireSession());
-boardRoutes.use('*', requireAdmin(isBoardAdmin));
+boardRoutes.use('*', requireBoardAdmin());
 
 // ── 预设机器人(bots 表 creator_id IS NULL 的模板行) ──────────
 const presetBotCreate = z.object({
