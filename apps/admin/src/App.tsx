@@ -2,10 +2,22 @@ import { Refine } from '@refinedev/core';
 import { ThemedLayout, RefineThemes, useNotificationProvider } from '@refinedev/antd';
 import routerProvider, { NavigateToResource } from '@refinedev/react-router';
 import { BrowserRouter, Routes, Route } from 'react-router';
-import { ConfigProvider, App as AntdApp } from 'antd';
+import { ConfigProvider, App as AntdApp, theme as antdTheme } from 'antd';
+import {
+  RobotOutlined,
+  MessageOutlined,
+  TeamOutlined,
+  MailOutlined,
+  ToolOutlined,
+  ApiOutlined,
+  ControlOutlined,
+  AppstoreOutlined,
+  SettingOutlined,
+} from '@ant-design/icons';
 import '@refinedev/antd/dist/reset.css';
 
 import { dataProvider } from './providers/data-provider';
+import { Dashboard } from './pages/dashboard';
 import { PresetBotList, PresetBotCreate, PresetBotEdit } from './pages/preset-bots';
 import {
   PresetConversationList,
@@ -17,15 +29,25 @@ import { PresetLetterList, PresetLetterCreate, PresetLetterEdit } from './pages/
 import { ToolList, ToolEdit } from './pages/tools';
 import { McpServerList, McpServerCreate, McpServerEdit } from './pages/mcp-servers';
 import { FeatureFlagsPage } from './pages/feature-flags';
+import { BoardTitle } from './components/board-title';
 
-// No authProvider / login route: the board is served same-origin under /board
-// behind Cloudflare Access, which is the sole identity gate (the edge verifies
-// the Access JWT on /v1/board/*). The SPA only renders once Access has already
-// authenticated the user, so there is nothing to gate client-side.
+// No authProvider / login route: served same-origin under /board behind
+// Cloudflare Access (the sole identity gate). The SPA only renders once Access
+// has authenticated the user.
 export default function App() {
   return (
     <BrowserRouter basename="/board">
-      <ConfigProvider theme={RefineThemes.Blue}>
+      <ConfigProvider
+        theme={{
+          ...RefineThemes.Green,
+          algorithm: antdTheme.defaultAlgorithm,
+          token: {
+            ...RefineThemes.Green.token,
+            borderRadius: 8,
+            fontSize: 14,
+          },
+        }}
+      >
         <AntdApp>
           <Refine
             routerProvider={routerProvider}
@@ -33,57 +55,62 @@ export default function App() {
             notificationProvider={useNotificationProvider}
             options={{ disableTelemetry: true, warnWhenUnsavedChanges: true }}
             resources={[
+              // 分组父项(不可导航,纯菜单分组)。
+              { name: 'content', meta: { label: '内容预设', icon: <AppstoreOutlined /> } },
               {
                 name: 'preset_bots',
                 list: '/preset-bots',
                 create: '/preset-bots/create',
                 edit: '/preset-bots/edit/:id',
-                meta: { label: '预设机器人' },
+                meta: { parent: 'content', label: '预设机器人', icon: <RobotOutlined /> },
               },
               {
                 name: 'preset_conversations',
                 list: '/preset-conversations',
                 create: '/preset-conversations/create',
                 edit: '/preset-conversations/edit/:id',
-                meta: { label: '预设会话' },
+                meta: { parent: 'content', label: '预设会话', icon: <MessageOutlined /> },
               },
               {
                 name: 'preset_groups',
                 list: '/preset-groups',
                 create: '/preset-groups/create',
                 edit: '/preset-groups/edit/:id',
-                meta: { label: '预设群' },
+                meta: { parent: 'content', label: '预设群', icon: <TeamOutlined /> },
               },
               {
                 name: 'preset_letters',
                 list: '/preset-letters',
                 create: '/preset-letters/create',
                 edit: '/preset-letters/edit/:id',
-                meta: { label: '预设来信' },
+                meta: { parent: 'content', label: '预设来信', icon: <MailOutlined /> },
               },
+              { name: 'config', meta: { label: '配置', icon: <SettingOutlined /> } },
               {
                 name: 'tools',
                 list: '/tools',
                 edit: '/tools/edit/:id',
-                meta: { label: '工具管理' },
+                meta: { parent: 'config', label: '工具管理', icon: <ToolOutlined /> },
               },
               {
                 name: 'mcp_servers',
                 list: '/mcp-servers',
                 create: '/mcp-servers/create',
                 edit: '/mcp-servers/edit/:id',
-                meta: { label: 'MCP 服务器' },
+                meta: { parent: 'config', label: 'MCP 服务器', icon: <ApiOutlined /> },
               },
               {
                 name: 'feature_flags',
                 list: '/feature-flags',
-                meta: { label: '功能开关' },
+                meta: { parent: 'config', label: '功能开关', icon: <ControlOutlined /> },
               },
             ]}
           >
-            <ThemedLayout Title={() => <strong>PendingBot Board</strong>}>
+            <ThemedLayout
+              Title={({ collapsed }) => <BoardTitle collapsed={collapsed} />}
+            >
               <Routes>
-                <Route index element={<NavigateToResource resource="preset_bots" />} />
+                <Route index element={<Dashboard />} />
                 <Route path="/preset-bots" element={<PresetBotList />} />
                 <Route path="/preset-bots/create" element={<PresetBotCreate />} />
                 <Route path="/preset-bots/edit/:id" element={<PresetBotEdit />} />
