@@ -238,6 +238,14 @@ struct PendingBotApp: App {
                 .environmentObject(accountStore)
                 .environmentObject(modelCatalog)
                 .environmentObject(unreadStore)
+                // 跟 iOS TabRoot 一致:注入 \.api / \.account。这两个
+                // EnvironmentKey 的值原本只在 iOS 的 Tabroot 注入,Mac @main
+                // 漏了 —— 共享 Features/* 视图里读 \.api 的(模型选择器走
+                // /v1/models、远程 session 等)在 Mac 上拿到 nil,模型列表
+                // 的 load() 在 `guard let api else { return }` 直接返回、
+                // loading 永远停在 true → 一直转圈、建不了机器人。
+                .environment(\.api, APIClient())
+                .environment(\.account, accountStore.current)
                 // 跟 iOS 一致:外观跟随设置(跟随系统/浅/深)。深色变体由
                 // 自适应 Theme.Palette 承载(2026-06-11 spec)。
                 .preferredColorScheme((AppearanceMode(rawValue: appearanceRaw) ?? .default).colorScheme)
@@ -277,6 +285,10 @@ struct PendingBotApp: App {
             SettingsRootView()
                 .environmentObject(accountStore)
                 .environmentObject(modelCatalog)
+                // Settings 是独立场景,不从主窗继承环境;跟主窗一样补注
+                // \.api / \.account,设置里的模型选择器等才能读到。
+                .environment(\.api, APIClient())
+                .environment(\.account, accountStore.current)
                 // 独立场景不继承主窗的 preferredColorScheme —— 单独绑同一个
                 // 设置,这样在 ⌘, 窗里改外观时它本身也即时重绘。
                 .preferredColorScheme((AppearanceMode(rawValue: appearanceRaw) ?? .default).colorScheme)
