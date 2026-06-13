@@ -56,6 +56,13 @@ export const RESOURCE_ROUTES: Record<string, ResourceRoute> = {
     listKey: 'items',
     note: 'EXISTING: /v1/board/preset-groups CRUD (P2).',
   },
+  // 预设来信 —— preset_letters(slug 主键,signup 读 slug='readme')。EXISTS (P2)。
+  preset_letters: {
+    basePath: 'board/preset-letters',
+    exists: true,
+    listKey: 'items',
+    note: 'EXISTING: /v1/board/preset-letters CRUD (P2).',
+  },
 };
 
 export function routeFor(resource: string): ResourceRoute {
