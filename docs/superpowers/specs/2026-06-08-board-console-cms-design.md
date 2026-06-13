@@ -2,7 +2,17 @@
 
 **日期**: 2026-06-08
 **分支**: `feat/board-console`
-**状态**: 设计已认可,待写实施计划
+**状态**: 设计已认可。**实施进展见下方更新**。
+
+## 实施进展更新(2026-06-12)
+
+- **P0 框架 + P1 预设机器人**:已落地并部署。
+- **P2 预设会话/群/来信**:已落地并部署(`b8a0ce93`)。**纠正本 spec 一处过时假设** —— 预设来信**不需要新建 `preset_letters` 表、也不需要改 `seed_example_letter()`**:该表早在 `20260517091351_preset_letter.sql` 就建好,且 `seed_example_letter()` 当时就已从 `preset_letters` 读 `slug='readme'` 物化进新用户 self 会话。所以 P2 **零迁移、不碰 signup**,三资源(会话/群/来信)全是给现成表补 board CRUD 面。下方表格/分期/开放项里"新建 preset_letters""改 seed_example_letter 读表""预设来信抽表"均已作废。
+- **认证模型已变更(BeyondCorp)**:门禁不再是本 spec 写的 `requireSession + requireAdmin(Supabase)`。board 同源服务在 `bot.pendingname.com/board`(Workers assets),身份唯一源是 **Cloudflare Access**:`requireCfAccess`(校验 Access JWT,fail-closed,取 email)→ `requireBoardAdmin`(email∈`BOARD_ADMIN_EMAILS`)。board 内**无 Supabase 登录/Turnstile**;审计 `actor` 改记 Access 邮箱(`admin_audit.actor_email`)。详见 `apps/edge/src/lib/cf-access.ts`。
+- **boardResource 前置债(#285)已修**:DB 错误 409 区分(PG 23505/23503→conflict)、LIST 真分页(`?limit/?offset`+`total/has_more`)。
+- **剩**:P3(tool 管理 #287)、P4(KV 配置类 #288)。
+
+下方为原始设计,保留留档(注意上述已变更/作废处)。
 
 ## 一句话
 
@@ -26,7 +36,7 @@
 |---|---|---|
 | 预设机器人 | `pendingbot.bots`(`creator_id IS NULL` 模板行) | onboarding 按用户克隆 |
 | 预设会话 / 预设群 | `preset_conversation_templates` / `preset_group_templates` | signup bootstrap 物化 |
-| 预设来信 | **新建 `preset_letters`** + 改 `seed_example_letter()` 读表 | signup 注入 self 会话 |
+| 预设来信 | ~~新建 `preset_letters` + 改 `seed_example_letter()` 读表~~ → **表已存在,函数已读表(无需新建/改)** | signup 注入 self 会话 |
 | tool 管理 | `pendingbot.tools` | `tools-registry.ts` 60s TTL 读 |
 | KV 配置类 | `mcp_servers` / task-routing / 模型目录 / pricing / i18n / place_names 等源表 | `kvConfig` 读穿表→KV,TTL 自动传播 |
 
@@ -66,7 +76,7 @@
 
 ### 3. 数据层
 
-- 全部复用现成表,**唯一新建** `preset_letters`(预设来信),并把 `seed_example_letter()` 改为从该表读取信件内容(而非函数内写死)。其余域零迁移。
+- 全部复用现成表,**零迁移**。~~唯一新建 `preset_letters` + 改 `seed_example_letter()` 读表~~ —— **作废:实施时发现 `preset_letters` 早已存在(`20260517091351_preset_letter.sql`),且 `seed_example_letter()` 当时就已从该表读 `slug='readme'`。预设来信只需补 board CRUD,不动 DB/signup。**
 - KV 配置类:`kvConfig` 是"读穿源表 → 缓存 KV → TTL 过期重读"。board 改源表后,KV 在既有 TTL 窗口内自动刷新 —— **不需要单独 KV 写路径**。可选:给写操作加一次显式 KV purge,把传播从"≤TTL"压到"即时"。
 
 ## 历史 / 版本
@@ -87,14 +97,14 @@ UPDATE pendingbot.users SET is_admin = true WHERE id = '<user-uuid>';
 
 - **P0 框架**:edge `routes/board.ts` 脚手架(requireAdmin 注入 + `boardWrite` 审计 helper)+ 前端接 AntD + 删旧页 + admin bootstrap SQL。
 - **P1 预设机器人**(最高频):`bots` 模板行 CRUD。
-- **P2 预设会话/群 + 预设来信**:含 `preset_letters` 小迁移 + `seed_example_letter()` 改读表。
+- **P2 预设会话/群 + 预设来信**:~~含 `preset_letters` 小迁移 + `seed_example_letter()` 改读表~~ → **已落地,零迁移(表/函数早已就位,见顶部更新)**。
 - **P3 tool 管理**:`tools` 表开关 / 绑定 / `model_description` 编辑。
 - **P4 KV 配置类**:逐个配置源表(先 `tools-registry`/`mcp_servers` 已确认走 kvConfig 的,再钉模型目录/pricing/i18n/place_names 的确切源表)。
 
 ## 待实施时钉死的开放项
 
 1. **KV 配置类的确切源表**:目前只确认 `cfg:tools-registry`、`cfg:mcp-servers` 真走 `kvConfig`。models/pricing/i18n/place_names(#263 "config → KV")的源表/读路径需在 P4 计划阶段逐个核实,可能部分不在 `kvConfig` 通道而需单独接。
-2. **预设来信抽表**:`seed_example_letter()` 的现有信件内容结构(单封"读我" vs 可多封),决定 `preset_letters` 的列设计。
+2. ~~**预设来信抽表**:`seed_example_letter()` 的现有信件内容结构,决定 `preset_letters` 的列设计。~~ **作废:表/函数早已存在,无需抽表。**
 3. **KV purge 即时性**:P4 决定是否给写操作加显式 KV 删除,还是接受 ≤TTL 的传播延迟。
 
 ## 验证
