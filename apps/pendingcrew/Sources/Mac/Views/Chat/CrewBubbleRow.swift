@@ -21,14 +21,14 @@ struct CrewBubbleRow: View {
                 CrewAvatar(sender: sender)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(sender.displayName)
-                        .font(CrewTheme.Fonts.rounded(11, weight: .semibold))
-                        .foregroundStyle(CrewTheme.Palette.inkMuted)
+                        .font(Theme.Fonts.rounded(11, weight: .semibold))
+                        .foregroundStyle(Theme.Palette.inkMuted)
                     content(mine: false)
                 }
                 Spacer(minLength: 32)
             }
         }
-        .padding(.horizontal, CrewTheme.Metrics.gutter)
+        .padding(.horizontal, Theme.Metrics.gutter)
         .padding(.vertical, 4)
     }
 
@@ -49,18 +49,18 @@ struct CrewBubbleRow: View {
 
     private func bubble(mine: Bool) -> some View {
         Text(entry.displayText)
-            .font(CrewTheme.Fonts.body)
-            .foregroundStyle(CrewTheme.Palette.ink)
+            .font(Theme.Fonts.body)
+            .foregroundStyle(Theme.Palette.ink)
             .textSelection(.enabled)
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
             .background(
-                RoundedRectangle(cornerRadius: CrewTheme.Metrics.bubbleRadius, style: .continuous)
-                    .fill(mine ? CrewTheme.Palette.userBubble : CrewTheme.Palette.surface)
+                RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
+                    .fill(mine ? Theme.Palette.userBubble : Theme.Palette.surface)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: CrewTheme.Metrics.bubbleRadius, style: .continuous)
-                    .strokeBorder(CrewTheme.Palette.hairline, lineWidth: 0.5)
+                RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
+                    .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
             )
             .frame(maxWidth: 520, alignment: mine ? .trailing : .leading)
     }

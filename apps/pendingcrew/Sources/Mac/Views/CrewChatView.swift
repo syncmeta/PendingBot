@@ -48,7 +48,7 @@ struct CrewChatView: View {
                 Task { await send() }
             }
         }
-        .background(CrewTheme.Palette.canvas)
+        .background(Theme.Palette.canvas)
         .task(id: crewId) { await pollLoop() }
     }
 
@@ -127,7 +127,7 @@ struct CrewChatView: View {
             Image(systemName: "bubble.left.and.bubble.right")
                 .font(.system(size: 34)).foregroundStyle(.tertiary)
             Text("群聊白板 —— 在这里给 session 留指令、看关键节点。\n@session 发给某个 session，不 @ 则广播给全部。")
-                .font(CrewTheme.Fonts.callout).foregroundStyle(CrewTheme.Palette.inkMuted)
+                .font(Theme.Fonts.callout).foregroundStyle(Theme.Palette.inkMuted)
                 .multilineTextAlignment(.center).frame(maxWidth: 420)
         }
         .frame(maxWidth: .infinity).padding(.vertical, 40)

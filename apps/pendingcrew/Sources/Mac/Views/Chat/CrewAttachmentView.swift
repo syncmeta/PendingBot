@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Renders a crew message's attachments below the bubble text — an image grid
 /// (up to 3 per row) + file chips. macOS native port of PendingBot iOS
-/// `AttachmentGrid` / `FileAttachmentChip`, styled with `CrewTheme` tokens so
+/// `AttachmentGrid` / `FileAttachmentChip`, styled with `Theme` tokens so
 /// it sits flush with the bubbles. Render-only (the compose / upload / send
 /// half lands in a later pass).
 struct CrewAttachmentView: View {
@@ -37,7 +37,7 @@ struct CrewAttachmentView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .strokeBorder(CrewTheme.Palette.hairline, lineWidth: 0.5)
+                                    .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
                             )
                     }
                 }
@@ -78,19 +78,19 @@ struct CrewFileAttachmentChip: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: iconName)
-                .font(CrewTheme.Fonts.system(22))
-                .foregroundStyle(CrewTheme.Palette.accent)
+                .font(Theme.Fonts.system(22))
+                .foregroundStyle(Theme.Palette.accent)
                 .frame(width: 30)
             VStack(alignment: .leading, spacing: 2) {
                 Text(displayName)
-                    .font(CrewTheme.Fonts.system(14, weight: .medium))
-                    .foregroundStyle(CrewTheme.Palette.ink)
+                    .font(Theme.Fonts.system(14, weight: .medium))
+                    .foregroundStyle(Theme.Palette.ink)
                     .lineLimit(2)
                     .truncationMode(.middle)
                 if let sizeText {
                     Text(sizeText)
-                        .font(CrewTheme.Fonts.system(11))
-                        .foregroundStyle(CrewTheme.Palette.inkMuted)
+                        .font(Theme.Fonts.system(11))
+                        .foregroundStyle(Theme.Palette.inkMuted)
                 }
             }
             Spacer(minLength: 4)
@@ -100,11 +100,11 @@ struct CrewFileAttachmentChip: View {
         .frame(maxWidth: 260, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(CrewTheme.Palette.surface)
+                .fill(Theme.Palette.surface)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(CrewTheme.Palette.hairline, lineWidth: 0.5)
+                .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
         )
     }
 }

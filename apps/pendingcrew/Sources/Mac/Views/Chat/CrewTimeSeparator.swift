@@ -7,8 +7,8 @@ struct CrewTimeSeparator: View {
 
     var body: some View {
         Text(CrewTimeSeparator.label(date))
-            .font(CrewTheme.Fonts.caption2)
-            .foregroundStyle(CrewTheme.Palette.inkMuted)
+            .font(Theme.Fonts.caption2)
+            .foregroundStyle(Theme.Palette.inkMuted)
             .padding(.vertical, 6)
             .frame(maxWidth: .infinity)
     }

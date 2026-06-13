@@ -15,8 +15,8 @@ struct CrewRosterBar: View {
                     VStack(spacing: 3) {
                         CrewAvatar(sender: sender, size: 28)
                         Text(sender.displayName)
-                            .font(CrewTheme.Fonts.caption2)
-                            .foregroundStyle(CrewTheme.Palette.inkMuted)
+                            .font(Theme.Fonts.caption2)
+                            .foregroundStyle(Theme.Palette.inkMuted)
                             .lineLimit(1)
                             .frame(maxWidth: 76)
                     }
@@ -25,7 +25,7 @@ struct CrewRosterBar: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
         }
-        .background(CrewTheme.Palette.surfaceMuted.opacity(0.5))
+        .background(Theme.Palette.surfaceMuted.opacity(0.5))
     }
 
     private func senderFor(_ m: CrewMember) -> CrewSender {

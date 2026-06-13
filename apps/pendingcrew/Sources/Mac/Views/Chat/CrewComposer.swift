@@ -38,7 +38,7 @@ struct CrewComposer: View {
     var body: some View {
         VStack(spacing: 6) {
             if let errorText {
-                Text(errorText).font(CrewTheme.Fonts.caption).foregroundStyle(.red)
+                Text(errorText).font(Theme.Fonts.caption).foregroundStyle(.red)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             if !attachments.isEmpty {
@@ -50,10 +50,10 @@ struct CrewComposer: View {
                 } label: {
                     Image(systemName: "plus")
                         .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(CrewTheme.Palette.inkMuted)
+                        .foregroundStyle(Theme.Palette.inkMuted)
                         .frame(width: 30, height: 30)
-                        .background(Circle().fill(CrewTheme.Palette.surface))
-                        .overlay(Circle().strokeBorder(CrewTheme.Palette.hairline, lineWidth: 0.5))
+                        .background(Circle().fill(Theme.Palette.surface))
+                        .overlay(Circle().strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
                 }
                 .buttonStyle(.plain)
                 .disabled(sending)
@@ -61,26 +61,26 @@ struct CrewComposer: View {
 
                 TextField("发消息…（不 @ = 广播给所有 session）", text: $draft, axis: .vertical)
                     .textFieldStyle(.plain)
-                    .font(CrewTheme.Fonts.body)
+                    .font(Theme.Fonts.body)
                     .lineLimit(1...5)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
                     .background(RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .fill(CrewTheme.Palette.surface))
+                        .fill(Theme.Palette.surface))
                     .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .strokeBorder(CrewTheme.Palette.hairline, lineWidth: 0.5))
+                        .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
                     .onSubmit { if canSend { onSend() } }
 
                 Button(action: onSend) {
                     ZStack {
-                        Circle().fill(canSend ? CrewTheme.Palette.accent : CrewTheme.Palette.surfaceMuted)
+                        Circle().fill(canSend ? Theme.Palette.accent : Theme.Palette.surfaceMuted)
                             .frame(width: 30, height: 30)
                         if sending {
                             ProgressView().controlSize(.small)
                         } else {
                             Image(systemName: "arrow.up")
                                 .font(.system(size: 14, weight: .bold))
-                                .foregroundStyle(canSend ? .white : CrewTheme.Palette.inkMuted)
+                                .foregroundStyle(canSend ? .white : Theme.Palette.inkMuted)
                         }
                     }
                 }
@@ -89,7 +89,7 @@ struct CrewComposer: View {
             }
         }
         .padding(12)
-        .background(CrewTheme.Palette.canvas)
+        .background(Theme.Palette.canvas)
         .fileImporter(
             isPresented: $importing,
             allowedContentTypes: [.image, .pdf, .plainText, .data],
@@ -129,7 +129,7 @@ struct CrewComposer: View {
             }
             .overlay(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(CrewTheme.Palette.hairline, lineWidth: 0.5)
+                    .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
             )
 
             Button {
@@ -150,17 +150,17 @@ struct CrewComposer: View {
         VStack(spacing: 4) {
             Image(systemName: iconName(for: att.mime))
                 .font(.system(size: 20))
-                .foregroundStyle(CrewTheme.Palette.accent)
+                .foregroundStyle(Theme.Palette.accent)
             Text(att.filename)
-                .font(CrewTheme.Fonts.system(10))
-                .foregroundStyle(CrewTheme.Palette.ink)
+                .font(Theme.Fonts.system(10))
+                .foregroundStyle(Theme.Palette.ink)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(width: 56)
         }
         .frame(width: 64, height: 64)
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .fill(CrewTheme.Palette.surface))
+            .fill(Theme.Palette.surface))
     }
 
     private func iconName(for mime: String) -> String {
