@@ -21,6 +21,8 @@ PendingCrew 的群聊页(`CrewChatView` + `Sources/Mac/Views/Chat/` 下的 `Crew
 - **对齐方式 = vendor 一份拷贝**(把 PendingBot 当前跨平台聊天视图原样拷进 PendingCrew,削掉 PendingBot 包袱,写 adapter)。成本压成"一次性搬运 + 以后重拷",而非"每次小修 + 永久手工追平"。
 - **Markdown 保真 = MarkdownUI + SwiftMath 都加**,`MarkdownText` 逐字拷不改 → 渲染与 PendingBot 逐字节一致、以后重拷最干净。
 - **iPad = 连可导航的 iPad 外壳一起做**(登录 → crew 列表 → 群聊)。
+- **Crew 专属标记保留,但在 PendingBot 头像位置重做**:captain 星标、session 状态点(running/queued)、session 终端图标头像 —— 这些 crew 语义不丢,但作为徽标/overlay **重新做到 vendored 头像上**(不保留旧 `CrewAvatar`);顶部成员 roster 条保留(re-theme)。
+- **加三态外观开关**(跟随/浅/深,对齐 PendingBot #299)—— 不只跟随系统。
 
 ## 现状事实(探针实证)
 
@@ -89,7 +91,8 @@ PendingCrew-authored shim(API 同名同签,顶住 auth 缝):
 **A3. adapter:`CrewWhiteboardEntry` → `CrewChatMessage` + `GroupBubbleSender`**
 - 定义 PendingCrew 本地的精简 `CrewChatMessage`(只含 `BubbleView` 读取的字段:id、content/displayText、sender 侧别(isMine)、attachments、status(sending/failed)、isStreaming),**不引** PendingBot 的 `ChatMessage`(避免拖 citations/arena/recall/MessageStore 包袱)。
   - 注:`BubbleView` 是 `BubbleView<Menu: View>` 且 `let message: ChatMessage` —— 因此需要 vendored `BubbleView` 引用的是 PendingCrew 本地的 `CrewChatMessage` 类型名,或在 vendor 时把类型别名对齐(`typealias`/同名本地型)。以"`BubbleView` 不改源"为最高优先级选具体手法。
-- `GroupBubbleSender`:用现成 `CrewSenderResolver` 的产物映射(kind→bot/user、displayName、avatarSeed、avatarPath=nil)。captain 用 `BotAvatar` 的徽标/或保留星标语义(视觉贴当前 PendingBot 群聊)。
+- `GroupBubbleSender`:用现成 `CrewSenderResolver` 的产物映射(kind→bot/user、displayName、avatarSeed、avatarPath=nil),并透传 crew 角色信息(isCaptain、sessionStatus、是否 session)。
+- **头像 = vendored `BotAvatar` + crew 徽标 overlay**:在 vendored 头像的位置重做 crew 标记 —— captain 橙星标、session 状态点(running/queued)、session 终端图标。做成一个薄 overlay 包装(`CrewAvatarBadges`),套在 vendored `BotAvatar` 外,而不是保留旧 `CrewAvatar`。这样头像主体仍是逐字拷的 PendingBot 件,crew 信息以徽标叠加。
 - 验收:补纯 Swift 单测覆盖映射(自己消息右对齐 / 他人左对齐带头像名 / ask 条目走卡片不走气泡 / relay 消息不误判 isMine)。
 
 **A4. CrewChatView 换叶子 + re-theme + 删旧件**
@@ -97,8 +100,13 @@ PendingCrew-authored shim(API 同名同签,顶住 auth 缝):
 - `CrewComposer` → vendored `ComposerView`;保留 PendingCrew 语义:占位"发消息…(不 @ = 广播给所有 session)"、`@session/@captain` 提示与 staged、`onSend` 仍调 `backend.postCrewMessage(crewId, text, mentions, attachmentIds)`;附件 picker 接 A5 的跨平台分支。
 - `CrewTheme` → vendored `Theme` **全局替换**(`CrewTheme.Palette/Fonts/Metrics` 的所有引用点改 `Theme.*`)→ 深色模式到位。
 - `CrewRosterBar` / `CrewTimeSeparator` / `CrewInteractionCard` / `SessionApprovalCardsView` 改用 `Theme` token,视觉贴 PendingBot(ask 卡片对标 `PermissionRequestCard` 观感)。
-- 删被取代的 `CrewBubbleRow` / `CrewComposer` / `CrewAvatar` / `CrewTheme`(确认无其他引用后)。
-- 验收:macOS GUI 构建,装进去看深色 + 浅色群聊,气泡/composer/头像/时间分隔/卡片全部对齐当前 PendingBot。
+- 删被取代的 `CrewBubbleRow` / `CrewComposer` / `CrewAvatar` / `CrewTheme`(确认无其他引用后;`CrewAvatar` 的 crew 徽标逻辑迁进 A3 的 `CrewAvatarBadges` overlay,roster 条也改用它)。
+- 验收:macOS GUI 构建,装进去看深色 + 浅色群聊,气泡/composer/头像(含 captain 星标/session 状态点)/时间分隔/卡片全部对齐当前 PendingBot。
+
+**A6. 三态外观开关(跟随/浅/深)**
+- vendor PendingBot 的 `AppearanceMode`(#299 的三态开关机制 + 偏好持久化),在 PendingCrew 接线(`@main` 注入 `preferredColorScheme`)。
+- 在 PendingCrew 设置/inspector 暴露 跟随/浅/深 切换。
+- 验收:三态切换在 macOS + iPad 都生效。
 
 **A5. 解平台门 + composer picker iOS 分支**
 - 聊天视图去 `#if os(macOS)`(`CrewChatView` 及被复用的子视图)。
