@@ -710,6 +710,32 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     return true;
   };
 
+  // Insert a `log_kind='guess_prompt'` row — the blind-box "猜一猜"
+  // interactive card. Mirrors the crew_proposal log insert in
+  // tools/start-crew.ts: log rows carry sender_bot_id + log_payload +
+  // a short human-readable `content` fallback, and (unlike bot bubbles)
+  // do NOT set parent_message_id / bubble_group_id. The client filters
+  // role='log' out of normal bubbles and dispatches by log_kind.
+  const emitGuessPrompt = async (): Promise<boolean> => {
+    const messageId = randomUUID();
+    const { error } = await supa.from('messages').insert({
+      id: messageId,
+      client_message_id: messageId,
+      conversation_id: conversationId,
+      sender_bot_id: bot.id,
+      role: 'log',
+      log_kind: 'guess_prompt',
+      log_payload: {},
+      content: '猜一猜我是哪个模型？',
+      status: 'done',
+    });
+    if (error) {
+      console.warn('[bot-reply] guess-prompt insert', error.message);
+      return false;
+    }
+    return true;
+  };
+
   // Persist an image the OpenAI image_generation built-in tool
   // produced into an attachments row + bot message. The caller is
   // responsible for resolving the corresponding `tool_result` SSE so
@@ -747,6 +773,7 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     webMeter,
     inGroup: input.inGroup ?? false,
     emitImagesMessage,
+    emitGuessPrompt,
   };
 
   // Each round inside the agent loop runs its own withFallback — when
