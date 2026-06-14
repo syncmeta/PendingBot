@@ -179,7 +179,10 @@ struct EnvelopeTabView: View {
                 }
             }
             ZStack {
-                Theme.Palette.canvas.ignoresSafeArea()
+                // Shell 模式下不铺 canvas —— 露出合并侧栏的原生玻璃。
+                if !renderAsMacListColumn {
+                    Theme.Palette.canvas.ignoresSafeArea()
+                }
                 if runs.isEmpty && !loading {
                     EmptyState()
                 } else {
@@ -194,7 +197,9 @@ struct EnvelopeTabView: View {
                                     .onTapGesture { open(run) }
                             }
                         }
-                        .padding(.horizontal, Theme.Metrics.gutter)
+                        // Shell 契约:卡片前导贴 rail 右沿,右侧留 gutter。
+                        .padding(.leading, renderAsMacListColumn ? 0 : Theme.Metrics.gutter)
+                        .padding(.trailing, Theme.Metrics.gutter)
                         .padding(.vertical, 16)
                         .readableColumnWidth()
                     }
@@ -421,10 +426,8 @@ private extension EnvelopeTabView {
     /// `feedList` (no SidebarTabBar) on canvas, carrying the full chrome so
     /// its load + Realtime work from this column.
     var macListColumn: some View {
-        chrome(
-            feedList
-                .background(Theme.Palette.canvas.ignoresSafeArea())
-        )
+        // 不铺 canvas —— 合并侧栏的原生玻璃透上来,整条侧栏一块玻璃。
+        chrome(feedList)
     }
 }
 
