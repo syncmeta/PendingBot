@@ -621,17 +621,16 @@ private enum ArenaSortDirection: String, CaseIterable, Identifiable {
 }
 
 private enum ArenaModelSort {
+    // Global sort across ALL vendors by the chosen key — the arena pool is a
+    // flat list, not vendor-grouped, so models mix together (sort by release
+    // shows the newest model overall first, regardless of maker; sort by price
+    // the cheapest overall, etc.). name/slug are only the final tiebreakers.
     static func sorted(
         _ models: [OpenRouterModel],
         key: ArenaModelSortKey,
-        direction: ArenaSortDirection,
-        vendorOrder: [String]
+        direction: ArenaSortDirection
     ) -> [OpenRouterModel] {
-        let vendorRank = Dictionary(uniqueKeysWithValues: vendorOrder.enumerated().map { ($1, $0) })
         return models.sorted { lhs, rhs in
-            let leftVendor = vendorRank[lhs.provider] ?? Int.max
-            let rightVendor = vendorRank[rhs.provider] ?? Int.max
-            if leftVendor != rightVendor { return leftVendor < rightVendor }
             if let ordered = compare(lhs, rhs, key: key, direction: direction) {
                 return ordered
             }
@@ -741,6 +740,12 @@ struct ArenaModelPoolEditor: View {
     @State private var priceMaxValue: Double = ArenaPriceRangeScale.numericMax
     @State private var sortKey: ArenaModelSortKey = .releaseDate
     @State private var sortDirection: ArenaSortDirection = .descending
+    // Pool pre-sorted by the current sort key/direction, cached so dragging
+    // the price slider only re-filters (cheap) instead of re-sorting hundreds
+    // of models every frame. Sort order never depends on the price/release/
+    // vendor filters, so we recompute this only when the sort changes or the
+    // catalog loads — not on every slider tick (that was the lag).
+    @State private var sortedPool: [OpenRouterModel] = []
 
     // Arena uses native rows for OpenAI / Anthropic / Google, plus the
     // OpenRouter long tail. Drop only the native-backed OpenRouter duplicates
@@ -775,12 +780,12 @@ struct ArenaModelPoolEditor: View {
     }
 
     private var effectiveModels: [OpenRouterModel] {
-        sort(pool.filter { isEffective($0) })
+        sortedPool.filter { isEffective($0) }
     }
 
     private var filtered: [OpenRouterModel] {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        return sort(pool.filter { m in
+        return sortedPool.filter { m in
             if !q.isEmpty {
                 let hay = "\(m.slug) \(m.display_name) \(m.provider)".lowercased()
                 if !hay.contains(q) { return false }
@@ -788,7 +793,7 @@ struct ArenaModelPoolEditor: View {
                 return false
             }
             return true
-        })
+        }
     }
 
     private var priceMinBound: Double? {
@@ -845,6 +850,10 @@ struct ArenaModelPoolEditor: View {
         .onChange(of: priceMaxValue) { _, _ in syncSelection() }
         .onChange(of: releaseMonthsValue) { _, _ in syncSelection() }
         .onChange(of: selectedVendors) { _, _ in syncSelection() }
+        // Sort order changes are the only thing that needs a re-sort; the
+        // price/release/vendor filters above just re-filter the cached pool.
+        .onChange(of: sortKey) { _, _ in resort() }
+        .onChange(of: sortDirection) { _, _ in resort() }
     }
 
     private var filterBar: some View {
@@ -1041,6 +1050,7 @@ struct ArenaModelPoolEditor: View {
                 releaseMonthsValue = ArenaReleaseRangeScale.sliderValue(fromDays: selection.releaseWindowDays)
             }
             error = nil
+            resort()
             syncSelection()
         } catch {
             self.error = error.localizedDescription
@@ -1098,8 +1108,10 @@ struct ArenaModelPoolEditor: View {
         selection = draft
     }
 
-    private func sort(_ models: [OpenRouterModel]) -> [OpenRouterModel] {
-        ArenaModelSort.sorted(models, key: sortKey, direction: sortDirection, vendorOrder: availableVendors)
+    // Recompute the cached sorted pool. Cheap relative to per-frame sorting
+    // because it runs only on sort-key/direction change or catalog load.
+    private func resort() {
+        sortedPool = ArenaModelSort.sorted(pool, key: sortKey, direction: sortDirection)
     }
 
     private func toggleVendor(_ vendor: String) {
