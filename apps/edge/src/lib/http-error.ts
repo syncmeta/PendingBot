@@ -73,6 +73,7 @@ export type ApiErrorCode =
   | 'conversation_not_found'
   | 'conversation_no_access'
   | 'conversation_has_no_bot'
+  | 'no_model_pool'
   | 'self_chat_not_allowed'
 
   // ── Friend / contact / handles ────────────────────────────
