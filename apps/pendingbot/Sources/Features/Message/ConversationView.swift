@@ -2071,6 +2071,14 @@ struct ConversationView: View {
         chatTurnTask = Task { @MainActor in
             let splitter = BubbleSplitter()
             let stream = ChatStream().send(body: body, path: path)
+            // Model Blind Box: the `prompt_model_guess` tool drops a
+            // `role='log'`, `log_kind='guess_prompt'` row mid-turn. That row
+            // is only dispatched into `guessPromptMsgIds` (→ GuessPromptCard)
+            // by `loadHistory`, and the live SSE path never reloads history,
+            // so without a nudge the card only appears on a manual reopen.
+            // Flag the tool here and run a single post-turn history refresh
+            // (below) instead of refreshing on every tool_result.
+            var sawGuessPrompt = false
             do {
                 for try await event in stream {
                     if Task.isCancelled { break }
@@ -2183,6 +2191,7 @@ struct ConversationView: View {
                     case .toolResult(let name, let summary, let error, let detail):
                         activeToolCount = max(0, activeToolCount - 1)
                         if activeToolCount == 0 { pending = true }
+                        if name == "prompt_model_guess" { sawGuessPrompt = true }
                         completeToolCall(name: name, summary: summary, error: error, detail: detail)
                     case .citations(let items):
                         // Update the per-turn snapshot AND backfill every
@@ -2254,6 +2263,15 @@ struct ConversationView: View {
             // model (blind-box regenReroll resets reveal server-side), so
             // refresh the pill — it should flip back to "PendingModel".
             if regeneratePromptId != nil {
+                await loadConvModelState()
+            }
+            // Model Blind Box: a turn that called `prompt_model_guess`
+            // inserted a `guess_prompt` log row. Reload history so it gets
+            // dispatched into `guessPromptMsgIds` (→ GuessPromptCard) and
+            // refresh the pill, instead of waiting for a manual reopen. One
+            // refresh at turn end keeps this off the per-event hot path.
+            if sawGuessPrompt {
+                await loadHistory()
                 await loadConvModelState()
             }
         }
