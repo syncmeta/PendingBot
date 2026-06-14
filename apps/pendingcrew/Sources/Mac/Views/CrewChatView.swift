@@ -155,7 +155,7 @@ struct CrewChatView: View {
             onSend: { Task { await send() } },
             isStreaming: false,
             showsAttachments: true,
-            placeholder: "发消息…（不 @ = 广播给所有 session）"
+            placeholder: "发消息"
         )
     }
 
@@ -180,11 +180,20 @@ struct CrewChatView: View {
         #endif
     }
 
+    @ViewBuilder
     private var timeline: some View {
+        if timelineEntries.isEmpty {
+            // 空白态：只居中放一个聊天图标，别的什么都不要。
+            emptyState
+        } else {
+            messageScroll
+        }
+    }
+
+    private var messageScroll: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    if timelineEntries.isEmpty { emptyState }
                     ForEach(Array(timelineEntries.enumerated()), id: \.element.id) { idx, entry in
                         let prevDate = idx > 0 ? CrewTimeSeparator.parse(timelineEntries[idx - 1].createdAt) : nil
                         if let cur = CrewTimeSeparator.parse(entry.createdAt),
@@ -250,14 +259,10 @@ struct CrewChatView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "bubble.left.and.bubble.right")
-                .font(.system(size: 34)).foregroundStyle(.tertiary)
-            Text("群聊白板 —— 在这里给 session 留指令、看关键节点。\n@session 发给某个 session，不 @ 则广播给全部。")
-                .font(Theme.Fonts.callout).foregroundStyle(Theme.Palette.inkMuted)
-                .multilineTextAlignment(.center).frame(maxWidth: 420)
-        }
-        .frame(maxWidth: .infinity).padding(.vertical, 40)
+        Image(systemName: "bubble.left.and.bubble.right")
+            .font(.system(size: 40))
+            .foregroundStyle(.tertiary)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - data

@@ -49,7 +49,10 @@ struct CrewSidebarView: View {
             // 让 user 始终能看见"我现在以谁的身份在花钱"。
             identityFooter
         }
-        .navigationTitle("PendingCrew")
+        // 不设 navigationTitle —— 否则它成为窗口标题，在 macOS 26 工具栏里渲染成
+        // 一颗 "PendingCrew" 玻璃胶囊，跟中栏 principal 的 crew 头像+名字打架。
+        // 标题位只留中栏那颗（CrewCenterView 的 .principal）。
+        .navigationTitle("")
         .toolbar {
             ToolbarItemGroup {
                 Button {
