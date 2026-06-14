@@ -24,6 +24,12 @@ final class CrewStore: ObservableObject {
     @Published private(set) var loadingSubjects: Bool = false
     @Published var error: String?
 
+    /// 建带 captain 的 crew 后，请求自动起机长（用户要的零摩擦：新建即启动 + 群里报到）。
+    /// `MacThreePaneView` 观察这个值（它持有 `CrewSessionRunner`），起完置 nil。
+    /// 放 store 而非建 crew 的 sheet：sheet 建完即 dismiss，且拿不到 window 级的
+    /// sessionRunner —— 信号经 store 冒泡给常驻的 three-pane 才能可靠落地。
+    @Published var captainAutostartRequest: String?
+
     private unowned let appModel: AppModel
 
     init(appModel: AppModel) {
@@ -112,6 +118,12 @@ final class CrewStore: ObservableObject {
         await refreshList()
         await refreshDetail(response.crewId)
         selectedCrewId = response.crewId
+        // 建完请求自动起机长（detail 已 refresh，three-pane 观察到就拉起 captain）。
+        // 当前建 crew 必带 systemGenerated captain；用 detail.captain 兜底判断，
+        // 防将来出现无 captain 的 crew 也误触发。
+        if details[response.crewId]?.captain != nil {
+            captainAutostartRequest = response.crewId
+        }
         return response
     }
 

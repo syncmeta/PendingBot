@@ -61,6 +61,19 @@ struct MacThreePaneView: View {
                 withAnimation { inspectorPresented = false }
             }
         }
+        // 建 crew 后自动起机长（用户要的零摩擦：新建即启动 + 群里报到，无需手动点
+        // 「启动 Captain」）。store 在 createCrew 完成后 set crewId；这里持有
+        // sessionRunner，best-effort 拉起后置 nil。
+        .onChange(of: crewStore.captainAutostartRequest) { _, req in
+            guard let crewId = req else { return }
+            Task {
+                if let detail = crewStore.details[crewId], detail.captain != nil {
+                    try? await LocalSessionLaunch.startCaptain(
+                        detail: detail, runner: sessionRunner, backend: model.backend)
+                }
+                crewStore.captainAutostartRequest = nil
+            }
+        }
         .task {
             // 首次进入时把列表 + subjects 都拉一遍 —— subjects 用于创建
             // crew sheet 的 picker，提前 prefetch 避免 sheet 打开时空。
