@@ -417,14 +417,14 @@ struct ModelPickerSheet: View {
 /// currently resolved pool size so creation/settings screens can validate the
 /// choice.
 struct ArenaModelSelection: Equatable, Hashable {
-    var priceMin: Double?
-    var priceMax: Double?
+    var priceMin: Double? = nil
+    var priceMax: Double? = nil
     var releaseWindowDays: Int? = nil
     var vendors: [String]? = nil
     var models: [String] = []
     var exclude: [String] = []
-    var fallbackModel: String?
-    var fallbackModelProvider: String?
+    var fallbackModel: String? = nil
+    var fallbackModelProvider: String? = nil
     var resolvedCount: Int = 0
 
     static func single(_ slug: String) -> ArenaModelSelection {
@@ -604,6 +604,18 @@ private enum ArenaModelSortKey: Hashable, Identifiable {
         }
     }
 
+    /// Rebuild from a persisted `id` (UserDefaults). Unknown → nil.
+    init?(id: String) {
+        switch id {
+        case "release": self = .releaseDate
+        case "name": self = .name
+        case "price": self = .price
+        default:
+            guard id.hasPrefix("lmarena:") else { return nil }
+            self = .lmarena(String(id.dropFirst("lmarena:".count)))
+        }
+    }
+
     var title: String {
         switch self {
         case .releaseDate: return "发行时间"
@@ -723,10 +735,32 @@ struct ArenaModelPickerSheet: View {
     }
 }
 
+/// Default pool knobs for a brand-new bot (and the 重置 target): cheapest
+/// floor 0.3x, no upper price cap, models from the last ~6 months, sorted
+/// newest-first. Also the seed for the remembered prefs below.
+private enum ArenaPoolDefaults {
+    static let priceMinSlider: Double = 0.3
+    static let priceMaxSlider = ArenaPriceRangeScale.sliderBounds.upperBound   // 最大(无上限)
+    static let releaseSlider = ArenaReleaseRangeScale.sliderValue(fromDays: ArenaReleaseRangeScale.defaultDays)
+    static let sortKeyID = ArenaModelSortKey.releaseDate.id
+    static let sortDir = ArenaSortDirection.descending.rawValue
+}
+
 struct ArenaModelPoolEditor: View {
     @Environment(\.api) private var api
 
     @Binding var selection: ArenaModelSelection
+    /// New-bot creation: seed the sliders + sort from the user's last-used
+    /// prefs and save changes back. Editing an existing bot's pool leaves
+    /// this false — that sheet shows the bot's saved config, untouched.
+    var rememberDefaults: Bool = false
+
+    // Remembered across launches; only read/written when rememberDefaults.
+    @AppStorage("arena.pref.priceMin") private var prefPriceMin: Double = ArenaPoolDefaults.priceMinSlider
+    @AppStorage("arena.pref.priceMax") private var prefPriceMax: Double = ArenaPoolDefaults.priceMaxSlider
+    @AppStorage("arena.pref.releaseMonths") private var prefReleaseMonths: Double = ArenaPoolDefaults.releaseSlider
+    @AppStorage("arena.pref.sortKey") private var prefSortKeyID: String = ArenaPoolDefaults.sortKeyID
+    @AppStorage("arena.pref.sortDir") private var prefSortDir: String = ArenaPoolDefaults.sortDir
 
     @State private var allModels: [OpenRouterModel] = []
     @State private var loading = true
@@ -846,14 +880,14 @@ struct ArenaModelPoolEditor: View {
             }
         }
         .task { await load() }
-        .onChange(of: priceMinValue) { _, _ in syncSelection() }
-        .onChange(of: priceMaxValue) { _, _ in syncSelection() }
-        .onChange(of: releaseMonthsValue) { _, _ in syncSelection() }
+        .onChange(of: priceMinValue) { _, _ in syncSelection(); savePrefs() }
+        .onChange(of: priceMaxValue) { _, _ in syncSelection(); savePrefs() }
+        .onChange(of: releaseMonthsValue) { _, _ in syncSelection(); savePrefs() }
         .onChange(of: selectedVendors) { _, _ in syncSelection() }
         // Sort order changes are the only thing that needs a re-sort; the
         // price/release/vendor filters above just re-filter the cached pool.
-        .onChange(of: sortKey) { _, _ in resort() }
-        .onChange(of: sortDirection) { _, _ in resort() }
+        .onChange(of: sortKey) { _, _ in resort(); savePrefs() }
+        .onChange(of: sortDirection) { _, _ in resort(); savePrefs() }
     }
 
     private var filterBar: some View {
@@ -881,6 +915,12 @@ struct ArenaModelPoolEditor: View {
                 rangeEndpoint("下限", value: ArenaPriceRangeScale.lowerLabel(priceMinValue))
                 rangeEndpoint("上限", value: ArenaPriceRangeScale.upperLabel(priceMaxValue))
                 Spacer()
+                Button { resetToDefaults(); Haptics.tap() } label: {
+                    Label("重置", systemImage: "arrow.counterclockwise")
+                        .font(Theme.Fonts.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.Palette.accent)
                 Text("区间内 \(rangeModels.count), 实际 \(draft.resolvedCount)")
                     .font(Theme.Fonts.caption)
                     .foregroundStyle(Theme.Palette.inkMuted)
@@ -1039,9 +1079,19 @@ struct ArenaModelPoolEditor: View {
                selection.exclude.isEmpty,
                selection.releaseWindowDays == nil,
                selection.vendors == nil {
-                priceMinValue = ArenaPriceRangeScale.numericMin
-                priceMaxValue = ArenaPriceRangeScale.numericMax
-                releaseMonthsValue = ArenaReleaseRangeScale.sliderValue(fromDays: ArenaReleaseRangeScale.defaultDays)
+                // Fresh (new bot): seed from remembered prefs when this is the
+                // create flow, otherwise the hard defaults.
+                if rememberDefaults {
+                    priceMinValue = prefPriceMin
+                    priceMaxValue = max(prefPriceMin, prefPriceMax)
+                    releaseMonthsValue = prefReleaseMonths
+                    sortKey = ArenaModelSortKey(id: prefSortKeyID) ?? .releaseDate
+                    sortDirection = ArenaSortDirection(rawValue: prefSortDir) ?? .descending
+                } else {
+                    priceMinValue = ArenaPoolDefaults.priceMinSlider
+                    priceMaxValue = ArenaPoolDefaults.priceMaxSlider
+                    releaseMonthsValue = ArenaPoolDefaults.releaseSlider
+                }
             } else {
                 priceMinValue = ArenaPriceRangeScale.sliderLower(fromPriceMin: selection.priceMin)
                 priceMaxValue = max(
@@ -1106,6 +1156,35 @@ struct ArenaModelPoolEditor: View {
 
     private func syncSelection() {
         selection = draft
+    }
+
+    // Persist the slider + sort knobs as the new-bot default. No-op when
+    // editing an existing bot's pool, so that sheet never overwrites the
+    // create-flow default.
+    private func savePrefs() {
+        guard rememberDefaults else { return }
+        prefPriceMin = priceMinValue
+        prefPriceMax = priceMaxValue
+        prefReleaseMonths = releaseMonthsValue
+        prefSortKeyID = sortKey.id
+        prefSortDir = sortDirection.rawValue
+    }
+
+    // 重置 → factory defaults (0.3x floor / no cap / last ~6 months / newest
+    // first), clearing any per-model include·exclude·vendor picks too. Also
+    // writes the prefs so the reset state becomes the remembered default.
+    private func resetToDefaults() {
+        priceMinValue = ArenaPoolDefaults.priceMinSlider
+        priceMaxValue = ArenaPoolDefaults.priceMaxSlider
+        releaseMonthsValue = ArenaPoolDefaults.releaseSlider
+        sortKey = .releaseDate
+        sortDirection = .descending
+        include = []
+        exclude = []
+        selectedVendors = nil
+        resort()
+        syncSelection()
+        savePrefs()
     }
 
     // Recompute the cached sorted pool. Cheap relative to per-frame sorting

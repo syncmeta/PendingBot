@@ -53,7 +53,9 @@ struct CreateBotSheet: View {
 
     @State private var step: CreateStep = .models
     @State private var displayName: String = ""
-    @State private var arenaSelection = ArenaModelSelection(priceMin: 0, priceMax: 5)
+    // Empty = "fresh" → the pool editor seeds the sliders + sort from the
+    // user's remembered prefs (rememberDefaults below) instead of this row.
+    @State private var arenaSelection = ArenaModelSelection()
     @State private var visibility: Visibility = .privateBot
     /// User-chosen public handle. Only required (and only sent) when the
     /// bot is public — private bots keep the synthetic `u_<random>` slug.
@@ -89,7 +91,7 @@ struct CreateBotSheet: View {
         NavigationStack {
             Group {
                 if step == .models {
-                    ArenaModelPoolEditor(selection: $arenaSelection)
+                    ArenaModelPoolEditor(selection: $arenaSelection, rememberDefaults: true)
                 } else {
                     Form {
                         settingsSections
