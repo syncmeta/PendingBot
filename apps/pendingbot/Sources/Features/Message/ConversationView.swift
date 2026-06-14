@@ -600,6 +600,22 @@ struct ConversationView: View {
                                                 retryFailedMessage(msg)
                                             } label: { Label("重新发送", systemImage: "arrow.clockwise") }
                                         } else {
+                                            // 重新生成: re-stream a fresh bot answer
+                                            // to this prompt via POST /v1/messages/
+                                            // :id/regenerate (:id = this user msg).
+                                            // Only meaningful in bot convs (a
+                                            // human peer has no model to re-roll);
+                                            // gate on a persisted UUID id so we
+                                            // never POST a local- optimistic id.
+                                            if conversation.conversation_type != "user_user",
+                                               msg.id.range(of: "^[0-9a-f-]{36}$",
+                                                            options: .regularExpression) != nil {
+                                                Button {
+                                                    Task { await regenerate(promptId: msg.id) }
+                                                } label: {
+                                                    Label("重新生成", systemImage: "arrow.clockwise")
+                                                }
+                                            }
                                             // 撤回: WeChat-style sender-only retract.
                                             // In user_user convs this leaves a
                                             // tombstone log row visible to both
@@ -1956,7 +1972,14 @@ struct ConversationView: View {
     ///     local row + conversation state on the fly.
     // Internal access — called from scheduleLookbackAutoFire (auto-fire
     // a no-input turn) in ConversationView+Realtime.swift.
-    func sendViaSSE(text: String, attachmentIds: [String], autoLookback: Bool = false, userMsgId: String? = nil, clientMessageId: String? = nil, startBotId: String? = nil) {
+    //
+    // `regeneratePromptId` re-streams a fresh bot answer to an existing user
+    // prompt via POST /v1/messages/:id/regenerate (`:id` = that prompt). No
+    // new user message is sent — the worker re-runs the turn off the parent
+    // prompt's content. For blind-box bots with regenReroll on, the worker
+    // also re-rolls + persists the conversation model and resets reveal, so
+    // we refresh `convModelState` once the stream finishes (see below).
+    func sendViaSSE(text: String, attachmentIds: [String], autoLookback: Bool = false, userMsgId: String? = nil, clientMessageId: String? = nil, startBotId: String? = nil, regeneratePromptId: String? = nil) {
         chatTurnTask?.cancel()
         flushRevealImmediately()
         // User taking action (or auto-fire firing) cancels the pending
@@ -1992,6 +2015,9 @@ struct ConversationView: View {
             let clientMsgId = clientMessageId ?? UUID().uuidString.lowercased()
             // Exclude the just-appended optimistic user row — it gets sent
             // as `newMessage` and would otherwise show up to the LLM twice.
+            // (Regenerate has no optimistic row, so `userMsgId` is nil and
+            // the filter is a no-op — the parent prompt is already part of
+            // the persisted history and the worker reads it server-side.)
             let recent = messages.suffix(20)
                 .filter { $0.id != userMsgId }
                 .map { m -> [String: Any] in
@@ -2003,6 +2029,16 @@ struct ConversationView: View {
                         ),
                     ]
                 }
+            // Regenerate: the endpoint takes only { conversationId,
+            // recentContext?, clientTz? } and re-runs off the parent prompt
+            // server-side. No newMessage / attachments / start fields.
+            if regeneratePromptId != nil {
+                return [
+                    "conversationId": conversation.id,
+                    "recentContext": recent,
+                    "clientTz": TimeZone.current.identifier,
+                ]
+            }
             var b: [String: Any] = [
                 "clientMessageId": clientMsgId,
                 "recentContext": recent,
@@ -2028,7 +2064,10 @@ struct ConversationView: View {
             return b
         }()
 
-        let path = startBotId == nil ? "v1/messages" : "v1/messages/start"
+        let path: String = {
+            if let regeneratePromptId { return "v1/messages/\(regeneratePromptId)/regenerate" }
+            return startBotId == nil ? "v1/messages" : "v1/messages/start"
+        }()
         chatTurnTask = Task { @MainActor in
             let splitter = BubbleSplitter()
             let stream = ChatStream().send(body: body, path: path)
@@ -2211,7 +2250,22 @@ struct ConversationView: View {
             // expanding it after the turn completes; only the live binding
             // is cleared here.
             liveTraceUserMsgId = nil
+            // Regenerate may have re-rolled + persisted a new conversation
+            // model (blind-box regenReroll resets reveal server-side), so
+            // refresh the pill — it should flip back to "PendingModel".
+            if regeneratePromptId != nil {
+                await loadConvModelState()
+            }
         }
+    }
+
+    /// Re-stream a fresh bot answer to an existing user prompt. Reuses the
+    /// regular SSE consumption path (bubbles append as a new bot group) and
+    /// refreshes the model pill on completion — see `sendViaSSE`.
+    func regenerate(promptId: String) async {
+        guard !conversation.id.isEmpty, !promptId.isEmpty else { return }
+        Haptics.tap()
+        sendViaSSE(text: "", attachmentIds: [], regeneratePromptId: promptId)
     }
 
     // Tool-call trace accumulation lives in ConversationView+ToolTrace.swift.
