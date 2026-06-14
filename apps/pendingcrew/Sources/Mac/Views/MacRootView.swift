@@ -25,6 +25,8 @@ struct MacThreePaneView: View {
     /// 经 `onChange` 自动翻 `.detailOnly`(收起左 sidebar 腾宽)—— 否则
     /// sidebar + 中栏 + 固定宽 inspector 三段总宽超屏，窗口挂到屏幕外。
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    /// 承载窗口引用 —— inspector 打开后用它触发一次 relayout(见 nudgeRelayout)。
+    @State private var hostWindow: NSWindow?
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -44,9 +46,15 @@ struct MacThreePaneView: View {
                 // 两模式共用这个列（宽度跟内容模式无关，开 session 不会变宽）。
                 .inspectorColumnWidth(min: 300, ideal: 380, max: 520)
         }
+        // 后台抓承载窗口引用，供 inspector 打开后触发 relayout。
+        .background(WindowGrabber { hostWindow = $0 })
         // 根治超屏：inspector 一开就收起左 sidebar 腾出宽度，关掉再放回来。
         .onChange(of: inspectorPresented) { _, open in
             withAnimation { columnVisibility = open ? .detailOnly : .all }
+            // SwiftUI inspector 首帧不套用列宽，要等一次真正的 layout 重排(手动拖
+            // divider 就是触发它)。这里程序化地把窗宽 +1 再 -1，等同那一拖，逼
+            // AppKit 重跑 split 约束，inspector 弹出当帧就定对宽。
+            if open { nudgeRelayout() }
         }
         // 反向：手动展开左 sidebar(翻回 .all)就收起 inspector —— 二者互斥,
         // 任一展开都不会把另一段连同窗口撑出屏幕外。inspector 自己开时只设
@@ -66,6 +74,33 @@ struct MacThreePaneView: View {
             // 起 session（#242 遥控 v1），与 inspector 手动起的 run 同一个切换条。
             relayAgent.start(appModel: model, sessionRunner: sessionRunner)
         }
+    }
+
+    /// 程序化触发一次窗口 relayout —— 把内容宽 +1 再 -1(下一 runloop 复原)，
+    /// 逼 NavigationSplitView 重跑约束，让 inspector 列宽在弹出当帧就套用，
+    /// 不必用户手动拖一下 divider 才"启用"自适应。
+    private func nudgeRelayout() {
+        DispatchQueue.main.async {
+            guard let window = hostWindow else { return }
+            let size = window.frame.size
+            window.setContentSize(NSSize(width: window.frame.width + 1, height: size.height))
+            DispatchQueue.main.async {
+                window.setContentSize(NSSize(width: window.frame.width - 1, height: size.height))
+            }
+        }
+    }
+}
+
+/// 后台零尺寸 NSView，挂上后回传其所属 NSWindow（用于程序化 relayout）。
+private struct WindowGrabber: NSViewRepresentable {
+    let onResolve: (NSWindow) -> Void
+    func makeNSView(context: Context) -> NSView {
+        let v = NSView()
+        DispatchQueue.main.async { if let w = v.window { onResolve(w) } }
+        return v
+    }
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async { if let w = nsView.window { onResolve(w) } }
     }
 }
 #endif
