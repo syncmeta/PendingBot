@@ -81,43 +81,6 @@ struct CrewSessionWindowView: View {
                 SessionUnreadStore.shared.markViewed(run.sessionId)
             }
         }
-        // 打开 inspector 会把整窗内容撑宽，窗口右缘容易顶出屏幕、inspector 最右
-        // 那段被切到屏幕外（用户三图诊断）。present 后把窗口夹回屏幕内（见
-        // clampWindowToScreen）。
-        .onAppear { scheduleClampWindow() }
-    }
-
-    /// inspector present 后把窗口夹回屏幕内 —— present 会让窗口右移/变宽撑出屏幕，
-    /// 把 inspector 最右段推到屏外被切。多拍覆盖 present 动画（grow 不一定一帧到位）。
-    private func scheduleClampWindow() {
-        for delay in [0.05, 0.3, 0.5] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                Self.clampWindowToScreen()
-            }
-        }
-    }
-
-    /// 若窗口比屏幕可见区宽就缩到可见宽（detail 随之压缩让位给 inspector）；
-    /// 右/左缘出屏就平移回来。保证 inspector（最右栏）整段都在屏内、不被切。
-    private static func clampWindowToScreen() {
-        guard let window = NSApp.keyWindow ?? NSApp.mainWindow,
-              let screen = window.screen ?? NSScreen.main else { return }
-        let visible = screen.visibleFrame
-        var frame = window.frame
-        var changed = false
-        if frame.width > visible.width {
-            frame.size.width = visible.width
-            changed = true
-        }
-        if frame.maxX > visible.maxX {
-            frame.origin.x = visible.maxX - frame.width
-            changed = true
-        }
-        if frame.minX < visible.minX {
-            frame.origin.x = visible.minX
-            changed = true
-        }
-        if changed { window.setFrame(frame, display: true, animate: false) }
     }
 
     // MARK: - 终端模式（原样保留：切换条 + 终端 + composer + 审批卡）

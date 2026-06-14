@@ -33,9 +33,14 @@ struct MacThreePaneView: View {
         } detail: {
             CrewCenterView(inspectorPresented: $inspectorPresented)
                 .environmentObject(sessionRunner)
-                // 中栏 min 调小 —— 让 macOS 在窗口贴屏幕边时能压缩中栏腾给 inspector，
-                // 而不是把窗口往屏幕外撑（两边被切的根因）。
-                .navigationSplitViewColumnWidth(min: 360, ideal: 560)
+                // **不设 navigationSplitViewColumnWidth** —— 诊断证明给它 ideal:560 会让
+                // 它在 inspector present 时霸占整个容器宽(detail=1040 满宽,inspector 拿到
+                // 400 却被挤到重叠/溢出),要手动拖一下才让位。去掉后它当弹性填充栏自动让位。
+                //
+                // 只给一个 minWidth 下限(不是 ideal,不贪婪):拖宽 inspector 时聊天栏压到
+                // 320 就卡住,inspector 不能再宽 —— 根治"拖到 max 把聊天栏挤破"。sidebar
+                // 收起时 inspector 仍可到 560；sidebar 开+窗口窄时自然在聊天栏触底处停。
+                .frame(minWidth: 320)
         }
         .inspector(isPresented: $inspectorPresented) {
             CrewSessionWindowView()
