@@ -1219,10 +1219,9 @@ private struct ConversationListRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(rowTitle)
-                        // 英文衬线(New York)、中文无衬线(PingFang)。`serif` 在
-                        // Mac 上已用 cascade 把 CJK 钉到 PingFang(见 Theme.Fonts.serif),
-                        // 与好友列表标题、与 iPhone 观感统一,中文不再走宋体发"黑"。
-                        .font(Theme.Fonts.serif(size: 16, weight: .semibold))
+                        // 英文衬线 / 中文无衬线(按串内 CJK 选 design);Mac 字重比
+                        // iOS 低一档。与好友列表标题同款、iOS/Mac 一致。
+                        .font(Theme.Fonts.scriptTitle(rowTitle, size: 16))
                         .foregroundStyle(
                             rowTitleIsPlaceholder ? Theme.Palette.inkMuted : Theme.Palette.ink
                         )

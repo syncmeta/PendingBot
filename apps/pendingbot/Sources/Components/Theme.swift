@@ -152,51 +152,38 @@ enum Theme {
 
         /// Serif display (system New York). Used for titles, header marks,
         /// avatar initials. Feels editorial vs the regular SF Pro UI.
-        ///
-        /// 中英混排:**英文走衬线(New York)、中文走无衬线(PingFang)**。
-        /// iOS 上这是天然效果 —— New York 没有 CJK 字形,系统自动回退到 PingFang。
-        /// 但 macOS 的 `.serif` 设计对 CJK 回退到**宋体(Songti,衬线、显粗)**,
-        /// 于是中文标题在 Mac 上发"黑"。这里在 Mac 显式用 cascade list 把 CJK
-        /// 回退钉死成 PingFang SC,英文仍是 New York —— 与 iPhone 观感一致。
         static func serif(size: CGFloat, weight: Font.Weight = .semibold) -> Font {
+            system(size: size, weight: weight, design: .serif)
+        }
+
+        /// 列表标题字体:**英文走衬线(New York)、中文走无衬线(系统中文字体)**。
+        /// 不锁定具体中文字体 —— 按串内是否含 CJK 选 `design`:含中文用 `.default`
+        /// (系统中文 = PingFang,无衬线),纯西文用 `.serif`(New York)。这样
+        /// iOS / macOS 两端表现一致,且 Mac 中文不再走宋体衬线(发"黑")。
+        /// 字重 Mac 比 iOS 低一档 —— 同号 Mac 渲染偏重,降一档观感才与 iPhone 齐。
+        static func scriptTitle(_ text: String, size: CGFloat) -> Font {
+            let cjk = text.unicodeScalars.contains(where: Fonts.isCJK)
             #if os(macOS)
-            return serifHan(size: size, weight: weight)
+            let weight: Font.Weight = .regular
             #else
-            return system(size: size, weight: weight, design: .serif)
+            let weight: Font.Weight = .semibold
             #endif
+            return system(size: size, weight: weight, design: cjk ? .default : .serif)
         }
 
-        #if os(macOS)
-        /// macOS: New York(衬线)+ CJK 强制 PingFang SC 回退(见 `serif` 注释)。
-        private static func serifHan(size: CGFloat, weight: Font.Weight) -> Font {
-            let pt = sized(size)
-            let nsW = nsWeight(weight)
-            let base = NSFont.systemFont(ofSize: pt, weight: nsW)
-            let serifDesc = base.fontDescriptor.withDesign(.serif) ?? base.fontDescriptor
-            // PingFang 在前 → CJK 优先用 PingFang,而非系统默认的宋体衬线回退。
-            let han = NSFontDescriptor(fontAttributes: [
-                .family: "PingFang SC",
-                .traits: [NSFontDescriptor.TraitKey.weight: nsW.rawValue],
-            ])
-            let cascaded = serifDesc.addingAttributes([.cascadeList: [han]])
-            let font = NSFont(descriptor: cascaded, size: pt) ?? base
-            return Font(font)
-        }
-
-        private static func nsWeight(_ w: Font.Weight) -> NSFont.Weight {
-            switch w {
-            case .ultraLight: return .ultraLight
-            case .thin:       return .thin
-            case .light:      return .light
-            case .medium:     return .medium
-            case .semibold:   return .semibold
-            case .bold:       return .bold
-            case .heavy:      return .heavy
-            case .black:      return .black
-            default:          return .regular
+        private static func isCJK(_ u: Unicode.Scalar) -> Bool {
+            switch u.value {
+            case 0x3000...0x30FF,    // CJK 符号 + 假名
+                 0x3400...0x4DBF,    // 扩展 A
+                 0x4E00...0x9FFF,    // 基本汉字
+                 0xF900...0xFAFF,    // 兼容汉字
+                 0xFF00...0xFFEF,    // 全角
+                 0x20000...0x2A6DF:  // 扩展 B
+                return true
+            default:
+                return false
             }
         }
-        #endif
 
         /// Rounded sans — softer than SF Pro, used for buttons, chip labels,
         /// nav, counters. Matches the warm palette.
