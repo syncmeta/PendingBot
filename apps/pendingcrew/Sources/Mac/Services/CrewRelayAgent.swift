@@ -163,23 +163,48 @@ final class CrewRelayAgent: ObservableObject {
         let workdir = SessionWorkspace.resolve(
             crewDirectory: dir, isolation: cfg.isolation, hint: req.taskBrief)
         let localSessionId = UUID().uuidString.lowercased()
-        if let detail = crewStore.getCrew(b.crewId), let backend = appModel?.backend {
-            let members = (try? await backend.listCrewMembers(crewId: b.crewId))?.members ?? []
-            cfg.appendSystemPromptFile = LocalSessionLaunch.renderWorldModelFile(
-                detail: detail, members: members, taskBrief: req.taskBrief,
-                workdir: workdir, sessionId: localSessionId, runnerKind: kind)
+        // 世界观 + comms 接线按 kind 分叉：claude 走文件标志（--append-system-prompt-file
+        // / --settings / --mcp-config）；codex 没这些通道 —— 世界观经 developerInstructions、
+        // MCP 经 mcpServers dict 走协议传入。best-effort：渲染失败 nil 不挡启动。
+        var codexDevInstructions: String? = nil
+        var codexMcp: [String: Any]? = nil
+        let members: [CrewMember]
+        if let backend = appModel?.backend {
+            members = (try? await backend.listCrewMembers(crewId: b.crewId))?.members ?? []
+        } else {
+            members = []
         }
-        let comms = LocalSessionLaunch.prepareLocalCommsConfig(
-            crewId: b.crewId, sessionId: localSessionId)
-        cfg.settingsFile = comms.settings
-        cfg.mcpConfigFile = comms.mcp
+        let detail = crewStore.getCrew(b.crewId)
+        switch kind {
+        case .claudeCode:
+            // claude 行为不变：detail+backend 都在才渲染世界观文件；comms 恒接。
+            if let detail, appModel?.backend != nil {
+                cfg.appendSystemPromptFile = LocalSessionLaunch.renderWorldModelFile(
+                    detail: detail, members: members, taskBrief: req.taskBrief,
+                    workdir: workdir, sessionId: localSessionId, runnerKind: kind)
+            }
+            let comms = LocalSessionLaunch.prepareLocalCommsConfig(
+                crewId: b.crewId, sessionId: localSessionId)
+            cfg.settingsFile = comms.settings
+            cfg.mcpConfigFile = comms.mcp
+        case .codex:
+            if let detail {
+                codexDevInstructions = LocalSessionLaunch.renderWorldModelString(
+                    detail: detail, members: members, taskBrief: req.taskBrief,
+                    workdir: workdir, sessionId: localSessionId)
+            }
+            codexMcp = LocalSessionLaunch.codexMcpServers(
+                crewId: b.crewId, sessionId: localSessionId)
+        }
         do {
             try await runner.start(
                 crewId: b.crewId,
                 sessionId: localSessionId,
                 config: cfg,
                 workingDirectory: workdir,
-                taskBrief: req.taskBrief)
+                taskBrief: req.taskBrief,
+                developerInstructions: codexDevInstructions,
+                codexMcpServers: codexMcp)
             await reportBack("🚀 已在 Mac 上启动 \(kind.displayName) session（\(localSessionId.prefix(8))），任务：\(req.taskBrief)")
         } catch {
             await reportBack("⚠️ 任务已收到，但本机起 session 失败：\(error.localizedDescription)")
