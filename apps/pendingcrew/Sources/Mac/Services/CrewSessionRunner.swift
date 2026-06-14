@@ -134,7 +134,7 @@ final class CrewSessionRunner: ObservableObject {
             throw RunnerError.toolNotInstalled(kind: config.kind)
         }
         // 2. env 白名单（spec v2 §8.4.2）—— 复用 spec 的纯函数构造。
-        let env = LocalCodingAgentEnv.build(additionalEnv: additionalEnv)
+        let env = LocalCodingAgentEnv.build(additionalEnv: additionalEnv, kind: config.kind)
         // 3. 起内嵌终端 session（claude；codex app-server 在后续 task 接入）
         let backend = AgentTerminalSession(
             config: config,
