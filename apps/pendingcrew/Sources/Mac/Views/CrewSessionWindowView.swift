@@ -867,8 +867,8 @@ private struct SessionBarItemView: View {
 }
 
 /// 单个 run 的内容视图。`@ObservedObject` 订阅 run 的 `@Published`（status /
-/// exitCode）驱动 header 刷新；内容区是内嵌的真终端（`AgentTerminalView`），
-/// agent 的输出原样渲染、键盘直接可输入。
+/// exitCode）驱动 header 刷新；内容区按 backend 类型分支：claude 显示
+/// `AgentTerminalView`（真终端），codex 显示 `CodexTranscriptView`（结构化 transcript）。
 private struct SessionRunContentView: View {
     @ObservedObject var run: CrewSessionRun
 
@@ -880,6 +880,9 @@ private struct SessionRunContentView: View {
                 AgentTerminalView(session: term)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color(nsColor: .textBackgroundColor))
+            } else if let codex = run.backend as? CodexAppServerBackend {
+                CodexTranscriptView(transcript: codex.transcript)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
     }
