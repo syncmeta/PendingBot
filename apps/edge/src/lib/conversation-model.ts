@@ -86,3 +86,21 @@ export async function chooseCandidateModel(input: {
     shouldPersist: false,
   };
 }
+
+export type RevealMode = 'surprise' | 'disclose';
+
+export interface BlindBoxConfig {
+  revealMode: RevealMode;
+  regenReroll: boolean;
+}
+
+export function parseBlindBoxConfig(config: unknown): BlindBoxConfig {
+  const fallback: BlindBoxConfig = { revealMode: 'surprise', regenReroll: true };
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return fallback;
+  const bb = (config as Record<string, unknown>).blindBox;
+  if (!bb || typeof bb !== 'object' || Array.isArray(bb)) return fallback;
+  const record = bb as Record<string, unknown>;
+  const revealMode: RevealMode = record.revealMode === 'disclose' ? 'disclose' : 'surprise';
+  const regenReroll = typeof record.regenReroll === 'boolean' ? record.regenReroll : true;
+  return { revealMode, regenReroll };
+}

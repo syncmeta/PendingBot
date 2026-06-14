@@ -3,6 +3,7 @@ import {
   chooseCandidateModel,
   chooseConversationMainModel,
   modelPoolConfigFromBotConfig,
+  parseBlindBoxConfig,
 } from './conversation-model';
 
 describe('modelPoolConfigFromBotConfig', () => {
@@ -100,5 +101,20 @@ describe('chooseCandidateModel', () => {
       providerOverride: 'openrouter',
       shouldPersist: false,
     });
+  });
+});
+
+describe('parseBlindBoxConfig', () => {
+  it('defaults to surprise + regenReroll when absent', () => {
+    expect(parseBlindBoxConfig(null)).toEqual({ revealMode: 'surprise', regenReroll: true });
+    expect(parseBlindBoxConfig({})).toEqual({ revealMode: 'surprise', regenReroll: true });
+  });
+  it('reads disclose + regenReroll=false', () => {
+    expect(parseBlindBoxConfig({ blindBox: { revealMode: 'disclose', regenReroll: false } }))
+      .toEqual({ revealMode: 'disclose', regenReroll: false });
+  });
+  it('ignores garbage and falls back to defaults', () => {
+    expect(parseBlindBoxConfig({ blindBox: { revealMode: 'nonsense', regenReroll: 'x' } }))
+      .toEqual({ revealMode: 'surprise', regenReroll: true });
   });
 });
