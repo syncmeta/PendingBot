@@ -816,6 +816,7 @@ export type Database = {
           last_turn_status: string | null
           message_seq_counter: number
           metadata: Json
+          model_revealed: boolean
           parent_message_id: string | null
           random_model_config: Json | null
           responsible_subject_id: string | null
@@ -836,6 +837,7 @@ export type Database = {
           last_turn_status?: string | null
           message_seq_counter?: number
           metadata?: Json
+          model_revealed?: boolean
           parent_message_id?: string | null
           random_model_config?: Json | null
           responsible_subject_id?: string | null
@@ -856,6 +858,7 @@ export type Database = {
           last_turn_status?: string | null
           message_seq_counter?: number
           metadata?: Json
+          model_revealed?: boolean
           parent_message_id?: string | null
           random_model_config?: Json | null
           responsible_subject_id?: string | null
@@ -2283,52 +2286,40 @@ export type Database = {
           },
         ]
       }
-      model_comparisons: {
+      model_guesses: {
         Row: {
-          conversation_id: string | null
+          actual_provider: string | null
+          actual_slug: string
+          conversation_id: string
+          correct: boolean | null
           created_at: string
-          group_a_id: string
-          group_b_id: string
+          guessed_slug: string | null
           id: string
-          model_a: string
-          model_b: string
-          outcome: string
-          parent_message_id: string | null
-          provider_a: string | null
-          provider_b: string | null
           user_id: string
         }
         Insert: {
-          conversation_id?: string | null
+          actual_provider?: string | null
+          actual_slug: string
+          conversation_id: string
+          correct?: boolean | null
           created_at?: string
-          group_a_id: string
-          group_b_id: string
+          guessed_slug?: string | null
           id?: string
-          model_a: string
-          model_b: string
-          outcome: string
-          parent_message_id?: string | null
-          provider_a?: string | null
-          provider_b?: string | null
           user_id: string
         }
         Update: {
-          conversation_id?: string | null
+          actual_provider?: string | null
+          actual_slug?: string
+          conversation_id?: string
+          correct?: boolean | null
           created_at?: string
-          group_a_id?: string
-          group_b_id?: string
+          guessed_slug?: string | null
           id?: string
-          model_a?: string
-          model_b?: string
-          outcome?: string
-          parent_message_id?: string | null
-          provider_a?: string | null
-          provider_b?: string | null
           user_id?: string
         }
         Relationships: [
           {
-            foreignKeyName: "model_comparisons_conversation_id_fkey"
+            foreignKeyName: "model_guesses_conversation_id_fkey"
             columns: ["conversation_id"]
             isOneToOne: false
             referencedRelation: "conversations"
