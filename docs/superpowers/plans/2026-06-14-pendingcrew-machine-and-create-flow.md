@@ -409,13 +409,14 @@ enum DeviceIdentity {
 
 - [ ] **Step 1: CrewSummary** — 删 `let tag: String?` + memberwise init 参数 + decoder 的 `decodeIfPresent(tag)`。`RuntimeLocation` 枚举与 `runtimeLocation` 字段**保留**（edge 仍下发派生值）。
 - [ ] **Step 2: CrewDetail.CrewBody** — 删 `let tag: String?` + decoder。
-- [ ] **Step 3: CreateCrewRequest** — 改为：
+- [ ] **Step 3: CreateCrewRequest** — 改为（**保留 workingDirectory**，edge session-world-model 要读 working_directory）：
 
 ```swift
 struct CreateCrewRequest: Encodable {
     let responsibleSubjectId: String
     let title: String?            // nil/空 = 自动(留给 captain)
     let machineId: String?        // nil = 本机
+    let workingDirectory: String? // 表单解析出的目录路径(CrewGround/手动/上次)
     let captain: Captain
     // Captain 枚举原样保留
 
@@ -423,20 +424,17 @@ struct CreateCrewRequest: Encodable {
         responsibleSubjectId: String,
         title: String?,
         machineId: String?,
+        workingDirectory: String?,
         captain: Captain
     ) -> CreateCrewRequest {
-        CreateCrewRequest(responsibleSubjectId: responsibleSubjectId,
-                          title: title, machineId: machineId, captain: captain)
+        CreateCrewRequest(responsibleSubjectId: responsibleSubjectId, title: title,
+                          machineId: machineId, workingDirectory: workingDirectory, captain: captain)
     }
 }
 ```
-删 `runtimeLocation`/`workingDirectory`/`tag`/`peerDeviceId`/`flyMachineId` 字段与 `localHost` 工厂。
+只删 `runtimeLocation`/`tag`/`peerDeviceId`/`flyMachineId` 字段与 `localHost` 工厂（workingDirectory **保留**）。
 
-> **workingDirectory 去哪了？** 本地 crew 的工作目录是**纯本地**概念（edge 不需要它来跑——runner 在本机起）。工作目录只存进 `LocalCrewStore`（Task 11 由表单直接写本地，不再走 CreateCrewRequest 上送）。edge 端 crew 仍有 working_directory 列但本地 crew 不依赖它；若 EdgeBackend.createCrew 需要可后续补。**核对**：确认 LocalBackend.createCrew 才是 Mac 默认路径（BYOK/本地），workingDirectory 写本地 store 即可。
-
-- [ ] **Step 4: LocalCrew + createCrew** — LocalCrew 删 `tag`；`createCrew` 不再读 `request.tag`/`request.runtimeLocation`/`request.workingDirectory`。改为：`createCrew(_ request:, workingDirectory: String?, machineId: String?)` —— 即给 LocalCrewStore.createCrew 增加 workingDirectory/machineId 形参（由表单传入），runtimeLocation 本地恒存 `"local_host"`（或按 machineId 派生）。LocalCrew 增 `machineId: String?` 字段（decoder 带 decodeIfPresent 兜底）。
-
-> 这一步会改动 `createCrew` 签名 → 牵动 `PendingCrewBackend` 协议（Task 9）与所有调用点（CrewStore、relay）。在 Task 9 一并改齐再编译。
+- [ ] **Step 4: LocalCrew + createCrew** — LocalCrew 删 `tag`、增 `machineId: String?`（decoder decodeIfPresent 兜底）。`createCrew(_ request:)` 签名**不变**：继续读 `request.workingDirectory`，新增读 `request.machineId` 存入 LocalCrew；不再读 `request.tag`/`request.runtimeLocation`（runtimeLocation 本地恒存 `"local_host"`）。
 
 ---
 
@@ -452,13 +450,13 @@ struct CreateCrewRequest: Encodable {
 ```swift
 func listMachines() async throws -> [Machine]
 func registerSelfMachine() async throws -> String   // 返回 machineId
-// createCrew 签名调整：把工作目录/machineId 显式带上（本地路径需要 wd）
-func createCrew(_ request: CreateCrewRequest, workingDirectory: String?) async throws -> CreateCrewResponse
+// createCrew 签名【不变】：workingDirectory/machineId 已在 request 内
 ```
+（`createCrew(_ request:)` 签名保持现状，无需改协议这一行。）
 
-- [ ] **Step 2: EdgeBackend 实现** — `listMachines` 调 `GET /v1/machines`；`registerSelfMachine` 调 `POST /v1/machines/register-self`（body: deviceId=DeviceIdentity.current, displayName=DeviceIdentity.displayName）；`createCrew` 透传（workingDirectory 对 edge 暂忽略或写 working_directory，本地路径为主）。
+- [ ] **Step 2: EdgeBackend 实现** — `listMachines` 调 `GET /v1/machines`；`registerSelfMachine` 调 `POST /v1/machines/register-self`（body: deviceId=DeviceIdentity.current, displayName=DeviceIdentity.displayName）；`createCrew` 原样透传（request 含 workingDirectory/machineId）。
 
-- [ ] **Step 3: LocalBackend 实现** — `listMachines` 返回单元素 `[本机]`（合成一个 Machine：id 用 device_id、kind=computer、isLocal）；`registerSelfMachine` no-op 返回本地 id；`createCrew` 调 `LocalCrewStore.createCrew(request, workingDirectory:, machineId:)`。
+- [ ] **Step 3: LocalBackend 实现** — `listMachines` 返回单元素 `[本机]`（合成一个 Machine：id 用 device_id、kind=computer、isLocal）；`registerSelfMachine` no-op 返回本地 id；`createCrew` 调既有 `LocalCrewStore.createCrew(request)`（已读 request.workingDirectory/machineId）。
 
 - [ ] **Step 4: PendingCrewAPI** — 加 `listMachines()`/`registerSelfMachine()`（照现有 `get`/`post` helper）：
 
@@ -478,9 +476,9 @@ func registerSelfMachine() async throws -> String {
 ```
 createCrew 的 body 编码：CreateCrewRequest 现已是 `{responsibleSubjectId, title?, machineId?, captain}`，原样 encode。
 
-- [ ] **Step 5: CrewStore** — 加 `@Published var machines: [Machine] = []` + `func refreshMachines()`；`createCrew(request, workingDirectory:)` 转发 backend；登录成功后（找到注入点：saveDeviceGrantToken 之后 / 进入主界面时）调 `registerSelfMachine()` then `refreshMachines()`。
+- [ ] **Step 5: CrewStore** — 加 `@Published var machines: [Machine] = []` + `func refreshMachines()`；`createCrew(request)` 转发 backend（签名不变）；登录成功后（找到注入点：saveDeviceGrantToken 之后 / 进入主界面时）调 `registerSelfMachine()` then `refreshMachines()`。
 
-- [ ] **Step 6: 修所有 createCrew 调用点**：relay（CrewDetailInspector connectToPendingBot）、CreateCrewSheet.submit（Task 11 重写）。relay 处改 `.make(responsibleSubjectId:title:machineId:nil,captain:)` + `workingDirectory: nil`，去 tag。
+- [ ] **Step 6: 修所有 createCrew 调用点**：relay（CrewDetailInspector connectToPendingBot）、CreateCrewSheet.submit（Task 11 重写）。relay 处改 `.make(responsibleSubjectId:, title: title, machineId: nil, workingDirectory: nil, captain: .systemGenerated(templateName: nil))`，去 tag。
 
 - [ ] **Step 7: 编译留到 Task 13。**
 
@@ -536,8 +534,9 @@ private func submit() async {
             : nil
         let request = CreateCrewRequest.make(
             responsibleSubjectId: subjectId, title: titleValue,
-            machineId: selectedMachineId, captain: .systemGenerated(templateName: nil))
-        _ = try await crewStore.createCrew(request, workingDirectory: resolvedDir.path)
+            machineId: selectedMachineId, workingDirectory: resolvedDir.path,
+            captain: .systemGenerated(templateName: nil))
+        _ = try await crewStore.createCrew(request)
         UserDefaults.standard.set(resolvedDir.path, forKey: "pendingcrew.lastWorkingDirectory")
         dismiss()
     } catch { localError = error.localizedDescription }
