@@ -107,7 +107,6 @@ function mkProposal(overrides: Partial<Row> = {}): Row {
     log_payload: {
       proposed_by_bot_id: 'bot-aaa',
       proposed_name: '研究小队',
-      proposed_tag: '研究',
       proposed_working_directory: null,
       proposed_parent_crew_id: null,
       proposed_initial_brief: null,
