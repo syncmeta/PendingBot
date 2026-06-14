@@ -61,8 +61,7 @@ struct CrewSessionWindowView: View {
                 memberListMode
             }
         }
-        // 填满 inspector 栏,但**不设 minWidth** —— 内容能被压到任意窄而只是重排,
-        // 绝不以固定宽居中溢出被切。列宽由 .inspectorColumnWidth 控。
+        // 填满 inspector 栏 —— 内容是弹性的，跟随固定列宽布局，不溢出。
         .frame(maxWidth: .infinity)
         // 无 navigationTitle —— 这是 inspector 内容,标题会漏到主窗标题栏(显成
         // "Session" 盖掉 crew 名)。窗标题由中栏 toolbar 的 crew 名负责。

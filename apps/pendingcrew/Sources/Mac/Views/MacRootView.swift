@@ -40,9 +40,12 @@ struct MacThreePaneView: View {
         .inspector(isPresented: $inspectorPresented) {
             CrewSessionWindowView()
                 .environmentObject(sessionRunner)
-                // **弹性**宽（不固定）—— 窗口窄时能自己缩，不再两边切。成员列表 / 终端
-                // 两模式共用这个列（宽度跟内容模式无关，开 session 不会变宽）。
-                .inspectorColumnWidth(min: 300, ideal: 380, max: 520)
+                // **固定宽**（不走 min/ideal/max 三值协商）—— 那个协商在 SwiftUI 里
+                // 首帧不落定（detail 的 ideal 和 inspector 的区间没被解算），要等一次
+                // geometry 变化才生效，正是"必须手动拖一下才正常"的根因。固定宽首帧即
+                // 定，不会被切；也正好满足"打开 session 后宽度保持不变"。内容是弹性的
+                // （maxWidth:.infinity + 终端低抗压缩），固定到 400 也不溢出。
+                .inspectorColumnWidth(400)
         }
         // 根治超屏：inspector 一开就收起左 sidebar 腾出宽度，关掉再放回来。
         .onChange(of: inspectorPresented) { _, open in
