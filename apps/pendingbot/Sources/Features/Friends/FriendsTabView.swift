@@ -260,141 +260,6 @@ struct FriendsTabView: View {
         }
     }
 
-    // MARK: - Mac 壳:自绘好友列表(ScrollView,不用 List)
-
-    /// macOS List 自带较大的水平/分组留白,行内边距覆盖不掉 → 左侧总空一条。
-    /// 消息列表是 ScrollView 所以贴左;好友这里照搬:自绘纯净一列 —— 行贴左
-    /// (leading 16,和消息对齐)、行间 hairline 细线、选中行铺一小块圆角染色。
-    /// iOS / iPad-regular 仍走原 `List`(insetGrouped)。
-    private var macFriendsScroll: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                let selfSelected = sidebarLayout && effectiveSelection?.kind == "self"
-                macRow(selected: selfSelected) {
-                    SelfRow(
-                        avatarSeed: AccountStore.shared.avatarSeed
-                            ?? AccountStore.shared.current?.id ?? "?",
-                        attachmentId: AccountStore.shared.avatarAttachmentId,
-                        name: AccountStore.shared.profileDisplayName
-                            ?? AccountStore.shared.current?.displayName ?? "你",
-                        onTap: { Task { await tapSelf() } },
-                        onQR: { showingQR = true; Haptics.tap() }
-                    )
-                }
-
-                FilterPillBar(filter: $filter)
-                    .padding(.vertical, 6)
-
-                if !pendingFriendRequests.isEmpty {
-                    macSectionHeader("好友申请")
-                    ForEach(Array(pendingFriendRequests.enumerated()), id: \.element.id) { idx, req in
-                        if idx > 0 { macRowDivider }
-                        macRow(selected: false) {
-                            FriendRequestRow(
-                                request: req,
-                                onAccept: { Task { await respondToRequest(req, accept: true) } },
-                                onDecline: { Task { await respondToRequest(req, accept: false) } }
-                            )
-                        }
-                    }
-                }
-
-                if !pendingGroupInvitations.isEmpty {
-                    macSectionHeader("群邀请")
-                    ForEach(Array(pendingGroupInvitations.enumerated()), id: \.element.id) { idx, invite in
-                        if idx > 0 { macRowDivider }
-                        macRow(selected: false) {
-                            GroupInvitationRow(
-                                invitation: invite,
-                                onAccept: { Task { await respondToGroupInvitation(invite, accept: true) } },
-                                onDecline: { Task { await respondToGroupInvitation(invite, accept: false) } }
-                            )
-                        }
-                    }
-                }
-
-                if !friendsForFilter.isEmpty {
-                    ForEach(Array(friendsForFilter.enumerated()), id: \.element.id) { idx, item in
-                        if idx > 0 { macRowDivider }
-                        switch item {
-                        case .bot(let bot):
-                            let selected = sidebarLayout && isSelected(kind: "bot", id: bot.id)
-                            macRow(selected: selected) {
-                                FriendRow(kind: .bot, avatarSeed: bot.id, name: bot.display_name,
-                                          modelSlug: bot.model_id, botVisibility: bot.visibility)
-                            }
-                            .onTapGesture { Task { await tapBot(bot) } }
-                            .modifier(BotRowOwnerActions(
-                                bot: bot, isMine: ownsBot(bot),
-                                onManage: { managingBot = bot }
-                            ))
-                        case .human(let c):
-                            let selected = sidebarLayout && isSelected(kind: "user", id: c.id)
-                            macRow(selected: selected) {
-                                FriendRow(kind: .human, avatarSeed: c.avatarSeed,
-                                          avatarAttachmentId: c.avatarPath, name: c.rowName,
-                                          modelSlug: nil, botVisibility: nil)
-                            }
-                            .onTapGesture { Task { await tapHuman(c) } }
-                            .contextMenu {
-                                Button { aliasEditTarget = c } label: {
-                                    Label(c.alias?.isEmpty == false ? "修改备注" : "设置备注",
-                                          systemImage: "person.text.rectangle")
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if let emptyText = emptyTextForFilter {
-                    Text(emptyText)
-                        .font(Theme.Fonts.footnote)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.leading, 16)
-                        .padding(.vertical, 24)
-                }
-            }
-            .padding(.trailing, Theme.Metrics.gutter)
-            .padding(.vertical, 8)
-        }
-        .refreshable { await load() }
-    }
-
-    /// 单行容器:左内边距 16(贴 rail,与消息列表对齐)、选中铺圆角染色。
-    @ViewBuilder
-    private func macRow<V: View>(selected: Bool, @ViewBuilder _ content: () -> V) -> some View {
-        content()
-            .padding(.leading, 16)
-            .padding(.vertical, 4)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background {
-                if selected {
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(Theme.Palette.accentBg)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                }
-            }
-            .contentShape(Rectangle())
-    }
-
-    private var macRowDivider: some View {
-        Divider()
-            .overlay(Theme.Palette.hairline)
-            .padding(.leading, 16)
-    }
-
-    private func macSectionHeader(_ text: String) -> some View {
-        Text(text)
-            .font(Theme.Fonts.caption)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.leading, 16)
-            .padding(.top, 14)
-            .padding(.bottom, 4)
-    }
-
     /// 表头操作 = 排序菜单 + "+" 弹层(加好友 / 加机器人 / 新建机器人)。抽出来
     /// 既给 iOS 的 `TabHeaderBar` trailing 用,又给 Mac 壳的 toolbar 用。
     @ViewBuilder private var friendsHeaderActions: some View {
@@ -450,10 +315,6 @@ struct FriendsTabView: View {
                 if !renderAsMacListColumn {
                     Theme.Palette.canvas.ignoresSafeArea()
                 }
-                if renderAsMacListColumn {
-                    // Mac:自绘 ScrollView 列表(贴左、纯净一列),不用 List。
-                    macFriendsScroll
-                } else {
                 List {
                     // Self row — pinned at the top, always visible
                     // regardless of filter. QR button on the right opens
@@ -579,7 +440,6 @@ struct FriendsTabView: View {
                 .scrollContentBackground(.hidden)
                 .contentMargins(.top, 0, for: .scrollContent)
                 .refreshable { await load() }
-                }
             }
         }
     }
