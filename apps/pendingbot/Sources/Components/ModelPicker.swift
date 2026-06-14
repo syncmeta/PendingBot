@@ -211,6 +211,7 @@ struct ModelPickerSheet: View {
             }
         }
         .task { await load() }
+        .macSheetMinSize()
     }
 
     private var searchField: some View {
@@ -719,6 +720,7 @@ struct ArenaModelPickerSheet: View {
                 }
         }
         .tint(Theme.Palette.accent)
+        .macSheetMinSize()
     }
 }
 

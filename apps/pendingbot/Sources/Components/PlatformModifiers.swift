@@ -72,6 +72,22 @@ extension View {
         #endif
     }
 
+    /// macOS sheets size to fit their content, so a sheet whose body is a
+    /// greedy `List` collapses that list to ~0 height — the rows vanish and
+    /// only the header/toolbar show. Give such sheets an explicit min size
+    /// on macOS so the List has room to render. No-op on iOS, where sheets
+    /// already get a full/detented height. Apply to the sheet's root
+    /// content (the NavigationStack inside the `.sheet { }` builder).
+    @ViewBuilder func macSheetMinSize(
+        minWidth: CGFloat = 560, minHeight: CGFloat = 640
+    ) -> some View {
+        #if os(macOS)
+        self.frame(minWidth: minWidth, minHeight: minHeight)
+        #else
+        self
+        #endif
+    }
+
     @ViewBuilder func platformListStyle() -> some View {
         #if os(iOS)
         self.listStyle(.insetGrouped)

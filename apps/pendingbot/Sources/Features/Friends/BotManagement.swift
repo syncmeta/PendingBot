@@ -132,6 +132,9 @@ struct CreateBotSheet: View {
                 await seedDefaultName()
             }
         }
+        // macOS: the model step is a greedy List; without a min sheet size
+        // it collapses to zero height (no rows). No-op on iOS.
+        .macSheetMinSize()
     }
 
     @ViewBuilder
