@@ -81,39 +81,46 @@ struct CrewSessionWindowView: View {
                 SessionUnreadStore.shared.markViewed(run.sessionId)
             }
         }
-        // SwiftUI 原生 .inspector 首帧 bug 兜底：内容 hosting view 不会在 present
-        // 当帧同步到列宽（被切，要手动拖一下 divider 才复位）。present 动画结束后
-        // 程序对 inspector 的 divider 做一次同步 = 等同那一拖，但时机对（内容已进
-        // 视图树、动画已停）。见 resyncInspectorDivider 注释。
-        .onAppear { resyncInspectorDivider() }
+        // SwiftUI 原生 .inspector 首帧 bug 兜底（见 fixInspectorWidth）。
+        .onAppear { fixInspectorWidth() }
     }
 
-    /// present 动画结束后，把 inspector 那条 divider 拨一下复位 —— 绕 SwiftUI
-    /// 原生 .inspector 的首帧不同步 bug（固定宽/弹性宽都中招，跟宽度写法无关；
-    /// 唯一触发复位的是对 inspector divider 的 geometry 变化，即用户手动那一拖）。
-    /// 延后到动画停 + 内容进树后再做，否则那条 split 还没建好（Opus 从 onChange
-    /// 触发太早所以没生效）。多拍重试覆盖动画时长抖动。
-    private func resyncInspectorDivider() {
-        for delay in [0.35, 0.5, 0.7] {
+    /// 关键诊断（用户）：inspector divider 拖到**最左 = inspector 最宽 = max** 时内容
+    /// 被切，比 max 窄一点就好。而 SwiftUI 首帧没套用 ideal、退回到 **max 宽**呈现，
+    /// 正好落在那个坏状态。之前的「+1 再复位」净零位移=又放回 max，所以无效。
+    ///
+    /// 正解：present 后把 inspector 的 divider 摆到 **ideal(400)（< max 的好宽度）
+    /// 并留在那**，不复位。多拍覆盖 present 动画时长（太早那条 split 还没建好）。
+    private func fixInspectorWidth() {
+        for delay in [0.3, 0.45, 0.6] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                Self.nudgeRightmostDividers()
+                Self.setInspectorPaneWidth(Self.inspectorIdealWidth)
             }
         }
     }
 
-    /// 找窗口里所有横向 NSSplitView，把最后一条 divider +1 再复位（净零位移，
-    /// 但逼 AppKit 重跑 split 布局，让 inspector 的 hosting view 重新贴合列宽）。
-    /// 跳过已折叠的栏（divider 贴边）以免误把 sidebar 拨出来。
-    private static func nudgeRightmostDividers() {
+    private static let inspectorIdealWidth: CGFloat = 400
+
+    /// 把 inspector 那一栏（窗口最右的 pane）的宽度设成 `width`。靠定位它所在
+    /// NSSplitView 的最后一条 divider 实现 —— inspector 是最右 pane，选「最后一个
+    /// 子视图右缘最靠右」的那条 split，避免误碰 sidebar/detail 的 divider。
+    private static func setInspectorPaneWidth(_ width: CGFloat) {
         guard let window = NSApp.keyWindow ?? NSApp.mainWindow else { return }
-        for sv in splitViews(in: window.contentView)
-        where sv.isVertical && sv.arrangedSubviews.count >= 2 {
-            let idx = sv.arrangedSubviews.count - 2
-            let pos = sv.arrangedSubviews[idx].frame.maxX
-            guard pos > 12 else { continue } // 折叠的栏（divider 贴左边）不碰
-            sv.setPosition(pos + 1, ofDividerAt: idx)
-            DispatchQueue.main.async { sv.setPosition(pos, ofDividerAt: idx) }
-        }
+        let candidates = splitViews(in: window.contentView)
+            .filter { $0.isVertical && $0.arrangedSubviews.count >= 2 }
+        guard let split = candidates.max(by: { a, b in
+            rightEdgeInWindow(a) < rightEdgeInWindow(b)
+        }) else { return }
+        let idx = split.arrangedSubviews.count - 2
+        let target = split.bounds.width - width - split.dividerThickness
+        guard target > 0 else { return }
+        split.setPosition(target, ofDividerAt: idx)
+    }
+
+    /// 一条 split 的最后一个 pane 在窗口坐标里的右缘 —— 越大越靠窗口右边。
+    private static func rightEdgeInWindow(_ split: NSSplitView) -> CGFloat {
+        guard let last = split.arrangedSubviews.last else { return 0 }
+        return split.convert(last.frame, to: nil).maxX
     }
 
     private static func splitViews(in view: NSView?) -> [NSSplitView] {
