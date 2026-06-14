@@ -36,6 +36,11 @@ struct CreateCrewSheet: View {
     @State private var selectedMachineId: String?
     @State private var workingDirMode: WorkingDirMode = .crewGround
     @State private var manualWorkingDir: URL?
+    /// 机长跑哪个本机 coding agent。**默认 Codex**（spec A）。
+    @State private var selectedCaptainKind: LocalCodingAgentKind = .codex
+    /// CrewGround 模式下提前挑好的目录名（如 "Lisbon"）—— 提交前就显示在框里
+    /// （`~/CrewGround/Lisbon`），稳定不抖；真正建目录推迟到 submit。空 = 尚未算出。
+    @State private var crewGroundName: String = ""
     @State private var creating = false
     @State private var localError: String?
 
@@ -61,6 +66,8 @@ struct CreateCrewSheet: View {
                 await crewStore.refreshMachines()
             }
         }
+        // CrewGround 目录名提前挑好（稳定显示在框里），只挑一次。
+        .onAppear { ensureCrewGroundName() }
     }
 
     // MARK: - sections
@@ -83,53 +90,70 @@ struct CreateCrewSheet: View {
                     machineField
                 }
                 workingDirField
+                captainField
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(20)
         }
+    }
+
+    /// 通用「药丸式」可点选项按钮 —— 选中态高亮，未选灰底。替代下拉/菜单 Picker，
+    /// 所有选项一眼平铺可点（spec B.1）。
+    @ViewBuilder
+    private func optionButton(_ label: String, selected: Bool, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(label)
+                .font(.callout)
+                .padding(.horizontal, 12).padding(.vertical, 6)
+                .background(selected ? Color.accentColor : Color.gray.opacity(0.15),
+                            in: RoundedRectangle(cornerRadius: 7))
+                .foregroundStyle(selected ? Color.white : Color.primary)
+        }
+        .buttonStyle(.plain)
     }
 
     private var titleField: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("标题")
                 .font(.callout.weight(.medium))
-            Picker("", selection: $titleMode) {
-                Text("自动（让机长之后命名）").tag(TitleMode.auto)
-                Text("手动填写").tag(TitleMode.manual)
+            HStack(spacing: 8) {
+                optionButton("自动", selected: titleMode == .auto) { titleMode = .auto }
+                optionButton("手动", selected: titleMode == .manual) { titleMode = .manual }
             }
-            .labelsHidden()
-            .pickerStyle(.segmented)
-            if titleMode == .manual {
-                TextField("例如：重构鉴权模块", text: $title)
-                    .textFieldStyle(.roundedBorder)
-            } else {
-                Text("留空交给机长 —— 它会在干起来之后总结一个标题。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            // 框始终在：自动模式下禁用 + 占位「Captain 来取名」、内容空；
+            // 手动模式启用，可填。
+            TextField(titleMode == .auto ? "Captain 来取名" : "例如：重构鉴权模块",
+                      text: titleMode == .auto ? .constant("") : $title)
+                .textFieldStyle(.roundedBorder)
+                .disabled(titleMode == .auto)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var machineField: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("运行机器")
                 .font(.callout.weight(.medium))
-            Picker("", selection: Binding(
-                get: { selectedMachineId ?? "" },
-                set: { selectedMachineId = $0.isEmpty ? nil : $0 }
-            )) {
-                Text("本机").tag("")
+            HStack(spacing: 8) {
+                optionButton("本机", selected: selectedMachineId == nil) {
+                    selectedMachineId = nil
+                }
                 ForEach(crewStore.machines) { machine in
                     if machine.deviceId != DeviceIdentity.current {
-                        Text(machineLabel(machine)).tag(machine.id)
+                        optionButton(machineLabel(machine),
+                                     selected: selectedMachineId == machine.id) {
+                            selectedMachineId = machine.id
+                        }
                     }
                 }
             }
-            .labelsHidden()
-            .pickerStyle(.menu)
+            .frame(maxWidth: .infinity, alignment: .leading)
             Text("crew 的 session 在这台机器上跑。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func machineLabel(_ m: Machine) -> String {
@@ -141,56 +165,102 @@ struct CreateCrewSheet: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("工作目录")
                 .font(.callout.weight(.medium))
-            Picker("", selection: $workingDirMode) {
-                Text("CrewGround（自动新建）").tag(WorkingDirMode.crewGround)
-                Text("手动选择").tag(WorkingDirMode.manual)
+            HStack(spacing: 8) {
+                optionButton("CrewGround", selected: workingDirMode == .crewGround) {
+                    workingDirMode = .crewGround
+                }
+                optionButton("手动选择", selected: workingDirMode == .manual) {
+                    workingDirMode = .manual
+                }
                 if hasLastDir {
-                    Text("用上次").tag(WorkingDirMode.lastUsed)
+                    optionButton("用上次", selected: workingDirMode == .lastUsed) {
+                        workingDirMode = .lastUsed
+                    }
                 }
             }
-            .labelsHidden()
-            .pickerStyle(.menu)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-            switch workingDirMode {
-            case .crewGround:
-                Text("将在 ~/CrewGround/<随机地名> 新建一个目录。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            case .manual:
-                HStack(spacing: 8) {
-                    if let url = manualWorkingDir {
-                        Text(url.path)
-                            .font(.system(.callout, design: .monospaced))
-                            .textSelection(.enabled)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .foregroundStyle(.primary)
-                    } else {
-                        Text("未选择")
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button("选择…") { pickWorkingDirectory() }
-                }
-                .padding(8)
-                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
-            case .lastUsed:
-                if let last = lastDir {
-                    Text(last)
+            // 目录框始终在下面，左对齐。
+            workingDirBox
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private var workingDirBox: some View {
+        switch workingDirMode {
+        case .crewGround:
+            // 提前算好的目标路径（如 ~/CrewGround/Lisbon），稳定显示；submit 时才建。
+            dirPathBox(crewGroundDisplayPath)
+        case .manual:
+            HStack(spacing: 8) {
+                if let url = manualWorkingDir {
+                    Text(url.path)
                         .font(.system(.callout, design: .monospaced))
                         .textSelection(.enabled)
                         .lineLimit(1)
                         .truncationMode(.middle)
-                        .padding(8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
+                        .foregroundStyle(.primary)
                 } else {
-                    Text("没有上次使用的目录")
-                        .font(.caption)
+                    Text("未选择")
                         .foregroundStyle(.secondary)
                 }
+                Spacer()
+                Button("选择…") { pickWorkingDirectory() }
+            }
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
+        case .lastUsed:
+            if let last = lastDir {
+                dirPathBox(last)
+            } else {
+                Text("没有上次使用的目录")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
+    }
+
+    /// 只读路径框 —— 等宽字体、左对齐、可选中。
+    private func dirPathBox(_ path: String) -> some View {
+        Text(path)
+            .font(.system(.callout, design: .monospaced))
+            .textSelection(.enabled)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
+    }
+
+    /// CrewGround 模式要显示的完整目标路径 `~/CrewGround/<name>`（提交前预览）。
+    private var crewGroundDisplayPath: String {
+        let name = crewGroundName.isEmpty ? "…" : crewGroundName
+        return "~/CrewGround/\(name)"
+    }
+
+    private var captainField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("机长（captain）")
+                .font(.callout.weight(.medium))
+            HStack(spacing: 8) {
+                optionButton(LocalCodingAgentKind.claudeCode.displayName,
+                             selected: selectedCaptainKind == .claudeCode) {
+                    selectedCaptainKind = .claudeCode
+                }
+                optionButton(LocalCodingAgentKind.codex.displayName,
+                             selected: selectedCaptainKind == .codex) {
+                    selectedCaptainKind = .codex
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Text("机长以这个本机 coding agent 运行。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var footer: some View {
@@ -280,17 +350,39 @@ struct CreateCrewSheet: View {
         }
     }
 
-    /// 在 `~/CrewGround/` 下挑一个还没被占用的地名建子目录。全占满了就退化到
-    /// `Crew-<uuid8>`，保证总能建出来。
+    /// 提前为 CrewGround 模式挑一个还没被占用的地名（只挑一次，存进
+    /// `crewGroundName` 让框里显示稳定）。全占满了退化到 `Crew-<uuid8>`。
+    /// 真正建目录推迟到 submit（`makeCrewGroundDirectory`）。
+    private func ensureCrewGroundName() {
+        guard crewGroundName.isEmpty else { return }
+        let fm = FileManager.default
+        let root = fm.homeDirectoryForCurrentUser
+            .appendingPathComponent("CrewGround", isDirectory: true)
+        let existing = Set((try? fm.contentsOfDirectory(atPath: root.path)) ?? [])
+        let names = PlaceNames.all.shuffled()
+        crewGroundName = names.first { !existing.contains($0) }
+            ?? "Crew-\(UUID().uuidString.prefix(8))"
+    }
+
+    /// 在 `~/CrewGround/` 下建出框里显示的那个目录（`crewGroundName`）。submit 时调。
+    /// 名字为空（理论上不会，onAppear 已挑）兜底现挑一个；目标已存在则现退避换名。
     private func makeCrewGroundDirectory() throws -> URL {
         let fm = FileManager.default
         let home = fm.homeDirectoryForCurrentUser
         let root = home.appendingPathComponent("CrewGround", isDirectory: true)
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
-        let existing = Set((try? fm.contentsOfDirectory(atPath: root.path)) ?? [])
-        let names = PlaceNames.all.shuffled()
-        let pick = names.first { !existing.contains($0) } ?? "Crew-\(UUID().uuidString.prefix(8))"
-        let dir = root.appendingPathComponent(pick, isDirectory: true)
+        if crewGroundName.isEmpty { ensureCrewGroundName() }
+        var pick = crewGroundName.isEmpty
+            ? "Crew-\(UUID().uuidString.prefix(8))"
+            : crewGroundName
+        var dir = root.appendingPathComponent(pick, isDirectory: true)
+        // 极小概率：onAppear 挑名后到提交前该名被占用 —— 退避换一个，别覆盖既有目录。
+        if fm.fileExists(atPath: dir.path) {
+            let existing = Set((try? fm.contentsOfDirectory(atPath: root.path)) ?? [])
+            pick = PlaceNames.all.shuffled().first { !existing.contains($0) }
+                ?? "Crew-\(UUID().uuidString.prefix(8))"
+            dir = root.appendingPathComponent(pick, isDirectory: true)
+        }
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
@@ -313,6 +405,7 @@ struct CreateCrewSheet: View {
                 title: titleValue,
                 machineId: selectedMachineId,
                 workingDirectory: resolvedDir.path,
+                captainAgentKind: selectedCaptainKind.rawValue,
                 captain: .systemGenerated(templateName: nil)
             )
             let resp = try await crewStore.createCrew(request)

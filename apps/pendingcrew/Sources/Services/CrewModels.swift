@@ -276,6 +276,11 @@ struct CreateCrewRequest: Encodable {
     let title: String?            // nil/空 = 自动(留给 captain)
     let machineId: String?        // nil = 本机
     let workingDirectory: String? // 表单解析出的目录路径(CrewGround/手动/上次)
+    /// 机长以哪个本机 coding agent 跑（`LocalCodingAgentKind.rawValue` ——
+    /// "claude_code" / "codex"）。nil = 旧请求 / 未指定 → 下游回落 `.codex`。
+    /// edge 暂不消费这个键（zod 会 strip 掉未知字段），但本地 store 会持久化它，
+    /// 让机长 session 真的按这个 kind 起。
+    let captainAgentKind: String?
     let captain: Captain
 
     enum Captain: Encodable, Equatable {
@@ -306,6 +311,7 @@ struct CreateCrewRequest: Encodable {
         title: String?,
         machineId: String?,
         workingDirectory: String?,
+        captainAgentKind: String?,
         captain: Captain
     ) -> CreateCrewRequest {
         CreateCrewRequest(
@@ -313,6 +319,7 @@ struct CreateCrewRequest: Encodable {
             title: title,
             machineId: machineId,
             workingDirectory: workingDirectory,
+            captainAgentKind: captainAgentKind,
             captain: captain
         )
     }

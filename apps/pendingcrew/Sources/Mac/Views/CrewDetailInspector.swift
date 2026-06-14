@@ -186,6 +186,7 @@ struct CrewDetailInspector: View {
                     title: title,
                     machineId: nil,
                     workingDirectory: nil,
+                    captainAgentKind: nil,   // edge relay crew —— captain kind 是本地概念，edge 不消费。
                     captain: .systemGenerated(templateName: nil)
                 ))
                 LocalCrewStore.shared.bindRemoteConversation(

@@ -105,6 +105,7 @@ final class LocalCrewStore {
             machineId: request.machineId,
             captainBotId: captainBotId,
             captainName: captainName,
+            captainAgentKind: request.captainAgentKind,
             createdAt: now,
             updatedAt: now
         )
@@ -293,6 +294,10 @@ private struct LocalCrew: Codable, Equatable {
     let machineId: String?
     let captainBotId: String?
     let captainName: String?
+    /// 机长跑哪个本机 coding agent（`LocalCodingAgentKind.rawValue` ——
+    /// "claude_code" / "codex"）。建 crew 时表单选定并持久化;机长 session 据此
+    /// 起对应 agent。旧 JSON 缺此键 → decodeIfPresent 兜底 nil（下游回落 `.codex`）。
+    var captainAgentKind: String? = nil
     let createdAt: String
     let updatedAt: String
     /// 本地 crew DAG 的**父边**:本 crew 挂在哪些父 crew 之下(crew id 列表)。
@@ -320,6 +325,7 @@ private struct LocalCrew: Codable, Equatable {
         machineId: String?,
         captainBotId: String?,
         captainName: String?,
+        captainAgentKind: String? = nil,
         createdAt: String,
         updatedAt: String,
         parentCrewIds: [String] = [],
@@ -336,6 +342,7 @@ private struct LocalCrew: Codable, Equatable {
         self.machineId = machineId
         self.captainBotId = captainBotId
         self.captainName = captainName
+        self.captainAgentKind = captainAgentKind
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.parentCrewIds = parentCrewIds
@@ -357,6 +364,7 @@ private struct LocalCrew: Codable, Equatable {
         machineId = try c.decodeIfPresent(String.self, forKey: .machineId)
         captainBotId = try c.decodeIfPresent(String.self, forKey: .captainBotId)
         captainName = try c.decodeIfPresent(String.self, forKey: .captainName)
+        captainAgentKind = try c.decodeIfPresent(String.self, forKey: .captainAgentKind)
         createdAt = try c.decode(String.self, forKey: .createdAt)
         updatedAt = try c.decode(String.self, forKey: .updatedAt)
         parentCrewIds = try c.decodeIfPresent([String].self, forKey: .parentCrewIds) ?? []
@@ -376,7 +384,8 @@ private struct LocalCrew: Codable, Equatable {
             status: "active",
             createdAt: createdAt,
             updatedAt: updatedAt,
-            parentCrewIds: parentCrewIds
+            parentCrewIds: parentCrewIds,
+            captainAgentKind: captainAgentKind
         )
     }
 
@@ -391,7 +400,8 @@ private struct LocalCrew: Codable, Equatable {
                 captainBotId: captainBotId,
                 status: "active",
                 createdAt: createdAt,
-                updatedAt: updatedAt
+                updatedAt: updatedAt,
+                captainAgentKind: captainAgentKind
             ),
             // 本地 crew 没有 DAG / 责任分账 —— 全空数组。后续 Phase 接本机
             // captain template 时也只动 captain section,parents/children
