@@ -115,6 +115,13 @@ const ConfigPatch = z
           .optional(),
       })
       .optional(),
+    // 盲盒:revealMode='disclose' 直接显示真名不让猜;regenReroll 控制手动 regen 是否重抽。
+    blindBox: z
+      .object({
+        revealMode: z.enum(['surprise', 'disclose']).optional(),
+        regenReroll: z.boolean().optional(),
+      })
+      .optional(),
   })
   .strict();
 
