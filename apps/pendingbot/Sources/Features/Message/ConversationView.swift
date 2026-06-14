@@ -141,6 +141,11 @@ struct ConversationView: View {
     /// Message ids whose permission-decide HTTP call is currently in
     /// flight. Used to disable the card's buttons mid-round-trip.
     @State var permissionRequestBusy: Set<String> = []
+    /// Message ids of `role='log'` rows with `log_kind='guess_prompt'`
+    /// (Model Blind Box). Populated in loadHistory; the timeline renderer
+    /// swaps in a `GuessPromptCard` (instead of a bubble) for each entry,
+    /// which opens the `GuessModelSheet` while the model isn't revealed.
+    @State var guessPromptMsgIds: Set<String> = []
     /// Local id of the user message currently driving an SSE turn — set in
     /// sendViaSSE before the stream starts, cleared when the turn ends.
     /// Multiple traces can land for the same user msg if the agent loops.
@@ -531,6 +536,22 @@ struct ConversationView: View {
                                     }
                                 )
                                 .id(msg.id)
+                                .transition(.opacity)
+                            } else if msg.sender_type == "guess_prompt_log" {
+                                // Model Blind Box (Task 9.1) — the
+                                // `prompt_model_guess` tool dropped a
+                                // 「猜一猜」card here. Tapping it opens the
+                                // GuessModelSheet while the model isn't
+                                // revealed; once revealed (or in disclose
+                                // mode) it just shows the friendly name.
+                                GuessPromptCard(
+                                    revealed: (convModelState?.model_revealed ?? false)
+                                        || (convModelState?.reveal_mode == "disclose"),
+                                    revealedName: convModelState?.current_model_slug
+                                        .map { modelCatalog.displayName(for: $0) },
+                                    onTapGuess: { showGuessSheet = true }
+                                )
+                                .id("guess:\(msg.id)")
                                 .transition(.opacity)
                             } else {
                             BubbleView(message: bubbleMessage(msg),

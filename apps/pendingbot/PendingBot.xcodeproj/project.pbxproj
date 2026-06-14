@@ -127,6 +127,7 @@
 		A22D46B0B364248079A08775 /* GroupSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2EDC1669F416D3C59723D25 /* GroupSettingsView.swift */; };
 		A2E9CBC1BBEC585F2594DFAC /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = 23AC5D1A6CD4C748003E6936 /* MarkdownUI */; };
 		A356B62C725A74F8C0DDB244 /* SubjectPickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A19A4D76A2D17FD422DA74D /* SubjectPickerSheet.swift */; };
+		A78E2A9B9941A805AF4F1E5F /* GuessPromptCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2403378DC838085AD809C6B4 /* GuessPromptCard.swift */; };
 		A7ADFAD7B076861A93C987D1 /* UserAvatar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A4C4C281584EA9A3D270E66 /* UserAvatar.swift */; };
 		ACB7DE5BB4722BC475D80C54 /* BrandAvatar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C5FC1E414D4CABC226AD902 /* BrandAvatar.swift */; };
 		AD4913CC001344F2013796AB /* WalletV2Format.swift in Sources */ = {isa = PBXBuildFile; fileRef = 199916D33039F4F07FC95D7D /* WalletV2Format.swift */; };
@@ -229,6 +230,7 @@
 		213E09F2D1646151DC7BE1C6 /* CallView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallView.swift; sourceTree = "<group>"; };
 		220B62863E705C1D1C1CB569 /* BotPick.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotPick.swift; sourceTree = "<group>"; };
 		22B3BF0A069E8CE296ED306E /* CrewSessionPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewSessionPresentation.swift; sourceTree = "<group>"; };
+		2403378DC838085AD809C6B4 /* GuessPromptCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuessPromptCard.swift; sourceTree = "<group>"; };
 		24A22C8CB9CB37FC1E1EBC60 /* CrewChatModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewChatModels.swift; sourceTree = "<group>"; };
 		26815F4D8AE1B1CDF63042ED /* CallKitManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallKitManager.swift; sourceTree = "<group>"; };
 		26BEFAA0CA92FE472585DD78 /* CrewMessageListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewMessageListView.swift; sourceTree = "<group>"; };
@@ -726,6 +728,7 @@
 				C87A0A38056F5029C934F737 /* ConversationView+ToolTrace.swift */,
 				BE4AD56378500470C3FFCB27 /* CrewProposalCard.swift */,
 				521B18ABF9E66E84454F7694 /* GuessModelSheet.swift */,
+				2403378DC838085AD809C6B4 /* GuessPromptCard.swift */,
 				0D559B8D3970D7B444980F3C /* MessageTabView.swift */,
 				DA2C5A82ADBE3A378A292684 /* PermissionRequestCard.swift */,
 				7E95667CA42D6EA266907A06 /* SubConversationView.swift */,
@@ -931,6 +934,7 @@
 				FCD54979BEFA6D687994FF09 /* GroupWalletShared.swift in Sources */,
 				FB00D4A903E342738907E282 /* GroupWalletView.swift in Sources */,
 				86828B5118AD38BD02DAF8B1 /* GuessModelSheet.swift in Sources */,
+				A78E2A9B9941A805AF4F1E5F /* GuessPromptCard.swift in Sources */,
 				EAF59E8B7CEB265E5E78C39C /* Haptics.swift in Sources */,
 				D6BA5491F9DE20519ACE28CD /* HostedConfig.swift in Sources */,
 				BBBB6FB5770D8E3EB3080CCE /* JoinRequestsInboxView.swift in Sources */,
