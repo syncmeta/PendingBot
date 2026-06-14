@@ -18,6 +18,55 @@ struct CrewSummary: Decodable, Identifiable, Equatable, Hashable {
     let status: String?
     let createdAt: String
     let updatedAt: String
+    /// 本地 crew DAG 的父边(本 crew 挂在哪些父 crew 之下)。**纯本地概念** ——
+    /// `LocalCrewStore` 填实值;edge 端不下发这个字段,`EdgeBackend` 路径恒空。
+    /// decode 时缺键 → 空数组(根 crew),不破坏现有 edge 响应解析。
+    let parentCrewIds: [String]
+
+    /// memberwise init —— `LocalCrewStore.summary` 等本地构造点用。
+    init(
+        id: String,
+        title: String,
+        responsibleSubjectId: String,
+        runtimeLocation: String,
+        tag: String?,
+        captainBotId: String?,
+        status: String?,
+        createdAt: String,
+        updatedAt: String,
+        parentCrewIds: [String] = []
+    ) {
+        self.id = id
+        self.title = title
+        self.responsibleSubjectId = responsibleSubjectId
+        self.runtimeLocation = runtimeLocation
+        self.tag = tag
+        self.captainBotId = captainBotId
+        self.status = status
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.parentCrewIds = parentCrewIds
+    }
+
+    /// 显式 decoder —— edge `GET /v1/crews` 不下发 `parentCrewIds`,缺键兜底空。
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        title = try c.decode(String.self, forKey: .title)
+        responsibleSubjectId = try c.decode(String.self, forKey: .responsibleSubjectId)
+        runtimeLocation = try c.decode(String.self, forKey: .runtimeLocation)
+        tag = try c.decodeIfPresent(String.self, forKey: .tag)
+        captainBotId = try c.decodeIfPresent(String.self, forKey: .captainBotId)
+        status = try c.decodeIfPresent(String.self, forKey: .status)
+        createdAt = try c.decode(String.self, forKey: .createdAt)
+        updatedAt = try c.decode(String.self, forKey: .updatedAt)
+        parentCrewIds = try c.decodeIfPresent([String].self, forKey: .parentCrewIds) ?? []
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, responsibleSubjectId, runtimeLocation, tag
+        case captainBotId, status, createdAt, updatedAt, parentCrewIds
+    }
 
     enum RuntimeLocation: String {
         case localHost = "local_host"

@@ -82,6 +82,7 @@ struct CrewCenterView: View {
         .sheet(isPresented: $showingDetail) {
             if let detail = crewStore.selectedDetail {
                 CrewDetailInspector(detail: detail)
+                    .environmentObject(crewStore)
             }
         }
         .sheet(isPresented: $showingRemoteSessions) {

@@ -26,8 +26,15 @@ protocol PendingCrewBackend: AnyObject {
     func getCrew(_ crewId: String) async throws -> CrewDetail
     func createCrew(_ request: CreateCrewRequest) async throws -> CreateCrewResponse
 
-    /// `POST /v1/crews/:crewId/attach-parent`(edge);BYOK 抛 `notSupportedInByok`。
+    /// 把 crew 挂到一个父 crew 之下。
+    /// - LocalBackend:写本地 DAG 父边(`LocalCrewStore.attachParent`,禁环)。
+    ///   `childKeepsBps` 本地暂时忽略(责任分账是后续计费的事)。
+    /// - EdgeBackend:`POST /v1/crews/:crewId/attach-parent`(带 bps)。
     func attachParent(crewId: String, parentCrewId: String, childKeepsBps: Int) async throws
+
+    /// 解绑一条父边。LocalBackend → 删本地 DAG 父边;EdgeBackend → 暂无端点,
+    /// 抛 `notSupportedInByok`(DAG 解绑目前是本地特性)。
+    func detachParent(crewId: String, parentCrewId: String) async throws
 
     // MARK: - Crew comms（白板/群聊，spec local-first §8.4 单后端）
 
@@ -85,6 +92,13 @@ final class EdgeBackend: PendingCrewBackend {
             crewId: crewId,
             parentCrewId: parentCrewId,
             childKeepsBps: childKeepsBps
+        )
+    }
+
+    func detachParent(crewId: String, parentCrewId: String) async throws {
+        // edge 暂无解绑端点 —— DAG 解绑目前是本地特性。
+        throw PendingCrewBackendError.notSupportedInByok(
+            "云端 crew 暂不支持解绑父 crew"
         )
     }
 
@@ -173,9 +187,14 @@ final class LocalBackend: PendingCrewBackend {
     }
 
     func attachParent(crewId: String, parentCrewId: String, childKeepsBps: Int) async throws {
-        throw PendingCrewBackendError.notSupportedInByok(
-            "BYOK 模式不支持 crew 之间的责任分账;需要登录 PendingBot 账号才能挂父 crew"
-        )
+        // 本地 DAG 父边 —— 「家」在本地,组织模型不走 edge。`childKeepsBps`
+        // 本地暂忽略(责任分账是后续计费的事,本次只落 DAG 边)。禁环由
+        // store 兜(parentCrewId 是 crewId 后代时抛 wouldCreateCycle)。
+        try store.attachParent(crewId: crewId, parentCrewId: parentCrewId)
+    }
+
+    func detachParent(crewId: String, parentCrewId: String) async throws {
+        store.detachParent(crewId: crewId, parentCrewId: parentCrewId)
     }
 
     func listModels() async throws -> [ModelCatalogEntry] {
