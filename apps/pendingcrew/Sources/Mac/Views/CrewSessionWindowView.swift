@@ -81,54 +81,43 @@ struct CrewSessionWindowView: View {
                 SessionUnreadStore.shared.markViewed(run.sessionId)
             }
         }
-        // SwiftUI 原生 .inspector 首帧 bug 兜底（见 fixInspectorWidth）。
-        .onAppear { fixInspectorWidth() }
+        // 打开 inspector 会把整窗内容撑宽，窗口右缘容易顶出屏幕、inspector 最右
+        // 那段被切到屏幕外（用户三图诊断）。present 后把窗口夹回屏幕内（见
+        // clampWindowToScreen）。
+        .onAppear { scheduleClampWindow() }
     }
 
-    /// 关键诊断（用户）：inspector divider 拖到**最左 = inspector 最宽 = max** 时内容
-    /// 被切，比 max 窄一点就好。而 SwiftUI 首帧没套用 ideal、退回到 **max 宽**呈现，
-    /// 正好落在那个坏状态。之前的「+1 再复位」净零位移=又放回 max，所以无效。
-    ///
-    /// 正解：present 后把 inspector 的 divider 摆到 **ideal(400)（< max 的好宽度）
-    /// 并留在那**，不复位。多拍覆盖 present 动画时长（太早那条 split 还没建好）。
-    private func fixInspectorWidth() {
-        for delay in [0.3, 0.45, 0.6] {
+    /// inspector present 后把窗口夹回屏幕内 —— present 会让窗口右移/变宽撑出屏幕，
+    /// 把 inspector 最右段推到屏外被切。多拍覆盖 present 动画（grow 不一定一帧到位）。
+    private func scheduleClampWindow() {
+        for delay in [0.05, 0.3, 0.5] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                Self.setInspectorPaneWidth(Self.inspectorIdealWidth)
+                Self.clampWindowToScreen()
             }
         }
     }
 
-    private static let inspectorIdealWidth: CGFloat = 400
-
-    /// 把 inspector 那一栏（窗口最右的 pane）的宽度设成 `width`。靠定位它所在
-    /// NSSplitView 的最后一条 divider 实现 —— inspector 是最右 pane，选「最后一个
-    /// 子视图右缘最靠右」的那条 split，避免误碰 sidebar/detail 的 divider。
-    private static func setInspectorPaneWidth(_ width: CGFloat) {
-        guard let window = NSApp.keyWindow ?? NSApp.mainWindow else { return }
-        let candidates = splitViews(in: window.contentView)
-            .filter { $0.isVertical && $0.arrangedSubviews.count >= 2 }
-        guard let split = candidates.max(by: { a, b in
-            rightEdgeInWindow(a) < rightEdgeInWindow(b)
-        }) else { return }
-        let idx = split.arrangedSubviews.count - 2
-        let target = split.bounds.width - width - split.dividerThickness
-        guard target > 0 else { return }
-        split.setPosition(target, ofDividerAt: idx)
-    }
-
-    /// 一条 split 的最后一个 pane 在窗口坐标里的右缘 —— 越大越靠窗口右边。
-    private static func rightEdgeInWindow(_ split: NSSplitView) -> CGFloat {
-        guard let last = split.arrangedSubviews.last else { return 0 }
-        return split.convert(last.frame, to: nil).maxX
-    }
-
-    private static func splitViews(in view: NSView?) -> [NSSplitView] {
-        guard let view else { return [] }
-        var out: [NSSplitView] = []
-        if let sv = view as? NSSplitView { out.append(sv) }
-        for sub in view.subviews { out.append(contentsOf: splitViews(in: sub)) }
-        return out
+    /// 若窗口比屏幕可见区宽就缩到可见宽（detail 随之压缩让位给 inspector）；
+    /// 右/左缘出屏就平移回来。保证 inspector（最右栏）整段都在屏内、不被切。
+    private static func clampWindowToScreen() {
+        guard let window = NSApp.keyWindow ?? NSApp.mainWindow,
+              let screen = window.screen ?? NSScreen.main else { return }
+        let visible = screen.visibleFrame
+        var frame = window.frame
+        var changed = false
+        if frame.width > visible.width {
+            frame.size.width = visible.width
+            changed = true
+        }
+        if frame.maxX > visible.maxX {
+            frame.origin.x = visible.maxX - frame.width
+            changed = true
+        }
+        if frame.minX < visible.minX {
+            frame.origin.x = visible.minX
+            changed = true
+        }
+        if changed { window.setFrame(frame, display: true, animate: false) }
     }
 
     // MARK: - 终端模式（原样保留：切换条 + 终端 + composer + 审批卡）
