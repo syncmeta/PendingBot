@@ -85,67 +85,80 @@ private struct CrewDAGNode: View {
         }
     }
 
+    /// 会话行样式(对齐 PendingBot `ConversationListRow`):36pt 头像 + serif-16
+    /// 标题 + footnote 副行 + 相对时间。前面留一个三角槽承载 DAG 展开/收起。
     private var row: some View {
-        HStack(spacing: 6) {
-            // disclosure 三角 —— 仅在有可下钻子节点时显示,否则留等宽占位对齐。
+        HStack(alignment: .top, spacing: 8) {
+            // disclosure 三角 —— 有可下钻子才显示,否则等宽占位对齐。顶部留白
+            // 让它大致对到头像竖直中线。
             Group {
                 if !expandableChildren.isEmpty {
-                    Button {
-                        isExpanded.toggle()
-                    } label: {
+                    Button { isExpanded.toggle() } label: {
                         Image(systemName: "chevron.right")
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(Theme.Palette.inkMuted)
                             .rotationEffect(.degrees(isExpanded ? 90 : 0))
                     }
                     .buttonStyle(.plain)
-                    .frame(width: 14)
                 } else {
-                    Color.clear.frame(width: 14)
+                    Color.clear
                 }
             }
+            .frame(width: 12)
+            .padding(.top, 12)
 
-            CrewGroupAvatar(seed: crew.id, size: 22)
+            CrewGroupAvatar(seed: crew.id, size: 36)
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text(crew.title)
-                    .font(Theme.Fonts.subheadline)
-                    .foregroundStyle(Theme.Palette.ink)
-                    .lineLimit(1)
-                subtitle
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(crew.title)
+                        .font(Theme.Fonts.serif(size: 16, weight: .semibold))
+                        .foregroundStyle(Theme.Palette.ink)
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    if let when = relativeUpdated {
+                        Text(when)
+                            .font(Theme.Fonts.caption)
+                            .foregroundStyle(Theme.Palette.inkMuted)
+                    }
+                }
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Text(subtitleText)
+                        .font(Theme.Fonts.footnote)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    if crew.parentCrewIds.count > 1 {
+                        Image(systemName: "arrow.triangle.branch")
+                            .font(Theme.Fonts.caption2)
+                            .foregroundStyle(Theme.Palette.inkMuted)
+                            .help("此 crew 挂在多个父 crew 之下,在每个父下都会出现")
+                    }
+                    Spacer(minLength: 0)
+                }
             }
-            Spacer(minLength: 0)
         }
-        .padding(.vertical, 4)
-        .padding(.horizontal, 6)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
         .background(
-            RoundedRectangle(cornerRadius: 6)
+            RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
                 .fill(isSelected ? Theme.Palette.accentBg : Color.clear)
         )
         .contentShape(Rectangle())
-        .onTapGesture {
-            crewStore.selectCrew(crew.id)
-        }
+        .onTapGesture { crewStore.selectCrew(crew.id) }
     }
 
-    @ViewBuilder
-    private var subtitle: some View {
-        let location = crew.runtimeLocationKind?.shortLabel ?? crew.runtimeLocation
-        // 多父标注 —— 此 crew 挂在多个父之下时,提示它在树里是引用式出现。
-        let multiParent = crew.parentCrewIds.count > 1
-        HStack(spacing: 4) {
-            Text(location)
-            if let tag = crew.tag, !tag.isEmpty {
-                Text("·")
-                Text(tag).lineLimit(1)
-            }
-            if multiParent {
-                Image(systemName: "arrow.triangle.branch")
-                    .help("此 crew 挂在多个父 crew 之下,在每个父下都会出现")
-            }
-        }
-        .font(Theme.Fonts.caption2)
-        .foregroundStyle(Theme.Palette.inkMuted)
+    /// 副行文案:位置 + 标签 + 机长名(有就接上),当"消息预览"位用。
+    private var subtitleText: String {
+        var parts: [String] = [crew.runtimeLocationKind?.shortLabel ?? crew.runtimeLocation]
+        if let tag = crew.tag, !tag.isEmpty { parts.append(tag) }
+        return parts.joined(separator: " · ")
+    }
+
+    /// crew.updatedAt(ISO8601)→ 相对时间("3 分钟前"),解析失败留 nil。
+    private var relativeUpdated: String? {
+        guard let date = ISO8601DateFormatter().date(from: crew.updatedAt) else { return nil }
+        return date.formatted(.relative(presentation: .numeric))
     }
 }
 #endif
