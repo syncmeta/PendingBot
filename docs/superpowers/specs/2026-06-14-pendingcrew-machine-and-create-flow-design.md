@@ -129,3 +129,17 @@ tag 的本职（同一"项目"归一类）改用父 crew：
 - Mac：`xcodebuild ... -destination 'platform=macOS' build`，并进 app 实测新建流程（标题自动 / 工作目录三选 / CrewGround 真建目录 / 无 tag）。
 - iPad：`-destination 'generic/platform=iOS Simulator' build`；登录后 machine 列表含本机。
 - 未登录路径：新建不显示 machine、CrewGround 仍能建目录。
+
+## 细化（2026-06-14，实现期用户反馈）
+
+实现后用户对新建表单追加几条，已落实（commit `d54d73ce`）：
+
+- **captain 选 coding-agent kind**：原设计写"captain 免配置"，细化为——建 crew 时仍要选 captain 跑哪个本机 coding agent（**Claude Code / Codex，默认 Codex**）。模型/模板/system-prompt 等仍不在建时配（那部分"免配置"不变）。
+  - 存到 crew（`captainAgentKind`，穿过 `CreateCrewRequest`→`LocalCrew`→`CrewSummary`/`CrewDetail`，可选解码，edge crew 无此列则 nil）。
+  - **必须生效非摆设**：`CrewSessionWindowView` 的 captain session 启动 + composer `selectedKind` 默认读 crew 的 `captainAgentKind`（nil→Codex）。
+- **选项一律平铺成可点药丸按钮**，不用下拉/菜单 Picker（标题模式 / 机器 / 工作目录模式 / captain kind 都是）。
+- **标题框、工作目录框始终在**，不随选项隐藏。标题=自动时框禁用 + placeholder「Captain 来取名」、内容空。
+- **工作目录=CrewGround 时即时显示**算好的目标路径 `~/CrewGround/<地名>`（稳定名，submit 才真建）。
+- 表单内容**一律左对齐**。
+
+> tech-debt：`captainAgentKind` 目前只在**本地 crew** 持久（edge crew 表无此列）。pre-launch + captain 跑在本机，先这样；要支持 relay/远端 crew 记住 captain kind 时再加列。
