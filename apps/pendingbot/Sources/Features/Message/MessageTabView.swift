@@ -1168,7 +1168,11 @@ private struct ConversationListRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(rowTitle)
-                        .font(Theme.Fonts.serif(size: 16, weight: .semibold))
+                        // Sans, not serif: the serif design (New York) has no CJK
+                        // glyphs, so Chinese titles fall back to PingFang (sans) on
+                        // iOS but Songti (serif) on macOS — same code, different look.
+                        // System design renders sans for CJK on both.
+                        .font(Theme.Fonts.system(size: 16, weight: .semibold))
                         .foregroundStyle(
                             rowTitleIsPlaceholder ? Theme.Palette.inkMuted : Theme.Palette.ink
                         )

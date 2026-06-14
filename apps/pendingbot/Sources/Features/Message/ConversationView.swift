@@ -1177,7 +1177,10 @@ struct ConversationView: View {
         VStack(spacing: 14) {
             headerAvatar(size: 64)
             Text(conversation.conversation_type == "user_user" ? headerTitle : botName)
-                .font(Theme.Fonts.serif(size: 22, weight: .semibold))
+                // Sans, not serif — serif design (New York) lacks CJK glyphs, so a
+                // Chinese title falls back to PingFang (sans) on iOS but Songti
+                // (serif) on macOS. System design keeps it sans on both.
+                .font(Theme.Fonts.system(size: 22, weight: .semibold))
                 .foregroundStyle(Theme.Palette.ink)
             if showsBotPreChatActions {
                 botPreChatActions
@@ -1312,7 +1315,10 @@ struct ConversationView: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(headerTitle)
-                    .font(Theme.Fonts.serif(size: 16, weight: .semibold))
+                    // Sans, not serif — serif design (New York) lacks CJK glyphs, so
+                    // a Chinese title falls back to PingFang (sans) on iOS but Songti
+                    // (serif) on macOS. System design keeps it sans on both.
+                    .font(Theme.Fonts.system(size: 16, weight: .semibold))
                     .foregroundStyle(Theme.Palette.ink)
                     .lineLimit(1)
                 // user_user 单聊没有 bot · model 这一行可显示;隐掉副标题
