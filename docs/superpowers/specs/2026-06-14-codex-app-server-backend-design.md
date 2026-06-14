@@ -3,11 +3,15 @@
 **2026-06-14** · feeds the implementation plan. Supersedes the codex "placeholder terminal" in `SessionConfig.swift`.
 Protocol facts live in `2026-06-05-codex-app-server-reference.md` (empirical, codex 0.137.0) — this doc is the *integration* design, not the protocol bible.
 
-## North star
+## Goal (the one-sentence definition)
 
-**Make codex run as if the user typed `codex` in the session's working directory — only the output is structured events instead of terminal bytes.**
+**PendingCrew becomes a native structured codex client — modeled on the codex desktop app (and license-friendly third-party open-source clients) — driving the local `codex app-server` over stdio JSON-RPC, scoped to the session's working directory.**
 
-Everything follows from that: same local `codex` login, same cwd, same default behavior. We spawn `codex app-server` (a local child process, stdio JSON-RPC) instead of attaching a PTY, so we can render a faithful structured transcript and route the (rare) approval requests through our existing approval UI.
+This is fully an app-server client, NOT a terminal. We spawn `codex app-server` (a local child process, stdio JSON-RPC) instead of attaching a PTY, and render a faithful structured transcript (messages / reasoning / commands / diffs), routing the (rare) approval requests through our existing approval UI.
+
+Two parity points with "just running codex locally" — these are the *only* things that phrase means, nothing terminal:
+- **cwd** = the session's working directory (worktree or shared crew dir), passed as `thread/start.cwd`.
+- **login** = the user's existing local codex login, exactly like the desktop client uses — we manage no credentials.
 
 claude stays on the SwiftTerm terminal (no app-server equivalent; interactive TUI is required for subscription billing). **Only codex moves.**
 
@@ -66,7 +70,7 @@ initialize / initialized · `account/read` · `thread/start` · `turn/start` · 
 `CodexThreadItem` enum maps the union: `userMessage · agentMessage · reasoning · plan · commandExecution{command,cwd,status,output,exitCode} · fileChange{changes,status} · mcpToolCall · dynamicToolCall · collabAgentToolCall · webSearch · contextCompaction · unknown(raw)`. The `.unknown` arm renders raw and never crashes on a new codex type.
 
 - v1 **opts out of delta notifications** (`initialize…optOutNotificationMethods`), renders on `item/completed` (authoritative final). No token-by-token streaming in v1 → defer to v1.x.
-- `CodexTranscriptView`: per-arm SwiftUI rows — message bubbles, collapsible reasoning, command-exec card (cmd + output + exit code), file-diff, tool-call. Style reference: codex's own TUI (Apache-2.0) + `shuto-S/codex-app-mobile` (SwiftUI) — patterns only, verify license before copying any code.
+- `CodexTranscriptView`: per-arm SwiftUI rows — message bubbles, collapsible reasoning, command-exec card (cmd + output + exit code), file-diff, tool-call. **UX model: the codex desktop client** — match how it lays out turns/items. Pattern references: codex's own TUI (Apache-2.0) + `shuto-S/codex-app-mobile` (SwiftUI). Patterns only; verify license before copying any code.
 
 ### Context injection (replaces claude's flag + hook)
 
