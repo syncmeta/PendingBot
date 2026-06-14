@@ -233,11 +233,11 @@ struct FriendsTabView: View {
 
     // ── Sidebar (shared) ────────────────────────────────────────────────────
 
-    /// 行内边距。Mac:纯净一列 —— 头像贴 rail(leading 16)、右留 gutter。
-    /// iOS 返回 nil(默认插入,行为不变)。
+    /// 行内边距。Mac:贴 rail —— leading 14(与消息列表卡片内边距 14 对齐)、
+    /// 右留 gutter。iOS 返回 nil(默认插入,行为不变)。
     private var cardRowInsets: EdgeInsets? {
         renderAsMacListColumn
-            ? EdgeInsets(top: 7, leading: 16, bottom: 7, trailing: Theme.Metrics.gutter)
+            ? EdgeInsets(top: 7, leading: 14, bottom: 7, trailing: Theme.Metrics.gutter)
             : nil
     }
 
@@ -436,8 +436,12 @@ struct FriendsTabView: View {
                         }
                     }
                 }
-                .platformListStyle()
+                // Mac:用原生 `.plain`(行贴边,去掉 `.inset` 样式自带的大留白)+
+                // 把 List 默认的水平 contentMargins 归零 —— 左侧大留白就来自这俩
+                // 原生默认值,不是避免不掉的。两者都是 List 自己的参数,非自绘。
+                .modifier(FriendsListStyle(macPlain: renderAsMacListColumn))
                 .scrollContentBackground(.hidden)
+                .contentMargins(.horizontal, 0, for: .scrollContent)
                 .contentMargins(.top, 0, for: .scrollContent)
                 .refreshable { await load() }
             }
@@ -1238,6 +1242,19 @@ private extension FriendsTabView {
                     }
                 }
         )
+    }
+}
+
+/// 原生 List 样式选择器(非自绘):Mac 壳用 `.plain`(行贴边,去掉 `.inset`
+/// 自带的大留白);iOS / iPad-regular 维持 `platformListStyle()`(insetGrouped)。
+private struct FriendsListStyle: ViewModifier {
+    let macPlain: Bool
+    @ViewBuilder func body(content: Content) -> some View {
+        if macPlain {
+            content.listStyle(.plain)
+        } else {
+            content.platformListStyle()
+        }
     }
 }
 
