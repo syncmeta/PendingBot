@@ -20,6 +20,16 @@
   3. **`captainAgentKind` 只在本地 crew 持久**：建 crew 选的 captain coding-agent（claude_code/codex）存在 `LocalCrew` + 穿过客户端模型，但 **edge crew 表无此列**——relay/登录态远端 crew 不记住 captain kind（解码恒 nil→默认 Codex）。pre-launch + captain 跑本机，可接受；要远端 crew 记住时给 `temporary_group_meta` 加列 + RPC 透传。
 - **状态**: 常驻参考（1 是日后清理项；2/3 是有意取舍，记着别当 bug）。
 
+### 🟡 PendingCrew 机长建 crew 即无条件自动启动 — 无 opt-out / 无空闲回收 + 活 spawn 未 E2E
+- **发现**: 2026-06-14 · `feat/crew-captain-autostart`（用户要"新建 crew 机长直接启动、群里报到、点头像进 session"）
+- **背景**: chunk2 spec（`2026-06-10-pendingcrew-chunk2-captain-session-design.md` §21/§47）当初**刻意把机长定为手动启动**，自动启动/常驻"留 crew 设置（后排，token 成本考量）"。本次按用户要求把机长改成**建 crew 时无条件自动起**（`CrewStore.createCrew` 置 `captainAutostartRequest` → `MacThreePaneView` 观察到调 `CrewSessionRunner.startCaptain`）。
+- **代价/缺口**:
+  1. **无 per-crew 开关**：每建一个带 captain 的 crew 就**立刻 spawn 一个真 claude 进程**（机长常驻 PTY），token 从创建起就在烧 —— 正是 spec 当初担心的成本。没有"建 crew 时不要自动起机长"的选项，也**没有空闲超时回收**（机长起来就一直活到手动停/退应用）。
+  2. **只覆盖"新建"**：重开 app 不会自动复活机长（run 是内存态）；老 crew / 重启后仍靠保留的手动「⚓ 启动 Captain」按钮兜底。这是有意为之（"新建即起"语义），但和"机长应该常驻"的直觉有落差。
+  3. **活 spawn 未 E2E**：build + 109 单测绿、自动起走的是和手动按钮**完全相同**的 launch 路径（只换触发点），但"建 crew → 机长真的 spawn → `post_to_crew` 在群里报到 → 点头像进 session"这条**真机链路没跑过**（需真 claude CLI + 有工作目录的 crew；同 spec §63 标的"真机尾巴"）。
+- **修法（若成本/体验成问题）**: 建 crew sheet 加"自动启动机长"勾选（默认开）→ 决定要不要 set `captainAutostartRequest`；机长空闲超时回收（spec 原计划的 crew 设置）；可选"app 启动时复活上次在跑的机长"。
+- **状态**: 待办（功能可用；①②是产品取舍，③是真机冒烟尾巴，用户下次建 crew 时顺手看一眼即可）。
+
 ### 🟡 PendingCrew vendored 聊天视图重拷指引 + 接缝清单（drift 风险）
 - **发现**: 2026-06-13 · `feat/crew-chat-align`（群聊对齐 PendingBot）
 - **背景**: PendingCrew 群聊为对齐 PendingBot 且两 app 保持独立，采用 **vendor 一份拷贝**（不共享 package）。`apps/pendingcrew/Sources/Chat/Vendored/` 下的文件是 PendingBot `apps/pendingbot/Sources/` 对应文件的**逐字拷贝**（顶部有 `// VENDORED from … @ <hash>` 注释）。PendingBot 改聊天 UI 后 PendingCrew **不会自动跟上** —— 这是 vendor 模式的固有代价（换来视觉一次性对齐 + iPad 几乎免费）。

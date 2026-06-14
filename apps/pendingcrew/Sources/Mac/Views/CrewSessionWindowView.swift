@@ -94,11 +94,7 @@ struct CrewSessionWindowView: View {
     /// 把 crew 的 `captainAgentKind`（"claude_code" / "codex"）映射成
     /// `LocalCodingAgentKind`；缺省 / nil / 未知值 → `.codex`（机长默认 Codex）。
     static func resolveAgentKind(_ detail: CrewDetail?) -> LocalCodingAgentKind {
-        switch detail?.crew.captainAgentKind {
-        case "claude_code": return .claudeCode
-        case "codex": return .codex
-        default: return .codex
-        }
+        LocalCodingAgentKind.captainDefault(detail?.crew.captainAgentKind)
     }
 
     // MARK: - 终端模式（原样保留：切换条 + 终端 + composer + 审批卡）
@@ -306,10 +302,21 @@ struct CrewSessionWindowView: View {
 
     private var memberRowItems: [MemberRowItem] {
         let runSessionIds = Set(memberSessionRuns.map { $0.sessionId })
+        // 有在跑的 captain run 时，server 的 captain 成员收敛成那条可点的 run 行 ——
+        // 否则会重复出现「机长」(不可点) + 「Captain」(可点) 两条（用户要"点头像进
+        // session"，留一条带星标可点的即可）。
+        let hasCaptainRun = memberSessionRuns.contains { $0.role == .captain }
         let serverRows = members
             .filter { m in
-                !(m.memberKind == "code_session"
-                  && (m.codeSessionId.map(runSessionIds.contains) ?? false))
+                // code_session 成员已有本地 run 的 → 去重（用 run 行）。
+                if m.memberKind == "code_session",
+                   m.codeSessionId.map(runSessionIds.contains) ?? false { return false }
+                // captain 成员在有在跑 captain run 时 → 去重（用 run 行）。
+                if hasCaptainRun,
+                   m.memberKind == "captain" || (m.botId != nil && m.botId == captainBotId) {
+                    return false
+                }
+                return true
             }
             .map { MemberRowItem(id: $0.id, sender: groupSenderFor($0), run: nil) }
         let runRows = memberSessionRuns.map {
@@ -404,10 +411,16 @@ struct CrewSessionWindowView: View {
     }
 
     /// 本地 run → session 头像 sender（状态点 running=绿/退出=灰）。从中栏搬来。
+    /// captain run 带星标（isCaptain）+ captainBotId 作头像 seed —— 与 server
+    /// captain 成员头像视觉一致（去重后这条是唯一的机长行）。
     private func senderForRun(_ run: CrewSessionRun) -> GroupBubbleSender {
-        GroupBubbleSender(
-            kind: .bot, id: run.sessionId, displayName: run.displayName,
-            avatarPath: nil, avatarSeed: run.sessionId, isCaptain: false,
+        let isCaptain = run.role == .captain
+        return GroupBubbleSender(
+            kind: .bot, id: run.sessionId,
+            displayName: run.displayName,
+            avatarPath: nil,
+            avatarSeed: isCaptain ? (captainBotId ?? run.sessionId) : run.sessionId,
+            isCaptain: isCaptain,
             sessionStatus: run.status == .running ? "running" : "exited", isSession: true)
     }
 
@@ -649,45 +662,16 @@ struct CrewSessionWindowView: View {
         }
     }
 
-    /// 启动机长 session（chunk2 T3）。与 worker 的差异只有两点：世界观后追加
-    /// captain persona（`crew-captain.zh.md`），MCP helper 带 `--captain` 解锁
-    /// answer_decision。机长是调度者不改代码 —— 直接用 crew 目录，不开 isolation
-    /// worktree。每 crew 同时只允许一个在跑的 captain。
+    /// 手动启动机长（按钮兜底：建 crew 会自动起，这里给"机长退出后重启"用）。
+    /// 核心工序在 `CrewSessionRunner.startCaptain` —— 与建 crew 自动起共用一份，
+    /// 不分叉（chunk2 T3）。这里只补 view 持有的 starting / localError 反馈。
     private func startCaptain() async {
         guard let detail = crewStore.selectedDetail else { return }
-        guard !hasRunningCaptain else { return }
-        guard let wd = detail.crew.workingDirectory, !wd.isEmpty else {
-            localError = "这个 crew 没有工作目录 —— 在建 crew 时设置后再启动 Captain。"
-            return
-        }
-        let workdir = URL(fileURLWithPath: (wd as NSString).expandingTildeInPath)
         starting = true
         defer { starting = false }
         localError = nil
-
-        let localSessionId = "captain-" + String(UUID().uuidString.lowercased().prefix(8))
-        let initialPrompt = "你是本 crew 的机长。先用 read_whiteboard 了解群聊现状，然后简短报到（post_to_crew 一句）并待命。后续有待决策会通知你。"
-        // persona best-effort：加载失败不挡启动（只是没机长人设，与世界观同策略）。
-        let persona = try? LocalPromptLoader().rawTemplate(name: "crew-captain", locale: "zh")
         do {
-            // 机长用建 crew 时选定的 agent kind（crew 没记 → `.codex`）。
-            let captainKind = Self.resolveAgentKind(detail)
-            var cfg = SessionConfig(kind: captainKind, initialPrompt: initialPrompt)
-            cfg.appendSystemPromptFile = await renderWorldModelFile(
-                detail: detail, taskBrief: initialPrompt, workdir: workdir,
-                sessionId: localSessionId, appendPersona: persona)
-            let comms = prepareLocalCommsConfig(
-                crewId: detail.crew.id, sessionId: localSessionId, captain: true)
-            cfg.settingsFile = comms.settings
-            cfg.mcpConfigFile = comms.mcp
-            try await sessionRunner.start(
-                crewId: detail.crew.id,
-                sessionId: localSessionId,
-                config: cfg,
-                workingDirectory: workdir,
-                taskBrief: initialPrompt,
-                role: .captain
-            )
+            try await sessionRunner.startCaptain(detail: detail, backend: appModel.backend)
         } catch {
             localError = error.localizedDescription
         }
