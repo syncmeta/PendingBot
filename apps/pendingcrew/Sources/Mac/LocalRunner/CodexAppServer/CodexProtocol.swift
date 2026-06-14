@@ -6,7 +6,14 @@ import Foundation
 enum CodexProtocol {
     static func initializeParams(clientName: String, version: String) -> [String: Any] {
         ["clientInfo": ["name": clientName, "title": clientName, "version": version],
-         "capabilities": ["experimentalApi": true]]
+         "capabilities": [
+             "experimentalApi": true,
+             // v1 renders on item/completed only — opt out of streaming deltas to cut wire chatter.
+             // Exact method-name list is version-locked; reconcile against a real
+             // `codex app-server generate-json-schema` capture (real-machine tail). Opting out of a
+             // non-existent method is a harmless no-op, so this documented name is safe to ship now.
+             "optOutNotificationMethods": ["item/agentMessage/delta"],
+         ]]
     }
     static func threadStartParams(cwd: String, model: String?, developerInstructions: String?,
                                   mcpServers: [String: Any]?) -> [String: Any] {

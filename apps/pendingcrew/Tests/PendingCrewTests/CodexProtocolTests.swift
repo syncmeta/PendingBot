@@ -7,7 +7,9 @@ final class CodexProtocolTests: XCTestCase {
         let info = p["clientInfo"] as? [String: Any]
         XCTAssertEqual(info?["name"] as? String, "PendingCrew")
         XCTAssertEqual(info?["version"] as? String, "1.0")
-        XCTAssertEqual((p["capabilities"] as? [String: Any])?["experimentalApi"] as? Bool, true)
+        let caps = p["capabilities"] as? [String: Any]
+        XCTAssertEqual(caps?["experimentalApi"] as? Bool, true)
+        XCTAssertNotNil(caps?["optOutNotificationMethods"], "v1 should opt out of streaming deltas")
     }
     func testThreadStartCarriesCwdDevInstructionsApprovalPolicyMcp() {
         let p = CodexProtocol.threadStartParams(cwd: "/repo", model: "gpt-5.5",

@@ -13,6 +13,7 @@ actor CodexAppServerConnection {
     private let dispatcher = CodexRPCDispatcher()
     private var nextId = 0
     private var readBuffer = Data()
+    private var onTerminate: ((Int32?) -> Void)?
 
     init(executable: String, argv: [String], cwd: String, env: [String: String]) {
         process.executableURL = URL(fileURLWithPath: executable)
@@ -26,7 +27,9 @@ actor CodexAppServerConnection {
 
     /// Spawn + initialize handshake. Wire the streaming + server-request callbacks.
     func start(onServerRequest: @escaping (Int, String, [String: Any]) -> Void,
-               onNotification: @escaping (String, [String: Any]) -> Void) async throws {
+               onNotification: @escaping (String, [String: Any]) -> Void,
+               onTerminate: ((Int32?) -> Void)? = nil) async throws {
+        self.onTerminate = onTerminate
         await dispatcher.setServerRequestHandler(onServerRequest)
         await dispatcher.setNotificationHandler(onNotification)
         stdoutPipe.fileHandleForReading.readabilityHandler = { [weak self] h in
@@ -76,6 +79,7 @@ actor CodexAppServerConnection {
 
     private func handleTermination() async {
         await dispatcher.failAll(CodexRPCError.malformed("app-server terminated"))
+        onTerminate?(process.terminationStatus)
     }
 
     func terminate() {

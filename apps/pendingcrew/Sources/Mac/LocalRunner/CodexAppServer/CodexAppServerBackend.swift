@@ -54,6 +54,12 @@ final class CodexAppServerBackend: ObservableObject, SessionBackend {
                             self?.transcript.apply(method: method, params: params)
                             self?.trackTurn(method: method, params: params)
                         }
+                    },
+                    onTerminate: { [weak self] code in
+                        Task { @MainActor in
+                            guard let self, self.status == .running else { return }   // stop() already set .exited; don't clobber
+                            self.status = .exited(code)
+                        }
                     })
                 let result = try await connection.request(
                     method: "thread/start",
