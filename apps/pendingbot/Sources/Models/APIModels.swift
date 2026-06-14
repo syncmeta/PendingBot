@@ -303,23 +303,3 @@ struct RandomModelConfig: Codable, Equatable, Hashable {
     var vendors: [String]?
     var release_window_days: Int?
 }
-
-/// One row of the personal leaderboard (GET /v1/arena/leaderboard).
-struct ArenaStanding: Codable, Identifiable, Hashable {
-    let model_slug: String
-    let rating: Int
-    let games: Int
-    let wins: Int
-    let losses: Int
-    let ties: Int
-    var id: String { model_slug }
-}
-
-struct ArenaLeaderboard: Codable {
-    let standings: [ArenaStanding]
-    let total_comparisons: Int
-}
-
-struct ArenaCompareResult: Codable {
-    let ok: Bool
-}

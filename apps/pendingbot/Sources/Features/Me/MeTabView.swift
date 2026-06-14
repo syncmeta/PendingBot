@@ -177,15 +177,6 @@ struct MeTabView: View {
 
                             optionDivider
 
-                            NavigationLink {
-                                ArenaLeaderboardView().platformTabBarVisibility(false)
-                            } label: {
-                                OptionRow(title: "猜你喜欢")
-                            }
-                            .buttonStyle(.plain)
-
-                            optionDivider
-
                             // 设置入口:iOS 原地 push 共享 `SettingsView`;macOS 用
                             // `SettingsLink` 打开原生 ⌘, 独立设置窗口(D4:两端指向
                             // 同一份设置内容,Mac 走系统 Settings 场景)。
@@ -422,110 +413,5 @@ extension View {
                 shape.strokeBorder(Color.black.opacity(0.08), lineWidth: 0.5)
             )
             .shadow(color: .black.opacity(0.03), radius: 5, x: 0, y: 1.5)
-    }
-}
-
-// MARK: - 模型竞技场榜单
-
-/// Personal model leaderboard — Elo standings replayed from the user's own
-/// blind A/B votes (GET /v1/arena/leaderboard). Pure read view.
-struct ArenaLeaderboardView: View {
-    @Environment(\.api) private var api
-    @EnvironmentObject private var catalog: ModelCatalog
-
-    @State private var standings: [ArenaStanding] = []
-    @State private var total: Int = 0
-    @State private var loading = true
-    @State private var error: String?
-
-    var body: some View {
-        ZStack {
-            Theme.Palette.canvas.ignoresSafeArea()
-            if loading && standings.isEmpty {
-                ProgressView().tint(Theme.Palette.accent)
-            } else if standings.isEmpty {
-                emptyState
-            } else {
-                List {
-                    Section {
-                        ForEach(Array(standings.enumerated()), id: \.element.id) { item in
-                            row(rank: item.offset + 1, s: item.element)
-                        }
-                    } footer: {
-                        Text("基于你的 \(total) 次盲评,用 Elo 排名。把机器人主模型设成竞技场(选 2 个以上模型)、对回答再生成、然后投票,榜单会越来越准。")
-                            .font(Theme.Fonts.caption)
-                            .foregroundStyle(Theme.Palette.inkMuted)
-                    }
-                    .listRowBackground(Theme.Palette.surface)
-                }
-                .platformListStyle()
-                .scrollContentBackground(.hidden)
-                .background(Theme.Palette.canvas)
-                .refreshable { await load() }
-            }
-        }
-        .navigationTitle("猜你喜欢")
-        .inlineNavTitle()
-        .task { await load() }
-    }
-
-    private func row(rank: Int, s: ArenaStanding) -> some View {
-        HStack(spacing: 12) {
-            Text("\(rank)")
-                .font(Theme.Fonts.rounded(size: 15, weight: .bold))
-                .foregroundStyle(rank <= 3 ? Theme.Palette.accent : Theme.Palette.inkMuted)
-                .frame(width: 26, alignment: .center)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(catalog.displayName(for: s.model_slug))
-                    .font(Theme.Fonts.rounded(size: 14, weight: .medium))
-                    .foregroundStyle(Theme.Palette.ink)
-                    .lineLimit(1)
-                Text("\(s.wins)胜 \(s.losses)负 \(s.ties)平 · \(s.games) 局")
-                    .font(Theme.Fonts.monoSmall)
-                    .foregroundStyle(Theme.Palette.inkMuted)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 8)
-            Text("\(s.rating)")
-                .font(Theme.Fonts.rounded(size: 16, weight: .semibold))
-                .foregroundStyle(Theme.Palette.ink)
-                .monospacedDigit()
-        }
-        .padding(.vertical, 4)
-    }
-
-    private var emptyState: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "trophy")
-                .font(.system(size: 32, weight: .light))
-                .foregroundStyle(Theme.Palette.inkMuted)
-            Text("还没有评价记录")
-                .font(Theme.Fonts.rounded(size: 15, weight: .medium))
-                .foregroundStyle(Theme.Palette.ink)
-            Text("把机器人主模型设成竞技场(在模型选择里勾选 2 个以上模型),对同一个问题再生成一个回答,然后盲评谁更好——投得越多,这里越能反映你的偏好。")
-                .font(Theme.Fonts.caption)
-                .foregroundStyle(Theme.Palette.inkMuted)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 40)
-            if let error {
-                Text(error)
-                    .font(Theme.Fonts.caption)
-                    .foregroundStyle(.red)
-                    .padding(.top, 4)
-            }
-        }
-    }
-
-    private func load() async {
-        guard let api else { return }
-        loading = true; defer { loading = false }
-        do {
-            let board: ArenaLeaderboard = try await api.get("v1/arena/leaderboard")
-            standings = board.standings
-            total = board.total_comparisons
-            error = nil
-        } catch {
-            self.error = error.localizedDescription
-        }
     }
 }
