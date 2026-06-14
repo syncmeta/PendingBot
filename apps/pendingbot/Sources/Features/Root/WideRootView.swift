@@ -82,6 +82,10 @@ struct WideRootView: View {
             }
         }
         .frame(maxHeight: .infinity)
+        // 空标题:不显示任何文字,但**确立侧栏列自己的 toolbar 区**。否则各
+        // tab 在 middleColumn 里声明的 toolbar 项无处可落,会漂到 detail 列的
+        // 工具栏(折叠按钮右侧),与 PendingCrew「按钮在折叠按钮左侧」不符。
+        .navigationTitle("")
         // 不自铺任何背景 —— rail 与 list 都透明,直接露出 NavigationSplitView
         // 侧栏列**自带的原生材质**(原来 List 侧栏那块)。list 列已去掉 canvas,
         // 所以整条侧栏是同一块原生底、中间无分隔。自糊 NSVisualEffectView 在
@@ -122,12 +126,12 @@ struct WideRootView: View {
             if binding.wrappedValue != tab { binding.wrappedValue = tab }
         } label: {
             Image(systemName: tab.systemImage)
-                .font(Theme.Fonts.glyph(size: 19, weight: .regular))
+                .font(Theme.Fonts.glyph(size: 16, weight: .regular))
                 // 没有 fill 变体的字形(如 command)会优雅回退到原线条形。
                 .symbolVariant(selected ? .fill : .none)
                 .foregroundStyle(selected ? Theme.Palette.accent : Theme.Palette.inkMuted)
                 .frame(maxWidth: .infinity)
-                .frame(height: 42)
+                .frame(height: 38)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -143,7 +147,7 @@ struct WideRootView: View {
                 seed: AccountStore.shared.avatarSeed
                     ?? AccountStore.shared.current?.id ?? "?",
                 attachmentId: AccountStore.shared.avatarAttachmentId,
-                size: 30
+                size: 26
             )
             .overlay(
                 Circle().strokeBorder(
@@ -153,7 +157,7 @@ struct WideRootView: View {
                 .padding(-2)
             )
             .frame(maxWidth: .infinity)
-            .frame(height: 42)
+            .frame(height: 38)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

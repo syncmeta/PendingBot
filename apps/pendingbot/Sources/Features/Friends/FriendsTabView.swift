@@ -1186,7 +1186,7 @@ private extension FriendsTabView {
         chrome(
             sidebarBody
                 .toolbar {
-                    ToolbarItemGroup(placement: .navigation) {
+                    ToolbarItemGroup {
                         friendsHeaderActions
                     }
                 }

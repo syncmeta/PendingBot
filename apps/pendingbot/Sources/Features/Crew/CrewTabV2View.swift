@@ -367,7 +367,7 @@ private extension CrewTabV2View {
         chrome(
             content
                 .toolbar {
-                    ToolbarItemGroup(placement: .navigation) {
+                    ToolbarItemGroup {
                         crewMenu
                     }
                 }
