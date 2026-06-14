@@ -351,39 +351,43 @@ struct FriendsTabView: View {
                         .font(Theme.Fonts.footnote)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.leading, 16)
+                        .padding(.leading, 14)
                         .padding(.vertical, 24)
                 }
             }
-            .padding(.trailing, Theme.Metrics.gutter)
             .padding(.vertical, 8)
         }
+        // ScrollView 在 macOS 也带默认水平 contentMargins(就是左边那截空)——归零,
+        // 让行真正贴 rail、与消息列表对齐;水平内缩交给下面 macRow 自己控制。
+        .contentMargins(.horizontal, 0, for: .scrollContent)
         .refreshable { await load() }
     }
 
-    /// 单行容器:左内边距 14(与消息列表卡片内边距对齐,贴 rail)、选中铺圆角染色。
+    /// 单行容器。content 左 14(对齐消息卡片内边距)、右留 gutter;选中染色块
+    /// 与分隔线**同一水平内缩(8)**,这样选中框、分隔线、行三者左右对齐。
     @ViewBuilder
     private func macRow<V: View>(selected: Bool, @ViewBuilder _ content: () -> V) -> some View {
         content()
             .padding(.leading, 14)
-            .padding(.vertical, 4)
+            .padding(.trailing, Theme.Metrics.gutter)
+            .padding(.vertical, 6)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background {
                 if selected {
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .fill(Theme.Palette.accentBg)
-                        .padding(.horizontal, 6)
+                        .padding(.horizontal, 8)
                         .padding(.vertical, 1)
                 }
             }
             .contentShape(Rectangle())
     }
 
-    /// 分隔线 leading 14,与行内容左缘齐(不再像 List 默认那样缩到头像右侧右偏)。
+    /// 分隔线:水平内缩 8,与选中框左右边缘对齐(不再缩到头像右侧右偏)。
     private var macRowDivider: some View {
         Divider()
             .overlay(Theme.Palette.hairline)
-            .padding(.leading, 14)
+            .padding(.horizontal, 8)
     }
 
     private func macSectionHeader(_ text: String) -> some View {
@@ -391,7 +395,7 @@ struct FriendsTabView: View {
             .font(Theme.Fonts.caption)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.leading, 16)
+            .padding(.leading, 14)
             .padding(.top, 14)
             .padding(.bottom, 4)
     }
