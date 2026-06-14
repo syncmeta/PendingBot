@@ -436,7 +436,9 @@ struct FriendsTabView: View {
                         }
                     }
                 }
-                .platformListStyle()
+                // Mac 壳:用 .plain(行贴边、无 .inset 自带的大留白)。否则左侧
+                // 会空出一条;iOS 仍走 platformListStyle(.insetGrouped)。
+                .modifier(FriendsListStyle(macPlain: renderAsMacListColumn))
                 .scrollContentBackground(.hidden)
                 .contentMargins(.top, 0, for: .scrollContent)
                 .refreshable { await load() }
@@ -1238,6 +1240,19 @@ private extension FriendsTabView {
                     }
                 }
         )
+    }
+}
+
+/// 列表样式分叉:Mac 壳用 `.plain`(行贴边、无 `.inset` 自带的大留白,左侧
+/// 不再空一条);iOS / iPad-regular 维持 `platformListStyle()`(insetGrouped)。
+private struct FriendsListStyle: ViewModifier {
+    let macPlain: Bool
+    @ViewBuilder func body(content: Content) -> some View {
+        if macPlain {
+            content.listStyle(.plain)
+        } else {
+            content.platformListStyle()
+        }
     }
 }
 
