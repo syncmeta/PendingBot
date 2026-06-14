@@ -310,7 +310,7 @@ final class CrewSessionRun: ObservableObject, Identifiable {
     }
 
     /// Map the terminal's running/exited state to the run lifecycle.
-    private static func map(_ status: AgentTerminalSession.Status, cancelled: Bool) -> Status {
+    private static func map(_ status: SessionStatus, cancelled: Bool) -> Status {
         switch status {
         case .running:
             return .running
