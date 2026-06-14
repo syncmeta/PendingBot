@@ -53,9 +53,7 @@ struct WideRootView: View {
 
     var body: some View {
         NavigationSplitView {
-            sidebar
-        } content: {
-            middleColumn
+            combinedSidebar
         } detail: {
             detailColumn
         }
@@ -69,24 +67,67 @@ struct WideRootView: View {
 
     // MARK: - Columns
 
-    private var sidebar: some View {
-        // 单选侧栏:`List(selection:)` 要 `Binding<SelectionValue?>`,而
-        // `tabSelection` 是非可选的 —— 派生一个永不为 nil 的 optional 绑定,
-        // 两端(iOS/macOS)都能用同一个初始化器。写回经 `tabSelection`,
-        // 所以 iPad 点侧栏会改 `TabRoot.selected`、macOS 改内部 `@State`。
-        let tabBinding = tabSelection
-        let listSelection = Binding<TopTab?>(
-            get: { tabBinding.wrappedValue },
-            set: { if let new = $0 { tabBinding.wrappedValue = new } }
-        )
-        return List(selection: listSelection) {
-            ForEach(TopTab.allCases) { tab in
-                Label(tab.label, systemImage: tab.systemImage)
-                    .tag(tab)
+    /// 合并侧栏 = 窄图标 rail ＋ 当前 tab 的会话 list,整体作为 split view 的
+    /// **唯一可折叠首列**(2 栏布局:sidebar | detail)。折叠按钮一下收起 rail+list,
+    /// 把整宽让给右侧会话。「我」tab 无 list → 仅留 rail,账号页占满右栏,列宽
+    /// 收到 72。其余 tab 列宽 = rail(72)+ list,可拖动 320–520。
+    private var combinedSidebar: some View {
+        let isMe = tabSelection.wrappedValue == .me
+        return HStack(spacing: 0) {
+            tabRail
+                .frame(width: 56)
+            if !isMe {
+                middleColumn
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .navigationTitle("PendingBot")
-        .navigationSplitViewColumnWidth(min: 150, ideal: 168, max: 200)
+        .frame(maxHeight: .infinity)
+        // 不自铺任何背景 —— rail 与 list 都透明,直接露出 NavigationSplitView
+        // 侧栏列**自带的原生材质**(原来 List 侧栏那块)。list 列已去掉 canvas,
+        // 所以整条侧栏是同一块原生底、中间无分隔。自糊 NSVisualEffectView 在
+        // 这个被 MacMainWindowStyler 强制不透明的窗口里 behind-window 透不出来,
+        // 反而发灰带渐变,故不用。
+        .navigationSplitViewColumnWidth(
+            min: isMe ? 56 : 300,
+            ideal: isMe ? 56 : 356,
+            max: isMe ? 56 : 520
+        )
+    }
+
+    private var tabRail: some View {
+        // 窄图标栏 —— **不用 `List`**:`List` 强制行顶对齐 + 撑满全高 + 自带
+        // inset 选中样式,硬压窄会挤掉 NavigationSplitView 的折叠按钮。改成自绘
+        // 的竖向 rail(上下 `Spacer` 居中),折叠按钮回来,图标/字号/列宽全可控。
+        // 写回经 `tabSelection` —— iPad 改 `TabRoot.selected`、macOS 改内部 `@State`。
+        let tabBinding = tabSelection
+        return VStack(spacing: 4) {
+            Spacer(minLength: 0)
+            ForEach(TopTab.allCases) { tab in
+                let selected = tabBinding.wrappedValue == tab
+                Button {
+                    if tabBinding.wrappedValue != tab { tabBinding.wrappedValue = tab }
+                } label: {
+                    VStack(spacing: 4) {
+                        Image(systemName: tab.systemImage)
+                            .font(Theme.Fonts.glyph(size: 16, weight: .regular))
+                            // 选中态 = 图标实心填充(SF Symbol `.fill` 变体),
+                            // 不再用背景块。没有 fill 变体的字形(如 command)
+                            // 会优雅回退到原线条形。
+                            .symbolVariant(selected ? .fill : .none)
+                        Text(tab.label)
+                            .font(Theme.Fonts.system(size: 10, weight: selected ? .semibold : .medium))
+                    }
+                    .foregroundStyle(selected ? Theme.Palette.accent : Theme.Palette.inkMuted)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 7)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .frame(maxHeight: .infinity)
     }
 
     // 中/右栏取共享 `FeatureSurface` 的 list/detail 列。这些方法是跨平台的
@@ -99,27 +140,22 @@ struct WideRootView: View {
             // 消息 tab 中列 = 共享 `MessageTabView` 的 list 列;选中一个会话
             // (ChatDest)后右栏是聊天 detail。壳持有 selection,list 写、detail 读。
             MessageTabView().listColumn(selection: $messagesSelection)
-                .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
         case .friends:
             // 好友 tab 中列 = 共享 `FriendsTabView` 的 list 列;选中一位好友
             // (PendingPeer)后右栏是会话 detail。
             FriendsTabView().listColumn(selection: $friendsSelection)
-                .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
         case .envelope:
             // 来信 tab 中列 = 共享 `EnvelopeTabView` 的 feed 列;选中一封来信
             // (envelope_runs.id)后右栏是正文 detail。
             EnvelopeTabView().listColumn(selection: $envelopeSelection)
-                .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
         case .crew:
             // Crew tab 中列 = 共享 `CrewTabV2View` 的 list 列;选中一个 crew
             // (crew id)后右栏是机组群聊 detail。
             CrewTabV2View().listColumn(selection: $crewSelection)
-                .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
         case .me:
-            // 「我」tab 没有可枚举的 list 内容,中间列保持空态;账号详情放右栏。
-            WidePlaceholderColumn(message: "账号与钱包条目会出现在这里")
-                .navigationTitle("我")
-                .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
+            // 「我」tab 无 list — `combinedSidebar` 已把它从侧栏中列里 guard 掉
+            // (仅留 rail,账号页占满右栏),这里只为 switch 穷尽兜个空。
+            EmptyView()
         }
     }
 

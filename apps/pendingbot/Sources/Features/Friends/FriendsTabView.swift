@@ -233,6 +233,14 @@ struct FriendsTabView: View {
 
     // ── Sidebar (shared) ────────────────────────────────────────────────────
 
+    /// Shell 契约下的行内边距:前导贴 rail 右沿(leading=0)、右侧留 gutter。
+    /// 非 shell(iOS)返回 nil → 用原生 List 默认插入,行为不变。
+    private var shellRowInsets: EdgeInsets? {
+        renderAsMacListColumn
+            ? EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: Theme.Metrics.gutter)
+            : nil
+    }
+
     @ViewBuilder
     private var sidebarBody: some View {
         VStack(spacing: 0) {
@@ -256,7 +264,11 @@ struct FriendsTabView: View {
                 }
             }
             ZStack {
-                Theme.Palette.canvas.ignoresSafeArea()
+                // Shell 模式下不铺 canvas —— 露出合并侧栏原生玻璃(List 已
+                // scrollContentBackground(.hidden))。
+                if !renderAsMacListColumn {
+                    Theme.Palette.canvas.ignoresSafeArea()
+                }
                 List {
                     // Self row — pinned at the top, always visible
                     // regardless of filter. QR button on the right opens
@@ -274,6 +286,7 @@ struct FriendsTabView: View {
                             onQR: { showingQR = true; Haptics.tap() }
                         )
                         .listRowBackground(selfSelected ? Theme.Palette.accentBg : Theme.Palette.surface)
+                        .listRowInsets(shellRowInsets)
                     }
 
                     Section {
@@ -296,6 +309,7 @@ struct FriendsTabView: View {
                                     onDecline: { Task { await respondToRequest(req, accept: false) } }
                                 )
                                 .listRowBackground(Theme.Palette.surface)
+                                .listRowInsets(shellRowInsets)
                             }
                         }
                     }
@@ -309,6 +323,7 @@ struct FriendsTabView: View {
                                     onDecline: { Task { await respondToGroupInvitation(invite, accept: false) } }
                                 )
                                 .listRowBackground(Theme.Palette.surface)
+                                .listRowInsets(shellRowInsets)
                             }
                         }
                     }
@@ -327,6 +342,7 @@ struct FriendsTabView: View {
                                               modelSlug: bot.model_id,
                                               botVisibility: bot.visibility)
                                         .listRowBackground(selected ? Theme.Palette.accentBg : Theme.Palette.surface)
+                                        .listRowInsets(shellRowInsets)
                                         .contentShape(Rectangle())
                                         .onTapGesture { Task { await tapBot(bot) } }
                                         .modifier(BotRowOwnerActions(
@@ -343,6 +359,7 @@ struct FriendsTabView: View {
                                               modelSlug: nil,
                                               botVisibility: nil)
                                         .listRowBackground(selected ? Theme.Palette.accentBg : Theme.Palette.surface)
+                                        .listRowInsets(shellRowInsets)
                                         .contentShape(Rectangle())
                                         .onTapGesture { Task { await tapHuman(c) } }
                                         .contextMenu {
@@ -362,6 +379,7 @@ struct FriendsTabView: View {
                             Text(emptyText)
                                 .foregroundStyle(.secondary)
                                 .listRowBackground(Theme.Palette.surface)
+                                .listRowInsets(shellRowInsets)
                         }
                     }
                 }
@@ -1158,10 +1176,8 @@ private extension FriendsTabView {
     /// The friend list as a standalone column for the Mac shell: the shared
     /// `sidebarBody` (no SidebarTabBar) on canvas, carrying the full chrome.
     var macListColumn: some View {
-        chrome(
-            sidebarBody
-                .background(Theme.Palette.canvas.ignoresSafeArea())
-        )
+        // 不铺 canvas —— 合并侧栏的原生玻璃透上来,整条侧栏一块玻璃。
+        chrome(sidebarBody)
     }
 }
 

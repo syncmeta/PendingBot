@@ -210,6 +210,8 @@ struct CrewTabV2View: View {
                 if externalSelection != nil {
                     CrewRowV2(crew: crew)
                         .contentShape(Rectangle())
+                        // Shell 契约:行前导贴 rail 右沿(leading=0),右侧留 gutter。
+                        .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: Theme.Metrics.gutter))
                         .listRowBackground(
                             externalSelection?.wrappedValue == crew.id
                                 ? Color.accentColor.opacity(0.12) : nil
@@ -222,6 +224,8 @@ struct CrewTabV2View: View {
                 }
             }
             .platformListStyle()
+            // Shell 模式:List 背景透明,露出合并侧栏原生玻璃。
+            .scrollContentBackground(renderAsMacListColumn ? .hidden : .automatic)
         }
     }
 

@@ -486,7 +486,10 @@ struct MessageTabView: View {
                                 }
                             }
                         }
-                        .padding(.horizontal, Theme.Metrics.gutter)
+                        // Shell 契约:Mac/iPad 合并侧栏里卡片前导贴 rail 右沿
+                        // (leading=0),右侧留 gutter;iOS 保持左右对称 gutter。
+                        .padding(.leading, renderAsMacListColumn ? 0 : Theme.Metrics.gutter)
+                        .padding(.trailing, Theme.Metrics.gutter)
                         .padding(.vertical, 12)
                         // Cap on compact only; on regular the sidebar already
                         // has a fixed-width column so the cap would just push
@@ -1008,10 +1011,9 @@ private extension MessageTabView {
     /// shared `sidebarBody` (no SidebarTabBar) on canvas, carrying the full
     /// chrome so its actions + loading work from this column.
     var macListColumn: some View {
-        chrome(
-            sidebarBody
-                .background(Theme.Palette.canvas.ignoresSafeArea())
-        )
+        // 不铺 canvas —— 让 `WideRootView` 合并侧栏垫的原生玻璃透上来,
+        // 整条侧栏一块玻璃。会话卡片(surface 填充)照旧浮在玻璃上。
+        chrome(sidebarBody)
     }
 }
 
