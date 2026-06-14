@@ -135,8 +135,8 @@ final class CrewSessionRunner: ObservableObject {
         }
         // 2. env 白名单（spec v2 §8.4.2）—— 复用 spec 的纯函数构造。
         let env = LocalCodingAgentEnv.build(additionalEnv: additionalEnv)
-        // 3. 起内嵌终端 session
-        let terminalSession = AgentTerminalSession(
+        // 3. 起内嵌终端 session（claude；codex app-server 在后续 task 接入）
+        let backend = AgentTerminalSession(
             config: config,
             executable: executable.path,
             workdir: workingDirectory.path,
@@ -151,7 +151,7 @@ final class CrewSessionRunner: ObservableObject {
             workingDirectory: workingDirectory,
             model: config.model,
             permissionModeOverride: config.permissionMode,
-            terminalSession: terminalSession,
+            backend: backend,
             serverLink: serverLink,
             role: role
         )
@@ -179,9 +179,9 @@ final class CrewSessionRunner: ObservableObject {
 
 /// 单次 session 的 UI 视图模型。
 ///
-/// agent 跑在内嵌真终端里（`terminalSession.terminalView`），UI 直接把那个
-/// `LocalProcessTerminalView` 嵌进来（见 `AgentTerminalView`）。这里只追踪
-/// 终端进程的 running/exited 生命周期，并在结束时关掉 server row。
+/// agent 跑在后端里（claude = 内嵌真终端；codex = app-server），UI 通过
+/// `agentTerminalSession` 有条件地嵌入终端视图。这里只追踪后端进程的
+/// running/exited 生命周期，并在结束时关掉 server row。
 @MainActor
 final class CrewSessionRun: ObservableObject, Identifiable {
     enum Status: Equatable {
@@ -220,8 +220,11 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         role == .captain ? "Captain" : kind.displayName + " · " + String(sessionId.prefix(6))
     }
 
-    /// 内嵌真终端 session —— UI 把它的 `terminalView` 嵌进来，agent 在里面跑。
-    let terminalSession: AgentTerminalSession
+    /// 后端实现（claude = AgentTerminalSession；codex = app-server，待实现）。
+    let backend: any SessionBackend
+
+    /// 类型转换访问：仅当后端是终端（claude）时非 nil，供 `AgentTerminalView` 使用。
+    var agentTerminalSession: AgentTerminalSession? { backend as? AgentTerminalSession }
 
     @Published private(set) var status: Status = .running
     @Published private(set) var exitCode: Int32?
@@ -244,7 +247,7 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         workingDirectory: URL,
         model: String? = nil,
         permissionModeOverride: String? = nil,
-        terminalSession: AgentTerminalSession,
+        backend: any SessionBackend,
         serverLink: CrewSessionServerLink? = nil,
         role: Role = .worker
     ) {
@@ -255,21 +258,21 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         self.workingDirectory = workingDirectory
         self.model = model
         self.permissionModeOverride = permissionModeOverride
-        self.terminalSession = terminalSession
+        self.backend = backend
         self.serverLink = serverLink
         self.role = role
-        self.status = Self.map(terminalSession.status, cancelled: false)
-        observeTerminalStatus()
+        self.status = Self.map(backend.status, cancelled: false)
+        observeBackendStatus()
     }
 
-    /// 跟踪内嵌终端的 running/exited，映射到 run 的生命周期 status，并在退出时
-    /// finalize（关 server row）。用 `@Published status` 的 Combine stream 驱动。
-    private func observeTerminalStatus() {
+    /// 跟踪后端的 running/exited，映射到 run 的生命周期 status，并在退出时
+    /// finalize（关 server row）。用 `backend.statusPublisher` 的 Combine stream 驱动。
+    private func observeBackendStatus() {
         statusObservation = Task { [weak self] in
             guard let self else { return }
-            for await terminalStatus in self.terminalSession.$status.values {
+            for await backendStatus in self.backend.statusPublisher.values {
                 if Task.isCancelled { return }
-                switch terminalStatus {
+                switch backendStatus {
                 case .running:
                     self.status = .running
                 case let .exited(code):
@@ -281,16 +284,16 @@ final class CrewSessionRun: ObservableObject, Identifiable {
     }
 
     /// 发文本给 agent（首条指令 / 续聊 / steer）。终端原样接收。
-    func send(_ text: String) { terminalSession.send(text) }
+    func send(_ text: String) { backend.send(text) }
 
     /// 打断进行中的回合（Esc）。
-    func interrupt() { terminalSession.interrupt() }
+    func interrupt() { backend.interrupt() }
 
-    /// 主动停掉 session（终止子进程）。终端退出后落 `.cancelled`。
+    /// 主动停掉 session（终止子进程）。后端退出后落 `.cancelled`。
     func stop() {
         guard status == .running else { return }
         cancelled = true
-        terminalSession.stop()
+        backend.stop()
     }
 
     deinit {

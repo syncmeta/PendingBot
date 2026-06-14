@@ -843,9 +843,11 @@ private struct SessionRunContentView: View {
         VStack(spacing: 0) {
             header
             Divider()
-            AgentTerminalView(session: run.terminalSession)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(nsColor: .textBackgroundColor))
+            if let term = run.agentTerminalSession {
+                AgentTerminalView(session: term)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(nsColor: .textBackgroundColor))
+            }
         }
     }
 
