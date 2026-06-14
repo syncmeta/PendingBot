@@ -29,7 +29,8 @@ extension EnvironmentValues {
 /// but tuned for the larger detail pane (more breathing room, slightly
 /// dimmer ink so it reads as ambient guidance, not an empty state).
 struct EmptyDetailHint: View {
-    let text: String
+    /// nil / 空串 → 只渲染图标(宽屏右栏占位「文字去掉,只留图标」)。
+    var text: String? = nil
     var systemImage: String? = nil
 
     var body: some View {
@@ -39,10 +40,12 @@ struct EmptyDetailHint: View {
                     .font(Theme.Fonts.glyph(size: 36, weight: .light))
                     .foregroundStyle(Theme.Palette.inkMuted.opacity(0.55))
             }
-            Text(text)
-                .font(Theme.Fonts.serif(size: 17, weight: .regular))
-                .foregroundStyle(Theme.Palette.inkMuted)
-                .multilineTextAlignment(.center)
+            if let text, !text.isEmpty {
+                Text(text)
+                    .font(Theme.Fonts.serif(size: 17, weight: .regular))
+                    .foregroundStyle(Theme.Palette.inkMuted)
+                    .multilineTextAlignment(.center)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.Palette.canvas.ignoresSafeArea())

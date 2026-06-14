@@ -241,27 +241,33 @@ struct FriendsTabView: View {
             : nil
     }
 
-    @ViewBuilder
+    /// 表头操作 = 排序菜单 + "+" 弹层(加好友 / 加机器人 / 新建机器人)。抽出来
+    /// 既给 iOS 的 `TabHeaderBar` trailing 用,又给 Mac 壳的 toolbar 用。
+    @ViewBuilder private var friendsHeaderActions: some View {
+        HStack(spacing: 6) {
+            friendSortMenu
+            PlusActionPopover(items: [
+                PlusActionItem(title: "加好友", systemImage: "person.badge.plus") {
+                    addingFriend = true
+                },
+                PlusActionItem(title: "加机器人", systemImage: "rectangle.badge.plus") {
+                    addingBot = true
+                },
+                PlusActionItem(title: "新建机器人", systemImage: "sparkles") {
+                    creatingBot = true
+                },
+            ])
+        }
+    }
+
     private var sidebarBody: some View {
         VStack(spacing: 0) {
             // Background applied at the VStack level (not just inside
             // the lower ZStack) so the TabHeaderBar at the top sits
             // on canvas instead of the default white safe-area fill.
-            TabHeaderBar(title: "好友") {
-                HStack(spacing: 6) {
-                    friendSortMenu
-                    PlusActionPopover(items: [
-                        PlusActionItem(title: "加好友", systemImage: "person.badge.plus") {
-                            addingFriend = true
-                        },
-                        PlusActionItem(title: "加机器人", systemImage: "rectangle.badge.plus") {
-                            addingBot = true
-                        },
-                        PlusActionItem(title: "新建机器人", systemImage: "sparkles") {
-                            creatingBot = true
-                        },
-                    ])
-                }
+            // Mac 壳:无表头(标题去掉,按钮移到 toolbar);iOS/iPad-regular 保留。
+            if !renderAsMacListColumn {
+                TabHeaderBar(title: "好友") { friendsHeaderActions }
             }
             ZStack {
                 // Shell 模式下不铺 canvas —— 露出合并侧栏原生玻璃(List 已
@@ -1159,8 +1165,7 @@ extension FriendsTabView: FeatureSurface {
                 )
                 .id(peer)
             } else {
-                EmptyDetailHint(text: "选择一位好友或机器人开始聊天",
-                                systemImage: "person.2")
+                EmptyDetailHint(systemImage: "person.2")
             }
         }
     }
@@ -1177,7 +1182,15 @@ private extension FriendsTabView {
     /// `sidebarBody` (no SidebarTabBar) on canvas, carrying the full chrome.
     var macListColumn: some View {
         // 不铺 canvas —— 合并侧栏的原生玻璃透上来,整条侧栏一块玻璃。
-        chrome(sidebarBody)
+        // 表头按钮搬到 toolbar 的 navigation 段(贴侧栏折叠按钮),无标题。
+        chrome(
+            sidebarBody
+                .toolbar {
+                    ToolbarItemGroup(placement: .navigation) {
+                        friendsHeaderActions
+                    }
+                }
+        )
     }
 }
 

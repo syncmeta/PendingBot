@@ -415,35 +415,39 @@ struct MessageTabView: View {
         return items
     }
 
-    private var sidebarBody: some View {
-        VStack(spacing: 0) {
-            TabHeaderBar(
-                title: "消息",
-                trailing: {
-                    GroupedHeaderControls {
-                        Menu {
-                            if !recentBots.isEmpty {
-                                Section("最近聊过") {
-                                    ForEach(recentBots) { bot in
-                                        Button {
-                                            Haptics.tap()
-                                            Task { await createAndNavigate(with: bot) }
-                                        } label: {
-                                            Label(bot.display_name, systemImage: "bubble.left")
-                                        }
-                                    }
-                                }
+    /// 表头操作 = 新建会话菜单 + "+" 弹层。抽出来既给 iOS 的 `TabHeaderBar`
+    /// trailing 用,又给 Mac 壳的 toolbar 用(贴侧栏折叠按钮)。
+    @ViewBuilder private var messageHeaderActions: some View {
+        GroupedHeaderControls {
+            Menu {
+                if !recentBots.isEmpty {
+                    Section("最近聊过") {
+                        ForEach(recentBots) { bot in
+                            Button {
+                                Haptics.tap()
+                                Task { await createAndNavigate(with: bot) }
+                            } label: {
+                                Label(bot.display_name, systemImage: "bubble.left")
                             }
-                            Section("右滑新建会话\n左滑标未读/删除") {
-                            }
-                        } label: {
-                            CircleComposeButton()
                         }
-                    } trailing: {
-                        PlusActionPopover(items: plusActionItems)
                     }
                 }
-            )
+                Section("右滑新建会话\n左滑标未读/删除") {
+                }
+            } label: {
+                CircleComposeButton()
+            }
+        } trailing: {
+            PlusActionPopover(items: plusActionItems)
+        }
+    }
+
+    private var sidebarBody: some View {
+        VStack(spacing: 0) {
+            // Mac 壳:无表头(标题去掉,按钮移到 toolbar);iOS/iPad-regular 保留。
+            if !renderAsMacListColumn {
+                TabHeaderBar(title: "消息", trailing: { messageHeaderActions })
+            }
             Group {
                 if loading && conversations.isEmpty {
                     ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -993,8 +997,7 @@ extension MessageTabView: FeatureSurface {
                 destinationView(for: dest)
                     .id(destinationKey(dest))
             } else {
-                EmptyDetailHint(text: "选择一个会话开始",
-                                systemImage: "bubble.left.and.bubble.right")
+                EmptyDetailHint(systemImage: "bubble.left.and.bubble.right")
             }
         }
     }
@@ -1013,7 +1016,15 @@ private extension MessageTabView {
     var macListColumn: some View {
         // 不铺 canvas —— 让 `WideRootView` 合并侧栏垫的原生玻璃透上来,
         // 整条侧栏一块玻璃。会话卡片(surface 填充)照旧浮在玻璃上。
-        chrome(sidebarBody)
+        // 表头按钮搬到 toolbar 的 navigation 段(贴侧栏折叠按钮),无标题。
+        chrome(
+            sidebarBody
+                .toolbar {
+                    ToolbarItemGroup(placement: .navigation) {
+                        messageHeaderActions
+                    }
+                }
+        )
     }
 }
 
