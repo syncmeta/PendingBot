@@ -233,58 +233,31 @@ struct FriendsTabView: View {
 
     // ── Sidebar (shared) ────────────────────────────────────────────────────
 
-    /// Mac 壳:行内容在圆角卡片里的内边距(content 缩进,让头像/文字不贴卡片边)。
-    /// iOS 返回 nil → 默认插入,行为不变。与 `cardRowBackground` 配套。
-    /// Mac:贴 rail 右沿(leading 14 内缩让头像不顶卡边)、右留 gutter。
+    /// 行内边距。Mac:纯净一列 —— 头像贴 rail(leading 16)、右留 gutter。
+    /// iOS 返回 nil(默认插入,行为不变)。
     private var cardRowInsets: EdgeInsets? {
         renderAsMacListColumn
-            ? EdgeInsets(top: 7, leading: 14, bottom: 7, trailing: Theme.Metrics.gutter + 14)
+            ? EdgeInsets(top: 7, leading: 16, bottom: 7, trailing: Theme.Metrics.gutter)
             : nil
     }
 
-    /// 行在分组里的位置 —— 决定圆角加在哪几个角(模拟 iOS insetGrouped:
-    /// **整组一个圆角**,组内行用细线分隔,而非每行各自圆角)。
-    enum RowPos { case single, first, middle, last }
-
-    /// 行背景:Mac 壳下,一个 Section = 一张整体圆角卡片(surface)。首行圆上两
-    /// 角、尾行圆下两角、中间方角,行与行之间靠 List 分隔线(hairline)断开。
+    /// 行背景。Mac:**不铺卡片** —— 行透明、融进侧栏玻璃,只有选中行铺一小块
+    /// 圆角染色(macOS 源列表式选中)。行与行之间用 List 自带的 hairline 分隔线。
     /// iOS 维持满宽 surface 行为不变。
     @ViewBuilder
-    private func cardRowBackground(selected: Bool, pos: RowPos = .single, card: Bool = true) -> some View {
+    private func rowBackground(selected: Bool) -> some View {
         if renderAsMacListColumn {
-            if !card && !selected {
-                // 「我」行未选中:透明,不铺白底卡片(融进侧栏)。
-                Color.clear
+            if selected {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Theme.Palette.accentBg)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
             } else {
-                let r = Theme.Metrics.cardRadius
-                let topR: CGFloat = (pos == .single || pos == .first) ? r : 0
-                let botR: CGFloat = (pos == .single || pos == .last) ? r : 0
-                UnevenRoundedRectangle(
-                    topLeadingRadius: topR, bottomLeadingRadius: botR,
-                    bottomTrailingRadius: botR, topTrailingRadius: topR,
-                    style: .continuous
-                )
-                .fill(selected ? Theme.Palette.accentBg : Theme.Palette.surface)
-                .padding(.trailing, Theme.Metrics.gutter)
+                Color.clear
             }
         } else {
             (selected ? Theme.Palette.accentBg : Theme.Palette.surface)
         }
-    }
-
-    /// 分隔线:Mac 上只在组内"行与行之间"画细线(first/middle 行底部),
-    /// 末行/单行不画(避免线压在圆角卡片下沿);iOS 维持默认。
-    private func cardRowSeparator(_ pos: RowPos) -> Visibility {
-        guard renderAsMacListColumn else { return .automatic }
-        return (pos == .first || pos == .middle) ? .visible : .hidden
-    }
-
-    /// 由下标 + 总数算出行在分组里的位置。
-    private func rowPos(_ idx: Int, of count: Int) -> RowPos {
-        if count <= 1 { return .single }
-        if idx == 0 { return .first }
-        if idx == count - 1 { return .last }
-        return .middle
     }
 
     /// 表头操作 = 排序菜单 + "+" 弹层(加好友 / 加机器人 / 新建机器人)。抽出来
@@ -358,10 +331,9 @@ struct FriendsTabView: View {
                             onTap: { Task { await tapSelf() } },
                             onQR: { showingQR = true; Haptics.tap() }
                         )
-                        // 「我」行:去掉满宽白底 —— 未选中透明融进侧栏,选中才染色。
-                        .listRowBackground(cardRowBackground(selected: selfSelected, pos: .single, card: false))
+                        // 「我」行:透明融进侧栏,选中才染色。
+                        .listRowBackground(rowBackground(selected: selfSelected))
                         .listRowInsets(cardRowInsets)
-                        .listRowSeparator(cardRowSeparator(.single))
                         .listRowSeparatorTint(Theme.Palette.hairline)
                     }
 
@@ -378,16 +350,14 @@ struct FriendsTabView: View {
                     // Hidden when there's nothing pending.
                     if !pendingFriendRequests.isEmpty {
                         Section("好友申请") {
-                            ForEach(Array(pendingFriendRequests.enumerated()), id: \.element.id) { idx, req in
-                                let pos = rowPos(idx, of: pendingFriendRequests.count)
+                            ForEach(pendingFriendRequests) { req in
                                 FriendRequestRow(
                                     request: req,
                                     onAccept: { Task { await respondToRequest(req, accept: true) } },
                                     onDecline: { Task { await respondToRequest(req, accept: false) } }
                                 )
-                                .listRowBackground(cardRowBackground(selected: false, pos: pos))
+                                .listRowBackground(rowBackground(selected: false))
                                 .listRowInsets(cardRowInsets)
-                                .listRowSeparator(cardRowSeparator(pos))
                                 .listRowSeparatorTint(Theme.Palette.hairline)
                             }
                         }
@@ -395,16 +365,14 @@ struct FriendsTabView: View {
 
                     if !pendingGroupInvitations.isEmpty {
                         Section("群邀请") {
-                            ForEach(Array(pendingGroupInvitations.enumerated()), id: \.element.id) { idx, invite in
-                                let pos = rowPos(idx, of: pendingGroupInvitations.count)
+                            ForEach(pendingGroupInvitations) { invite in
                                 GroupInvitationRow(
                                     invitation: invite,
                                     onAccept: { Task { await respondToGroupInvitation(invite, accept: true) } },
                                     onDecline: { Task { await respondToGroupInvitation(invite, accept: false) } }
                                 )
-                                .listRowBackground(cardRowBackground(selected: false, pos: pos))
+                                .listRowBackground(rowBackground(selected: false))
                                 .listRowInsets(cardRowInsets)
-                                .listRowSeparator(cardRowSeparator(pos))
                                 .listRowSeparatorTint(Theme.Palette.hairline)
                             }
                         }
@@ -414,8 +382,7 @@ struct FriendsTabView: View {
                     // alphabetical order. Filter chips above narrow by type.
                     if !friendsForFilter.isEmpty {
                         Section {
-                            ForEach(Array(friendsForFilter.enumerated()), id: \.element.id) { idx, item in
-                                let pos = rowPos(idx, of: friendsForFilter.count)
+                            ForEach(friendsForFilter) { item in
                                 switch item {
                                 case .bot(let bot):
                                     let selected = sidebarLayout && isSelected(kind: "bot", id: bot.id)
@@ -424,9 +391,8 @@ struct FriendsTabView: View {
                                               name: bot.display_name,
                                               modelSlug: bot.model_id,
                                               botVisibility: bot.visibility)
-                                        .listRowBackground(cardRowBackground(selected: selected, pos: pos))
+                                        .listRowBackground(rowBackground(selected: selected))
                                         .listRowInsets(cardRowInsets)
-                                        .listRowSeparator(cardRowSeparator(pos))
                                         .listRowSeparatorTint(Theme.Palette.hairline)
                                         .contentShape(Rectangle())
                                         .onTapGesture { Task { await tapBot(bot) } }
@@ -443,9 +409,8 @@ struct FriendsTabView: View {
                                               name: c.rowName,
                                               modelSlug: nil,
                                               botVisibility: nil)
-                                        .listRowBackground(cardRowBackground(selected: selected, pos: pos))
+                                        .listRowBackground(rowBackground(selected: selected))
                                         .listRowInsets(cardRowInsets)
-                                        .listRowSeparator(cardRowSeparator(pos))
                                         .listRowSeparatorTint(Theme.Palette.hairline)
                                         .contentShape(Rectangle())
                                         .onTapGesture { Task { await tapHuman(c) } }
@@ -465,9 +430,8 @@ struct FriendsTabView: View {
                         Section {
                             Text(emptyText)
                                 .foregroundStyle(.secondary)
-                                .listRowBackground(cardRowBackground(selected: false, pos: .single))
+                                .listRowBackground(rowBackground(selected: false))
                                 .listRowInsets(cardRowInsets)
-                                .listRowSeparator(cardRowSeparator(.single))
                                 .listRowSeparatorTint(Theme.Palette.hairline)
                         }
                     }
