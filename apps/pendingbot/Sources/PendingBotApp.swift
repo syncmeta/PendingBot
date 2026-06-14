@@ -246,6 +246,13 @@ struct PendingBotApp: App {
                 // loading 永远停在 true → 一直转圈、建不了机器人。
                 .environment(\.api, APIClient())
                 .environment(\.account, accountStore.current)
+                // macOS 把 Form 默认渲染成 `.columns`(左标签/右控件的裸网格,
+                // 分组标题成几行裸文字 —— 看着像"没套样式")。`.formStyle` 是
+                // 会向下级联的环境修饰符,在 scene 根设一次,主窗里所有共享
+                // Form(设置/建管机器人/群设置/会话设置…)都继承到分组卡片
+                // 外观,跟 iOS 默认的 `.grouped` 对齐。iOS 段无此修饰(默认即
+                // grouped),互不影响。
+                .formStyle(.grouped)
                 // 跟 iOS 一致:外观跟随设置(跟随系统/浅/深)。深色变体由
                 // 自适应 Theme.Palette 承载(2026-06-11 spec)。
                 .preferredColorScheme((AppearanceMode(rawValue: appearanceRaw) ?? .default).colorScheme)
@@ -289,6 +296,9 @@ struct PendingBotApp: App {
                 // \.api / \.account,设置里的模型选择器等才能读到。
                 .environment(\.api, APIClient())
                 .environment(\.account, accountStore.current)
+                // Settings 是独立场景,不继承主窗的 `.formStyle` —— 单独设一次,
+                // 让 ⌘, 设置窗里的 Form 也是分组卡片而非 macOS 默认的 columns。
+                .formStyle(.grouped)
                 // 独立场景不继承主窗的 preferredColorScheme —— 单独绑同一个
                 // 设置,这样在 ⌘, 窗里改外观时它本身也即时重绘。
                 .preferredColorScheme((AppearanceMode(rawValue: appearanceRaw) ?? .default).colorScheme)
