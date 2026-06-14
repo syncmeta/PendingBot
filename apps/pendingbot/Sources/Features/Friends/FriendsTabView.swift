@@ -260,6 +260,27 @@ struct FriendsTabView: View {
         }
     }
 
+    /// Mac 壳 toolbar 版表头操作 —— 原生 `Menu` 直接作 `ToolbarItemGroup`
+    /// 子项(理由同 MessageTabView.macToolbarActions:iOS 的 PlusActionPopover
+    /// 在 macOS toolbar 里点不动)。排序复用 friendSortMenu(本就是 Menu)。
+    @ViewBuilder private var macToolbarActions: some View {
+        friendSortMenu
+        Menu {
+            Button { addingFriend = true } label: {
+                Label("加好友", systemImage: "person.badge.plus")
+            }
+            Button { addingBot = true } label: {
+                Label("加机器人", systemImage: "rectangle.badge.plus")
+            }
+            Button { creatingBot = true } label: {
+                Label("新建机器人", systemImage: "sparkles")
+            }
+        } label: {
+            Image(systemName: "plus")
+        }
+        .help("加好友 / 加机器人 / 新建机器人")
+    }
+
     private var sidebarBody: some View {
         VStack(spacing: 0) {
             // Background applied at the VStack level (not just inside
@@ -1187,7 +1208,7 @@ private extension FriendsTabView {
             sidebarBody
                 .toolbar {
                     ToolbarItemGroup {
-                        friendsHeaderActions
+                        macToolbarActions
                     }
                 }
         )

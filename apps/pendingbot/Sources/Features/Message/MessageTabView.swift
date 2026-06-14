@@ -442,6 +442,44 @@ struct MessageTabView: View {
         }
     }
 
+    /// Mac 壳 toolbar 版表头操作 —— 必须用**原生 `Menu` 直接作为
+    /// `ToolbarItemGroup` 子项**:iOS 那套 `GroupedHeaderControls`(HStack)+
+    /// `PlusActionPopover`(自定义 `.popover`)塞进 macOS toolbar 收不到点击,
+    /// 「+」点不动。这里换成原生 menu,行为同 iOS 但在 toolbar 里可用。
+    @ViewBuilder private var macToolbarActions: some View {
+        Menu {
+            if recentBots.isEmpty {
+                Text("还没有最近会话")
+            } else {
+                ForEach(recentBots) { bot in
+                    Button {
+                        Haptics.tap()
+                        Task { await createAndNavigate(with: bot) }
+                    } label: {
+                        Label(bot.display_name, systemImage: "bubble.left")
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "square.and.pencil")
+        }
+        .help("新建会话")
+
+        Menu {
+            ForEach(plusActionItems) { item in
+                Button {
+                    Haptics.tap()
+                    item.action()
+                } label: {
+                    Label(item.title, systemImage: item.systemImage)
+                }
+            }
+        } label: {
+            Image(systemName: "plus")
+        }
+        .help("加好友 / 拉群 / 加群")
+    }
+
     private var sidebarBody: some View {
         VStack(spacing: 0) {
             // Mac 壳:无表头(标题去掉,按钮移到 toolbar);iOS/iPad-regular 保留。
@@ -1021,7 +1059,7 @@ private extension MessageTabView {
             sidebarBody
                 .toolbar {
                     ToolbarItemGroup {
-                        messageHeaderActions
+                        macToolbarActions
                     }
                 }
         )
