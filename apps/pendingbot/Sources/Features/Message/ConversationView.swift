@@ -302,6 +302,18 @@ struct ConversationView: View {
     /// header pill falls back to the bot's pinned model in that case.
     @State var convModelState: ConvModelState? = nil
 
+    /// 盲盒「猜模型」sheet 的呈现开关。由 composer "+" 菜单的「猜模型」tile 翻起；
+    /// 仅 `shouldOfferGuess` 为真时该 tile 才出现。
+    @State private var showGuessSheet = false
+    /// 盲盒「换模型」sheet 的呈现开关。任何带 bot 的 conv 都可换。
+    @State private var showSwitchSheet = false
+
+    /// 是否给该 conv 提供「猜模型」入口:有模型池、surprise(盲盒)模式、且尚未揭晓。
+    private var shouldOfferGuess: Bool {
+        guard let s = convModelState else { return false }
+        return s.has_pool && s.reveal_mode == "surprise" && !s.model_revealed
+    }
+
     /// "<bot_name> · <model-tag>". When the conversation carries a 盲盒 model
     /// state, the tag reflects the drawn model + reveal flag: "PendingModel"
     /// until revealed (surprise mode), the friendly name once revealed or in
@@ -906,6 +918,25 @@ struct ConversationView: View {
                 .platformDetents([.medium, .large])
                 .platformDragIndicator()
         }
+        .sheet(isPresented: $showGuessSheet) {
+            GuessModelSheet(conversationId: conversation.id) { _ in
+                Task { await loadConvModelState() }
+            }
+            .environmentObject(modelCatalog)
+            .tint(Theme.Palette.accent)
+            .platformDragIndicator()
+        }
+        .sheet(isPresented: $showSwitchSheet) {
+            SwitchModelSheet(
+                conversationId: conversation.id,
+                hasPool: convModelState?.has_pool ?? false
+            ) {
+                Task { await loadConvModelState() }
+            }
+            .environmentObject(modelCatalog)
+            .tint(Theme.Palette.accent)
+            .platformDragIndicator()
+        }
         .onChange(of: photoPickerItems) { _, items in
             guard !items.isEmpty else { return }
             uploadTasks.append(Task { await ingestPhotos(items) })
@@ -967,6 +998,8 @@ struct ConversationView: View {
                              || conversation.conversation_type == "self")
                     ? { Task { await triggerManualLookback() } }
                     : nil,
+                onGuessModel: shouldOfferGuess ? { showGuessSheet = true } : nil,
+                onSwitchModel: { showSwitchSheet = true },
                 onInsertMention: { sender in
                     if let prefix = mentionPrefix {
                         insertMention(sender, prefix: prefix)
@@ -1007,7 +1040,9 @@ struct ConversationView: View {
             onLookback: (conversation.conversation_type == "user_bot"
                          || conversation.conversation_type == "self")
                 ? { Task { await triggerManualLookback() } }
-                : nil
+                : nil,
+            onGuessModel: shouldOfferGuess ? { showGuessSheet = true } : nil,
+            onSwitchModel: { showSwitchSheet = true }
         )
         .background(Theme.Palette.canvas)
     }

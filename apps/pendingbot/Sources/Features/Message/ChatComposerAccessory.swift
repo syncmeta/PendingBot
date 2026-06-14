@@ -57,6 +57,8 @@ struct ComposerAccessoryContent: View {
     let onSend: () -> Void
     let onStop: () -> Void
     let onLookback: (() -> Void)?
+    let onGuessModel: (() -> Void)?
+    let onSwitchModel: (() -> Void)?
     let onInsertMention: (GroupBubbleSender) -> Void
     let onDecideContinue: (ConversationView.PendingContinue, Bool) -> Void
 
@@ -82,7 +84,9 @@ struct ComposerAccessoryContent: View {
                 onSend: onSend,
                 isStreaming: isStreaming,
                 onStop: onStop,
-                onLookback: onLookback
+                onLookback: onLookback,
+                onGuessModel: onGuessModel,
+                onSwitchModel: onSwitchModel
             )
             .readableColumnWidth()
         }
@@ -209,6 +213,8 @@ final class ComposerAccessoryModel: ObservableObject {
     var onSend: () -> Void = {}
     var onStop: () -> Void = {}
     var onLookback: (() -> Void)?
+    var onGuessModel: (() -> Void)?
+    var onSwitchModel: (() -> Void)?
     var onInsertMention: (GroupBubbleSender) -> Void = { _ in }
     var onDecideContinue: (ConversationView.PendingContinue, Bool) -> Void = { _, _ in }
 
@@ -231,6 +237,8 @@ final class ComposerAccessoryModel: ObservableObject {
         onSend = c.onSend
         onStop = c.onStop
         onLookback = c.onLookback
+        onGuessModel = c.onGuessModel
+        onSwitchModel = c.onSwitchModel
         onInsertMention = c.onInsertMention
         onDecideContinue = c.onDecideContinue
         revision += 1
@@ -265,6 +273,8 @@ struct ComposerAccessoryRoot: View {
             onSend: model.onSend,
             onStop: model.onStop,
             onLookback: model.onLookback,
+            onGuessModel: model.onGuessModel,
+            onSwitchModel: model.onSwitchModel,
             onInsertMention: model.onInsertMention,
             onDecideContinue: model.onDecideContinue
         )
