@@ -49,10 +49,10 @@ struct CrewSidebarView: View {
             // 让 user 始终能看见"我现在以谁的身份在花钱"。
             identityFooter
         }
-        // 不设 navigationTitle —— 否则它成为窗口标题，在 macOS 26 工具栏里渲染成
-        // 一颗 "PendingCrew" 玻璃胶囊，跟中栏 principal 的 crew 头像+名字打架。
-        // 标题位只留中栏那颗（CrewCenterView 的 .principal）。
-        .navigationTitle("")
+        // 完全不设 navigationTitle —— 一旦设了（哪怕空串），SwiftUI 会不停把窗口
+        // titleVisibility 设回 .visible，把我们在 WindowChromeConfigurator 里藏标题的
+        // 设置顶掉，于是 App 名 "PendingCrew" 又冒回标题栏。不设它，标题由
+        // WindowChromeConfigurator 一次性藏死。
         .toolbar {
             ToolbarItemGroup {
                 Button {

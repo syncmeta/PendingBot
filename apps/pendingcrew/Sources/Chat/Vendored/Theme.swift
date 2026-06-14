@@ -55,8 +55,8 @@ enum Theme {
         /// Private-bot tag bg, washed from `plum`.
         static let plumBg      = Color.adaptive(light: 0xECE3F7, dark: 0x322546)
 
-        /// Page canvas — warm off-white / warm near-black.
-        static let canvas        = Color.adaptive(light: 0xFDFCFA, dark: 0x161512)
+        /// Page canvas — pure white / warm near-black.
+        static let canvas        = Color.adaptive(light: 0xFFFFFF, dark: 0x161512)
         /// Cards / sheets — sits a hair above canvas (brighter in both modes).
         static let surface       = Color.adaptive(light: 0xFFFFFF, dark: 0x201E1A)
         /// Subtler than surface — chips / pills / muted bg fills.
