@@ -297,13 +297,36 @@ struct ConversationView: View {
     // POST handler in the same extension.
     @State var continueDeciding: Bool = false
 
-    /// "<bot_name> · <model-tag>". The model is the bot's resolved model
-    /// (bots.model_id, which already accounts for the owner's edits in
-    /// 我 → 机器人管理).
+    /// Conversation-level drawn-model state from `GET /v1/conversations/:id/model`.
+    /// nil until loaded (or when the fetch fails / the conv is user_user); the
+    /// header pill falls back to the bot's pinned model in that case.
+    @State var convModelState: ConvModelState? = nil
+
+    /// "<bot_name> · <model-tag>". When the conversation carries a 盲盒 model
+    /// state, the tag reflects the drawn model + reveal flag: "PendingModel"
+    /// until revealed (surprise mode), the friendly name once revealed or in
+    /// disclose mode. Falls back to the bot's pinned model (bots.model_id)
+    /// when the conv state hasn't loaded.
     private var botName: String {
         let base = effectiveBot?.display_name ?? conversation.bot_name ?? conversation.bot_id
-        guard let slug = effectiveBot?.model, !slug.isEmpty else { return base }
-        return "\(base) · \(modelCatalog.displayName(for: slug))"
+        guard conversation.conversation_type != "user_user" else { return base }
+        let modelTag: String?
+        if let s = convModelState {
+            if s.reveal_mode == "disclose" || s.model_revealed {
+                modelTag = s.current_model_slug.map { modelCatalog.displayName(for: $0) }
+            } else {
+                modelTag = "PendingModel"   // 盲盒未揭示
+            }
+        } else {
+            // 未取到会话状态 → 回落 bot 模型(老行为)
+            if let slug = effectiveBot?.model, !slug.isEmpty {
+                modelTag = modelCatalog.displayName(for: slug)
+            } else {
+                modelTag = nil
+            }
+        }
+        guard let tag = modelTag else { return base }
+        return "\(base) · \(tag)"
     }
 
     /// Seed for the avatar's emoji glyph. Always tied to bot identity so
@@ -783,12 +806,16 @@ struct ConversationView: View {
                 await loadPeerProfileIfNeeded()
                 await loadGroupSendersIfNeeded()
             }
+            // 盲盒会话模型状态 — drives the header pill; fetch concurrently with
+            // history so the pill doesn't queue behind loadHistory's round-trip.
+            let convModel = Task { @MainActor in await loadConvModelState() }
             await loadHistory()
             await loadSkills()
             await loadActiveLookbacks()
             await subscribeRealtime()
             // Ensure the roster is in before the auto-join below reads it.
             await identity.value
+            await convModel.value
             await loadPendingContinueIfNeeded()
             // Cold-launch path: we arrived here because the user
             // accepted a CallKit incoming voice ring. Now that
@@ -2393,5 +2420,25 @@ private struct PreChatActionButton: View {
             .shadow(color: Color.black.opacity(0.02), radius: 3, x: 0, y: 1.5)
         }
         .buttonStyle(.plain)
+    }
+}
+
+// MARK: - 盲盒 model state
+
+extension ConversationView {
+    /// Fetch the conversation's drawn-model state so the header pill can show
+    /// "PendingModel" (surprise, not revealed) or the friendly name (revealed /
+    /// disclose). Non-fatal: on any failure the pill falls back to the bot's
+    /// pinned model name. Skips user_user convs (no bot model there).
+    func loadConvModelState() async {
+        guard conversation.conversation_type != "user_user" else { return }
+        guard !conversation.id.isEmpty else { return }
+        guard let api else { return }
+        do {
+            let s: ConvModelState = try await api.get("v1/conversations/\(conversation.id)/model")
+            await MainActor.run { self.convModelState = s }
+        } catch {
+            // non-fatal: pill falls back to bot model name
+        }
     }
 }
