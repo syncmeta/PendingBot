@@ -18,6 +18,9 @@ final class CrewStore: ObservableObject {
     @Published private(set) var crews: [CrewSummary] = []
     @Published private(set) var details: [String: CrewDetail] = [:]
     @Published private(set) var subjects: [UserSubject] = []
+    /// 本账号可用机器（CreateCrewSheet 据 `count > 1` 决定显不显示 machine 选择）。
+    /// 本地态恒单元素 [本机]；登录态走 `GET /v1/machines`。
+    @Published private(set) var machines: [Machine] = []
     @Published var selectedCrewId: String?
     @Published private(set) var loadingList: Bool = false
     @Published private(set) var loadingDetailIds: Set<String> = []
@@ -96,6 +99,26 @@ final class CrewStore: ObservableObject {
         }
     }
 
+    /// 拉本账号机器列表（CreateCrewSheet 的 machine 选择数据源）。失败静默
+    /// 兜本机 —— machine 选择只是锦上添花，拉不到不该挡新建。
+    func refreshMachines() async {
+        guard let backend = currentBackend() else { return }
+        do {
+            machines = try await backend.listMachines()
+        } catch {
+            // 失败回落空 —— CreateCrewSheet count<=1 不显示选择，默认本机。
+            machines = []
+        }
+    }
+
+    /// 把当前设备注册成本账号的一台机器（登录后调，幂等）。失败静默 ——
+    /// 注册是 best-effort，失败不该挡用户用 app。
+    @discardableResult
+    func registerSelfMachine() async -> String? {
+        guard let backend = currentBackend() else { return nil }
+        return try? await backend.registerSelfMachine()
+    }
+
     // MARK: - Mutations
 
     /// 创建 crew 并把它选中。新 crew 进 `crews` 头部 + 自动选中。
@@ -146,6 +169,7 @@ final class CrewStore: ObservableObject {
         crews = []
         details = [:]
         subjects = []
+        machines = []
         selectedCrewId = nil
         error = nil
     }

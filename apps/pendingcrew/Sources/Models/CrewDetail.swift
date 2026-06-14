@@ -19,7 +19,6 @@ struct CrewDetail: Decodable, Equatable, Hashable {
         let responsibleSubjectId: String
         let runtimeLocation: String
         let workingDirectory: String?
-        let tag: String?
         let captainBotId: String?
         let status: String?
         let createdAt: String

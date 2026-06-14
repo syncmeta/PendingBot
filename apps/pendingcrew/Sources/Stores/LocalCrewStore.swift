@@ -93,11 +93,16 @@ final class LocalCrewStore {
 
         let crew = LocalCrew(
             id: id,
-            title: request.title,
+            // title 缺省/空 = 自动 → 本地占位 "未命名 crew"（后续接本机 captain
+            // 总结时回填真名；本地路径没有 captain summary，先放占位）。
+            title: request.title?.trimmingCharacters(in: .whitespaces).isEmpty == false
+                ? request.title!.trimmingCharacters(in: .whitespaces)
+                : "未命名 crew",
             responsibleSubjectId: request.responsibleSubjectId,
-            runtimeLocation: request.runtimeLocation,
+            // 本地 crew 恒「本机」 —— runtime_location 永远 local_host。
+            runtimeLocation: "local_host",
             workingDirectory: request.workingDirectory,
-            tag: request.tag,
+            machineId: request.machineId,
             captainBotId: captainBotId,
             captainName: captainName,
             createdAt: now,
@@ -283,7 +288,9 @@ private struct LocalCrew: Codable, Equatable {
     let responsibleSubjectId: String
     let runtimeLocation: String
     let workingDirectory: String?
-    let tag: String?
+    /// 所选 machine id（nil = 本机）。登录态多机时记录 crew 运行在哪台机；
+    /// 本机/BYOK 路径恒 nil。
+    let machineId: String?
     let captainBotId: String?
     let captainName: String?
     let createdAt: String
@@ -310,7 +317,7 @@ private struct LocalCrew: Codable, Equatable {
         responsibleSubjectId: String,
         runtimeLocation: String,
         workingDirectory: String?,
-        tag: String?,
+        machineId: String?,
         captainBotId: String?,
         captainName: String?,
         createdAt: String,
@@ -326,7 +333,7 @@ private struct LocalCrew: Codable, Equatable {
         self.responsibleSubjectId = responsibleSubjectId
         self.runtimeLocation = runtimeLocation
         self.workingDirectory = workingDirectory
-        self.tag = tag
+        self.machineId = machineId
         self.captainBotId = captainBotId
         self.captainName = captainName
         self.createdAt = createdAt
@@ -347,7 +354,7 @@ private struct LocalCrew: Codable, Equatable {
         responsibleSubjectId = try c.decode(String.self, forKey: .responsibleSubjectId)
         runtimeLocation = try c.decode(String.self, forKey: .runtimeLocation)
         workingDirectory = try c.decodeIfPresent(String.self, forKey: .workingDirectory)
-        tag = try c.decodeIfPresent(String.self, forKey: .tag)
+        machineId = try c.decodeIfPresent(String.self, forKey: .machineId)
         captainBotId = try c.decodeIfPresent(String.self, forKey: .captainBotId)
         captainName = try c.decodeIfPresent(String.self, forKey: .captainName)
         createdAt = try c.decode(String.self, forKey: .createdAt)
@@ -365,7 +372,6 @@ private struct LocalCrew: Codable, Equatable {
             title: title,
             responsibleSubjectId: responsibleSubjectId,
             runtimeLocation: runtimeLocation,
-            tag: tag,
             captainBotId: captainBotId,
             status: "active",
             createdAt: createdAt,
@@ -382,7 +388,6 @@ private struct LocalCrew: Codable, Equatable {
                 responsibleSubjectId: responsibleSubjectId,
                 runtimeLocation: runtimeLocation,
                 workingDirectory: workingDirectory,
-                tag: tag,
                 captainBotId: captainBotId,
                 status: "active",
                 createdAt: createdAt,

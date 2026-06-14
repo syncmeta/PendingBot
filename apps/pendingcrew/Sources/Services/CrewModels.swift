@@ -264,18 +264,19 @@ struct CrewMailboxItem: Decodable, Identifiable, Equatable {
 
 // MARK: - Create crew request/response
 
-/// 对应 edge `POST /v1/crews` 的 body。`runtimeLocation` MVP 只支持
-/// `local_host`，peer/fly 两档留下次（需要先选 peer device / fly
-/// machine —— Phase 4+）。
+/// 对应 edge `POST /v1/crews` 的 body。
+///
+/// 服务端契约（已部署）：`{ responsibleSubjectId, title?, machineId?,
+/// workingDirectory?, captain }`。
+/// - `title` 缺省/null = 自动（留给 captain 之后总结命名）。
+/// - `machineId` 缺省/null = 本机（edge 派生 runtime_location = local_host）。
+/// 老的 `runtimeLocation` / `tag` / `peerDeviceId` / `flyMachineId` 已去掉。
 struct CreateCrewRequest: Encodable {
     let responsibleSubjectId: String
-    let title: String
-    let runtimeLocation: String
-    let workingDirectory: String?
-    let tag: String?
+    let title: String?            // nil/空 = 自动(留给 captain)
+    let machineId: String?        // nil = 本机
+    let workingDirectory: String? // 表单解析出的目录路径(CrewGround/手动/上次)
     let captain: Captain
-    let peerDeviceId: String?
-    let flyMachineId: String?
 
     enum Captain: Encodable, Equatable {
         case systemGenerated(templateName: String?)
@@ -300,22 +301,19 @@ struct CreateCrewRequest: Encodable {
         }
     }
 
-    static func localHost(
+    static func make(
         responsibleSubjectId: String,
-        title: String,
+        title: String?,
+        machineId: String?,
         workingDirectory: String?,
-        tag: String?,
         captain: Captain
     ) -> CreateCrewRequest {
         CreateCrewRequest(
             responsibleSubjectId: responsibleSubjectId,
             title: title,
-            runtimeLocation: "local_host",
+            machineId: machineId,
             workingDirectory: workingDirectory,
-            tag: tag,
-            captain: captain,
-            peerDeviceId: nil,
-            flyMachineId: nil
+            captain: captain
         )
     }
 }

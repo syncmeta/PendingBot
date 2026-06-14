@@ -13,7 +13,6 @@ struct CrewSummary: Decodable, Identifiable, Equatable, Hashable {
     let title: String
     let responsibleSubjectId: String
     let runtimeLocation: String
-    let tag: String?
     let captainBotId: String?
     let status: String?
     let createdAt: String
@@ -29,7 +28,6 @@ struct CrewSummary: Decodable, Identifiable, Equatable, Hashable {
         title: String,
         responsibleSubjectId: String,
         runtimeLocation: String,
-        tag: String?,
         captainBotId: String?,
         status: String?,
         createdAt: String,
@@ -40,7 +38,6 @@ struct CrewSummary: Decodable, Identifiable, Equatable, Hashable {
         self.title = title
         self.responsibleSubjectId = responsibleSubjectId
         self.runtimeLocation = runtimeLocation
-        self.tag = tag
         self.captainBotId = captainBotId
         self.status = status
         self.createdAt = createdAt
@@ -55,7 +52,6 @@ struct CrewSummary: Decodable, Identifiable, Equatable, Hashable {
         title = try c.decode(String.self, forKey: .title)
         responsibleSubjectId = try c.decode(String.self, forKey: .responsibleSubjectId)
         runtimeLocation = try c.decode(String.self, forKey: .runtimeLocation)
-        tag = try c.decodeIfPresent(String.self, forKey: .tag)
         captainBotId = try c.decodeIfPresent(String.self, forKey: .captainBotId)
         status = try c.decodeIfPresent(String.self, forKey: .status)
         createdAt = try c.decode(String.self, forKey: .createdAt)
@@ -64,7 +60,7 @@ struct CrewSummary: Decodable, Identifiable, Equatable, Hashable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, responsibleSubjectId, runtimeLocation, tag
+        case id, title, responsibleSubjectId, runtimeLocation
         case captainBotId, status, createdAt, updatedAt, parentCrewIds
     }
 
