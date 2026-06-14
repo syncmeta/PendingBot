@@ -61,6 +61,12 @@ final class CrewSessionRunner: ObservableObject {
     /// composer（消费的一端）无需额外 binding 即可共享。
     @Published var isComposingNew = false
 
+    /// inspector 内的模式开关：`false`=成员列表模式（平时看 roster + 待审批），
+    /// `true`=终端模式（看某个 session 的终端 + composer）。点 session 行 / 起新
+    /// session 翻 true；inspector 顶「‹ 成员」返回翻 false。toolbar 的「Session 终端」
+    /// 开关只翻 inspector 呈现态，不强制 true —— 让用户先落在成员列表。
+    @Published var viewingTerminal = false
+
     /// 前台 run：选中的那个；没选中（或选中的已被移除）时回退最后一个。
     /// 保留这个名字让既有 call site（composer / auto-claim）继续编译。
     var current: CrewSessionRun? {

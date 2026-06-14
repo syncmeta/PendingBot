@@ -21,8 +21,9 @@ struct MacThreePaneView: View {
     @StateObject private var relayAgent = CrewRelayAgent()
     /// session inspector 呈现态。中栏 roster 头像点击 / 「+」/ toolbar 开关翻它。
     @State private var inspectorPresented = false
-    /// 钉住侧栏始终可见 —— 否则 2 栏 + inspector 组合下 macOS 会把 sidebar 自动
-    /// 收起(整列塌成零宽,只剩标题槽),DAG 树看不见。
+    /// 侧栏可见性。inspector 关时 `.all`(左 sidebar + 中栏并存)；inspector 开时
+    /// 经 `onChange` 自动翻 `.detailOnly`(收起左 sidebar 腾宽)—— 否则
+    /// sidebar + 中栏 + 固定宽 inspector 三段总宽超屏，窗口挂到屏幕外。
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
@@ -37,9 +38,13 @@ struct MacThreePaneView: View {
         .inspector(isPresented: $inspectorPresented) {
             CrewSessionWindowView()
                 .environmentObject(sessionRunner)
-                // 收窄理想宽 —— 否则开 inspector 后(侧栏 280 + 中栏 + 终端)总宽
-                // 超出屏幕,窗口挂到屏幕右边外,inspector 内容被切。
-                .inspectorColumnWidth(min: 300, ideal: 360, max: 640)
+                // 固定宽 —— 成员列表 / 终端两模式都用这个宽，开 session 不再变宽。
+                // 配合下面 onChange 收起左 sidebar，总宽不超屏。
+                .inspectorColumnWidth(min: 420, ideal: 420, max: 460)
+        }
+        // 根治超屏：inspector 一开就收起左 sidebar 腾出宽度，关掉再放回来。
+        .onChange(of: inspectorPresented) { _, open in
+            withAnimation { columnVisibility = open ? .detailOnly : .all }
         }
         .task {
             // 首次进入时把列表 + subjects 都拉一遍 —— subjects 用于创建

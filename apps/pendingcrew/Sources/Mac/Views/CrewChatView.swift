@@ -108,18 +108,13 @@ struct CrewChatView: View {
     @ViewBuilder
     private var content: some View {
         #if os(macOS)
-        // QQ Mac 风:左=消息+composer,右=半透玻璃侧栏(上待审批/下成员)。
-        // 顶部不再有 roster 头像条(成员挪进右下)。
-        HStack(spacing: 0) {
-            VStack(spacing: 0) {
-                timeline
-                errorBar
-                Divider()
-                composer
-            }
-            rightSidebar
-                .frame(width: 240)
-                .background(.ultraThinMaterial)
+        // 成员列表 + 待审批已搬进 inspector(CrewSessionWindowView 的成员列表模式)。
+        // 中栏只留群聊本体：消息流 + composer，开 inspector 时窗口更省宽。
+        VStack(spacing: 0) {
+            timeline
+            errorBar
+            Divider()
+            composer
         }
         #else
         VStack(spacing: 0) {
@@ -163,161 +158,6 @@ struct CrewChatView: View {
             placeholder: "发消息…（不 @ = 广播给所有 session）"
         )
     }
-
-    #if os(macOS)
-    // MARK: - 右侧栏（待审批 上 + 成员 下，QQ Mac 风）
-
-    /// 本 crew 的本地 PTY run —— 列进右下成员列表。
-    private var sessionRuns: [CrewSessionRun] {
-        sessionRunner.runs.filter { $0.crewId == crewId }
-    }
-
-    /// 时间线里需要人答的交互卡 —— 滤出来挂右上待审批区。
-    private var pendingInteractions: [CrewWhiteboardEntry] {
-        entries.filter { $0.isInteraction }
-    }
-
-    private var rightSidebar: some View {
-        VStack(spacing: 0) {
-            if !pendingInteractions.isEmpty {
-                approvalsSection
-                Divider()
-            }
-            memberSection
-        }
-    }
-
-    private var approvalsSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("待审批 \(pendingInteractions.count)")
-                .font(Theme.Fonts.caption.weight(.semibold))
-                .foregroundStyle(Theme.Palette.amber)
-                .padding(.horizontal, 12)
-                .padding(.top, 10)
-            ScrollView {
-                VStack(spacing: 8) {
-                    ForEach(pendingInteractions) { entry in
-                        let reqId = entry.payload?.permissionRequestId ?? entry.id
-                        CrewInteractionCard(
-                            entry: entry,
-                            reply: Binding(get: { replyDrafts[reqId] ?? "" },
-                                           set: { replyDrafts[reqId] = $0 })
-                        ) { Task { await answer(reqId) } }
-                    }
-                }
-                .padding(.horizontal, 8)
-                .padding(.bottom, 8)
-            }
-            .frame(maxHeight: 260)
-        }
-    }
-
-    private var memberSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 6) {
-                Text("成员 \(memberRowItems.count)")
-                    .font(Theme.Fonts.caption.weight(.semibold))
-                    .foregroundStyle(Theme.Palette.inkMuted)
-                Spacer()
-                if onNewSession != nil {
-                    Button { onNewSession?() } label: {
-                        Image(systemName: "plus")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(Theme.Palette.inkMuted)
-                    }
-                    .buttonStyle(.plain)
-                    .help("起一个新 session")
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            ScrollView {
-                LazyVStack(spacing: 1) {
-                    ForEach(memberRowItems) { memberRow($0) }
-                }
-                .padding(.horizontal, 6)
-                .padding(.bottom, 8)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-    }
-
-    /// 成员行统一模型：server 成员（去掉已有本地 run 的 code_session）+ 本地 run。
-    private struct MemberRowItem: Identifiable {
-        let id: String
-        let sender: GroupBubbleSender
-        /// 非 nil = 本地 session，可点开终端 inspector。
-        let runId: UUID?
-    }
-
-    private var memberRowItems: [MemberRowItem] {
-        let runSessionIds = Set(sessionRuns.map { $0.sessionId })
-        let serverRows = members
-            .filter { m in
-                !(m.memberKind == "code_session"
-                  && (m.codeSessionId.map(runSessionIds.contains) ?? false))
-            }
-            .map { MemberRowItem(id: $0.id, sender: groupSenderFor($0), runId: nil) }
-        let runRows = sessionRuns.map {
-            MemberRowItem(id: "run-\($0.sessionId)", sender: senderForRun($0), runId: $0.runID)
-        }
-        return serverRows + runRows
-    }
-
-    @ViewBuilder
-    private func memberRow(_ item: MemberRowItem) -> some View {
-        let isSelected = item.runId != nil && item.runId == sessionRunner.selectedRunId
-        let row = HStack(spacing: 8) {
-            CrewAvatarBadges(sender: item.sender, size: 26)
-            Text(item.sender.displayName)
-                .font(Theme.Fonts.callout)
-                .foregroundStyle(Theme.Palette.ink)
-                .lineLimit(1)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(isSelected ? Theme.Palette.accentBg : .clear)
-        )
-        .contentShape(Rectangle())
-        if let runId = item.runId {
-            Button { onOpenSession?(runId) } label: { row }
-                .buttonStyle(.plain)
-                .help("打开这个 session 的终端")
-        } else {
-            row
-        }
-    }
-
-    /// server 成员 → GroupBubbleSender（与 CrewRosterBar 同映射，头像一致）。
-    private func groupSenderFor(_ m: CrewMember) -> GroupBubbleSender {
-        let isCaptain = m.memberKind == "captain" || (m.botId != nil && m.botId == captainBotId)
-        let isSession = m.memberKind == "code_session"
-        let isHuman   = m.memberKind == "human"
-        let seed = m.botId ?? m.userId ?? m.codeSessionId ?? m.id
-        let name: String = {
-            if let n = m.displayName, !n.isEmpty { return n }
-            if isCaptain { return "机长" }
-            if isHuman   { return "我" }
-            if isSession { return "session" }
-            return "bot"
-        }()
-        return GroupBubbleSender(
-            kind: isHuman ? .user : .bot, id: seed, displayName: name,
-            avatarPath: nil, avatarSeed: seed, isCaptain: isCaptain,
-            sessionStatus: m.sessionStatus, isSession: isSession)
-    }
-
-    /// 本地 run → session 头像 sender（状态点 running=绿/退出=灰）。
-    private func senderForRun(_ run: CrewSessionRun) -> GroupBubbleSender {
-        GroupBubbleSender(
-            kind: .bot, id: run.sessionId, displayName: run.displayName,
-            avatarPath: nil, avatarSeed: run.sessionId, isCaptain: false,
-            sessionStatus: run.status == .running ? "running" : "exited", isSession: true)
-    }
-    #endif
 
     // 本机用户哨兵 id —— 接合 v2 后 macOS 白板恒为本地，本机人类消息都标
     // `LocalWhiteboardStore.localUserId`，CrewSenderResolver 据此把自己的

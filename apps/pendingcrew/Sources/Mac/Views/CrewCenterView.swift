@@ -30,10 +30,12 @@ struct CrewCenterView: View {
                     crewTitle: detail.crew.title,
                     onOpenSession: { runId in
                         sessionRunner.select(runId)
+                        sessionRunner.viewingTerminal = true
                         inspectorPresented = true
                     },
                     onNewSession: {
                         sessionRunner.composeNew()
+                        sessionRunner.viewingTerminal = true
                         inspectorPresented = true
                     }
                 )
