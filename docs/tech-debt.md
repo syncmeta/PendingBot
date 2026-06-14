@@ -25,6 +25,14 @@
 - **test bundle 陷阱**: `PendingCrewTests` 只能纳入 `Chat/Adapter` 下的**纯 Foundation 文件**（`CrewChatAdapter/CrewChatMessage/GroupBubbleSender`），**不能整目录**（`CrewAvatarBadges`/`ThemeCrewExtras` 依赖 Vendored 的 Theme/BotAvatar，会让 bundle 编不过）。往 `Chat/Adapter` 加新 UI 文件时注意别让 test bundle 拖进去。
 - **状态**: 常驻参考（不是待办）。每次"再对齐 PendingBot"时按本条操作。
 
+### 🟢 模型盲盒 — 端到端未验 + 持久猜测记录未回放
+- **发现**: 2026-06-14 · `feat/model-blindbox`
+- **现状**: 盲盒功能（藏名/猜模型/换模型/regen 重抽/bot 惊喜披露/tool 弹卡片）代码全落，edge typecheck+582 vitest 绿、iOS+macOS 双 build 绿。但有两条尾巴：
+  1. **端到端冒烟未做**（同 #290/#297 约束）：新 edge 端点（`/v1/conversations/:id/model`、`reveal-model`、`prompt_model_guess`）**未部署 prod**，且模拟器无登录态 → 跑不通实流程。验证清单见 plan Task 11.1 step 3，需用户主动 `bun --filter='@pendingbot/edge' run deploy` + 登录态真机/模拟器。**未真机验前不算 done**。
+  2. **持久猜测记录只写不回放**：`model_guesses` 表每次揭示落一行（actual/guessed/correct），但 iOS 目前只在 `GuessModelSheet` 猜的当下显「✓猜对/✗你猜的是X」，**重开会话只见揭示后的真名，不见历史猜测结论**。回放（气泡/卡片上长显「你猜了X·对/错」）是 plan 里标的 nice-to-have，未做。
+  3. **guess_prompt 卡片即时出现**：已处理 tool turn 内的情况（turn 结束若调过 `prompt_model_guess` 就一次性 `loadHistory`+`loadConvModelState`）；纯 realtime INSERT 路径（log 行经 realtime 到达、非本端发起的 turn）是否把 `guess_prompt` 派进 `guessPromptMsgIds` 未审，最坏情况是下次重开才出卡片（罕见，1:1 场景基本走 turn 路径）。
+- **状态**: 待办（主要是①需用户 deploy 后端 + 真机冒烟；②③视体验决定要不要补）。
+
 ### 🟢 PendingCrew iPad 群聊未做真账号端到端验证
 - **发现**: 2026-06-13 · `feat/crew-chat-align`
 - **现状**: iPad 外壳（登录→crew 列表→群聊）代码全落，macOS + iOS Simulator 双 build 绿、`PendingCrewTests` 109 绿。但**真账号端到端未验**：模拟器无登录态（device-grant 凭据），进不到 crew 聊天 —— 与 #290 三端真机验证同款约束。
