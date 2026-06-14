@@ -43,6 +43,13 @@ final class CodexRPCDispatcherTests: XCTestCase {
         try? await d.handle(.response(id: 5, result: nil, error: ["message": "boom"]))
         do { _ = try await r; XCTFail("expected throw") } catch { /* ok */ }
     }
+
+    func testResponseArrivingBeforeAwaiterIsBuffered() async throws {
+        let d = CodexRPCDispatcher()
+        try await d.handle(.response(id: 7, result: ["v": 1], error: nil))   // arrives FIRST
+        let result = try await d.awaitResponse(id: 7) as? [String: Any]      // awaiter comes after
+        XCTAssertEqual(result?["v"] as? Int, 1)
+    }
 }
 
 /// Tiny thread-safe boxes so handler closures can record without data-race warnings.

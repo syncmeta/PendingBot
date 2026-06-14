@@ -8,8 +8,16 @@ import Foundation
 ///
 /// Both sides may independently use id 0 (or any other integer) without
 /// collision because they never share a map.
+///
+/// Early-response buffering: a response can arrive over stdout before
+/// `awaitResponse(id:)` has registered its continuation (the two paths hop
+/// through the actor independently). Without buffering the response would be
+/// dropped and the request would hang. `earlyResults` holds any response that
+/// arrived before its awaiter; `awaitResponse` drains it synchronously — safe
+/// because the actor serialises both writes.
 actor CodexRPCDispatcher {
     private var pending: [Int: CheckedContinuation<Any?, Error>] = [:]
+    private var earlyResults: [Int: Result<Any?, Error>] = [:]
     private var onServerRequest: ((Int, String, [String: Any]) -> Void)?
     private var onNotification: ((String, [String: Any]) -> Void)?
 
@@ -22,8 +30,10 @@ actor CodexRPCDispatcher {
     }
 
     /// Suspends the caller until the server sends a `.response` with this id.
+    /// If the response already arrived, returns immediately from the buffer.
     func awaitResponse(id: Int) async throws -> Any? {
-        try await withCheckedThrowingContinuation { cont in
+        if let early = earlyResults.removeValue(forKey: id) { return try early.get() }
+        return try await withCheckedThrowingContinuation { cont in
             pending[id] = cont
         }
     }
@@ -33,12 +43,13 @@ actor CodexRPCDispatcher {
     func handle(_ msg: CodexRPCMessage) throws {
         switch msg {
         case let .response(id, result, error):
-            guard let cont = pending.removeValue(forKey: id) else { return }
-            if let error {
-                let msg = error["message"] as? String ?? "unknown"
-                cont.resume(throwing: CodexRPCError.malformed("server error: \(msg)"))
+            let outcome: Result<Any?, Error> = error
+                .map { .failure(CodexRPCError.malformed("server error: \($0["message"] as? String ?? "unknown")")) }
+                ?? .success(result)
+            if let cont = pending.removeValue(forKey: id) {
+                cont.resume(with: outcome)
             } else {
-                cont.resume(returning: result)
+                earlyResults[id] = outcome
             }
         case let .serverRequest(id, method, params):
             onServerRequest?(id, method, params)
