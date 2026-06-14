@@ -15,6 +15,8 @@ struct BotVisibilityTag: View {
         Text(text)
             .font(Theme.Fonts.system(size: 10, weight: .semibold))
             .foregroundStyle(fg)
+            .lineLimit(1)
+            .fixedSize()   // 窄列(Mac 侧栏)下也不换行成两行
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(Capsule().fill(bg))

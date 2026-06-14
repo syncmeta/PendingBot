@@ -164,7 +164,9 @@ enum Theme {
         static func scriptTitle(_ text: String, size: CGFloat) -> Font {
             let cjk = text.unicodeScalars.contains(where: Fonts.isCJK)
             #if os(macOS)
-            let weight: Font.Weight = .regular
+            // 英文(衬线)字重不降,与 iOS 一致;中文(无衬线)比 iOS 略降一档到
+            // medium —— 同号 Mac 渲染偏重,但 regular 又太轻,medium 居中。
+            let weight: Font.Weight = cjk ? .medium : .semibold
             #else
             let weight: Font.Weight = .semibold
             #endif

@@ -250,18 +250,23 @@ struct FriendsTabView: View {
     /// 角、尾行圆下两角、中间方角,行与行之间靠 List 分隔线(hairline)断开。
     /// iOS 维持满宽 surface 行为不变。
     @ViewBuilder
-    private func cardRowBackground(selected: Bool, pos: RowPos = .single) -> some View {
+    private func cardRowBackground(selected: Bool, pos: RowPos = .single, card: Bool = true) -> some View {
         if renderAsMacListColumn {
-            let r = Theme.Metrics.cardRadius
-            let topR: CGFloat = (pos == .single || pos == .first) ? r : 0
-            let botR: CGFloat = (pos == .single || pos == .last) ? r : 0
-            UnevenRoundedRectangle(
-                topLeadingRadius: topR, bottomLeadingRadius: botR,
-                bottomTrailingRadius: botR, topTrailingRadius: topR,
-                style: .continuous
-            )
-            .fill(selected ? Theme.Palette.accentBg : Theme.Palette.surface)
-            .padding(.trailing, Theme.Metrics.gutter)
+            if !card && !selected {
+                // 「我」行未选中:透明,不铺白底卡片(融进侧栏)。
+                Color.clear
+            } else {
+                let r = Theme.Metrics.cardRadius
+                let topR: CGFloat = (pos == .single || pos == .first) ? r : 0
+                let botR: CGFloat = (pos == .single || pos == .last) ? r : 0
+                UnevenRoundedRectangle(
+                    topLeadingRadius: topR, bottomLeadingRadius: botR,
+                    bottomTrailingRadius: botR, topTrailingRadius: topR,
+                    style: .continuous
+                )
+                .fill(selected ? Theme.Palette.accentBg : Theme.Palette.surface)
+                .padding(.trailing, Theme.Metrics.gutter)
+            }
         } else {
             (selected ? Theme.Palette.accentBg : Theme.Palette.surface)
         }
@@ -353,8 +358,8 @@ struct FriendsTabView: View {
                             onTap: { Task { await tapSelf() } },
                             onQR: { showingQR = true; Haptics.tap() }
                         )
-                        // 「我」行:单行分组 → 整体圆角卡片(去掉原满宽白底)。
-                        .listRowBackground(cardRowBackground(selected: selfSelected, pos: .single))
+                        // 「我」行:去掉满宽白底 —— 未选中透明融进侧栏,选中才染色。
+                        .listRowBackground(cardRowBackground(selected: selfSelected, pos: .single, card: false))
                         .listRowInsets(cardRowInsets)
                         .listRowSeparator(cardRowSeparator(.single))
                         .listRowSeparatorTint(Theme.Palette.hairline)
@@ -1342,6 +1347,7 @@ private struct FriendRow: View {
                     .font(Theme.Fonts.scriptTitle(name, size: 16))
                     .foregroundStyle(Theme.Palette.ink)
                     .lineLimit(1)
+                    .layoutPriority(1)   // 名字优先,窄列时先压缩 model 标签而非名字
                 if kind == .bot, let slug = modelSlug, !slug.isEmpty {
                     // Friendly model name + blended price multiplier.
                     // Muted ink fg + surface-muted bg, matching the
@@ -1487,6 +1493,8 @@ private struct HumanKindTag: View {
         Text("人类")
             .font(Theme.Fonts.system(size: 10, weight: .semibold))
             .foregroundStyle(Theme.Palette.accent)
+            .lineLimit(1)
+            .fixedSize()
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(Capsule().fill(Theme.Palette.accentBg))

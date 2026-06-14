@@ -1279,11 +1279,9 @@ private struct ConversationListRow: View {
                 .fill(isSelected ? Theme.Palette.accentBg : Theme.Palette.surface)
         )
         .overlay(
+            // 选中只靠底色(accentBg)区分,不加绿色描边 —— 描边线圈在 Mac 上太抢眼。
             RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
-                .strokeBorder(
-                    isSelected ? Theme.Palette.accent.opacity(0.5) : Theme.Palette.hairline,
-                    lineWidth: isSelected ? 1 : 0.5
-                )
+                .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
         )
         .contentShape(RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous))
     }
