@@ -21,9 +21,12 @@ struct MacThreePaneView: View {
     @StateObject private var relayAgent = CrewRelayAgent()
     /// session inspector 呈现态。中栏 roster 头像点击 / 「+」/ toolbar 开关翻它。
     @State private var inspectorPresented = false
+    /// 钉住侧栏始终可见 —— 否则 2 栏 + inspector 组合下 macOS 会把 sidebar 自动
+    /// 收起(整列塌成零宽,只剩标题槽),DAG 树看不见。
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             CrewSidebarView()
                 .navigationSplitViewColumnWidth(min: 240, ideal: 280)
         } detail: {
