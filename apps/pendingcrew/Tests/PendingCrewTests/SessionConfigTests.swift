@@ -35,11 +35,16 @@ final class SessionConfigTests: XCTestCase {
         XCTAssertEqual(isolated.argv(), ["--permission-mode", "auto", "go"])
     }
 
-    func testCodexArgvUnchangedPlaceholder() {
-        // codex PTY argv is a placeholder until the app-server plan; keep sandbox, carry prompt.
-        let cfg = SessionConfig(kind: .codex, model: "gpt-5.5", initialPrompt: "ship it")
-        XCTAssertEqual(cfg.argv(),
-                       ["--sandbox", "workspace-write", "--model", "gpt-5.5", "ship it"])
+    func testCodexArgvIsAppServerWithEffortOverride() {
+        let cfg = SessionConfig(kind: .codex, effort: "high", initialPrompt: "ship it")
+        // codex launches app-server; effort is deterministic via -c on spawn (spec §5).
+        // initialPrompt is NOT argv for codex — it's sent as the first turn after handshake.
+        XCTAssertEqual(cfg.argv(), ["-c", "model_reasoning_effort=high", "app-server"])
+    }
+
+    func testCodexArgvAppServerNoEffort() {
+        let cfg = SessionConfig(kind: .codex, initialPrompt: "go")
+        XCTAssertEqual(cfg.argv(), ["app-server"])
     }
 
     func testClaudeArgvAppendsSystemPromptFile() {
@@ -56,10 +61,11 @@ final class SessionConfigTests: XCTestCase {
         XCTAssertEqual(cfg.argv(), ["--permission-mode", "auto", "go"])
     }
 
-    func testCodexIgnoresAppendSystemPromptFile() {
-        // codex 不接 --append-system-prompt-file（世界观走 app-server additionalContext）。
-        let cfg = SessionConfig(kind: .codex, initialPrompt: "go", appendSystemPromptFile: "/tmp/w.md")
-        XCTAssertEqual(cfg.argv(), ["--sandbox", "workspace-write", "go"])
+    func testCodexArgvIgnoresClaudeOnlyFlags() {
+        let cfg = SessionConfig(kind: .codex, initialPrompt: "go",
+                                appendSystemPromptFile: "/t/w.md",
+                                settingsFile: "/t/s.json", mcpConfigFile: "/t/m.json")
+        XCTAssertEqual(cfg.argv(), ["app-server"])
     }
 
     func testClaudeArgvSettingsAndMcpConfig() {
@@ -81,9 +87,4 @@ final class SessionConfigTests: XCTestCase {
                         "--settings", "/t/s.json", "--mcp-config", "/t/m.json", "go"])
     }
 
-    func testCodexIgnoresSettingsAndMcpConfig() {
-        let cfg = SessionConfig(kind: .codex, initialPrompt: "go",
-                                settingsFile: "/t/s.json", mcpConfigFile: "/t/m.json")
-        XCTAssertEqual(cfg.argv(), ["--sandbox", "workspace-write", "go"])
-    }
 }
