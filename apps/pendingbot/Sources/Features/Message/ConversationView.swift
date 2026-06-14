@@ -141,6 +141,11 @@ struct ConversationView: View {
     /// Message ids whose permission-decide HTTP call is currently in
     /// flight. Used to disable the card's buttons mid-round-trip.
     @State var permissionRequestBusy: Set<String> = []
+    /// Message ids of `role='log'` rows with `log_kind='guess_prompt'`
+    /// (Model Blind Box). Populated in loadHistory; the timeline renderer
+    /// swaps in a `GuessPromptCard` (instead of a bubble) for each entry,
+    /// which opens the `GuessModelSheet` while the model isn't revealed.
+    @State var guessPromptMsgIds: Set<String> = []
     /// Local id of the user message currently driving an SSE turn — set in
     /// sendViaSSE before the stream starts, cleared when the turn ends.
     /// Multiple traces can land for the same user msg if the agent loops.
@@ -242,13 +247,6 @@ struct ConversationView: View {
     @State var revealTask: Task<Void, Never>?
     @State var streamPaused: Bool = false
 
-    /// Collapsed/expanded state for each arena compare card, keyed by the
-    /// prompt (parent) message id. Owned here — not in the card — so the
-    /// default survives card recreation: a card with no entry is collapsed,
-    /// which makes every multi-answer turn open folded on re-entry. Freshly
-    /// regenerated turns set their id to `false` so they open expanded.
-    @State var arenaCollapsed: [String: Bool] = [:]
-
     /// This turn's bot-bubble message ids, in creation order. A bubble is
     /// born under a `live-<uuid>` id (the client splitter has no canonical
     /// id yet); when the SSE `bubble` event announces the server's
@@ -304,13 +302,48 @@ struct ConversationView: View {
     // POST handler in the same extension.
     @State var continueDeciding: Bool = false
 
-    /// "<bot_name> · <model-tag>". The model is the bot's resolved model
-    /// (bots.model_id, which already accounts for the owner's edits in
-    /// 我 → 机器人管理).
+    /// Conversation-level drawn-model state from `GET /v1/conversations/:id/model`.
+    /// nil until loaded (or when the fetch fails / the conv is user_user); the
+    /// header pill falls back to the bot's pinned model in that case.
+    @State var convModelState: ConvModelState? = nil
+
+    /// 盲盒「猜模型」sheet 的呈现开关。由 composer "+" 菜单的「猜模型」tile 翻起；
+    /// 仅 `shouldOfferGuess` 为真时该 tile 才出现。
+    @State private var showGuessSheet = false
+    /// 盲盒「换模型」sheet 的呈现开关。任何带 bot 的 conv 都可换。
+    @State private var showSwitchSheet = false
+
+    /// 是否给该 conv 提供「猜模型」入口:有模型池、surprise(盲盒)模式、且尚未揭晓。
+    private var shouldOfferGuess: Bool {
+        guard let s = convModelState else { return false }
+        return s.has_pool && s.reveal_mode == "surprise" && !s.model_revealed
+    }
+
+    /// "<bot_name> · <model-tag>". When the conversation carries a 盲盒 model
+    /// state, the tag reflects the drawn model + reveal flag: "PendingModel"
+    /// until revealed (surprise mode), the friendly name once revealed or in
+    /// disclose mode. Falls back to the bot's pinned model (bots.model_id)
+    /// when the conv state hasn't loaded.
     private var botName: String {
         let base = effectiveBot?.display_name ?? conversation.bot_name ?? conversation.bot_id
-        guard let slug = effectiveBot?.model, !slug.isEmpty else { return base }
-        return "\(base) · \(modelCatalog.displayName(for: slug))"
+        guard conversation.conversation_type != "user_user" else { return base }
+        let modelTag: String?
+        if let s = convModelState {
+            if s.reveal_mode == "disclose" || s.model_revealed {
+                modelTag = s.current_model_slug.map { modelCatalog.displayName(for: $0) }
+            } else {
+                modelTag = "PendingModel"   // 盲盒未揭示
+            }
+        } else {
+            // 未取到会话状态 → 回落 bot 模型(老行为)
+            if let slug = effectiveBot?.model, !slug.isEmpty {
+                modelTag = modelCatalog.displayName(for: slug)
+            } else {
+                modelTag = nil
+            }
+        }
+        guard let tag = modelTag else { return base }
+        return "\(base) · \(tag)"
     }
 
     /// Seed for the avatar's emoji glyph. Always tied to bot identity so
@@ -504,6 +537,22 @@ struct ConversationView: View {
                                 )
                                 .id(msg.id)
                                 .transition(.opacity)
+                            } else if msg.sender_type == "guess_prompt_log" {
+                                // Model Blind Box (Task 9.1) — the
+                                // `prompt_model_guess` tool dropped a
+                                // 「猜一猜」card here. Tapping it opens the
+                                // GuessModelSheet while the model isn't
+                                // revealed; once revealed (or in disclose
+                                // mode) it just shows the friendly name.
+                                GuessPromptCard(
+                                    revealed: (convModelState?.model_revealed ?? false)
+                                        || (convModelState?.reveal_mode == "disclose"),
+                                    revealedName: convModelState?.current_model_slug
+                                        .map { modelCatalog.displayName(for: $0) },
+                                    onTapGuess: { showGuessSheet = true }
+                                )
+                                .id("guess:\(msg.id)")
+                                .transition(.opacity)
                             } else {
                             BubbleView(message: bubbleMessage(msg),
                                        botName: botName,
@@ -539,18 +588,6 @@ struct ConversationView: View {
                                             } label: {
                                                 Label("保存为技能", systemImage: "square.and.arrow.down.on.square")
                                             }
-                                            // Arena: regenerate another answer to the same
-                                            // prompt so the inline blind A/B compare appears.
-                                            // parent_message_id is nil on freshly-streamed
-                                            // rows, so fall back to the preceding user message.
-                                            if let parent = arenaParentId(for: msg) {
-                                                Button {
-                                                    Haptics.tap()
-                                                    Task { await regenerateArenaAnswer(parentId: parent) }
-                                                } label: {
-                                                    Label("再生成一个回答", systemImage: "die.face.5")
-                                                }
-                                            }
                                         }
                                     }
                                     if msg.isMine(currentUserId: AccountStore.shared.current?.id) {
@@ -563,6 +600,22 @@ struct ConversationView: View {
                                                 retryFailedMessage(msg)
                                             } label: { Label("重新发送", systemImage: "arrow.clockwise") }
                                         } else {
+                                            // 重新生成: re-stream a fresh bot answer
+                                            // to this prompt via POST /v1/messages/
+                                            // :id/regenerate (:id = this user msg).
+                                            // Only meaningful in bot convs (a
+                                            // human peer has no model to re-roll);
+                                            // gate on a persisted UUID id so we
+                                            // never POST a local- optimistic id.
+                                            if conversation.conversation_type != "user_user",
+                                               msg.id.range(of: "^[0-9a-f-]{36}$",
+                                                            options: .regularExpression) != nil {
+                                                Button {
+                                                    Task { await regenerate(promptId: msg.id) }
+                                                } label: {
+                                                    Label("重新生成", systemImage: "arrow.clockwise")
+                                                }
+                                            }
                                             // 撤回: WeChat-style sender-only retract.
                                             // In user_user convs this leaves a
                                             // tombstone log row visible to both
@@ -595,24 +648,6 @@ struct ConversationView: View {
                                     citations: traceCitationsByUserMsgId[msg.id] ?? []
                                 )
                                 .id("trace:\(msg.id)")
-                                .transition(.opacity)
-                            }
-                            // Arena: a prompt with ≥2 answers shows an inline
-                            // blind A/B compare card right under the prompt
-                            // (the variant bubbles are hidden in displayedMessages).
-                            if msg.sender_type == "user", let variants = arenaGroups[msg.id] {
-                                ArenaCompareCard(
-                                    conversationId: conversation.id,
-                                    parentMessageId: msg.id,
-                                    variants: variants,
-                                    avatarSeed: avatarEmojiSeed,
-                                    streamingGroupId: revealTargetId,
-                                    collapsed: Binding(
-                                        get: { arenaCollapsed[msg.id] ?? true },
-                                        set: { arenaCollapsed[msg.id] = $0 }),
-                                    onRegenerate: { await regenerateArenaAnswer(parentId: msg.id) }
-                                )
-                                .id("arena:\(msg.id)")
                                 .transition(.opacity)
                             }
                             }  // end else (non-recall_log branch)
@@ -820,12 +855,16 @@ struct ConversationView: View {
                 await loadPeerProfileIfNeeded()
                 await loadGroupSendersIfNeeded()
             }
+            // 盲盒会话模型状态 — drives the header pill; fetch concurrently with
+            // history so the pill doesn't queue behind loadHistory's round-trip.
+            let convModel = Task { @MainActor in await loadConvModelState() }
             await loadHistory()
             await loadSkills()
             await loadActiveLookbacks()
             await subscribeRealtime()
             // Ensure the roster is in before the auto-join below reads it.
             await identity.value
+            await convModel.value
             await loadPendingContinueIfNeeded()
             // Cold-launch path: we arrived here because the user
             // accepted a CallKit incoming voice ring. Now that
@@ -916,6 +955,25 @@ struct ConversationView: View {
                 .platformDetents([.medium, .large])
                 .platformDragIndicator()
         }
+        .sheet(isPresented: $showGuessSheet) {
+            GuessModelSheet(conversationId: conversation.id) { _ in
+                Task { await loadConvModelState() }
+            }
+            .environmentObject(modelCatalog)
+            .tint(Theme.Palette.accent)
+            .platformDragIndicator()
+        }
+        .sheet(isPresented: $showSwitchSheet) {
+            SwitchModelSheet(
+                conversationId: conversation.id,
+                hasPool: convModelState?.has_pool ?? false
+            ) {
+                Task { await loadConvModelState() }
+            }
+            .environmentObject(modelCatalog)
+            .tint(Theme.Palette.accent)
+            .platformDragIndicator()
+        }
         .onChange(of: photoPickerItems) { _, items in
             guard !items.isEmpty else { return }
             uploadTasks.append(Task { await ingestPhotos(items) })
@@ -977,6 +1035,8 @@ struct ConversationView: View {
                              || conversation.conversation_type == "self")
                     ? { Task { await triggerManualLookback() } }
                     : nil,
+                onGuessModel: shouldOfferGuess ? { showGuessSheet = true } : nil,
+                onSwitchModel: { showSwitchSheet = true },
                 onInsertMention: { sender in
                     if let prefix = mentionPrefix {
                         insertMention(sender, prefix: prefix)
@@ -1017,7 +1077,9 @@ struct ConversationView: View {
             onLookback: (conversation.conversation_type == "user_bot"
                          || conversation.conversation_type == "self")
                 ? { Task { await triggerManualLookback() } }
-                : nil
+                : nil,
+            onGuessModel: shouldOfferGuess ? { showGuessSheet = true } : nil,
+            onSwitchModel: { showSwitchSheet = true }
         )
         .background(Theme.Palette.canvas)
     }
@@ -1029,49 +1091,7 @@ struct ConversationView: View {
     }
 
     private var displayedMessages: [ChatMessage] {
-        let groups = arenaGroups
-        var base = messages
-        // Arena variant bubbles are hidden from the normal timeline — they're
-        // rendered together in the inline blind-compare card anchored to their
-        // prompt instead.
-        if !groups.isEmpty {
-            base = base.filter { m in
-                guard m.sender_type == "bot", let p = m.parent_message_id else { return true }
-                return groups[p] == nil
-            }
-        }
-        return base
-    }
-
-    /// Arena blind-compare groups keyed by parent (user prompt) message id.
-    /// A prompt with ≥2 distinct bot answer groups (each carrying a model)
-    /// becomes a compare candidate. Variants are chronological.
-    var arenaGroups: [String: [ArenaVariant]] {
-        var contentByGroup: [String: [String: String]] = [:]   // parent → group → content
-        var modelByGroup: [String: [String: String?]] = [:]
-        var order: [String: [String]] = [:]                    // parent → group order
-        for m in messages where m.sender_type == "bot" {
-            // Model is optional here so a freshly-streamed regenerate bubble
-            // (no model_slug until reload) still joins its group live.
-            guard let parent = m.parent_message_id,
-                  let gid = m.bubble_group_id else { continue }
-            if contentByGroup[parent]?[gid] == nil {
-                order[parent, default: []].append(gid)
-                modelByGroup[parent, default: [:]][gid] = m.model_slug
-            } else if modelByGroup[parent]?[gid] == nil, let ms = m.model_slug {
-                modelByGroup[parent]?[gid] = ms
-            }
-            contentByGroup[parent, default: [:]][gid, default: ""] += m.content
-        }
-        var result: [String: [ArenaVariant]] = [:]
-        for (parent, groupIds) in order where groupIds.count >= 2 {
-            result[parent] = groupIds.map { gid in
-                ArenaVariant(groupId: gid,
-                             content: contentByGroup[parent]?[gid] ?? "",
-                             modelSlug: (modelByGroup[parent]?[gid]) ?? nil)
-            }
-        }
-        return result
+        return messages
     }
 
     /// Set of message ids that should have a centered time-separator
@@ -1952,7 +1972,14 @@ struct ConversationView: View {
     ///     local row + conversation state on the fly.
     // Internal access — called from scheduleLookbackAutoFire (auto-fire
     // a no-input turn) in ConversationView+Realtime.swift.
-    func sendViaSSE(text: String, attachmentIds: [String], autoLookback: Bool = false, userMsgId: String? = nil, clientMessageId: String? = nil, startBotId: String? = nil) {
+    //
+    // `regeneratePromptId` re-streams a fresh bot answer to an existing user
+    // prompt via POST /v1/messages/:id/regenerate (`:id` = that prompt). No
+    // new user message is sent — the worker re-runs the turn off the parent
+    // prompt's content. For blind-box bots with regenReroll on, the worker
+    // also re-rolls + persists the conversation model and resets reveal, so
+    // we refresh `convModelState` once the stream finishes (see below).
+    func sendViaSSE(text: String, attachmentIds: [String], autoLookback: Bool = false, userMsgId: String? = nil, clientMessageId: String? = nil, startBotId: String? = nil, regeneratePromptId: String? = nil) {
         chatTurnTask?.cancel()
         flushRevealImmediately()
         // User taking action (or auto-fire firing) cancels the pending
@@ -1988,6 +2015,9 @@ struct ConversationView: View {
             let clientMsgId = clientMessageId ?? UUID().uuidString.lowercased()
             // Exclude the just-appended optimistic user row — it gets sent
             // as `newMessage` and would otherwise show up to the LLM twice.
+            // (Regenerate has no optimistic row, so `userMsgId` is nil and
+            // the filter is a no-op — the parent prompt is already part of
+            // the persisted history and the worker reads it server-side.)
             let recent = messages.suffix(20)
                 .filter { $0.id != userMsgId }
                 .map { m -> [String: Any] in
@@ -1999,6 +2029,16 @@ struct ConversationView: View {
                         ),
                     ]
                 }
+            // Regenerate: the endpoint takes only { conversationId,
+            // recentContext?, clientTz? } and re-runs off the parent prompt
+            // server-side. No newMessage / attachments / start fields.
+            if regeneratePromptId != nil {
+                return [
+                    "conversationId": conversation.id,
+                    "recentContext": recent,
+                    "clientTz": TimeZone.current.identifier,
+                ]
+            }
             var b: [String: Any] = [
                 "clientMessageId": clientMsgId,
                 "recentContext": recent,
@@ -2024,10 +2064,21 @@ struct ConversationView: View {
             return b
         }()
 
-        let path = startBotId == nil ? "v1/messages" : "v1/messages/start"
+        let path: String = {
+            if let regeneratePromptId { return "v1/messages/\(regeneratePromptId)/regenerate" }
+            return startBotId == nil ? "v1/messages" : "v1/messages/start"
+        }()
         chatTurnTask = Task { @MainActor in
             let splitter = BubbleSplitter()
             let stream = ChatStream().send(body: body, path: path)
+            // Model Blind Box: the `prompt_model_guess` tool drops a
+            // `role='log'`, `log_kind='guess_prompt'` row mid-turn. That row
+            // is only dispatched into `guessPromptMsgIds` (→ GuessPromptCard)
+            // by `loadHistory`, and the live SSE path never reloads history,
+            // so without a nudge the card only appears on a manual reopen.
+            // Flag the tool here and run a single post-turn history refresh
+            // (below) instead of refreshing on every tool_result.
+            var sawGuessPrompt = false
             do {
                 for try await event in stream {
                     if Task.isCancelled { break }
@@ -2140,6 +2191,7 @@ struct ConversationView: View {
                     case .toolResult(let name, let summary, let error, let detail):
                         activeToolCount = max(0, activeToolCount - 1)
                         if activeToolCount == 0 { pending = true }
+                        if name == "prompt_model_guess" { sawGuessPrompt = true }
                         completeToolCall(name: name, summary: summary, error: error, detail: detail)
                     case .citations(let items):
                         // Update the per-turn snapshot AND backfill every
@@ -2207,7 +2259,31 @@ struct ConversationView: View {
             // expanding it after the turn completes; only the live binding
             // is cleared here.
             liveTraceUserMsgId = nil
+            // Regenerate may have re-rolled + persisted a new conversation
+            // model (blind-box regenReroll resets reveal server-side), so
+            // refresh the pill — it should flip back to "PendingModel".
+            if regeneratePromptId != nil {
+                await loadConvModelState()
+            }
+            // Model Blind Box: a turn that called `prompt_model_guess`
+            // inserted a `guess_prompt` log row. Reload history so it gets
+            // dispatched into `guessPromptMsgIds` (→ GuessPromptCard) and
+            // refresh the pill, instead of waiting for a manual reopen. One
+            // refresh at turn end keeps this off the per-event hot path.
+            if sawGuessPrompt {
+                await loadHistory()
+                await loadConvModelState()
+            }
         }
+    }
+
+    /// Re-stream a fresh bot answer to an existing user prompt. Reuses the
+    /// regular SSE consumption path (bubbles append as a new bot group) and
+    /// refreshes the model pill on completion — see `sendViaSSE`.
+    func regenerate(promptId: String) async {
+        guard !conversation.id.isEmpty, !promptId.isEmpty else { return }
+        Haptics.tap()
+        sendViaSSE(text: "", attachmentIds: [], regeneratePromptId: promptId)
     }
 
     // Tool-call trace accumulation lives in ConversationView+ToolTrace.swift.
@@ -2475,350 +2551,22 @@ private struct PreChatActionButton: View {
     }
 }
 
-// MARK: - Arena inline blind compare
+// MARK: - 盲盒 model state
 
 extension ConversationView {
-    /// The user prompt a bot answer belongs to. Uses the row's
-    /// parent_message_id when present (loaded rows), else the most recent
-    /// user message before this bot bubble (freshly-streamed rows that don't
-    /// carry the field yet) — so 再生成 works without a manual reload.
-    func arenaParentId(for msg: ChatMessage) -> String? {
-        if let p = msg.parent_message_id, !p.isEmpty { return p }
-        let prior = messages.filter { $0.created_at <= msg.created_at && $0.sender_type == "user" }
-        return prior.last?.id
-    }
-
-    /// Regenerate another answer to a prompt (arena 再生成). Appends a live
-    /// bot bubble tagged to the same prompt so it joins the arena group at
-    /// once, streams tokens into it (blinking cursor via revealTargetId),
-    /// then reloads so the canonical variant (with model_slug) replaces it.
-    func regenerateArenaAnswer(parentId: String) async {
-        guard let parent = messages.first(where: { $0.id == parentId }) else { return }
-        // Keep this turn expanded — the user is actively comparing, so the
-        // new answer must stream into view rather than fold away.
-        arenaCollapsed[parentId] = false
-        let iso = ISO8601DateFormatter()
-        let prior: [[String: Any]] = messages
-            .filter { $0.created_at < parent.created_at && ($0.sender_type == "user" || $0.sender_type == "bot") }
-            .suffix(20)
-            .map { m in
-                [
-                    "role": m.sender_type == "bot" ? "bot" : "user",
-                    "content": m.content,
-                    "created_at": iso.string(from: Date(timeIntervalSince1970: TimeInterval(m.created_at))),
-                ]
-            }
-        let body: [String: Any] = ["conversationId": conversation.id, "recentContext": prior]
-
-        let liveId = "arena-live-\(UUID().uuidString)"
-        messages.append(ChatMessage(
-            id: liveId, conversation_id: conversation.id, sender_type: "bot",
-            sender_id: conversation.bot_id, content: "",
-            created_at: Int(Date().timeIntervalSince1970), attachments: nil,
-            parent_message_id: parentId, bubble_group_id: liveId, model_slug: nil))
-        revealTargetId = liveId
-        streamPaused = true
-
-        func setContent(_ make: (String) -> String) {
-            guard let i = messages.lastIndex(where: { $0.id == liveId }) else { return }
-            let p = messages[i]
-            messages[i] = ChatMessage(
-                id: p.id, conversation_id: p.conversation_id, sender_type: p.sender_type,
-                sender_id: p.sender_id, content: make(p.content), created_at: p.created_at,
-                message_seq: p.message_seq, attachments: nil, parent_message_id: p.parent_message_id,
-                bubble_group_id: p.bubble_group_id, model_slug: p.model_slug)
-        }
+    /// Fetch the conversation's drawn-model state so the header pill can show
+    /// "PendingModel" (surprise, not revealed) or the friendly name (revealed /
+    /// disclose). Non-fatal: on any failure the pill falls back to the bot's
+    /// pinned model name. Skips user_user convs (no bot model there).
+    func loadConvModelState() async {
+        guard conversation.conversation_type != "user_user" else { return }
+        guard !conversation.id.isEmpty else { return }
+        guard let api else { return }
         do {
-            let stream = ChatStream().send(body: body, path: "v1/messages/\(parentId)/regenerate")
-            for try await event in stream {
-                switch event {
-                case .token(let delta):
-                    streamPaused = false
-                    setContent { $0 + delta }
-                case .done(_, let total), .interrupted(_, let total):
-                    if !total.isEmpty { setContent { _ in total } }
-                default:
-                    break
-                }
-            }
+            let s: ConvModelState = try await api.get("v1/conversations/\(conversation.id)/model")
+            await MainActor.run { self.convModelState = s }
         } catch {
-            // Whatever streamed stays until the reload below corrects it.
-        }
-        revealTargetId = nil
-        messages.removeAll { $0.id == liveId }
-        await loadHistory()
-    }
-}
-
-/// One answer to a prompt (one bubble_group_id), with its model hidden until
-/// the user votes (client-side blind).
-struct ArenaVariant: Identifiable, Hashable {
-    let groupId: String
-    let content: String
-    /// nil until the canonical row's model_slug loads (e.g. a regenerate
-    /// bubble that's still streaming).
-    let modelSlug: String?
-    var id: String { groupId }
-}
-
-/// Inline blind A/B compare for a prompt with ≥2 answers. Compares the two
-/// most recent answers, keeps model identity hidden, and treats the user's
-/// choice as the current conversation model switch. Also offers 再生成 to add
-/// another contender.
-struct ArenaCompareCard: View {
-    @Environment(\.api) private var api
-
-    let conversationId: String
-    let parentMessageId: String
-    let variants: [ArenaVariant]
-    var avatarSeed: String = ""
-    /// The bubble_group_id of the variant currently streaming (a live
-    /// regenerate), so its bubble shows a blinking cursor. nil = none.
-    var streamingGroupId: String? = nil
-    /// Collapsed state, owned by the parent (keyed by prompt id) so the
-    /// folded-by-default behavior survives card recreation on re-entry.
-    @Binding var collapsed: Bool
-    let onRegenerate: () async -> Void
-
-    @State private var outcome: String?     // 'a' / 'b' once voted
-    @State private var voting = false
-    @State private var regenerating = false
-
-    private var a: ArenaVariant { variants[variants.count - 2] }
-    private var b: ArenaVariant { variants[variants.count - 1] }
-    private var chosen: ArenaVariant { outcome == "b" ? b : a }
-    /// What the collapsed card shows: the voted answer, or the newest one
-    /// (last variant) when the turn hasn't been voted yet.
-    private var representative: ArenaVariant { outcome == nil ? b : chosen }
-
-    /// Caption under the collapsed bubble — always the answer count, plus
-    /// the answer count only. Model identity stays hidden even after choice.
-    private var collapsedFootnote: String {
-        "共 \(variants.count) 个回答"
-    }
-
-    var body: some View {
-        Group {
-            if collapsed {
-                collapsedStack
-            } else {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(variants.enumerated()), id: \.element.id) { item in
-                        variantRow(item.element, index: item.offset)
-                    }
-                    footerRow
-                }
-            }
-        }
-        // Keyed on the active pair: regenerating adds a variant, which shifts
-        // a/b to the two newest answers — re-check the vote for that new pair
-        // (and fall back to blind) so a stale outcome can't ring the wrong one.
-        .task(id: comparePairKey) { await loadExistingVote() }
-    }
-
-    private var comparePairKey: String { "\(a.groupId)|\(b.groupId)" }
-
-    private func sideFor(_ v: ArenaVariant) -> String? {
-        if v.groupId == b.groupId { return "b" }
-        if v.groupId == a.groupId { return "a" }
-        return nil   // an older variant (>2): shown but not part of the active vote
-    }
-    private func isChosenVariant(_ v: ArenaVariant) -> Bool {
-        guard let o = outcome else { return false }
-        return (o == "a" && v.groupId == a.groupId) || (o == "b" && v.groupId == b.groupId)
-    }
-
-    // Each answer is its own bot bubble — the regenerated ones drop the avatar
-    // (a Color.clear keeps the bubble aligned) so they read as alternatives.
-    private func variantRow(_ v: ArenaVariant, index: Int) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            if index == 0 {
-                BotAvatar(emojiSeed: avatarSeed.isEmpty ? conversationId : avatarSeed,
-                          colorSeed: conversationId, size: 30)
-            } else {
-                Color.clear.frame(width: 30, height: 1)
-            }
-            answerBubble(v)
-            Spacer(minLength: 32)
-        }
-        .padding(.horizontal, Theme.Metrics.gutter)
-    }
-
-    // The bubble itself — same chrome + MarkdownText as a normal bot bubble.
-    // The whole bubble is the vote target; the chosen one gets an accent ring.
-    private func answerBubble(_ v: ArenaVariant) -> some View {
-        let isChosen = isChosenVariant(v)
-        let isStreaming = streamingGroupId == v.groupId
-        let votable = outcome == nil && !isStreaming && sideFor(v) != nil
-        let text = v.content.isEmpty ? (isStreaming ? " " : "（空）") : v.content
-        return VStack(alignment: .leading, spacing: 4) {
-            MarkdownText(text: text, allowCodeRun: false, citations: [])
-                .fixedSize(horizontal: false, vertical: true)
-        }
-            .padding(.horizontal, 14).padding(.vertical, 10)
-            .background(RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
-                .fill(Theme.Palette.surface))
-            .overlay(RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
-                .strokeBorder(isChosen ? Theme.Palette.accent : Theme.Palette.hairline,
-                              lineWidth: isChosen ? 1.5 : 0.5))
-            .overlay(alignment: .bottomTrailing) {
-                if isStreaming {
-                    BlinkingCursor(paused: streamPausedSeed)
-                        .padding(.trailing, 12).padding(.bottom, 12)
-                }
-            }
-            // While blind, a clear layer on top captures the vote tap —
-            // MarkdownText enables text selection, which would otherwise eat
-            // the gesture. Removed after voting so the text stays selectable.
-            .overlay {
-                if votable {
-                    Color.clear.contentShape(Rectangle())
-                        .onTapGesture {
-                            guard !voting, let side = sideFor(v) else { return }
-                            Task { await vote(side) }
-                        }
-                }
-            }
-    }
-
-    // BlinkingCursor needs a paused flag; arena's live stream is always
-    // "flowing" from the card's POV, so keep it solid-then-blink default off.
-    private var streamPausedSeed: Bool { false }
-
-    private var footerRow: some View {
-        HStack(spacing: 14) {
-            Color.clear.frame(width: 30, height: 1)
-            if outcome == nil {
-                Text("喜欢哪个点哪个")
-                    .font(Theme.Fonts.caption)
-                    .foregroundStyle(Theme.Palette.inkMuted)
-            }
-            regenInline
-            collapseButton
-            Spacer(minLength: 32)
-        }
-        .padding(.horizontal, Theme.Metrics.gutter)
-        .padding(.bottom, 2)
-    }
-
-    private var collapseButton: some View {
-        Button { withAnimation(.easeOut(duration: 0.26)) { collapsed = true } } label: {
-            HStack(spacing: 3) {
-                Image(systemName: "chevron.up")
-                Text("收起")
-            }
-            .font(Theme.Fonts.rounded(size: 12, weight: .medium))
-            .foregroundStyle(Theme.Palette.inkMuted)
-        }
-        .buttonStyle(.plain)
-    }
-
-    // Collapsed: the representative answer on top of a small offset card
-    // stack (iOS app-switcher feel, simple version). Tap anywhere to expand.
-    // Always carries the bot avatar (it's the bot's folded answer), and the
-    // vertical metrics match variantRow so expand/collapse doesn't jump it.
-    private var collapsedStack: some View {
-        HStack(alignment: .top, spacing: 8) {
-            BotAvatar(emojiSeed: avatarSeed.isEmpty ? conversationId : avatarSeed,
-                      colorSeed: conversationId, size: 30)
-            ZStack(alignment: .top) {
-                RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
-                    .fill(Theme.Palette.surface)
-                    .overlay(RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
-                        .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
-                    .offset(x: 7, y: 7)
-                RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
-                    .fill(Theme.Palette.surface)
-                    .overlay(RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
-                        .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
-                    .offset(x: 3.5, y: 3.5)
-                VStack(alignment: .leading, spacing: 4) {
-                    MarkdownText(text: representative.content.isEmpty ? "（空）" : representative.content,
-                                 allowCodeRun: false, citations: [])
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text(collapsedFootnote)
-                        .font(Theme.Fonts.caption)
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                }
-                .padding(.horizontal, 14).padding(.vertical, 10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
-                    .fill(Theme.Palette.surface))
-                .overlay(RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius, style: .continuous)
-                    .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
-            }
-            .contentShape(Rectangle())
-            .onTapGesture { withAnimation(.easeOut(duration: 0.26)) { collapsed = false } }
-            Spacer(minLength: 40)
-        }
-        .padding(.horizontal, Theme.Metrics.gutter)
-        .padding(.bottom, 8)
-    }
-
-    private var regenInline: some View {
-        Button {
-            guard !regenerating else { return }
-            regenerating = true
-            Task { await onRegenerate(); regenerating = false }
-        } label: {
-            HStack(spacing: 5) {
-                if regenerating { ProgressView().controlSize(.small) }
-                else { Image(systemName: "arrow.triangle.2.circlepath") }
-                Text(regenerating ? "生成中…" : "再生成")
-            }
-            .font(Theme.Fonts.rounded(size: 12, weight: .medium))
-            .foregroundStyle(Theme.Palette.inkMuted)
-        }
-        .buttonStyle(.plain)
-        .disabled(regenerating)
-    }
-
-    private func vote(_ value: String) async {
-        guard let api, !voting else { return }
-        voting = true; defer { voting = false }
-        struct Body: Encodable {
-            let conversationId: String
-            let parentMessageId: String
-            let groupA: String
-            let groupB: String
-            let outcome: String
-        }
-        do {
-            let _: ArenaCompareResult = try await api.post(
-                "v1/arena/compare",
-                body: Body(conversationId: conversationId, parentMessageId: parentMessageId,
-                           groupA: a.groupId, groupB: b.groupId, outcome: value))
-            outcome = value
-            Haptics.success()
-        } catch {
-            Haptics.error()
-        }
-    }
-
-    private func loadExistingVote() async {
-        struct CmpRow: Decodable { let group_a_id: String; let group_b_id: String; let outcome: String }
-        do {
-            let rows: [CmpRow] = try await SupabaseStack.shared
-                .from("model_comparisons")
-                .select("group_a_id, group_b_id, outcome")
-                .eq("parent_message_id", value: parentMessageId)
-                .execute()
-                .value
-            // The endpoint normalises the pair (smaller group id stored as A),
-            // so de-normalise back to this card's A=a, B=b orientation.
-            if let r = rows.first(where: { Set([$0.group_a_id, $0.group_b_id]) == Set([a.groupId, b.groupId]) }) {
-                if r.group_a_id == a.groupId {
-                    outcome = r.outcome
-                } else {
-                    outcome = r.outcome == "a" ? "b" : r.outcome == "b" ? "a" : "tie"
-                }
-            } else {
-                // This pair (e.g. after a regenerate shifted a/b) has no vote —
-                // go blind so a stale outcome doesn't ring the wrong bubble.
-                outcome = nil
-            }
-        } catch {
-            // Read failed — leave whatever state we have.
+            // non-fatal: pill falls back to bot model name
         }
     }
 }

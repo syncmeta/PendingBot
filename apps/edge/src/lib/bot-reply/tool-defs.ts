@@ -251,6 +251,16 @@ export const CHAT_TOOLS: ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'prompt_model_guess',
+      // Blind-box "guess which model" card. No args. Description lives in
+      // pendingbot.tools.model_description (seeded by the model_blindbox
+      // migration) and is swapped in by applyToolRegistry.
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
 ];
 
 // Frontmatter name regex — must match the DB CHECK in 0026.

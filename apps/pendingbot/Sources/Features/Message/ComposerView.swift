@@ -40,6 +40,10 @@ struct ComposerView: View {
     /// when the conv has a single bot (user_bot / self); group + user_user
     /// pass nil and the action sheet hides the tile.
     var onLookback: (() -> Void)? = nil
+    /// 盲盒「猜模型」入口。非 nil 时 ChatActionSheet 多一个 tile。
+    var onGuessModel: (() -> Void)? = nil
+    /// 盲盒「换模型」入口。非 nil 时 ChatActionSheet 多一个 tile。
+    var onSwitchModel: (() -> Void)? = nil
     /// When false, the "+" attachment button and its action panel are hidden
     /// entirely. Crew chat (T4.6 P1) has no attachments, so it passes false
     /// rather than surfacing a "+" that opens tiles wired to dead pickers.
@@ -186,7 +190,9 @@ struct ComposerView: View {
                     onPickCamera: { showCamera = true },
                     onPickFile: { showFileImporter = true },
                     onDismiss: { showActions = false },
-                    onLookback: onLookback
+                    onLookback: onLookback,
+                    onGuessModel: onGuessModel,
+                    onSwitchModel: onSwitchModel
                 )
                 .frame(height: 240)
                 .background(Theme.Palette.canvas)

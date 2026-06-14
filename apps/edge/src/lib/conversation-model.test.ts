@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-  chooseCandidateModel,
   chooseConversationMainModel,
   modelPoolConfigFromBotConfig,
+  parseBlindBoxConfig,
 } from './conversation-model';
 
 describe('modelPoolConfigFromBotConfig', () => {
@@ -81,24 +81,17 @@ describe('chooseConversationMainModel', () => {
   });
 });
 
-describe('chooseCandidateModel', () => {
-  it('draws a candidate from the model pool without requiring persistence', async () => {
-    const result = await chooseCandidateModel({
-      bot: {
-        model_id: 'fallback-model',
-        model_provider: 'openrouter',
-        config: { modelPool: { models: ['pool-model'], price_min: null, price_max: null, exclude: null } },
-      },
-      pickFromPool: async (_cfg, opts) => {
-        expect(opts?.excludeSlugs).toEqual([]);
-        return { slug: 'pool-model', modelProvider: null };
-      },
-    });
-
-    expect(result).toEqual({
-      modelId: 'pool-model',
-      providerOverride: 'openrouter',
-      shouldPersist: false,
-    });
+describe('parseBlindBoxConfig', () => {
+  it('defaults to surprise + regenReroll when absent', () => {
+    expect(parseBlindBoxConfig(null)).toEqual({ revealMode: 'surprise', regenReroll: true });
+    expect(parseBlindBoxConfig({})).toEqual({ revealMode: 'surprise', regenReroll: true });
+  });
+  it('reads disclose + regenReroll=false', () => {
+    expect(parseBlindBoxConfig({ blindBox: { revealMode: 'disclose', regenReroll: false } }))
+      .toEqual({ revealMode: 'disclose', regenReroll: false });
+  });
+  it('ignores garbage and falls back to defaults', () => {
+    expect(parseBlindBoxConfig({ blindBox: { revealMode: 'nonsense', regenReroll: 'x' } }))
+      .toEqual({ revealMode: 'surprise', regenReroll: true });
   });
 });

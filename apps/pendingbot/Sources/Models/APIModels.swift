@@ -304,22 +304,23 @@ struct RandomModelConfig: Codable, Equatable, Hashable {
     var release_window_days: Int?
 }
 
-/// One row of the personal leaderboard (GET /v1/arena/leaderboard).
-struct ArenaStanding: Codable, Identifiable, Hashable {
-    let model_slug: String
-    let rating: Int
-    let games: Int
-    let wins: Int
-    let losses: Int
-    let ties: Int
-    var id: String { model_slug }
+/// Conversation-level model state — returned by `GET /v1/conversations/:id/model`.
+/// Drives the header pill's 盲盒 behavior: when `reveal_mode == "surprise"` and
+/// `model_revealed == false`, the pill shows "PendingModel" instead of the drawn
+/// model's friendly name.
+struct ConvModelState: Codable, Equatable {
+    let current_model_slug: String?
+    let current_model_provider: String?
+    let model_revealed: Bool
+    let reveal_mode: String      // "surprise" | "disclose"
+    let regen_reroll: Bool
+    let has_pool: Bool
 }
 
-struct ArenaLeaderboard: Codable {
-    let standings: [ArenaStanding]
-    let total_comparisons: Int
-}
-
-struct ArenaCompareResult: Codable {
-    let ok: Bool
+/// Result of revealing / guessing the blind-box model. `correct == nil` means
+/// the user gave up rather than guessing.
+struct RevealResult: Codable {
+    let actual_slug: String
+    let actual_provider: String?
+    let correct: Bool?           // nil = gave up
 }

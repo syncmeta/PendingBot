@@ -395,6 +395,7 @@ extension ConversationView {
             var attachmentIdsLoaded: [String: [String]] = [:]
             var crewProposalsLoaded: [String: CrewProposalPayload] = [:]
             var permissionRequestsLoaded: [String: PermissionRequestPayload] = [:]
+            var guessPromptsLoaded: Set<String> = []
             for r in rows {
                 let secs = ServerTimestamp.epochSeconds(r.created_at, default: 0)
                 // Recalled message rows (status='deleted') shouldn't render —
@@ -460,6 +461,25 @@ extension ConversationView {
                             id: r.id,
                             conversation_id: r.conversation_id,
                             sender_type: "permission_request_log",
+                            sender_id: r.sender_bot_id ?? "",
+                            content: "",
+                            created_at: secs,
+                            message_seq: r.message_seq,
+                            attachments: nil
+                        ))
+                    } else if r.log_kind == "guess_prompt" {
+                        // guess_prompt (Model Blind Box, T9.1) — the
+                        // `prompt_model_guess` tool dropped a 「猜一猜」
+                        // card here. There's no per-row payload to decode;
+                        // the card reads the conv-level `convModelState`
+                        // (revealed / current model) instead. We just need
+                        // a host ChatMessage so the timeline can place the
+                        // card, and the id collected for the render branch.
+                        guessPromptsLoaded.insert(r.id)
+                        viewMessages.append(ChatMessage(
+                            id: r.id,
+                            conversation_id: r.conversation_id,
+                            sender_type: "guess_prompt_log",
                             sender_id: r.sender_bot_id ?? "",
                             content: "",
                             created_at: secs,
@@ -537,6 +557,11 @@ extension ConversationView {
             // load overwrites any locally cached `pending` card that has
             // been decided elsewhere.
             self.permissionRequestsByMsgId.merge(permissionRequestsLoaded) { _, new in new }
+            // guess_prompt ids — history is the source of truth for which
+            // log rows are 「猜一猜」cards, so union in the freshly-loaded
+            // set (a realtime-arrived id from this session stays put; the
+            // history pass just confirms it).
+            self.guessPromptMsgIds.formUnion(guessPromptsLoaded)
 
             // Per-id attachment metadata (mime + filename) so the bubble
             // grid can render non-image files as icon+name chips, not

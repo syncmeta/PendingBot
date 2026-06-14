@@ -28,6 +28,11 @@ struct ChatActionSheet: View {
     /// on the current conv. Nil for conv types without a single bot (group,
     /// user_user) — those skip the tile entirely.
     var onLookback: (() -> Void)? = nil
+    /// 盲盒「猜模型」入口。仅当 conv 是未揭晓的 surprise 盲盒时 ConversationView
+    /// 才传非 nil（见 `shouldOfferGuess`）；其余情况隐藏该 tile。
+    var onGuessModel: (() -> Void)? = nil
+    /// 盲盒「换模型」入口。任何带 bot 的 conv 都可换，所以 ConversationView 总传。
+    var onSwitchModel: (() -> Void)? = nil
 
     // All pickers (photo / camera / file) are presented by the host from the
     // main view tree via bindings, not from here — this panel lives inside the
@@ -75,6 +80,28 @@ struct ChatActionSheet: View {
                         onDismiss()
                     } label: {
                         actionTileLabel(icon: "checkmark.seal", label: "检查")
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                if let onGuessModel {
+                    Button {
+                        Haptics.tap()
+                        onGuessModel()
+                        onDismiss()
+                    } label: {
+                        actionTileLabel(icon: "questionmark.app", label: "猜模型")
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                if let onSwitchModel {
+                    Button {
+                        Haptics.tap()
+                        onSwitchModel()
+                        onDismiss()
+                    } label: {
+                        actionTileLabel(icon: "cube.transparent", label: "换模型")
                     }
                     .buttonStyle(.plain)
                 }

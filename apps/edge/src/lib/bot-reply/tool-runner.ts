@@ -23,6 +23,7 @@ import { startCrewTool } from './tools/start-crew';
 import { createChildCrewTool } from './tools/create-child-crew';
 import { recruitTempBotTool } from './tools/recruit-temp-bot';
 import { requestPermissionTool } from './tools/request-permission';
+import { promptModelGuessTool } from './tools/prompt-model-guess';
 
 /// Single web-search citation. Stored on each bubble row's `citations`
 /// jsonb so iOS can resolve inline `[N]` markers to a tappable link.
@@ -68,6 +69,10 @@ export interface ToolCtx {
   /// the tool doesn't need to know about bubbleGroupId / sender_bot_id
   /// / model_slug / model_provider plumbing.
   emitImagesMessage: (attachmentIds: string[]) => Promise<boolean>;
+  /// Insert a `log_kind='guess_prompt'` message — the blind-box "猜一猜"
+  /// interactive card. Returns true if the row landed. Closure in
+  /// runChatTurn so the tool needn't know conversation/parent plumbing.
+  emitGuessPrompt: () => Promise<boolean>;
 }
 
 /// Tolerant JSON parse for tool arg blobs. Models occasionally emit
@@ -166,6 +171,9 @@ export async function runTool(
     }
     if (name === 'request_permission') {
       return await requestPermissionTool(env, args, ctx);
+    }
+    if (name === 'prompt_model_guess') {
+      return await promptModelGuessTool(env, args, ctx);
     }
     return JSON.stringify({ error: `unknown tool: ${name}` });
   } catch (err) {

@@ -19,8 +19,10 @@ import { resolveBot } from '../lib/bot-cache';
 import { deleteCachedConv, resolveConv } from '../lib/conv-cache';
 import { pickRandomModel } from '../llm/random-model';
 import {
-  chooseCandidateModel,
   chooseConversationMainModel,
+  parseBlindBoxConfig,
+  readConvModelStateRow,
+  rerollConversationModel,
   type ConversationModelState,
 } from '../lib/conversation-model';
 import { safeWaitUntil } from '../lib/safe-wait-until';
@@ -987,15 +989,35 @@ messageRoutes.post('/:id/regenerate', async (c) => {
   });
   if (gateErr) return insufficientBalanceResponse(c, gateErr);
 
-  const turnRoute = await resolveMessageBotTurnRoute(
-    c.env,
-    {
+  const blindBox = parseBlindBoxConfig(bot.config);
+  let turnRoute: { modelId: string; providerOverride: string | null };
+  if (blindBox.regenReroll) {
+    // 盲盒:手动重抽 → 重新抽主模型并持久化,reveal 重置;新模型此后成为会话模型。
+    const current = await readConvModelStateRow(c.env, parsed.conversationId);
+    const rolled = await rerollConversationModel(
+      c.env,
+      parsed.conversationId,
+      { model_id: bot.model_id, model_provider: bot.model_provider, config: bot.config },
+      current?.current_model_slug ?? null,
+    );
+    turnRoute = rolled
+      ? { modelId: rolled.slug, providerOverride: rolled.provider }
+      : // No pool → keep current (or bot default), don't reset reveal.
+        await resolveMessageBotTurnRoute(c.env, {
+          model_id: bot.model_id,
+          model_provider: bot.model_provider,
+          config: bot.config,
+          conversationId: parsed.conversationId,
+        });
+  } else {
+    // 保持当前会话模型(不重抽,不动 reveal)。
+    turnRoute = await resolveMessageBotTurnRoute(c.env, {
       model_id: bot.model_id,
       model_provider: bot.model_provider,
       config: bot.config,
-    },
-    { candidateOnly: true },
-  );
+      conversationId: parsed.conversationId,
+    });
+  }
 
   const isSelfChat = conv.conversation_type === 'self';
   const encoder = new TextEncoder();
@@ -1627,19 +1649,7 @@ async function resolveMessageBotTurnRoute(
     conversationId?: string;
     conversation?: ConversationModelState | null;
   },
-  opts?: { candidateOnly?: boolean },
 ): Promise<{ modelId: string; providerOverride: string | null }> {
-  if (opts?.candidateOnly) {
-    const candidate = await chooseCandidateModel({
-      bot,
-      pickFromPool: (cfg, pickOpts) => pickRandomModel(env, cfg, pickOpts),
-    });
-    return {
-      modelId: candidate.modelId,
-      providerOverride: candidate.providerOverride,
-    };
-  }
-
   let conversation = bot.conversation ?? null;
   if (!conversation && bot.conversationId) {
     conversation = await readConversationModelState(env, bot.conversationId);

@@ -37,11 +37,11 @@ import { runnerHostRoutes } from './routes/runner-hosts';
 import { humanHelpRequestRoutes } from './routes/human-help-requests';
 import { codeExecRoutes } from './routes/code-exec';
 import { modelCatalogRoutes } from './routes/models';
-import { arenaRoutes } from './routes/arena';
 import { realtimeRoutes } from './routes/realtime';
 import { realtimeHubRoutes } from './routes/realtime-hub';
 import { realtimeInternalRoutes } from './routes/realtime-internal';
 import { conversationListRoutes, messageTailRoutes } from './routes/projections';
+import { conversationModelRoutes } from './routes/conversation-model-routes';
 import { wellKnownRoutes } from './routes/well-known';
 import { billingWebhookRoutes } from './routes/billing-webhooks';
 import { langfusePromptRoutes } from './routes/langfuse-prompts';
@@ -142,6 +142,7 @@ v1.route('/health', healthRoutes);
 v1.route('/messages', messageRoutes);
 v1.route('/messages', messageTailRoutes);          // GET /v1/messages/tail (T2 边缘读投影 — 消息尾)
 v1.route('/conversations', conversationListRoutes); // GET /v1/conversations (T2 边缘读投影 — 会话列表+未读)
+v1.route('/conversations', conversationModelRoutes); // GET /:id/model · POST /:id/reveal-model · POST /:id/model (盲盒)
 v1.route('/bots', botRoutes);
 v1.route('/bot-invites', botInviteRoutes);         // GET/:token resolve · POST/:token/redeem · DELETE/:token
 v1.route('/groups', groupInviteLinkRoutes);        // POST/GET /v1/groups/:id/invite-links (D2)
@@ -174,7 +175,6 @@ v1.route('/runner-hosts', runnerHostRoutes);
 v1.route('/human-help-requests', humanHelpRequestRoutes);
 v1.route('/code-exec-requests', codeExecRoutes);
 v1.route('/models', modelCatalogRoutes);
-v1.route('/arena', arenaRoutes);
 v1.route('/realtime', realtimeRoutes);
 v1.route('/realtime-hub', realtimeHubRoutes);
 v1.route('/realtime-internal', realtimeInternalRoutes);
