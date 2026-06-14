@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  chooseCandidateModel,
   chooseConversationMainModel,
   modelPoolConfigFromBotConfig,
   parseBlindBoxConfig,
@@ -78,28 +77,6 @@ describe('chooseConversationMainModel', () => {
       modelId: 'pool-model',
       providerOverride: 'anthropic',
       shouldPersist: true,
-    });
-  });
-});
-
-describe('chooseCandidateModel', () => {
-  it('draws a candidate from the model pool without requiring persistence', async () => {
-    const result = await chooseCandidateModel({
-      bot: {
-        model_id: 'fallback-model',
-        model_provider: 'openrouter',
-        config: { modelPool: { models: ['pool-model'], price_min: null, price_max: null, exclude: null } },
-      },
-      pickFromPool: async (_cfg, opts) => {
-        expect(opts?.excludeSlugs).toEqual([]);
-        return { slug: 'pool-model', modelProvider: null };
-      },
-    });
-
-    expect(result).toEqual({
-      modelId: 'pool-model',
-      providerOverride: 'openrouter',
-      shouldPersist: false,
     });
   });
 });

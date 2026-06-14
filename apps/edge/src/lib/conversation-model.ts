@@ -70,29 +70,6 @@ export async function chooseConversationMainModel(input: {
   };
 }
 
-export async function chooseCandidateModel(input: {
-  bot: BotModelSelectionInput;
-  pickFromPool: PoolPick;
-}): Promise<ChosenTurnModel> {
-  const cfg = modelPoolConfigFromBotConfig(input.bot.config);
-  if (cfg) {
-    const picked = await input.pickFromPool(cfg, { excludeSlugs: [] });
-    if (picked) {
-      return {
-        modelId: picked.slug,
-        providerOverride: picked.modelProvider ?? 'openrouter',
-        shouldPersist: false,
-      };
-    }
-  }
-
-  return {
-    modelId: input.bot.model_id,
-    providerOverride: input.bot.model_provider ?? null,
-    shouldPersist: false,
-  };
-}
-
 export type RevealMode = 'surprise' | 'disclose';
 
 export interface BlindBoxConfig {
