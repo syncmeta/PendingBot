@@ -61,10 +61,9 @@ struct CrewSessionWindowView: View {
                 memberListMode
             }
         }
-        // 明确声明理想宽 —— inspector 列首帧靠 content 的理想宽定列宽,内容若全是
-        // maxWidth:.infinity 的贪婪布局(无理想宽),列会退回一个默认窄宽并裁切,要手动
-        // 拖一次才重算。给个 idealWidth 让弹出当帧就定对宽,不必手动"启用"自适应。
-        .frame(minWidth: 300, idealWidth: 380, maxWidth: .infinity)
+        // 填满 inspector 栏,但**不设 minWidth** —— 内容能被压到任意窄而只是重排,
+        // 绝不以固定宽居中溢出被切。列宽由 .inspectorColumnWidth 控。
+        .frame(maxWidth: .infinity)
         // 无 navigationTitle —— 这是 inspector 内容,标题会漏到主窗标题栏(显成
         // "Session" 盖掉 crew 名)。窗标题由中栏 toolbar 的 crew 名负责。
         // K (edge→Mac channel): for the selected crew, auto-claim + run sessions
