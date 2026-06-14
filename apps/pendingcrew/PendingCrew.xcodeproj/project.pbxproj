@@ -114,6 +114,7 @@
 		ADD79344E8C5B17BF6F44EEA /* SessionBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = 937DEE031D3D9DA550B8AFCA /* SessionBackend.swift */; };
 		B094D64B0509EF9E543C90F7 /* CrewChatMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED731B9FBC4FCAABA1696C82 /* CrewChatMessage.swift */; };
 		B0B76B7F63D1A2DA9028D41D /* GitWorktreeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF8FE15162B5E527F4765346 /* GitWorktreeService.swift */; };
+		B1657FCBE4979ECD6A5AE16B /* CodexTranscriptTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCBA9432E0886603D03BFD9B /* CodexTranscriptTests.swift */; };
 		B18FDA6222492107773A78B4 /* session-world-model.zh.md in Resources */ = {isa = PBXBuildFile; fileRef = 87F000A18A5E886FA706EC9B /* session-world-model.zh.md */; };
 		B4A500C63F56A660FBC9D415 /* session-world-model.en.md in Resources */ = {isa = PBXBuildFile; fileRef = 38F5E570088DE41977747A62 /* session-world-model.en.md */; };
 		B4FBE94B9E0DB131BE3327C0 /* PendingCrewEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 219AD4E22DF4542909B2067A /* PendingCrewEntry.swift */; };
@@ -131,7 +132,9 @@
 		C519EE8701CF25B2A43261D7 /* CodexRPCDispatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 902E2DCD59F65F11777B1D83 /* CodexRPCDispatcher.swift */; };
 		C525C292D657308A7487CDF7 /* Haptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE0CACBC82045E85464C0CB1 /* Haptics.swift */; };
 		C96A57C6587DC58D7BFE6BBF /* CrewInteractionCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00A7D9CD365C5CDA21A05246 /* CrewInteractionCard.swift */; };
+		CA9E60F96DDFDB642FB6BC8E /* CodexTranscript.swift in Sources */ = {isa = PBXBuildFile; fileRef = C732FA5985719F9892BABD77 /* CodexTranscript.swift */; };
 		CABF5E79969852F020AF8C97 /* GitInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60202465DF374BE31614C151 /* GitInspector.swift */; };
+		CB04BCC40C364D88FDDE7273 /* CodexTranscript.swift in Sources */ = {isa = PBXBuildFile; fileRef = C732FA5985719F9892BABD77 /* CodexTranscript.swift */; };
 		CCB8B7D58871E769BD2E1C07 /* LocalCodingAgentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68DED4864DF441E88BAC0A24 /* LocalCodingAgentTests.swift */; };
 		CCE5EFF3574B69F46BD28503 /* LocalWhiteboardStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7328186C8B9131242BB8C719 /* LocalWhiteboardStoreTests.swift */; };
 		CD478DB6A5F0A7917027EBE6 /* CrewChatAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B201B1F85B5578B8544DCA69 /* CrewChatAdapter.swift */; };
@@ -272,9 +275,11 @@
 		BCB0A9A2B511BAA8446CF9A4 /* Subject.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Subject.swift; sourceTree = "<group>"; };
 		C19AB68BF7E4D689CEAF0A0F /* CrewSessionRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewSessionRunner.swift; sourceTree = "<group>"; };
 		C6388019E8C2DDFED3A85E99 /* PendingCrewAuthCredential.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingCrewAuthCredential.swift; sourceTree = "<group>"; };
+		C732FA5985719F9892BABD77 /* CodexTranscript.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexTranscript.swift; sourceTree = "<group>"; };
 		C8A233B79D2CE87B8C6D3BF1 /* CrewChatAdapterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewChatAdapterTests.swift; sourceTree = "<group>"; };
 		C90E34205163859EFCB0446F /* HookEmitterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HookEmitterTests.swift; sourceTree = "<group>"; };
 		CBB0C1A453530F00E8B6D49F /* ImageViewer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageViewer.swift; sourceTree = "<group>"; };
+		CCBA9432E0886603D03BFD9B /* CodexTranscriptTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexTranscriptTests.swift; sourceTree = "<group>"; };
 		CD0F5E7501DDF890EA04C5EA /* AgentTerminalSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentTerminalSession.swift; sourceTree = "<group>"; };
 		D13CB4287864AEB5C5A8FECC /* Platform.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Platform.swift; sourceTree = "<group>"; };
 		D1A9FCA930C6487C96B9A211 /* MacRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacRootView.swift; sourceTree = "<group>"; };
@@ -492,6 +497,7 @@
 				902E2DCD59F65F11777B1D83 /* CodexRPCDispatcher.swift */,
 				60A91B2E730386ADCD52A3B9 /* CodexRPCMessage.swift */,
 				AE34BA1080CD0D29F160C9A6 /* CodexThreadItem.swift */,
+				C732FA5985719F9892BABD77 /* CodexTranscript.swift */,
 			);
 			path = CodexAppServer;
 			sourceTree = "<group>";
@@ -553,6 +559,7 @@
 				07B9E918E0B797CF2286F0A4 /* CodexRPCDispatcherTests.swift */,
 				0F58735ECC1D2FD177BFB792 /* CodexRPCMessageTests.swift */,
 				7CCD472BA2B27A5116C0E0AD /* CodexThreadItemTests.swift */,
+				CCBA9432E0886603D03BFD9B /* CodexTranscriptTests.swift */,
 				C8A233B79D2CE87B8C6D3BF1 /* CrewChatAdapterTests.swift */,
 				E9ABA828277E44B7E7CABDDB /* FamilyCredentialStoreTests.swift */,
 				1A4D1C7DBA64FB676E8F61FF /* GitWorktreeServiceTests.swift */,
@@ -799,6 +806,7 @@
 				C519EE8701CF25B2A43261D7 /* CodexRPCDispatcher.swift in Sources */,
 				A47AB832FB4F2E968FDAE540 /* CodexRPCMessage.swift in Sources */,
 				59B45475A7261B04FE645C2E /* CodexThreadItem.swift in Sources */,
+				CB04BCC40C364D88FDDE7273 /* CodexTranscript.swift in Sources */,
 				F59E6499F8F9A918EA384F5B /* ColorHash.swift in Sources */,
 				A4E148969B130D4DA1A5646E /* ColorHex.swift in Sources */,
 				EC862B7770804C06765F676C /* ComposerView.swift in Sources */,
@@ -899,6 +907,8 @@
 				A6C63EE4421E535FE0CC6182 /* CodexRPCMessageTests.swift in Sources */,
 				939E2030BF3C9753C1F54C67 /* CodexThreadItem.swift in Sources */,
 				ED22F32292574D9A6CEA1094 /* CodexThreadItemTests.swift in Sources */,
+				CA9E60F96DDFDB642FB6BC8E /* CodexTranscript.swift in Sources */,
+				B1657FCBE4979ECD6A5AE16B /* CodexTranscriptTests.swift in Sources */,
 				D1DD2B27650D223B37D4B295 /* CrewChatAdapter.swift in Sources */,
 				00384409C41B8F5886C8313E /* CrewChatAdapterTests.swift in Sources */,
 				B094D64B0509EF9E543C90F7 /* CrewChatMessage.swift in Sources */,
