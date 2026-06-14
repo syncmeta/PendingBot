@@ -48,27 +48,36 @@ struct CrewCenterView: View {
                 empty("在左侧选一个 crew，或者点 \"+\" 新建一个。")
             }
         }
+        // 标题走原生 navigationTitle —— 位置/收合行为和系统窗口标题完全一致（不会跑到
+        // 红绿灯后面、收 sidebar 也不冒第二个标题），纯文字无胶囊。操作按钮放 trailing
+        // （macOS 26 自动给原生白色液态玻璃岛 + 阴影）。
+        //
+        // 标题文字与按钮组都 gate 在 selectedCrewId（而非 selectedDetail）——后者在切换
+        // crew 时会短暂为 nil（detail 异步加载），导致标题清空 + 工具栏项目消失再出现，
+        // 表现为"切换后 toolbar 闪一下"。用 selectedCrewId（切换瞬间即非 nil）+ 列表里的
+        // title 兜底，整条就稳定不抖。
+        .navigationTitle(crewStore.selectedDetail?.crew.title ?? crewStore.selectedCrew?.title ?? "")
+        // 那条灰线真因不是 hairline，是 toolbar 默认材质比内容浅一档形成的色差边界。
+        // 把 toolbar 背景刷成和内容(canvas:纯白/深)同色，边界就没了——这次 canvas 是
+        // 纯白，不再是之前那种暖白("淡黄")。配合 WindowSeparatorRemover 关掉 hairline。
+        .toolbarBackground(Theme.Palette.canvas, for: .windowToolbar)
+        .toolbarBackground(.visible, for: .windowToolbar)
         .toolbar {
-            if let detail = crewStore.selectedDetail {
-                ToolbarItem(placement: .principal) {
-                    // crew 头像 + 名字,对齐 PendingBot 群聊抬头。
-                    HStack(spacing: 8) {
-                        CrewGroupAvatar(seed: detail.crew.id, size: 22)
-                        Text(detail.crew.title).font(.headline)
-                    }
-                }
+            if let crewId = crewStore.selectedCrewId {
                 ToolbarItem {
                     Button { showingDetail = true } label: {
                         Label("crew 详情", systemImage: "info.circle")
                     }
+                    .disabled(crewStore.selectedDetail == nil)
                 }
                 ToolbarItem {
                     Button { showingRemoteSessions = true } label: {
                         Label("服务端 session", systemImage: "rectangle.on.rectangle.angled")
                     }
+                    .disabled(crewStore.selectedDetail == nil)
                 }
                 ToolbarItem {
-                    Button { Task { await crewStore.refreshDetail(detail.crew.id) } } label: {
+                    Button { Task { await crewStore.refreshDetail(crewId) } } label: {
                         Label("刷新", systemImage: "arrow.clockwise")
                     }
                 }

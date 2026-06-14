@@ -1,5 +1,6 @@
 #if os(macOS)
 import SwiftUI
+import AppKit
 
 /// Mac 主视图：两栏 + 按需 inspector。
 ///
@@ -73,6 +74,9 @@ struct MacThreePaneView: View {
                 crewStore.captainAutostartRequest = nil
             }
         }
+        // 去掉 toolbar 底部那条灰色分隔线（详见 WindowSeparatorRemover）。tick 传
+        // selectedCrewId —— 切 crew 时借 updateNSView 重设，抢在 SwiftUI 把它重置回去之后。
+        .background(WindowSeparatorRemover(tick: crewStore.selectedCrewId ?? ""))
         .task {
             // 首次进入时把列表 + subjects 都拉一遍 —— subjects 用于创建
             // crew sheet 的 picker，提前 prefetch 避免 sheet 打开时空。
@@ -83,6 +87,39 @@ struct MacThreePaneView: View {
             // 起 session（#242 遥控 v1），与 inspector 手动起的 run 同一个切换条。
             relayAgent.start(appModel: model, sessionRunner: sessionRunner)
         }
+    }
+}
+
+/// 去掉 toolbar 底部那条灰色分隔线（`titlebarSeparatorStyle = .none`）。
+///
+/// 之前几次没生效的真因：在 `viewDidMoveToWindow` 设过一次，但 SwiftUI 把 toolbar
+/// 装配完之后会把 separatorStyle 重置回 `.automatic`，我没在它之后补设。这版三重保险：
+/// 挂上窗口立刻设一次 + 延迟 0.3s 抢在 SwiftUI 装配之后再设一次 + `tick`(crew 选择)
+/// 变化时经 updateNSView 重设。**不碰** titlebarAppearsTransparent / backgroundColor /
+/// titleVisibility / fullSizeContentView —— 上一版那套把 composer 材质带黑了，且没解决线。
+private struct WindowSeparatorRemover: NSViewRepresentable {
+    /// 任意会变的值（这里传 selectedCrewId）—— 变化时 SwiftUI 调 updateNSView，借机重设。
+    var tick: String
+
+    func makeNSView(context: Context) -> NSView { SeparatorKillerView() }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        SeparatorKillerView.killSeparator(nsView.window)
+    }
+}
+
+private final class SeparatorKillerView: NSView {
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        Self.killSeparator(window)
+        // SwiftUI 在 toolbar 装配完后会把它重置回 .automatic，延迟再设一次抢在它后面。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            Self.killSeparator(self?.window)
+        }
+    }
+
+    static func killSeparator(_ window: NSWindow?) {
+        window?.titlebarSeparatorStyle = .none
     }
 }
 #endif
