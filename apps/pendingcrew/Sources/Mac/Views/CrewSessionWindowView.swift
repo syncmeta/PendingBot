@@ -81,6 +81,47 @@ struct CrewSessionWindowView: View {
                 SessionUnreadStore.shared.markViewed(run.sessionId)
             }
         }
+        // SwiftUI 原生 .inspector 首帧 bug 兜底：内容 hosting view 不会在 present
+        // 当帧同步到列宽（被切，要手动拖一下 divider 才复位）。present 动画结束后
+        // 程序对 inspector 的 divider 做一次同步 = 等同那一拖，但时机对（内容已进
+        // 视图树、动画已停）。见 resyncInspectorDivider 注释。
+        .onAppear { resyncInspectorDivider() }
+    }
+
+    /// present 动画结束后，把 inspector 那条 divider 拨一下复位 —— 绕 SwiftUI
+    /// 原生 .inspector 的首帧不同步 bug（固定宽/弹性宽都中招，跟宽度写法无关；
+    /// 唯一触发复位的是对 inspector divider 的 geometry 变化，即用户手动那一拖）。
+    /// 延后到动画停 + 内容进树后再做，否则那条 split 还没建好（Opus 从 onChange
+    /// 触发太早所以没生效）。多拍重试覆盖动画时长抖动。
+    private func resyncInspectorDivider() {
+        for delay in [0.35, 0.5, 0.7] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                Self.nudgeRightmostDividers()
+            }
+        }
+    }
+
+    /// 找窗口里所有横向 NSSplitView，把最后一条 divider +1 再复位（净零位移，
+    /// 但逼 AppKit 重跑 split 布局，让 inspector 的 hosting view 重新贴合列宽）。
+    /// 跳过已折叠的栏（divider 贴边）以免误把 sidebar 拨出来。
+    private static func nudgeRightmostDividers() {
+        guard let window = NSApp.keyWindow ?? NSApp.mainWindow else { return }
+        for sv in splitViews(in: window.contentView)
+        where sv.isVertical && sv.arrangedSubviews.count >= 2 {
+            let idx = sv.arrangedSubviews.count - 2
+            let pos = sv.arrangedSubviews[idx].frame.maxX
+            guard pos > 12 else { continue } // 折叠的栏（divider 贴左边）不碰
+            sv.setPosition(pos + 1, ofDividerAt: idx)
+            DispatchQueue.main.async { sv.setPosition(pos, ofDividerAt: idx) }
+        }
+    }
+
+    private static func splitViews(in view: NSView?) -> [NSSplitView] {
+        guard let view else { return [] }
+        var out: [NSSplitView] = []
+        if let sv = view as? NSSplitView { out.append(sv) }
+        for sub in view.subviews { out.append(contentsOf: splitViews(in: sub)) }
+        return out
     }
 
     // MARK: - 终端模式（原样保留：切换条 + 终端 + composer + 审批卡）

@@ -40,20 +40,21 @@ struct MacThreePaneView: View {
         .inspector(isPresented: $inspectorPresented) {
             CrewSessionWindowView()
                 .environmentObject(sessionRunner)
-                // **固定宽**（不走 min/ideal/max 三值协商）—— 那个协商在 SwiftUI 里
-                // 首帧不落定（detail 的 ideal 和 inspector 的区间没被解算），要等一次
-                // geometry 变化才生效，正是"必须手动拖一下才正常"的根因。固定宽首帧即
-                // 定，不会被切；也正好满足"打开 session 后宽度保持不变"。内容是弹性的
-                // （maxWidth:.infinity + 终端低抗压缩），固定到 400 也不溢出。
-                .inspectorColumnWidth(400)
+                // 可拖动（min/ideal/max）。SwiftUI 原生 .inspector 有个首帧 bug：
+                // 内容 hosting view 不会在 present 当帧同步到列宽，要等一次对 inspector
+                // divider 的 geometry 变化才复位（用户手动"拖一下"）。CrewSessionWindowView
+                // 在 onAppear 后做一次程序化 divider 同步兜这个 bug（见那里 resyncInspectorDivider）。
+                .inspectorColumnWidth(min: 300, ideal: 400, max: 560)
         }
-        // 根治超屏：inspector 一开就收起左 sidebar 腾出宽度，关掉再放回来。
+        // inspector 开 → 若 sidebar 还展开着就收起它（用户要的：开 inspector 自动让
+        // sidebar 收）。**关 inspector 不自动弹回 sidebar** —— sidebar 由用户手动控制。
         .onChange(of: inspectorPresented) { _, open in
-            withAnimation { columnVisibility = open ? .detailOnly : .all }
+            if open, columnVisibility != .detailOnly {
+                withAnimation { columnVisibility = .detailOnly }
+            }
         }
-        // 反向：手动展开左 sidebar(翻回 .all)就收起 inspector —— 二者互斥,
-        // 任一展开都不会把另一段连同窗口撑出屏幕外。inspector 自己开时只设
-        // .detailOnly(不是 .all),不会触发这里,无回环。
+        // 用户手动展开 sidebar(翻回 .all) 且 inspector 还开着 → 收起 inspector（互斥）。
+        // inspector 自己开时只把 columnVisibility 设 .detailOnly，不会触发这里，无回环。
         .onChange(of: columnVisibility) { _, vis in
             if vis == .all && inspectorPresented {
                 withAnimation { inspectorPresented = false }
