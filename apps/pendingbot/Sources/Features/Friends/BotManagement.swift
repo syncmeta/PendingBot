@@ -1177,6 +1177,12 @@ struct BotConfigView: View {
     @State private var webSearch: BotWebSearchSettings = .defaults
     @State private var lookbackEnabled: Bool = true
     @State private var lookbackInterval: Int = 10
+    /// 盲盒 (model blind box). `revealMode` "surprise" hides the real model
+    /// name behind PendingModel so the user can guess; "disclose" always
+    /// shows the true name. `regenReroll` decides whether 重新生成 picks a
+    /// fresh model from the pool or keeps the current one.
+    @State private var revealMode: String = "surprise"   // "surprise" | "disclose"
+    @State private var regenReroll: Bool = true
 
     @State private var initial: Snapshot?
     @State private var loaded = false
@@ -1198,6 +1204,8 @@ struct BotConfigView: View {
         let webSearch: BotWebSearchSettings
         let lookbackEnabled: Bool
         let lookbackInterval: Int
+        let revealMode: String
+        let regenReroll: Bool
     }
 
     private enum PickerTarget: Identifiable {
@@ -1224,7 +1232,8 @@ struct BotConfigView: View {
             voiceSettings: voiceSettings,
             visionModel: visionModel, envelope: envelope,
             webSearch: webSearch,
-            lookbackEnabled: lookbackEnabled, lookbackInterval: lookbackInterval
+            lookbackEnabled: lookbackEnabled, lookbackInterval: lookbackInterval,
+            revealMode: revealMode, regenReroll: regenReroll
         )
     }
 
@@ -1252,6 +1261,7 @@ struct BotConfigView: View {
             voiceSection
             envelopeSection
             lookbackSection
+            blindBoxSection
 
             Section("技能") {
                 NavigationLink {
@@ -1434,6 +1444,26 @@ struct BotConfigView: View {
         }
     }
 
+    private var blindBoxSection: some View {
+        Section {
+            Picker("模型身份", selection: $revealMode) {
+                Text("保留惊喜(让用户猜)").tag("surprise")
+                Text("直接披露(显示真名)").tag("disclose")
+            }
+            .disabled(!canEdit)
+            // 重抽只在有模型池(竞技场)时才有意义——单模型机器人没有
+            // 可换的对象,所以仅在池存在时显示这个开关。
+            if arenaConfig != nil {
+                Toggle("重新生成时重抽模型", isOn: $regenReroll)
+                    .disabled(!canEdit)
+            }
+        } header: {
+            Text("盲盒")
+        } footer: {
+            Text("保留惊喜:对话里模型名显示为 PendingModel,用户可以猜。直接披露:始终显示真实模型,不让猜。重抽:点重新生成时换一个新模型(否则保持当前)。")
+        }
+    }
+
     // ── Reusable picker row ─────────────────────────────────────────────────
 
     @ViewBuilder
@@ -1555,6 +1585,12 @@ struct BotConfigView: View {
                 lookbackInterval = Int(d)
             }
         }
+        if case let .object(bb)? = dict["blindBox"] {
+            if case let .string(s)? = bb["revealMode"], s == "disclose" || s == "surprise" {
+                revealMode = s
+            }
+            if case let .bool(b)? = bb["regenReroll"] { regenReroll = b }
+        }
     }
 
     private static func jsonDouble(_ value: AnyJSON?) -> Double? {
@@ -1627,6 +1663,10 @@ struct BotConfigView: View {
                 "webSearch": webSearch.toConfigDict(),
                 "modelPool": arenaVal,
                 "arena": NSNull(),
+                "blindBox": [
+                    "revealMode": revealMode,
+                    "regenReroll": regenReroll,
+                ] as [String: Any],
             ]
             let body: [String: Any] = [
                 "model_id": model,
