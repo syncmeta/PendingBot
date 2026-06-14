@@ -233,12 +233,37 @@ struct FriendsTabView: View {
 
     // ── Sidebar (shared) ────────────────────────────────────────────────────
 
-    /// Shell 契约下的行内边距:前导贴 rail 右沿(leading=0)、右侧留 gutter。
-    /// 非 shell(iOS)返回 nil → 用原生 List 默认插入,行为不变。
-    private var shellRowInsets: EdgeInsets? {
+    /// Mac 壳:行内容在圆角卡片里的内边距(content 缩进,让头像/文字不贴卡片边)。
+    /// iOS 返回 nil → 默认插入,行为不变。与 `cardRowBackground` 配套。
+    private var cardRowInsets: EdgeInsets? {
         renderAsMacListColumn
-            ? EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: Theme.Metrics.gutter)
+            ? EdgeInsets(top: 9, leading: 12, bottom: 9, trailing: Theme.Metrics.gutter + 12)
             : nil
+    }
+
+    /// 行背景:Mac 壳是**圆角卡片**(贴 rail 右沿、右留 gutter,与消息列表卡片
+    /// 同款),iOS 维持满宽 surface。`card=false`(「我」未选中)→ 透明、无白底。
+    @ViewBuilder
+    private func cardRowBackground(selected: Bool, card: Bool = true) -> some View {
+        if renderAsMacListColumn {
+            if card || selected {
+                RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
+                    .fill(selected ? Theme.Palette.accentBg : Theme.Palette.surface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
+                            .strokeBorder(
+                                selected ? Theme.Palette.accent.opacity(0.5) : Theme.Palette.hairline,
+                                lineWidth: selected ? 1 : 0.5
+                            )
+                    )
+                    .padding(.trailing, Theme.Metrics.gutter)
+                    .padding(.vertical, 3)
+            } else {
+                Color.clear
+            }
+        } else {
+            (selected ? Theme.Palette.accentBg : Theme.Palette.surface)
+        }
     }
 
     /// 表头操作 = 排序菜单 + "+" 弹层(加好友 / 加机器人 / 新建机器人)。抽出来
@@ -312,8 +337,10 @@ struct FriendsTabView: View {
                             onTap: { Task { await tapSelf() } },
                             onQR: { showingQR = true; Haptics.tap() }
                         )
-                        .listRowBackground(selfSelected ? Theme.Palette.accentBg : Theme.Palette.surface)
-                        .listRowInsets(shellRowInsets)
+                        // 「我」行:Mac 上去掉满宽白底 —— 未选中透明、选中才染色卡片。
+                        .listRowBackground(cardRowBackground(selected: selfSelected, card: false))
+                        .listRowInsets(cardRowInsets)
+                        .listRowSeparator(renderAsMacListColumn ? .hidden : .automatic)
                     }
 
                     Section {
@@ -335,8 +362,9 @@ struct FriendsTabView: View {
                                     onAccept: { Task { await respondToRequest(req, accept: true) } },
                                     onDecline: { Task { await respondToRequest(req, accept: false) } }
                                 )
-                                .listRowBackground(Theme.Palette.surface)
-                                .listRowInsets(shellRowInsets)
+                                .listRowBackground(cardRowBackground(selected: false))
+                                .listRowInsets(cardRowInsets)
+                                .listRowSeparator(renderAsMacListColumn ? .hidden : .automatic)
                             }
                         }
                     }
@@ -349,8 +377,9 @@ struct FriendsTabView: View {
                                     onAccept: { Task { await respondToGroupInvitation(invite, accept: true) } },
                                     onDecline: { Task { await respondToGroupInvitation(invite, accept: false) } }
                                 )
-                                .listRowBackground(Theme.Palette.surface)
-                                .listRowInsets(shellRowInsets)
+                                .listRowBackground(cardRowBackground(selected: false))
+                                .listRowInsets(cardRowInsets)
+                                .listRowSeparator(renderAsMacListColumn ? .hidden : .automatic)
                             }
                         }
                     }
@@ -368,8 +397,9 @@ struct FriendsTabView: View {
                                               name: bot.display_name,
                                               modelSlug: bot.model_id,
                                               botVisibility: bot.visibility)
-                                        .listRowBackground(selected ? Theme.Palette.accentBg : Theme.Palette.surface)
-                                        .listRowInsets(shellRowInsets)
+                                        .listRowBackground(cardRowBackground(selected: selected))
+                                        .listRowInsets(cardRowInsets)
+                                        .listRowSeparator(renderAsMacListColumn ? .hidden : .automatic)
                                         .contentShape(Rectangle())
                                         .onTapGesture { Task { await tapBot(bot) } }
                                         .modifier(BotRowOwnerActions(
@@ -385,8 +415,9 @@ struct FriendsTabView: View {
                                               name: c.rowName,
                                               modelSlug: nil,
                                               botVisibility: nil)
-                                        .listRowBackground(selected ? Theme.Palette.accentBg : Theme.Palette.surface)
-                                        .listRowInsets(shellRowInsets)
+                                        .listRowBackground(cardRowBackground(selected: selected))
+                                        .listRowInsets(cardRowInsets)
+                                        .listRowSeparator(renderAsMacListColumn ? .hidden : .automatic)
                                         .contentShape(Rectangle())
                                         .onTapGesture { Task { await tapHuman(c) } }
                                         .contextMenu {
@@ -405,8 +436,9 @@ struct FriendsTabView: View {
                         Section {
                             Text(emptyText)
                                 .foregroundStyle(.secondary)
-                                .listRowBackground(Theme.Palette.surface)
-                                .listRowInsets(shellRowInsets)
+                                .listRowBackground(cardRowBackground(selected: false))
+                                .listRowInsets(cardRowInsets)
+                                .listRowSeparator(renderAsMacListColumn ? .hidden : .automatic)
                         }
                     }
                 }
