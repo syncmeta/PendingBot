@@ -33,14 +33,16 @@ struct MacThreePaneView: View {
         } detail: {
             CrewCenterView(inspectorPresented: $inspectorPresented)
                 .environmentObject(sessionRunner)
-                .navigationSplitViewColumnWidth(min: 420, ideal: 560)
+                // 中栏 min 调小 —— 让 macOS 在窗口贴屏幕边时能压缩中栏腾给 inspector，
+                // 而不是把窗口往屏幕外撑（两边被切的根因）。
+                .navigationSplitViewColumnWidth(min: 360, ideal: 560)
         }
         .inspector(isPresented: $inspectorPresented) {
             CrewSessionWindowView()
                 .environmentObject(sessionRunner)
-                // 固定宽 —— 成员列表 / 终端两模式都用这个宽，开 session 不再变宽。
-                // 配合下面 onChange 收起左 sidebar，总宽不超屏。
-                .inspectorColumnWidth(min: 420, ideal: 420, max: 460)
+                // **弹性**宽（不固定）—— 窗口窄时能自己缩，不再两边切。成员列表 / 终端
+                // 两模式共用这个列（宽度跟内容模式无关，开 session 不会变宽）。
+                .inspectorColumnWidth(min: 300, ideal: 380, max: 520)
         }
         // 根治超屏：inspector 一开就收起左 sidebar 腾出宽度，关掉再放回来。
         .onChange(of: inspectorPresented) { _, open in

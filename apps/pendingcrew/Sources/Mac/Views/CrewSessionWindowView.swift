@@ -84,40 +84,80 @@ struct CrewSessionWindowView: View {
     // MARK: - 终端模式（原样保留：切换条 + 终端 + composer + 审批卡）
 
     private var terminalMode: some View {
-        VStack(spacing: 0) {
-            // 顶部返回条：回成员列表模式。
-            HStack(spacing: 6) {
-                Button {
-                    sessionRunner.viewingTerminal = false
-                } label: {
-                    Label("成员", systemImage: "chevron.left")
-                        .font(.caption.weight(.semibold))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.tint)
-                .help("返回成员列表")
-                Spacer()
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+        HStack(spacing: 0) {
+            // 左侧成员头像竖条 —— 始终保留(含新建 session 占位),当前 session/新建态高亮。
+            terminalRail
             Divider()
-            // 选中 crew 就渲染 —— 零 run 时也得有 ⚓ 启动 Captain 入口
-            // （旧条件 !runs.isEmpty 让启动按钮在空列表时根本不可达）。
-            if crewStore.selectedDetail != nil {
-                sessionBar
-                Divider()
+            terminalContent
+        }
+    }
+
+    /// 终端模式左侧的成员头像竖条:顶「‹」回成员列表;成员头像(session 可点切换,
+    /// 选中高亮);末尾「+」起新 session(新建态时「+」高亮)。
+    private var terminalRail: some View {
+        VStack(spacing: 0) {
+            Button { sessionRunner.viewingTerminal = false } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.inkMuted)
             }
+            .buttonStyle(.plain)
+            .padding(.vertical, 10)
+            .help("返回成员列表")
+            ScrollView {
+                LazyVStack(spacing: 8) {
+                    ForEach(memberRowItems) { railAvatar($0) }
+                    // 新建 session 占位 —— composing 时高亮,代表"正在建的那个 session"。
+                    Button {
+                        sessionRunner.composeNew()
+                        sessionRunner.viewingTerminal = true
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Theme.Palette.inkMuted)
+                            .frame(width: 34, height: 34)
+                            .background(
+                                Circle().fill(sessionRunner.isComposingNew
+                                              ? Theme.Palette.accentBg : .clear))
+                            .overlay(
+                                Circle().strokeBorder(
+                                    Theme.Palette.inkMuted.opacity(0.4),
+                                    style: StrokeStyle(lineWidth: 1.5, dash: [3, 2])))
+                    }
+                    .buttonStyle(.plain)
+                    .help("起一个新 session")
+                }
+                .padding(.vertical, 8)
+            }
+        }
+        .frame(width: 52)
+    }
+
+    @ViewBuilder
+    private func railAvatar(_ item: MemberRowItem) -> some View {
+        let isSelected = item.run != nil
+            && item.run?.runID == sessionRunner.selectedRunId && !sessionRunner.isComposingNew
+        let av = CrewAvatarBadges(sender: item.sender, size: 34)
+            .padding(3)
+            .background(Circle().fill(isSelected ? Theme.Palette.accentBg : .clear))
+        if let run = item.run {
+            Button { sessionRunner.select(run.runID) } label: { av }
+                .buttonStyle(.plain)
+                .help(item.sender.displayName)
+        } else {
+            av.help(item.sender.displayName)
+        }
+    }
+
+    private var terminalContent: some View {
+        VStack(spacing: 0) {
             if sessionRunner.isComposingNew {
-                // 「新建 session」态：显零配置启动面（composer 在下方），下一条
-                // 消息开新 session，不动任何在跑的 run。
+                // 「新建 session」态：显零配置启动面（composer 在下方）。
                 idleState
             } else if let run = sessionRunner.current {
-                // `.id(run.runID)` 强制换 run 时整个终端视图重建 —— 否则 SwiftUI
-                // 复用同一个 NSViewRepresentable，切换条点了终端不换。
+                // `.id(run.runID)` 强制换 run 时整个终端视图重建。
                 SessionRunContentView(run: run)
                     .id(run.runID)
-                // 内联待办卡片：本 session 调 ask / 撞权限被拦时，就地答（写 LocalApprovalStore
-                // 解 helper 的 long-poll）。接合 v2：comms/审批恒为本地，不再按 mode 门禁。
                 SessionApprovalCardsView(crewId: run.crewId, sessionId: run.sessionId)
             } else {
                 idleState
