@@ -69,10 +69,6 @@ private struct CrewListRow: View {
     @ViewBuilder
     private var subtitleText: some View {
         let location = crew.runtimeLocationKind?.shortLabel ?? crew.runtimeLocation
-        if let tag = crew.tag, !tag.isEmpty {
-            Text("\(location) · \(tag)")
-        } else {
-            Text(location)
-        }
+        Text(location)
     }
 }

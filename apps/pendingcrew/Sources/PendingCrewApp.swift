@@ -141,6 +141,10 @@ struct RootView: View {
                 Task {
                     await crewStore.refreshList()
                     await crewStore.refreshSubjects()
+                    // 登录后把本机 upsert 进 machine 表，再拉机器列表（幂等，
+                    // 重复登录安全）。CreateCrewSheet 据 machines.count 决定显选择。
+                    _ = await crewStore.registerSelfMachine()
+                    await crewStore.refreshMachines()
                 }
             }
         }
@@ -148,11 +152,19 @@ struct RootView: View {
 
     @ViewBuilder
     private var authenticatedRoot: some View {
-        #if os(iOS)
-        IPadShell()
-        #else
-        MacThreePaneView()
-        #endif
+        Group {
+            #if os(iOS)
+            IPadShell()
+            #else
+            MacThreePaneView()
+            #endif
+        }
+        // 进入主界面时确保机器列表已就绪。macOS backend 恒本地（至少一台本机）；
+        // 登录态会在 onChange 里再 register+refresh 一次拿到全量多机。
+        .task {
+            _ = await crewStore.registerSelfMachine()
+            await crewStore.refreshMachines()
+        }
     }
 }
 

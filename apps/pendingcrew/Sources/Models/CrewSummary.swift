@@ -13,7 +13,6 @@ struct CrewSummary: Decodable, Identifiable, Equatable, Hashable {
     let title: String
     let responsibleSubjectId: String
     let runtimeLocation: String
-    let tag: String?
     let captainBotId: String?
     let status: String?
     let createdAt: String
@@ -22,6 +21,9 @@ struct CrewSummary: Decodable, Identifiable, Equatable, Hashable {
     /// `LocalCrewStore` 填实值;edge 端不下发这个字段,`EdgeBackend` 路径恒空。
     /// decode 时缺键 → 空数组(根 crew),不破坏现有 edge 响应解析。
     let parentCrewIds: [String]
+    /// 机长跑哪个本机 coding agent（"claude_code" / "codex"）。**本地概念** ——
+    /// `LocalCrewStore` 填值;edge 不下发 → 缺键兜底 nil（下游回落 `.codex`）。
+    let captainAgentKind: String?
 
     /// memberwise init —— `LocalCrewStore.summary` 等本地构造点用。
     init(
@@ -29,43 +31,44 @@ struct CrewSummary: Decodable, Identifiable, Equatable, Hashable {
         title: String,
         responsibleSubjectId: String,
         runtimeLocation: String,
-        tag: String?,
         captainBotId: String?,
         status: String?,
         createdAt: String,
         updatedAt: String,
-        parentCrewIds: [String] = []
+        parentCrewIds: [String] = [],
+        captainAgentKind: String? = nil
     ) {
         self.id = id
         self.title = title
         self.responsibleSubjectId = responsibleSubjectId
         self.runtimeLocation = runtimeLocation
-        self.tag = tag
         self.captainBotId = captainBotId
         self.status = status
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.parentCrewIds = parentCrewIds
+        self.captainAgentKind = captainAgentKind
     }
 
-    /// 显式 decoder —— edge `GET /v1/crews` 不下发 `parentCrewIds`,缺键兜底空。
+    /// 显式 decoder —— edge `GET /v1/crews` 不下发 `parentCrewIds` / `captainAgentKind`,缺键兜底。
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
         title = try c.decode(String.self, forKey: .title)
         responsibleSubjectId = try c.decode(String.self, forKey: .responsibleSubjectId)
         runtimeLocation = try c.decode(String.self, forKey: .runtimeLocation)
-        tag = try c.decodeIfPresent(String.self, forKey: .tag)
         captainBotId = try c.decodeIfPresent(String.self, forKey: .captainBotId)
         status = try c.decodeIfPresent(String.self, forKey: .status)
         createdAt = try c.decode(String.self, forKey: .createdAt)
         updatedAt = try c.decode(String.self, forKey: .updatedAt)
         parentCrewIds = try c.decodeIfPresent([String].self, forKey: .parentCrewIds) ?? []
+        captainAgentKind = try c.decodeIfPresent(String.self, forKey: .captainAgentKind)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, responsibleSubjectId, runtimeLocation, tag
+        case id, title, responsibleSubjectId, runtimeLocation
         case captainBotId, status, createdAt, updatedAt, parentCrewIds
+        case captainAgentKind
     }
 
     enum RuntimeLocation: String {

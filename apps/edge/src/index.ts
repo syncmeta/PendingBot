@@ -19,6 +19,7 @@ import { friendRequestRoutes } from './routes/friend-requests';
 import { groupRoutes } from './routes/groups';
 import { crewRoutes } from './routes/crew';
 import { crewsRoutes } from './routes/crews';
+import { machinesRoutes } from './routes/machines';
 import { crewMessagesRoutes, sessionInboxRoutes } from './routes/crew-comms';
 import { sessionProxyRoutes } from './routes/session-proxy';
 import { crewInteractionRoutes, crewInteractionAnswerRoutes } from './routes/crew-interactions';
@@ -166,6 +167,7 @@ v1.route('/sessions', sessionProxyRoutes);                   // GET /v1/sessions
 v1.route('/sessions', crewInteractionRoutes);                // POST/GET /v1/sessions/:sessionId/interactions (T4.5 ask_human)
 v1.route('/interactions', crewInteractionAnswerRoutes);      // POST /v1/interactions/:reqId/answer
 v1.route('/share-changes', shareChangesRoutes);
+v1.route('/machines', machinesRoutes);             // GET /v1/machines + POST /v1/machines/register-self
 v1.route('/groups', groupVoiceRoutes);
 v1.route('/voice', voiceActiveRoutes);
 v1.route('/devices', deviceRoutes);

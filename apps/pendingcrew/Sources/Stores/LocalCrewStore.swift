@@ -93,13 +93,19 @@ final class LocalCrewStore {
 
         let crew = LocalCrew(
             id: id,
-            title: request.title,
+            // title 缺省/空 = 自动 → 本地占位 "未命名 crew"（后续接本机 captain
+            // 总结时回填真名；本地路径没有 captain summary，先放占位）。
+            title: request.title?.trimmingCharacters(in: .whitespaces).isEmpty == false
+                ? request.title!.trimmingCharacters(in: .whitespaces)
+                : "未命名 crew",
             responsibleSubjectId: request.responsibleSubjectId,
-            runtimeLocation: request.runtimeLocation,
+            // 本地 crew 恒「本机」 —— runtime_location 永远 local_host。
+            runtimeLocation: "local_host",
             workingDirectory: request.workingDirectory,
-            tag: request.tag,
+            machineId: request.machineId,
             captainBotId: captainBotId,
             captainName: captainName,
+            captainAgentKind: request.captainAgentKind,
             createdAt: now,
             updatedAt: now
         )
@@ -283,9 +289,15 @@ private struct LocalCrew: Codable, Equatable {
     let responsibleSubjectId: String
     let runtimeLocation: String
     let workingDirectory: String?
-    let tag: String?
+    /// 所选 machine id（nil = 本机）。登录态多机时记录 crew 运行在哪台机；
+    /// 本机/BYOK 路径恒 nil。
+    let machineId: String?
     let captainBotId: String?
     let captainName: String?
+    /// 机长跑哪个本机 coding agent（`LocalCodingAgentKind.rawValue` ——
+    /// "claude_code" / "codex"）。建 crew 时表单选定并持久化;机长 session 据此
+    /// 起对应 agent。旧 JSON 缺此键 → decodeIfPresent 兜底 nil（下游回落 `.codex`）。
+    var captainAgentKind: String? = nil
     let createdAt: String
     let updatedAt: String
     /// 本地 crew DAG 的**父边**:本 crew 挂在哪些父 crew 之下(crew id 列表)。
@@ -310,9 +322,10 @@ private struct LocalCrew: Codable, Equatable {
         responsibleSubjectId: String,
         runtimeLocation: String,
         workingDirectory: String?,
-        tag: String?,
+        machineId: String?,
         captainBotId: String?,
         captainName: String?,
+        captainAgentKind: String? = nil,
         createdAt: String,
         updatedAt: String,
         parentCrewIds: [String] = [],
@@ -326,9 +339,10 @@ private struct LocalCrew: Codable, Equatable {
         self.responsibleSubjectId = responsibleSubjectId
         self.runtimeLocation = runtimeLocation
         self.workingDirectory = workingDirectory
-        self.tag = tag
+        self.machineId = machineId
         self.captainBotId = captainBotId
         self.captainName = captainName
+        self.captainAgentKind = captainAgentKind
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.parentCrewIds = parentCrewIds
@@ -347,9 +361,10 @@ private struct LocalCrew: Codable, Equatable {
         responsibleSubjectId = try c.decode(String.self, forKey: .responsibleSubjectId)
         runtimeLocation = try c.decode(String.self, forKey: .runtimeLocation)
         workingDirectory = try c.decodeIfPresent(String.self, forKey: .workingDirectory)
-        tag = try c.decodeIfPresent(String.self, forKey: .tag)
+        machineId = try c.decodeIfPresent(String.self, forKey: .machineId)
         captainBotId = try c.decodeIfPresent(String.self, forKey: .captainBotId)
         captainName = try c.decodeIfPresent(String.self, forKey: .captainName)
+        captainAgentKind = try c.decodeIfPresent(String.self, forKey: .captainAgentKind)
         createdAt = try c.decode(String.self, forKey: .createdAt)
         updatedAt = try c.decode(String.self, forKey: .updatedAt)
         parentCrewIds = try c.decodeIfPresent([String].self, forKey: .parentCrewIds) ?? []
@@ -365,12 +380,12 @@ private struct LocalCrew: Codable, Equatable {
             title: title,
             responsibleSubjectId: responsibleSubjectId,
             runtimeLocation: runtimeLocation,
-            tag: tag,
             captainBotId: captainBotId,
             status: "active",
             createdAt: createdAt,
             updatedAt: updatedAt,
-            parentCrewIds: parentCrewIds
+            parentCrewIds: parentCrewIds,
+            captainAgentKind: captainAgentKind
         )
     }
 
@@ -382,11 +397,11 @@ private struct LocalCrew: Codable, Equatable {
                 responsibleSubjectId: responsibleSubjectId,
                 runtimeLocation: runtimeLocation,
                 workingDirectory: workingDirectory,
-                tag: tag,
                 captainBotId: captainBotId,
                 status: "active",
                 createdAt: createdAt,
-                updatedAt: updatedAt
+                updatedAt: updatedAt,
+                captainAgentKind: captainAgentKind
             ),
             // 本地 crew 没有 DAG / 责任分账 —— 全空数组。后续 Phase 接本机
             // captain template 时也只动 captain section,parents/children

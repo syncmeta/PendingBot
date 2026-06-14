@@ -202,10 +202,12 @@ final class CrewSessionRunner: ObservableObject {
         // persona / members best-effort：加载失败不挡启动（只是少人设/世界观，与 worker 同策略）。
         let persona = try? LocalPromptLoader().rawTemplate(name: "crew-captain", locale: "zh")
         let members = (try? await backend?.listCrewMembers(crewId: crewId))?.members ?? []
-        var cfg = SessionConfig(kind: .claudeCode, initialPrompt: initialPrompt)
+        // 机长用建 crew 时选定的 coding agent（crew 没记 → 默认 Codex）。
+        let captainKind = LocalCodingAgentKind.captainDefault(detail.crew.captainAgentKind)
+        var cfg = SessionConfig(kind: captainKind, initialPrompt: initialPrompt)
         cfg.appendSystemPromptFile = LocalSessionLaunch.renderWorldModelFile(
             detail: detail, members: members, taskBrief: initialPrompt, workdir: workdir,
-            sessionId: localSessionId, runnerKind: .claudeCode, appendPersona: persona)
+            sessionId: localSessionId, runnerKind: captainKind, appendPersona: persona)
         let comms = LocalSessionLaunch.prepareLocalCommsConfig(
             crewId: crewId, sessionId: localSessionId, captain: true)
         cfg.settingsFile = comms.settings

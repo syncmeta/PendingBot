@@ -26,7 +26,9 @@ struct CrewSessionWindowView: View {
     @State private var draft = ""
     @State private var starting = false
     @State private var localError: String?
-    @State private var selectedKind: LocalCodingAgentKind = .claudeCode
+    /// composer 里给「新 worker session」选的 agent kind。初值从 crew 的
+    /// `captainAgentKind` 派生（见 `.onAppear` / `.onChange`），crew 没记 → `.codex`。
+    @State private var selectedKind: LocalCodingAgentKind = .codex
 
     // MARK: - 成员列表模式 state（自轮询白板 + roster，与中栏各拉各的）
 
@@ -81,6 +83,18 @@ struct CrewSessionWindowView: View {
                 SessionUnreadStore.shared.markViewed(run.sessionId)
             }
         }
+        // composer 的 agent kind 默认跟随 crew 建好时选的 captainAgentKind ——
+        // 初次出现 + 切 crew 都重算（crew 没记 → `.codex`）。
+        .onAppear { selectedKind = Self.resolveAgentKind(crewStore.selectedDetail) }
+        .onChange(of: crewStore.selectedDetail?.crew.id) { _, _ in
+            selectedKind = Self.resolveAgentKind(crewStore.selectedDetail)
+        }
+    }
+
+    /// 把 crew 的 `captainAgentKind`（"claude_code" / "codex"）映射成
+    /// `LocalCodingAgentKind`；缺省 / nil / 未知值 → `.codex`（机长默认 Codex）。
+    static func resolveAgentKind(_ detail: CrewDetail?) -> LocalCodingAgentKind {
+        LocalCodingAgentKind.captainDefault(detail?.crew.captainAgentKind)
     }
 
     // MARK: - 终端模式（原样保留：切换条 + 终端 + composer + 审批卡）

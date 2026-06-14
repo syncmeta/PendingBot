@@ -107,7 +107,6 @@ function mkProposal(overrides: Partial<Row> = {}): Row {
     log_payload: {
       proposed_by_bot_id: 'bot-aaa',
       proposed_name: '研究小队',
-      proposed_tag: '研究',
       proposed_working_directory: null,
       proposed_parent_crew_id: null,
       proposed_initial_brief: null,
@@ -191,16 +190,16 @@ function freshSeed(): FakeDb {
   db.rpcs = {
     create_crew_with_captain: (args) => {
       // Pin the contract: we always pass captain_source=reuse_bot with
-      // the proposing bot id, the conv's responsible subject, and
-      // runtime_location=local_host.
+      // the proposing bot id, the conv's responsible subject, and no
+      // machine id (null → RPC derives runtime_location=local_host).
       if (args.p_captain_source !== 'reuse_bot') {
         return { error: { code: '22023', message: 'expected captain_source=reuse_bot' } };
       }
       if (!args.p_captain_bot_id) {
         return { error: { code: '22023', message: 'missing captain bot id' } };
       }
-      if (args.p_runtime_location !== 'local_host') {
-        return { error: { code: '22023', message: 'expected local_host' } };
+      if (args.p_machine_id != null) {
+        return { error: { code: '22023', message: 'expected null machine id (local)' } };
       }
       return { data: 'crew-new-001' };
     },

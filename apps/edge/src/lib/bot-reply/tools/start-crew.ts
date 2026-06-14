@@ -6,7 +6,7 @@
 // a special "crew proposal" message into the current conversation:
 //
 //   role='log', log_kind='crew_proposal', log_payload = {
-//     proposed_by_bot_id, proposed_name, proposed_tag,
+//     proposed_by_bot_id, proposed_name,
 //     proposed_working_directory, proposed_parent_crew_id,
 //     proposed_initial_brief, status: 'pending'
 //   }
@@ -27,7 +27,6 @@ import { getPrompt } from '../../../llm/prompt-loader';
 import type { ToolCtx } from '../tool-runner';
 
 const NAME_MAX = 80;
-const TAG_MAX = 80;
 const WORKING_DIR_MAX = 2048;
 const BRIEF_MAX = 4_000;
 
@@ -52,7 +51,6 @@ export async function startCrewTool(
     return JSON.stringify({ error: `name exceeds ${NAME_MAX} chars` });
   }
 
-  const tag = trimOrUndefined(args.tag, TAG_MAX);
   const workingDirectory = trimOrUndefined(args.working_directory, WORKING_DIR_MAX);
   const initialBrief = trimOrUndefined(args.initial_brief, BRIEF_MAX);
 
@@ -93,7 +91,6 @@ export async function startCrewTool(
   const payload = {
     proposed_by_bot_id: ctx.botId,
     proposed_name: rawName,
-    proposed_tag: tag ?? null,
     proposed_working_directory: workingDirectory ?? null,
     proposed_parent_crew_id: parentCrewId ?? null,
     proposed_initial_brief: initialBrief ?? null,
