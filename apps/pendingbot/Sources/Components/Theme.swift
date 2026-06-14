@@ -2,6 +2,9 @@ import SwiftUI
 #if canImport(UIKit)
 import UIKit
 #endif
+#if canImport(AppKit)
+import AppKit
+#endif
 
 /// One place to change the look. Mirrors the design language used across
 /// the PendingBot reference + the web `tokens.css`: deep-jade accent on
@@ -149,9 +152,51 @@ enum Theme {
 
         /// Serif display (system New York). Used for titles, header marks,
         /// avatar initials. Feels editorial vs the regular SF Pro UI.
+        ///
+        /// 中英混排:**英文走衬线(New York)、中文走无衬线(PingFang)**。
+        /// iOS 上这是天然效果 —— New York 没有 CJK 字形,系统自动回退到 PingFang。
+        /// 但 macOS 的 `.serif` 设计对 CJK 回退到**宋体(Songti,衬线、显粗)**,
+        /// 于是中文标题在 Mac 上发"黑"。这里在 Mac 显式用 cascade list 把 CJK
+        /// 回退钉死成 PingFang SC,英文仍是 New York —— 与 iPhone 观感一致。
         static func serif(size: CGFloat, weight: Font.Weight = .semibold) -> Font {
-            system(size: size, weight: weight, design: .serif)
+            #if os(macOS)
+            return serifHan(size: size, weight: weight)
+            #else
+            return system(size: size, weight: weight, design: .serif)
+            #endif
         }
+
+        #if os(macOS)
+        /// macOS: New York(衬线)+ CJK 强制 PingFang SC 回退(见 `serif` 注释)。
+        private static func serifHan(size: CGFloat, weight: Font.Weight) -> Font {
+            let pt = sized(size)
+            let nsW = nsWeight(weight)
+            let base = NSFont.systemFont(ofSize: pt, weight: nsW)
+            let serifDesc = base.fontDescriptor.withDesign(.serif) ?? base.fontDescriptor
+            // PingFang 在前 → CJK 优先用 PingFang,而非系统默认的宋体衬线回退。
+            let han = NSFontDescriptor(fontAttributes: [
+                .family: "PingFang SC",
+                .traits: [NSFontDescriptor.TraitKey.weight: nsW.rawValue],
+            ])
+            let cascaded = serifDesc.addingAttributes([.cascadeList: [han]])
+            let font = NSFont(descriptor: cascaded, size: pt) ?? base
+            return Font(font)
+        }
+
+        private static func nsWeight(_ w: Font.Weight) -> NSFont.Weight {
+            switch w {
+            case .ultraLight: return .ultraLight
+            case .thin:       return .thin
+            case .light:      return .light
+            case .medium:     return .medium
+            case .semibold:   return .semibold
+            case .bold:       return .bold
+            case .heavy:      return .heavy
+            case .black:      return .black
+            default:          return .regular
+            }
+        }
+        #endif
 
         /// Rounded sans — softer than SF Pro, used for buttons, chip labels,
         /// nav, counters. Matches the warm palette.

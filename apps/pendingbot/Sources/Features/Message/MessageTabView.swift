@@ -1200,16 +1200,6 @@ private struct ConversationListRow: View {
 
     private var isGroupConv: Bool { conv.conversation_type == "group" }
 
-    /// macOS 的 PingFang semibold 比 iOS 同号明显更粗,会话标题在 Mac 上发"黑"。
-    /// Mac 退到 medium,与 iPhone 观感对齐;iOS 保持 semibold。
-    private var rowTitleWeight: Font.Weight {
-        #if os(macOS)
-        return .medium
-        #else
-        return .semibold
-        #endif
-    }
-
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             // user_user → peer's photo / generated; group → cluster
@@ -1229,14 +1219,10 @@ private struct ConversationListRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(rowTitle)
-                        // Sans, not serif: the serif design (New York) has no CJK
-                        // glyphs, so Chinese titles fall back to PingFang (sans) on
-                        // iOS but Songti (serif) on macOS — same code, different look.
-                        // System design renders sans for CJK on both.
-                        // 字重平台分叉:macOS 的 PingFang semibold 比 iOS 同名同号
-                        // 明显更粗(AppKit 无 UIKit 的视觉缩放),会话标题在 Mac 上
-                        // 发"黑"。Mac 退到 medium,与 iPhone 观感对齐。
-                        .font(Theme.Fonts.system(size: 16, weight: rowTitleWeight))
+                        // 英文衬线(New York)、中文无衬线(PingFang)。`serif` 在
+                        // Mac 上已用 cascade 把 CJK 钉到 PingFang(见 Theme.Fonts.serif),
+                        // 与好友列表标题、与 iPhone 观感统一,中文不再走宋体发"黑"。
+                        .font(Theme.Fonts.serif(size: 16, weight: .semibold))
                         .foregroundStyle(
                             rowTitleIsPlaceholder ? Theme.Palette.inkMuted : Theme.Palette.ink
                         )
