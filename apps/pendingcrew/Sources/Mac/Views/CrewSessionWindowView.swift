@@ -649,7 +649,7 @@ struct CrewSessionWindowView: View {
     }
 
     /// 手动启动机长（按钮兜底：建 crew 会自动起，这里给"机长退出后重启"用）。
-    /// 核心工序抽到 `LocalSessionLaunch.startCaptain` —— 与建 crew 自动起共用一份，
+    /// 核心工序在 `CrewSessionRunner.startCaptain` —— 与建 crew 自动起共用一份，
     /// 不分叉（chunk2 T3）。这里只补 view 持有的 starting / localError 反馈。
     private func startCaptain() async {
         guard let detail = crewStore.selectedDetail else { return }
@@ -657,8 +657,7 @@ struct CrewSessionWindowView: View {
         defer { starting = false }
         localError = nil
         do {
-            try await LocalSessionLaunch.startCaptain(
-                detail: detail, runner: sessionRunner, backend: appModel.backend)
+            try await sessionRunner.startCaptain(detail: detail, backend: appModel.backend)
         } catch {
             localError = error.localizedDescription
         }

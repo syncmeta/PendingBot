@@ -5,61 +5,6 @@ import Foundation
 /// 手动起（CrewSessionWindowView）与 relay task_request 自动起（CrewRelayAgent）
 /// 用同一份 —— comms 接线 / 世界观渲染不分叉。
 enum LocalSessionLaunch {
-    /// 机长起不来的可恢复错误（建 crew 自动起兜底/手动按钮共用）。
-    enum CaptainLaunchError: LocalizedError {
-        case noWorkingDirectory
-        var errorDescription: String? {
-            switch self {
-            case .noWorkingDirectory:
-                return "这个 crew 没有工作目录 —— 在建 crew 时设置后再启动 Captain。"
-            }
-        }
-    }
-
-    /// 启动机长 session —— 手动按钮、建 crew 自动起共用这一份（单一事实源）。
-    /// 已有在跑的 captain 直接返回（每 crew 同时只允许一个，防重）。无工作目录抛错。
-    ///
-    /// captain 与 worker 的差异只有两点:世界观后追加 captain persona
-    /// （`crew-captain.zh.md`），MCP helper 带 `--captain` 解锁 answer_decision
-    /// （chunk2 §2）。机长是调度者不改代码 —— 直接用 crew 目录,不开 isolation worktree。
-    /// `initialPrompt` 让它读白板 + `post_to_crew` 报到一句 —— "建 crew 即在群里发消息"
-    /// 走这条（不另写代码发系统消息，保持白板由 agent 自己写的一致语义）。
-    @MainActor
-    static func startCaptain(
-        detail: CrewDetail,
-        runner: CrewSessionRunner,
-        backend: PendingCrewBackend?
-    ) async throws {
-        let crewId = detail.crew.id
-        guard !runner.runs.contains(where: {
-            $0.crewId == crewId && $0.role == .captain && $0.status == .running
-        }) else { return }
-        guard let wd = detail.crew.workingDirectory, !wd.isEmpty else {
-            throw CaptainLaunchError.noWorkingDirectory
-        }
-        let workdir = URL(fileURLWithPath: (wd as NSString).expandingTildeInPath)
-        let localSessionId = "captain-" + String(UUID().uuidString.lowercased().prefix(8))
-        let initialPrompt = "你是本 crew 的机长。先用 read_whiteboard 了解群聊现状，然后简短报到（post_to_crew 一句）并待命。后续有待决策会通知你。"
-        // persona / members best-effort：加载失败不挡启动（只是少人设/世界观，与 worker 同策略）。
-        let persona = try? LocalPromptLoader().rawTemplate(name: "crew-captain", locale: "zh")
-        let members = (try? await backend?.listCrewMembers(crewId: crewId))?.members ?? []
-        var cfg = SessionConfig(kind: .claudeCode, initialPrompt: initialPrompt)
-        cfg.appendSystemPromptFile = renderWorldModelFile(
-            detail: detail, members: members, taskBrief: initialPrompt, workdir: workdir,
-            sessionId: localSessionId, runnerKind: .claudeCode, appendPersona: persona)
-        let comms = prepareLocalCommsConfig(crewId: crewId, sessionId: localSessionId, captain: true)
-        cfg.settingsFile = comms.settings
-        cfg.mcpConfigFile = comms.mcp
-        try await runner.start(
-            crewId: crewId,
-            sessionId: localSessionId,
-            config: cfg,
-            workingDirectory: workdir,
-            taskBrief: initialPrompt,
-            role: .captain
-        )
-    }
-
     /// 生成 per-session 的 settings.json（PostToolUse hook = 自身二进制 `--mcp-hook`，
     /// 每轮注入未读白板）+ mcp-config.json（自身二进制 `--mcp-serve`，post_to_crew/read_whiteboard）。
     /// helper = `Bundle.main.executablePath`（re-exec self：app 二进制兼当 helper，最自包含、

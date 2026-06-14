@@ -68,8 +68,7 @@ struct MacThreePaneView: View {
             guard let crewId = req else { return }
             Task {
                 if let detail = crewStore.details[crewId], detail.captain != nil {
-                    try? await LocalSessionLaunch.startCaptain(
-                        detail: detail, runner: sessionRunner, backend: model.backend)
+                    try? await sessionRunner.startCaptain(detail: detail, backend: model.backend)
                 }
                 crewStore.captainAutostartRequest = nil
             }
