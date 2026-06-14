@@ -32,12 +32,14 @@ struct MacThreePaneView: View {
         } detail: {
             CrewCenterView(inspectorPresented: $inspectorPresented)
                 .environmentObject(sessionRunner)
-                .navigationSplitViewColumnWidth(min: 480, ideal: 760)
+                .navigationSplitViewColumnWidth(min: 420, ideal: 560)
         }
         .inspector(isPresented: $inspectorPresented) {
             CrewSessionWindowView()
                 .environmentObject(sessionRunner)
-                .inspectorColumnWidth(min: 380, ideal: 520, max: 900)
+                // 收窄理想宽 —— 否则开 inspector 后(侧栏 280 + 中栏 + 终端)总宽
+                // 超出屏幕,窗口挂到屏幕右边外,inspector 内容被切。
+                .inspectorColumnWidth(min: 300, ideal: 360, max: 640)
         }
         .task {
             // 首次进入时把列表 + subjects 都拉一遍 —— subjects 用于创建

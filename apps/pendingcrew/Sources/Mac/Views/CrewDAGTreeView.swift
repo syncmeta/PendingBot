@@ -85,34 +85,29 @@ private struct CrewDAGNode: View {
         }
     }
 
-    /// 会话行样式(对齐 PendingBot `ConversationListRow`):36pt 头像 + serif-16
-    /// 标题 + footnote 副行 + 相对时间。前面留一个三角槽承载 DAG 展开/收起。
+    /// 会话行样式(对齐 PendingBot `ConversationListRow`):36pt 头像 + 无衬线-16
+    /// 标题 + 最近一条消息 + 位置标签 + 相对时间。三角槽**仅在有子时占位**——
+    /// 无子节点头像直接贴左,免左侧空白。
     private var row: some View {
         HStack(alignment: .top, spacing: 8) {
-            // disclosure 三角 —— 有可下钻子才显示,否则等宽占位对齐。顶部留白
-            // 让它大致对到头像竖直中线。
-            Group {
-                if !expandableChildren.isEmpty {
-                    Button { isExpanded.toggle() } label: {
-                        Image(systemName: "chevron.right")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(Theme.Palette.inkMuted)
-                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    }
-                    .buttonStyle(.plain)
-                } else {
-                    Color.clear
+            if !expandableChildren.isEmpty {
+                Button { isExpanded.toggle() } label: {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
                 }
+                .buttonStyle(.plain)
+                .frame(width: 12)
+                .padding(.top, 12)
             }
-            .frame(width: 12)
-            .padding(.top, 12)
 
             CrewGroupAvatar(seed: crew.id, size: 36)
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(crew.title)
-                        .font(Theme.Fonts.serif(size: 16, weight: .semibold))
+                        .font(Theme.Fonts.system(size: 16, weight: .semibold))
                         .foregroundStyle(Theme.Palette.ink)
                         .lineLimit(1)
                     Spacer(minLength: 8)
@@ -122,19 +117,20 @@ private struct CrewDAGNode: View {
                             .foregroundStyle(Theme.Palette.inkMuted)
                     }
                 }
-                HStack(alignment: .firstTextBaseline, spacing: 5) {
-                    Text(subtitleText)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(lastMessagePreview)
                         .font(Theme.Fonts.footnote)
                         .foregroundStyle(Theme.Palette.inkMuted)
                         .lineLimit(1)
                         .truncationMode(.tail)
+                    Spacer(minLength: 6)
                     if crew.parentCrewIds.count > 1 {
                         Image(systemName: "arrow.triangle.branch")
                             .font(Theme.Fonts.caption2)
                             .foregroundStyle(Theme.Palette.inkMuted)
                             .help("此 crew 挂在多个父 crew 之下,在每个父下都会出现")
                     }
-                    Spacer(minLength: 0)
+                    locationTag
                 }
             }
         }
@@ -148,11 +144,21 @@ private struct CrewDAGNode: View {
         .onTapGesture { crewStore.selectCrew(crew.id) }
     }
 
-    /// 副行文案:位置 + 标签 + 机长名(有就接上),当"消息预览"位用。
-    private var subtitleText: String {
-        var parts: [String] = [crew.runtimeLocationKind?.shortLabel ?? crew.runtimeLocation]
-        if let tag = crew.tag, !tag.isEmpty { parts.append(tag) }
-        return parts.joined(separator: " · ")
+    /// machine 位置标签(本机/云端),对齐 PendingBot 行右侧的"群/公/私"name pill。
+    private var locationTag: some View {
+        Text(crew.runtimeLocationKind?.shortLabel ?? crew.runtimeLocation)
+            .font(Theme.Fonts.rounded(size: 10, weight: .semibold))
+            .foregroundStyle(Theme.Palette.inkMuted)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(Theme.Palette.surfaceMuted))
+            .lineLimit(1)
+    }
+
+    /// 最近一条白板消息(本地 store);空则"还没有消息"。
+    private var lastMessagePreview: String {
+        let text = LocalWhiteboardStore.shared.list(crewId: crew.id).last?.text ?? ""
+        return text.isEmpty ? "还没有消息" : text
     }
 
     /// crew.updatedAt(ISO8601)→ 相对时间("3 分钟前"),解析失败留 nil。
