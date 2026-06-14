@@ -2121,6 +2121,60 @@ export type Database = {
         }
         Relationships: []
       }
+      machine: {
+        Row: {
+          created_at: string
+          device_id: string | null
+          display_name: string
+          fly_machine_id: string | null
+          id: string
+          kind: string
+          last_seen_at: string | null
+          status: string | null
+          subject_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          device_id?: string | null
+          display_name: string
+          fly_machine_id?: string | null
+          id?: string
+          kind: string
+          last_seen_at?: string | null
+          status?: string | null
+          subject_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          device_id?: string | null
+          display_name?: string
+          fly_machine_id?: string | null
+          id?: string
+          kind?: string
+          last_seen_at?: string | null
+          status?: string | null
+          subject_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "machine_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "bi_subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "machine_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       mcp_servers: {
         Row: {
           auth_header_name: string | null
@@ -3482,15 +3536,14 @@ export type Database = {
           cloud_machine_id: string | null
           conversation_id: string
           created_at: string
-          fly_machine_id: string | null
           initiator_bot_id: string | null
           initiator_type: string
           initiator_user_id: string | null
           local_master_enabled: boolean
+          machine_id: string | null
           master_bot_id: string | null
           master_member_id: string | null
           parent_temporary_group_id: string | null
-          peer_device_id: string | null
           permission_mode: string
           responsibility_mode: string
           responsible_subject_id: string | null
@@ -3499,7 +3552,6 @@ export type Database = {
           runtime_location: string
           source_conversation_id: string | null
           status: string
-          tag: string | null
           temporary_kind: string
           title: string | null
           updated_at: string
@@ -3511,15 +3563,14 @@ export type Database = {
           cloud_machine_id?: string | null
           conversation_id: string
           created_at?: string
-          fly_machine_id?: string | null
           initiator_bot_id?: string | null
           initiator_type: string
           initiator_user_id?: string | null
           local_master_enabled?: boolean
+          machine_id?: string | null
           master_bot_id?: string | null
           master_member_id?: string | null
           parent_temporary_group_id?: string | null
-          peer_device_id?: string | null
           permission_mode?: string
           responsibility_mode?: string
           responsible_subject_id?: string | null
@@ -3528,7 +3579,6 @@ export type Database = {
           runtime_location?: string
           source_conversation_id?: string | null
           status?: string
-          tag?: string | null
           temporary_kind: string
           title?: string | null
           updated_at?: string
@@ -3540,15 +3590,14 @@ export type Database = {
           cloud_machine_id?: string | null
           conversation_id?: string
           created_at?: string
-          fly_machine_id?: string | null
           initiator_bot_id?: string | null
           initiator_type?: string
           initiator_user_id?: string | null
           local_master_enabled?: boolean
+          machine_id?: string | null
           master_bot_id?: string | null
           master_member_id?: string | null
           parent_temporary_group_id?: string | null
-          peer_device_id?: string | null
           permission_mode?: string
           responsibility_mode?: string
           responsible_subject_id?: string | null
@@ -3557,7 +3606,6 @@ export type Database = {
           runtime_location?: string
           source_conversation_id?: string | null
           status?: string
-          tag?: string | null
           temporary_kind?: string
           title?: string | null
           updated_at?: string
@@ -3583,6 +3631,13 @@ export type Database = {
             columns: ["initiator_bot_id"]
             isOneToOne: false
             referencedRelation: "bots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "temporary_group_meta_machine_id_fkey"
+            columns: ["machine_id"]
+            isOneToOne: false
+            referencedRelation: "machine"
             referencedColumns: ["id"]
           },
           {
@@ -4571,11 +4626,8 @@ export type Database = {
           p_captain_bot_id?: string
           p_captain_source?: string
           p_captain_template_name?: string
-          p_fly_machine_id?: string
-          p_peer_device_id?: string
+          p_machine_id?: string
           p_responsible_subject_id: string
-          p_runtime_location?: string
-          p_tag?: string
           p_title: string
           p_working_directory?: string
         }
@@ -5021,6 +5073,14 @@ export type Database = {
       subject_user_has_role: {
         Args: { p_roles: string[]; p_subject_id: string; p_user_id: string }
         Returns: boolean
+      }
+      upsert_self_machine: {
+        Args: {
+          p_device_id: string
+          p_display_name: string
+          p_subject_id: string
+        }
+        Returns: string
       }
       user_can_control_crew_by_responsibility: {
         Args: { p_crew_conversation_id: string; p_user_id: string }
