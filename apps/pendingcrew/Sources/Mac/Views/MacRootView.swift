@@ -76,18 +76,30 @@ struct MacThreePaneView: View {
         }
     }
 
-    /// 程序化触发一次窗口 relayout —— 把内容宽 +1 再 -1(下一 runloop 复原)，
-    /// 逼 NavigationSplitView 重跑约束，让 inspector 列宽在弹出当帧就套用，
-    /// 不必用户手动拖一下 divider 才"启用"自适应。
+    /// 程序化"拖一下 inspector 的 divider"—— SwiftUI inspector 首帧不套用列宽，
+    /// 但只要 divider 被动一下，SwiftUI 就会把它 snap 回理想宽(这正是用户手动
+    /// "拖一点点马上就正常"的机理)。改窗口大小碰不到 divider 所以无效；这里直接
+    /// 在 AppKit 层把每个横向 NSSplitView 的最后一条 divider +1 再复位，触发 snap。
     private func nudgeRelayout() {
         DispatchQueue.main.async {
             guard let window = hostWindow else { return }
-            let size = window.frame.size
-            window.setContentSize(NSSize(width: window.frame.width + 1, height: size.height))
-            DispatchQueue.main.async {
-                window.setContentSize(NSSize(width: window.frame.width - 1, height: size.height))
+            for sv in Self.splitViews(in: window.contentView)
+            where sv.isVertical && sv.arrangedSubviews.count >= 2 {
+                let idx = sv.arrangedSubviews.count - 2 // 最后一条 divider
+                let pos = sv.arrangedSubviews[idx].frame.maxX
+                sv.setPosition(pos + 1, ofDividerAt: idx)
+                DispatchQueue.main.async { sv.setPosition(pos, ofDividerAt: idx) }
             }
         }
+    }
+
+    /// 在视图树里递归收集所有 NSSplitView(NavigationSplitView / inspector 都是它撑的)。
+    private static func splitViews(in view: NSView?) -> [NSSplitView] {
+        guard let view else { return [] }
+        var result: [NSSplitView] = []
+        if let sv = view as? NSSplitView { result.append(sv) }
+        for sub in view.subviews { result.append(contentsOf: splitViews(in: sub)) }
+        return result
     }
 }
 
