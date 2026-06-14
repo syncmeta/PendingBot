@@ -19,14 +19,16 @@ struct CrewSidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            List(selection: selectionBinding) {
+            List {
                 Section {
                     if crewStore.crews.isEmpty {
                         emptyRow
                     } else {
-                        ForEach(crewStore.crews) { crew in
-                            CrewRow(crew: crew).tag(crew.id)
-                        }
+                        // 本地 DAG 折叠树 —— 根 = 无父 crew,子按 parentCrewIds 反推
+                        // 嵌套。选中态 / 展开态都在 CrewDAGTreeView 内部处理(不走
+                        // List(selection:),因为嵌套自定义行用 List 选择会错位)。
+                        CrewDAGTreeView()
+                            .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
                     }
                 } header: {
                     Text("Crew")
@@ -112,13 +114,6 @@ struct CrewSidebarView: View {
         } message: {
             Text("本机授权凭据可能已失效或网络异常，请改用扫码登录。")
         }
-    }
-
-    private var selectionBinding: Binding<String?> {
-        Binding(
-            get: { crewStore.selectedCrewId },
-            set: { crewStore.selectCrew($0) }
-        )
     }
 
     /// 接合 v2：按 `isAuthenticated`(能力叠加)切两种 placeholder ——
@@ -290,30 +285,4 @@ struct CrewSidebarView: View {
     }
 }
 
-private struct CrewRow: View {
-    let crew: CrewSummary
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 8) {
-            Image(systemName: crew.runtimeLocationKind?.displayIcon ?? "questionmark.circle")
-                .foregroundStyle(.secondary)
-                .frame(width: 18)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(crew.title)
-                    .font(.callout)
-                    .lineLimit(1)
-                HStack(spacing: 4) {
-                    Text(crew.runtimeLocationKind?.shortLabel ?? crew.runtimeLocation)
-                    if let tag = crew.tag, !tag.isEmpty {
-                        Text("·")
-                        Text(tag).lineLimit(1)
-                    }
-                }
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            }
-        }
-        .padding(.vertical, 2)
-    }
-}
 #endif

@@ -13,6 +13,11 @@ import UniformTypeIdentifiers
 struct CrewChatView: View {
     let crewId: String
     let crewTitle: String
+    /// macOS:点 session(右侧成员行 / session 气泡)时打开 inspector 并选中。
+    /// 由 CrewCenterView 注入(用它持有的 inspectorPresented + sessionRunner)。iOS 传 nil。
+    var onOpenSession: ((UUID) -> Void)? = nil
+    /// macOS:成员区「+」起新 session(进新建态 + 弹 inspector)。iOS 传 nil。
+    var onNewSession: (() -> Void)? = nil
 
     @EnvironmentObject private var appModel: AppModel
     #if os(macOS)
@@ -76,36 +81,7 @@ struct CrewChatView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            if !members.isEmpty {
-                CrewRosterBar(members: members, captainBotId: captainBotId)
-                Divider()
-            }
-            timeline
-            if let errorText = loadError {
-                Text(errorText)
-                    .font(Theme.Fonts.caption)
-                    .foregroundStyle(.red)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 14)
-                    .padding(.top, 4)
-            }
-            Divider()
-            ComposerView(
-                input: $draft,
-                pending: pendingForDisplay,
-                photoItems: $photoItems,
-                cameraImage: $cameraImage,
-                showFileImporter: $showFileImporter,
-                showPhotoPicker: $showPhotoPicker,
-                showCamera: $showCamera,
-                canSend: canSend,
-                onSend: { Task { await send() } },
-                isStreaming: false,
-                showsAttachments: true,
-                placeholder: "发消息…（不 @ = 广播给所有 session）"
-            )
-        }
+        content
         .background(Theme.Palette.canvas)
         .task(id: crewId) { await pollLoop() }
         // File importer — .fileImporter is available on iOS 14+ and macOS 11+.
@@ -129,6 +105,60 @@ struct CrewChatView: View {
         #endif
     }
 
+    @ViewBuilder
+    private var content: some View {
+        #if os(macOS)
+        // 成员列表 + 待审批已搬进 inspector(CrewSessionWindowView 的成员列表模式)。
+        // 中栏只留群聊本体：消息流 + composer，开 inspector 时窗口更省宽。
+        VStack(spacing: 0) {
+            timeline
+            errorBar
+            Divider()
+            composer
+        }
+        #else
+        VStack(spacing: 0) {
+            if !members.isEmpty {
+                CrewRosterBar(members: members, captainBotId: captainBotId)
+                Divider()
+            }
+            timeline
+            errorBar
+            Divider()
+            composer
+        }
+        #endif
+    }
+
+    @ViewBuilder
+    private var errorBar: some View {
+        if let errorText = loadError {
+            Text(errorText)
+                .font(Theme.Fonts.caption)
+                .foregroundStyle(.red)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+                .padding(.top, 4)
+        }
+    }
+
+    private var composer: some View {
+        ComposerView(
+            input: $draft,
+            pending: pendingForDisplay,
+            photoItems: $photoItems,
+            cameraImage: $cameraImage,
+            showFileImporter: $showFileImporter,
+            showPhotoPicker: $showPhotoPicker,
+            showCamera: $showCamera,
+            canSend: canSend,
+            onSend: { Task { await send() } },
+            isStreaming: false,
+            showsAttachments: true,
+            placeholder: "发消息…（不 @ = 广播给所有 session）"
+        )
+    }
+
     // 本机用户哨兵 id —— 接合 v2 后 macOS 白板恒为本地，本机人类消息都标
     // `LocalWhiteboardStore.localUserId`，CrewSenderResolver 据此把自己的
     // 消息识别成"自己"(右对齐、无头像)。
@@ -141,13 +171,22 @@ struct CrewChatView: View {
         #endif
     }
 
+    /// 时间线渲染的消息。macOS 把交互卡滤掉(挪去右上待审批区);iOS 保留 inline。
+    private var timelineEntries: [CrewWhiteboardEntry] {
+        #if os(macOS)
+        return entries.filter { !$0.isInteraction }
+        #else
+        return entries
+        #endif
+    }
+
     private var timeline: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    if entries.isEmpty { emptyState }
-                    ForEach(Array(entries.enumerated()), id: \.element.id) { idx, entry in
-                        let prevDate = idx > 0 ? CrewTimeSeparator.parse(entries[idx - 1].createdAt) : nil
+                    if timelineEntries.isEmpty { emptyState }
+                    ForEach(Array(timelineEntries.enumerated()), id: \.element.id) { idx, entry in
+                        let prevDate = idx > 0 ? CrewTimeSeparator.parse(timelineEntries[idx - 1].createdAt) : nil
                         if let cur = CrewTimeSeparator.parse(entry.createdAt),
                            CrewTimeSeparator.needsSeparator(prev: prevDate, cur: cur) {
                             CrewTimeSeparator(date: cur)
@@ -158,7 +197,7 @@ struct CrewChatView: View {
                 }
                 .padding(.vertical, 10)
             }
-            .onChange(of: entries.count) { _, _ in
+            .onChange(of: timelineEntries.count) { _, _ in
                 withAnimation(.linear(duration: 0.05)) { proxy.scrollTo("tail", anchor: .bottom) }
             }
         }
@@ -198,7 +237,7 @@ struct CrewChatView: View {
                     .contentShape(Rectangle())
                     .onTapGesture {
                         if let run = sessionRunner.runs.first(where: { $0.sessionId == senderSessionId }) {
-                            sessionRunner.select(run.runID)
+                            onOpenSession?(run.runID)
                         }
                     }
             } else {

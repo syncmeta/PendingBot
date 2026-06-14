@@ -108,6 +108,59 @@ final class LocalCrewStore {
         return CreateCrewResponse(crewId: id, captainBotId: captainBotId)
     }
 
+    // MARK: - 本地 DAG 父边
+
+    /// 把 `parentCrewId` 加进 `crewId` 的父边集合(去重)。
+    ///
+    /// **禁环**:若 `parentCrewId` 已经是 `crewId` 的后代(沿 children 向下能
+    /// 到达),挂上去会成环 —— 拒绝并抛 `LocalCrewStoreError.wouldCreateCycle`。
+    /// children 由「谁的 parentCrewIds 含本 crew」反推,所以"后代"判定走
+    /// `descendants(of:)`。自挂自(crewId == parentCrewId)也算环,拒绝。
+    func attachParent(crewId: String, parentCrewId: String) throws {
+        guard crewId != parentCrewId else {
+            throw LocalCrewStoreError.wouldCreateCycle
+        }
+        guard crews[crewId] != nil else {
+            throw LocalCrewStoreError.crewNotFound(crewId)
+        }
+        guard crews[parentCrewId] != nil else {
+            throw LocalCrewStoreError.crewNotFound(parentCrewId)
+        }
+        // parentCrewId 是 crewId 的后代 → 反向连边会成环。
+        if descendants(of: crewId).contains(parentCrewId) {
+            throw LocalCrewStoreError.wouldCreateCycle
+        }
+        guard var crew = crews[crewId] else { return }
+        guard !crew.parentCrewIds.contains(parentCrewId) else { return } // 已挂,幂等
+        crew.parentCrewIds.append(parentCrewId)
+        crews[crewId] = crew
+        persistToDisk()
+    }
+
+    /// 移除一条父边。父边不存在则无操作。
+    func detachParent(crewId: String, parentCrewId: String) {
+        guard var crew = crews[crewId],
+              let idx = crew.parentCrewIds.firstIndex(of: parentCrewId) else { return }
+        crew.parentCrewIds.remove(at: idx)
+        crews[crewId] = crew
+        persistToDisk()
+    }
+
+    /// `crewId` 的全部后代 id(沿 children 向下 BFS)。child = 其
+    /// parentCrewIds 含某 crew 的那些 crew。带 visited 自保防脏数据成环。
+    func descendants(of crewId: String) -> Set<String> {
+        var result: Set<String> = []
+        var queue: [String] = [crewId]
+        while let current = queue.popLast() {
+            for (id, crew) in crews where crew.parentCrewIds.contains(current) {
+                if result.insert(id).inserted {
+                    queue.append(id)
+                }
+            }
+        }
+        return result
+    }
+
     // MARK: - Relay 绑定（接合 v2 block 3：edge 信箱）
 
     /// 把本地 crew 绑到 edge 侧 relay crew conversation（「接入 PendingBot」
@@ -235,6 +288,11 @@ private struct LocalCrew: Codable, Equatable {
     let captainName: String?
     let createdAt: String
     let updatedAt: String
+    /// 本地 crew DAG 的**父边**:本 crew 挂在哪些父 crew 之下(crew id 列表)。
+    /// 「家」在本地 —— DAG 组织模型不走 edge,纯本地持久化。children 不存,渲染
+    /// 时从「谁的 parentCrewIds 含本 crew」反推。旧 JSON 缺此键 → 默认空数组
+    /// (= 根 crew),不破坏 decode。
+    var parentCrewIds: [String] = []
     // 接合 v2 block 3：edge relay 信箱绑定（optional → 旧 JSON 缺键向后兼容）。
     /// 绑定的 edge crew conversation id（「接入 PendingBot」后写入）。
     var remoteConversationId: String? = nil
@@ -244,6 +302,62 @@ private struct LocalCrew: Codable, Equatable {
     var relayPushedThroughId: String? = nil
     /// 已处理过的 task_request 远端消息 id（#242 遥控 v1，FIFO 裁剪留 200）。
     var processedTaskRequestIds: [String]? = nil
+
+    /// memberwise init —— `createCrew` 等内部构造点用。父边默认空(新建 = 根)。
+    init(
+        id: String,
+        title: String,
+        responsibleSubjectId: String,
+        runtimeLocation: String,
+        workingDirectory: String?,
+        tag: String?,
+        captainBotId: String?,
+        captainName: String?,
+        createdAt: String,
+        updatedAt: String,
+        parentCrewIds: [String] = [],
+        remoteConversationId: String? = nil,
+        relayCursor: String? = nil,
+        relayPushedThroughId: String? = nil,
+        processedTaskRequestIds: [String]? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.responsibleSubjectId = responsibleSubjectId
+        self.runtimeLocation = runtimeLocation
+        self.workingDirectory = workingDirectory
+        self.tag = tag
+        self.captainBotId = captainBotId
+        self.captainName = captainName
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.parentCrewIds = parentCrewIds
+        self.remoteConversationId = remoteConversationId
+        self.relayCursor = relayCursor
+        self.relayPushedThroughId = relayPushedThroughId
+        self.processedTaskRequestIds = processedTaskRequestIds
+    }
+
+    /// 显式 decoder —— 非 optional 的 `parentCrewIds` 在旧 JSON(无此键)里
+    /// 合成 Codable 会抛 keyNotFound,这里用 decodeIfPresent ?? [] 兜底。
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        title = try c.decode(String.self, forKey: .title)
+        responsibleSubjectId = try c.decode(String.self, forKey: .responsibleSubjectId)
+        runtimeLocation = try c.decode(String.self, forKey: .runtimeLocation)
+        workingDirectory = try c.decodeIfPresent(String.self, forKey: .workingDirectory)
+        tag = try c.decodeIfPresent(String.self, forKey: .tag)
+        captainBotId = try c.decodeIfPresent(String.self, forKey: .captainBotId)
+        captainName = try c.decodeIfPresent(String.self, forKey: .captainName)
+        createdAt = try c.decode(String.self, forKey: .createdAt)
+        updatedAt = try c.decode(String.self, forKey: .updatedAt)
+        parentCrewIds = try c.decodeIfPresent([String].self, forKey: .parentCrewIds) ?? []
+        remoteConversationId = try c.decodeIfPresent(String.self, forKey: .remoteConversationId)
+        relayCursor = try c.decodeIfPresent(String.self, forKey: .relayCursor)
+        relayPushedThroughId = try c.decodeIfPresent(String.self, forKey: .relayPushedThroughId)
+        processedTaskRequestIds = try c.decodeIfPresent([String].self, forKey: .processedTaskRequestIds)
+    }
 
     var summary: CrewSummary {
         CrewSummary(
@@ -255,7 +369,8 @@ private struct LocalCrew: Codable, Equatable {
             captainBotId: captainBotId,
             status: "active",
             createdAt: createdAt,
-            updatedAt: updatedAt
+            updatedAt: updatedAt,
+            parentCrewIds: parentCrewIds
         )
     }
 
@@ -311,4 +426,21 @@ private struct LocalCrewFile: Codable {
     /// schema 版本号,以后 shape 改了走 migration。
     let version: Int
     let crews: [LocalCrew]
+}
+
+/// 本地 crew store 的错误。目前只覆盖 DAG 父边操作。
+enum LocalCrewStoreError: LocalizedError {
+    /// 挂父边会让本地 DAG 成环(parentCrewId 是 crewId 的后代,或自挂自)。
+    case wouldCreateCycle
+    /// 引用了不存在的本地 crew。
+    case crewNotFound(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .wouldCreateCycle:
+            return "挂到这个父 crew 会形成环(它已经是当前 crew 的子孙)"
+        case .crewNotFound(let id):
+            return "本地 crew \(id) 不存在"
+        }
+    }
 }

@@ -55,6 +55,18 @@ final class CrewSessionRunner: ObservableObject {
     @Published private(set) var runs: [CrewSessionRun] = []
     @Published var selectedRunId: UUID?
 
+    /// 「新建 session」态：inspector 显示零配置 composer 而非某个 run。由 roster /
+    /// 切换条的「+」置 true，启动成功或切到某个 run 时复位。UI 选择态（与
+    /// `selectedRunId` 同类），放这里让 roster（开 inspector 的一端）与 inspector
+    /// composer（消费的一端）无需额外 binding 即可共享。
+    @Published var isComposingNew = false
+
+    /// inspector 内的模式开关：`false`=成员列表模式（平时看 roster + 待审批），
+    /// `true`=终端模式（看某个 session 的终端 + composer）。点 session 行 / 起新
+    /// session 翻 true；inspector 顶「‹ 成员」返回翻 false。toolbar 的「Session 终端」
+    /// 开关只翻 inspector 呈现态，不强制 true —— 让用户先落在成员列表。
+    @Published var viewingTerminal = false
+
     /// 前台 run：选中的那个；没选中（或选中的已被移除）时回退最后一个。
     /// 保留这个名字让既有 call site（composer / auto-claim）继续编译。
     var current: CrewSessionRun? {
@@ -66,9 +78,15 @@ final class CrewSessionRunner: ObservableObject {
 
     init() {}
 
-    /// 切换前台 run。
+    /// 切换前台 run（退出「新建」态）。
     func select(_ runId: UUID) {
         selectedRunId = runId
+        isComposingNew = false
+    }
+
+    /// 进入「新建 session」态（composer 显零配置启动面）。
+    func composeNew() {
+        isComposingNew = true
     }
 
     /// 停掉指定 run（保留在列表里，状态落 cancelled）。
@@ -141,6 +159,7 @@ final class CrewSessionRunner: ObservableObject {
         // 停止/移除入口，不会变 orphan）。
         runs.append(run)
         selectedRunId = run.runID
+        isComposingNew = false
     }
 
     enum RunnerError: LocalizedError {

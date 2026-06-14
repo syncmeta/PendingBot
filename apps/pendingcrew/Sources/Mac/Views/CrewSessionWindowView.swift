@@ -1,13 +1,23 @@
 #if os(macOS)
 import SwiftUI
 
-/// 右栏：当前 session 的内嵌终端视图。
+/// 右栏（inspector）：两模式合一。
 ///
-/// 这一层只观察 `CrewSessionRunner.current`（哪个 run 在前台）。具体 run 的
+/// - **成员列表模式**（`sessionRunner.viewingTerminal == false`，平时）：顶部
+///   ⚓启动 Captain + 「+ 新 session」，下面是待审批区 + crew 成员富列表（session
+///   行带简介 + 最新一步动作，可点进终端）。
+/// - **终端模式**（`viewingTerminal == true`）：顶部「‹ 成员」返回，下面是原样的
+///   session 切换条 + 终端 + composer + 内联审批卡。
+///
+/// 终端那一层只观察 `CrewSessionRunner.current`（哪个 run 在前台）。具体 run 的
 /// status 变化由内层 `SessionRunContentView` 通过 `@ObservedObject` 观察 ——
 /// **必须分两层**：`CrewSessionRun` 是嵌套的 ObservableObject，父 view 只
 /// `@EnvironmentObject` 持有 runner 时不会订阅到 run 自己的 `@Published`，否则
 /// status 更新了 UI 不刷新。
+///
+/// **重复轮询说明**：成员列表模式这里自己 poll 本 crew 的白板/roster
+/// （`listCrewWhiteboard` / `listCrewMembers`），中栏 CrewChatView 也在 poll 同一
+/// 份数据 —— 两端各拉各的。v1 单用户低频可接受，未做共享数据层的重构。
 struct CrewSessionWindowView: View {
     @EnvironmentObject private var sessionRunner: CrewSessionRunner
     @EnvironmentObject private var appModel: AppModel
@@ -17,16 +27,25 @@ struct CrewSessionWindowView: View {
     @State private var starting = false
     @State private var localError: String?
     @State private var selectedKind: LocalCodingAgentKind = .claudeCode
+
+    // MARK: - 成员列表模式 state（自轮询白板 + roster，与中栏各拉各的）
+
+    /// 本 crew 白板条目（滤出 isInteraction 当待审批，其余拿来取「最新一步动作」）。
+    @State private var entries: [CrewWhiteboardEntry] = []
+    /// 本 crew server 成员名册。
+    @State private var members: [CrewMember] = []
+    @State private var captainBotId: String?
+    /// 待审批卡的回复草稿，按 permission_request_id 存。
+    @State private var replyDrafts: [String: String] = [:]
+    private let rosterPollInterval: UInt64 = 3_000_000_000 // 3s
     /// Sessions this app has already claimed+run (or is running), so the
     /// auto-claim loop (K: captain-created queued sessions) doesn't double-run
     /// them. Includes both manual starts and auto-claimed ones.
     @State private var handledSessionIds: Set<String> = []
-    /// chunk2 T5（captain 唤醒=app 注入）：已通知过 captain 的 decision id ——
-    /// 防止每个 tick 重复注入同一条待决策。
-    @State private var notifiedDecisionIds: Set<String> = []
-    /// 跨进程轮询（helper 写 LocalApprovalStore 文件、本进程读）—— 2s 检查
-    /// 新待决策并注入 captain PTY。与 SessionApprovalCardsView 的 1.5s 同套路。
-    private let captainTick = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
+    /// 未读角标刷新 ticker（chunk2 T6）—— 仅驱动 inspector 里切换条的角标重算
+    /// （store 数据在文件里，无 ObservableObject 推送）。captain 唤醒不在这——它
+    /// 必须不依赖 inspector 是否打开，已搬到常驻的 CrewCenterView。
+    private let badgeTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
     /// 未读角标的轻量刷新计数（chunk2 T6）—— 每个 tick 自增，逼 badgeCount 重算。
     @State private var badgeTick = 0
 
@@ -35,37 +54,26 @@ struct CrewSessionWindowView: View {
     /// session**（零配置，用 crew 默认目录/runner/权限模式；无标题、无单独的
     /// 「新建」表单）。运行中再发 = 直接把文本注入终端续聊。
     var body: some View {
-        VStack(spacing: 0) {
-            // 选中 crew 就渲染 —— 零 run 时也得有 ⚓ 启动 Captain 入口
-            // （旧条件 !runs.isEmpty 让启动按钮在空列表时根本不可达）。
-            if crewStore.selectedDetail != nil {
-                sessionBar
-                Divider()
-            }
-            if let run = sessionRunner.current {
-                // `.id(run.runID)` 强制换 run 时整个终端视图重建 —— 否则 SwiftUI
-                // 复用同一个 NSViewRepresentable，切换条点了终端不换。
-                SessionRunContentView(run: run)
-                    .id(run.runID)
-                // 内联待办卡片：本 session 调 ask / 撞权限被拦时，就地答（写 LocalApprovalStore
-                // 解 helper 的 long-poll）。接合 v2：comms/审批恒为本地，不再按 mode 门禁。
-                SessionApprovalCardsView(crewId: run.crewId, sessionId: run.sessionId)
+        Group {
+            if sessionRunner.viewingTerminal {
+                terminalMode
             } else {
-                idleState
+                memberListMode
             }
-            Divider()
-            composer
         }
-        .navigationTitle("Session")
+        // 填满 inspector 栏 —— 内容是弹性的，跟随固定列宽布局，不溢出。
+        .frame(maxWidth: .infinity)
+        // 无 navigationTitle —— 这是 inspector 内容,标题会漏到主窗标题栏(显成
+        // "Session" 盖掉 crew 名)。窗标题由中栏 toolbar 的 crew 名负责。
         // K (edge→Mac channel): for the selected crew, auto-claim + run sessions
         // the captain queued on the server (status='queued'). local_host = this
         // Mac is the executor; the captain just creates the queued row on edge.
         .task(id: crewStore.selectedDetail?.crew.id) { await autoClaimLoop() }
-        // chunk2 T5：captain 唤醒 = app 注入。本地 BYOK 模式下轮询待决策，
-        // 有新的（非 captain 自己 raise 的）就把提示注入 captain 的 PTY。
-        .onReceive(captainTick) { _ in
-            notifyCaptainOfNewDecisions()
-            badgeTick &+= 1 // 未读角标随同一拍刷新（T6）
+        // 成员列表模式要的白板/roster 数据 —— 自轮询（与中栏各拉各的，见类型注释）。
+        .task(id: crewStore.selectedDetail?.crew.id) { await rosterPollLoop() }
+        // 未读角标随 ticker 刷新（T6）。captain 唤醒已移到 CrewCenterView。
+        .onReceive(badgeTimer) { _ in
+            badgeTick &+= 1
         }
         // 切前台 = 看过了：清掉新选中 run 的未读（T6）。
         .onChange(of: sessionRunner.selectedRunId) { _, newId in
@@ -75,26 +83,358 @@ struct CrewSessionWindowView: View {
         }
     }
 
-    /// chunk2 T5：发现新待决策 → 注入运行中的 captain session（spec §2 唤醒=app 注入）。
-    /// 没有在跑的 captain 就什么都不做（等 captain 启动后第一个 tick 再补通知）。
-    private func notifyCaptainOfNewDecisions() {
-        guard let crewId = crewStore.selectedDetail?.crew.id,
-              let captainRun = sessionRunner.runs.first(where: {
-                  $0.crewId == crewId && $0.role == .captain && $0.status == .running
-              })
-        else { return }
-        let items = LocalApprovalStore.shared.pending(crewId: crewId).filter {
-            $0.kind == "decision"
-                && $0.sessionId != captainRun.sessionId
-                && !notifiedDecisionIds.contains($0.id)
-        }
-        for item in items {
-            captainRun.send("有新的待决策 #\(item.id)（来自 session \(item.sessionId)）：\(item.summary)\n能拍板就用 answer_decision 工具答它（reqId=\(item.id)）；拍不了就用 post_to_crew 发消息 @human 说明需要人类决策的理由与你的建议。")
-            notifiedDecisionIds.insert(item.id)
+    // MARK: - 终端模式（原样保留：切换条 + 终端 + composer + 审批卡）
+
+    private var terminalMode: some View {
+        HStack(spacing: 0) {
+            // 左侧成员头像竖条 —— 始终保留(含新建 session 占位),当前 session/新建态高亮。
+            terminalRail
+            Divider()
+            terminalContent
         }
     }
 
-    private var isRunning: Bool { sessionRunner.current?.status == .running }
+    /// 终端模式左侧的成员头像竖条:顶「‹」回成员列表;成员头像(session 可点切换,
+    /// 选中高亮);末尾「+」起新 session(新建态时「+」高亮)。
+    private var terminalRail: some View {
+        VStack(spacing: 0) {
+            Button { sessionRunner.viewingTerminal = false } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.inkMuted)
+            }
+            .buttonStyle(.plain)
+            .padding(.vertical, 10)
+            .help("返回成员列表")
+            ScrollView {
+                LazyVStack(spacing: 8) {
+                    ForEach(memberRowItems) { railAvatar($0) }
+                    // 新建 session 占位 —— composing 时高亮,代表"正在建的那个 session"。
+                    Button {
+                        sessionRunner.composeNew()
+                        sessionRunner.viewingTerminal = true
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Theme.Palette.inkMuted)
+                            .frame(width: 34, height: 34)
+                            .background(
+                                Circle().fill(sessionRunner.isComposingNew
+                                              ? Theme.Palette.accentBg : .clear))
+                            .overlay(
+                                Circle().strokeBorder(
+                                    Theme.Palette.inkMuted.opacity(0.4),
+                                    style: StrokeStyle(lineWidth: 1.5, dash: [3, 2])))
+                    }
+                    .buttonStyle(.plain)
+                    .help("起一个新 session")
+                }
+                .padding(.vertical, 8)
+            }
+        }
+        .frame(width: 52)
+    }
+
+    @ViewBuilder
+    private func railAvatar(_ item: MemberRowItem) -> some View {
+        let isSelected = item.run != nil
+            && item.run?.runID == sessionRunner.selectedRunId && !sessionRunner.isComposingNew
+        let av = CrewAvatarBadges(sender: item.sender, size: 34)
+            .padding(3)
+            .background(Circle().fill(isSelected ? Theme.Palette.accentBg : .clear))
+        if let run = item.run {
+            Button { sessionRunner.select(run.runID) } label: { av }
+                .buttonStyle(.plain)
+                .help(item.sender.displayName)
+        } else {
+            av.help(item.sender.displayName)
+        }
+    }
+
+    private var terminalContent: some View {
+        VStack(spacing: 0) {
+            if sessionRunner.isComposingNew {
+                // 「新建 session」态：显零配置启动面（composer 在下方）。
+                idleState
+            } else if let run = sessionRunner.current {
+                // `.id(run.runID)` 强制换 run 时整个终端视图重建。
+                SessionRunContentView(run: run)
+                    .id(run.runID)
+                SessionApprovalCardsView(crewId: run.crewId, sessionId: run.sessionId)
+            } else {
+                idleState
+            }
+            Divider()
+            composer
+        }
+    }
+
+    // MARK: - 成员列表模式（平时：启动入口 + 待审批 + 成员富列表）
+
+    private var memberListMode: some View {
+        VStack(spacing: 0) {
+            // 顶部：⚓启动 Captain + 「+ 新 session」。
+            if crewStore.selectedDetail != nil {
+                memberListHeader
+                Divider()
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    if !pendingInteractions.isEmpty {
+                        approvalsSection
+                        Divider()
+                    }
+                    memberSection
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .overlay {
+            if crewStore.selectedDetail == nil {
+                Text("先在左侧选一个 crew").foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var memberListHeader: some View {
+        HStack(spacing: 6) {
+            if !hasRunningCaptain {
+                Button {
+                    Task { await startCaptain() }
+                } label: {
+                    Text("⚓ 启动 Captain")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.bordered)
+                .tint(.indigo)
+                .controlSize(.small)
+                .disabled(starting)
+                .help("起一个机长 session：读白板、报到、答复待决策")
+            }
+            Spacer()
+            Button {
+                sessionRunner.composeNew()
+                sessionRunner.viewingTerminal = true
+            } label: {
+                Label("新 session", systemImage: "plus")
+                    .font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(starting)
+            .help("起一个新 session（与在跑的并存）")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
+    /// 时间线里需要人答的交互卡 —— 滤出来挂待审批区（从中栏搬来）。
+    private var pendingInteractions: [CrewWhiteboardEntry] {
+        entries.filter { $0.isInteraction }
+    }
+
+    private var approvalsSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("待审批 \(pendingInteractions.count)")
+                .font(Theme.Fonts.caption.weight(.semibold))
+                .foregroundStyle(Theme.Palette.amber)
+                .padding(.horizontal, 12)
+                .padding(.top, 10)
+            VStack(spacing: 8) {
+                ForEach(pendingInteractions) { entry in
+                    let reqId = entry.payload?.permissionRequestId ?? entry.id
+                    CrewInteractionCard(
+                        entry: entry,
+                        reply: Binding(get: { replyDrafts[reqId] ?? "" },
+                                       set: { replyDrafts[reqId] = $0 })
+                    ) { Task { await answer(reqId) } }
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.bottom, 8)
+        }
+    }
+
+    // MARK: 成员富列表
+
+    /// 本 crew 的本地 PTY run —— 列进成员列表（session 行可点进终端）。
+    private var memberSessionRuns: [CrewSessionRun] {
+        sessionRunner.runs.filter { $0.crewId == crewStore.selectedDetail?.crew.id }
+    }
+
+    private var memberSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("成员 \(memberRowItems.count)")
+                .font(Theme.Fonts.caption.weight(.semibold))
+                .foregroundStyle(Theme.Palette.inkMuted)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            LazyVStack(spacing: 1) {
+                ForEach(memberRowItems) { memberRow($0) }
+            }
+            .padding(.horizontal, 6)
+            .padding(.bottom, 8)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// 成员行统一模型：server 成员（去掉已有本地 run 的 code_session）+ 本地 run。
+    private struct MemberRowItem: Identifiable {
+        let id: String
+        let sender: GroupBubbleSender
+        /// 非 nil = 本地 session run，可点进终端 + 显简介/最新动作。
+        let run: CrewSessionRun?
+    }
+
+    private var memberRowItems: [MemberRowItem] {
+        let runSessionIds = Set(memberSessionRuns.map { $0.sessionId })
+        let serverRows = members
+            .filter { m in
+                !(m.memberKind == "code_session"
+                  && (m.codeSessionId.map(runSessionIds.contains) ?? false))
+            }
+            .map { MemberRowItem(id: $0.id, sender: groupSenderFor($0), run: nil) }
+        let runRows = memberSessionRuns.map {
+            MemberRowItem(id: "run-\($0.sessionId)", sender: senderForRun($0), run: $0)
+        }
+        return serverRows + runRows
+    }
+
+    @ViewBuilder
+    private func memberRow(_ item: MemberRowItem) -> some View {
+        if let run = item.run {
+            // session 行：富行 —— 头像 + 名 + 简介 + 最新一步动作，点进终端。
+            Button {
+                sessionRunner.select(run.runID)
+                sessionRunner.viewingTerminal = true
+            } label: {
+                sessionRowContent(sender: item.sender, run: run)
+            }
+            .buttonStyle(.plain)
+            .help("打开这个 session 的终端")
+        } else {
+            // captain / human 行：只头像 + 名。
+            HStack(spacing: 8) {
+                CrewAvatarBadges(sender: item.sender, size: 26)
+                Text(item.sender.displayName)
+                    .font(Theme.Fonts.callout)
+                    .foregroundStyle(Theme.Palette.ink)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+        }
+    }
+
+    @ViewBuilder
+    private func sessionRowContent(sender: GroupBubbleSender, run: CrewSessionRun) -> some View {
+        let isSelected = run.runID == sessionRunner.selectedRunId
+        HStack(alignment: .top, spacing: 8) {
+            CrewAvatarBadges(sender: sender, size: 26)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(run.taskBrief.isEmpty ? "新 session" : run.taskBrief)
+                    .font(Theme.Fonts.callout)
+                    .foregroundStyle(Theme.Palette.ink)
+                    .lineLimit(1)
+                Text(latestStep(for: run))
+                    .font(Theme.Fonts.caption)
+                    .foregroundStyle(Theme.Palette.inkMuted)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isSelected ? Theme.Palette.accentBg : .clear)
+        )
+        .contentShape(Rectangle())
+    }
+
+    /// session 行的「最新一步动作」：取本地白板里该 session 最近一条消息的文本；
+    /// 没有就退回 run 状态（running / 已退出）。
+    /// **尾巴**：只有走 `post_to_crew` 写进白板的进展才拿得到 —— 纯终端 stdout
+    /// （没 post_to_crew）这里看不到，退回状态展示。
+    private func latestStep(for run: CrewSessionRun) -> String {
+        if let last = LocalWhiteboardStore.shared
+            .list(crewId: run.crewId)
+            .last(where: { $0.senderSessionId == run.sessionId }) {
+            return last.text
+        }
+        return run.status == .running ? "running" : "已退出"
+    }
+
+    /// server 成员 → GroupBubbleSender（与 CrewRosterBar 同映射，头像一致）。从中栏搬来。
+    private func groupSenderFor(_ m: CrewMember) -> GroupBubbleSender {
+        let isCaptain = m.memberKind == "captain" || (m.botId != nil && m.botId == captainBotId)
+        let isSession = m.memberKind == "code_session"
+        let isHuman   = m.memberKind == "human"
+        let seed = m.botId ?? m.userId ?? m.codeSessionId ?? m.id
+        let name: String = {
+            if let n = m.displayName, !n.isEmpty { return n }
+            if isCaptain { return "机长" }
+            if isHuman   { return "我" }
+            if isSession { return "session" }
+            return "bot"
+        }()
+        return GroupBubbleSender(
+            kind: isHuman ? .user : .bot, id: seed, displayName: name,
+            avatarPath: nil, avatarSeed: seed, isCaptain: isCaptain,
+            sessionStatus: m.sessionStatus, isSession: isSession)
+    }
+
+    /// 本地 run → session 头像 sender（状态点 running=绿/退出=灰）。从中栏搬来。
+    private func senderForRun(_ run: CrewSessionRun) -> GroupBubbleSender {
+        GroupBubbleSender(
+            kind: .bot, id: run.sessionId, displayName: run.displayName,
+            avatarPath: nil, avatarSeed: run.sessionId, isCaptain: false,
+            sessionStatus: run.status == .running ? "running" : "exited", isSession: true)
+    }
+
+    // MARK: - 成员列表模式数据轮询 + 答复
+
+    /// 3s 轮询本 crew 的白板（取待审批 + 最新动作）和 roster。与中栏 CrewChatView
+    /// 各拉各的（见类型注释，v1 可接受）。
+    private func rosterPollLoop() async {
+        entries = []
+        members = []
+        while !Task.isCancelled {
+            await refreshRoster()
+            try? await Task.sleep(nanoseconds: rosterPollInterval)
+        }
+    }
+
+    private func refreshRoster() async {
+        guard let crewId = crewStore.selectedDetail?.crew.id,
+              let backend = appModel.backend else { return }
+        if let wb = try? await backend.listCrewWhiteboard(crewId: crewId) {
+            entries = wb
+        }
+        if let roster = try? await backend.listCrewMembers(crewId: crewId) {
+            members = roster.members
+            captainBotId = roster.captainBotId
+        }
+    }
+
+    private func answer(_ reqId: String) async {
+        let reply = (replyDrafts[reqId] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !reply.isEmpty, let api = try? appModel.loggedAPIClient() else { return }
+        do {
+            try await api.answerInteraction(reqId: reqId, reply: reply)
+            replyDrafts[reqId] = nil
+            await refreshRoster()
+        } catch {
+            localError = error.localizedDescription
+        }
+    }
+
+    /// composer 是否处于「续聊当前 run」态（反之 = 起新 session 态）。
+    /// 新建态、无 run、当前 run 已退出，都算起新 session。
+    private var isContinuing: Bool {
+        !sessionRunner.isComposingNew && sessionRunner.current?.status == .running
+    }
 
     // MARK: - session bar (chunk2 T2)
 
@@ -145,12 +485,22 @@ struct CrewSessionWindowView: View {
                 ForEach(barRuns) { run in
                     SessionBarItemView(
                         run: run,
-                        isSelected: run.runID == sessionRunner.selectedRunId,
+                        isSelected: !sessionRunner.isComposingNew && run.runID == sessionRunner.selectedRunId,
                         badgeCount: badgeCount(for: run),
                         select: { sessionRunner.select(run.runID) },
                         remove: { sessionRunner.remove(run.runID) }
                     )
                 }
+                // 「+」起一个新 session（不动在跑的 run）。选中态高亮。
+                Button { sessionRunner.composeNew() } label: {
+                    Label("新 session", systemImage: "plus")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.bordered)
+                .tint(sessionRunner.isComposingNew ? .accentColor : nil)
+                .controlSize(.small)
+                .disabled(starting)
+                .help("起一个新 session（与在跑的并存）")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -182,7 +532,7 @@ struct CrewSessionWindowView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             HStack(spacing: 8) {
-                if !isRunning {
+                if !isContinuing {
                     Picker("", selection: $selectedKind) {
                         Text("Claude Code").tag(LocalCodingAgentKind.claudeCode)
                         Text("Codex").tag(LocalCodingAgentKind.codex)
@@ -191,7 +541,7 @@ struct CrewSessionWindowView: View {
                     .frame(width: 130)
                     .disabled(starting)
                 }
-                TextField(isRunning ? "继续对 agent 说…（⌘↩ 发送）" : "下第一条指令开始…",
+                TextField(isContinuing ? "继续对 agent 说…（⌘↩ 发送）" : "下第一条指令开始…",
                           text: $draft, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
                     .lineLimit(1...6)
@@ -217,12 +567,13 @@ struct CrewSessionWindowView: View {
     private func send() async {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        if let run = sessionRunner.current, run.status == .running {
-            // Running session → inject the text straight into the embedded
-            // terminal (the agent's interactive prompt picks it up).
+        if isContinuing, let run = sessionRunner.current {
+            // Running session（且非新建态）→ inject the text straight into the
+            // embedded terminal (the agent's interactive prompt picks it up).
             run.send(text)
             draft = ""
         } else {
+            // 无 run / 已退出 / 新建态 → 开一个新 session。
             await startSession(firstPrompt: text)
         }
     }

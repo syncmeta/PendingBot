@@ -9,6 +9,11 @@ struct CrewDetailInspector: View {
     let detail: CrewDetail
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var appModel: AppModel
+    @EnvironmentObject private var crewStore: CrewStore
+
+    /// 「挂到父 crew」操作的进行中 / 失败态。
+    @State private var dagBusy = false
+    @State private var dagError: String?
 
     /// 已绑定的 edge relay conversation id（接合 v2 block 3）。onAppear 从
     /// LocalCrewStore 读，接入成功后就地更新。nil = 未接入。
@@ -28,8 +33,7 @@ struct CrewDetailInspector: View {
                     if appModel.isAuthenticated {
                         relaySection
                     }
-                    linkSection("父 crew", links: detail.parents)
-                    linkSection("子 crew", links: detail.children)
+                    parentDAGSection
                     sharesSection
                 }
                 .padding(20)
@@ -200,23 +204,117 @@ struct CrewDetailInspector: View {
         }
     }
 
+    // MARK: - 本地 DAG 父边（「挂到父 crew」）
+
+    /// 本 crew 在 `crewStore` 里的实时 summary —— 父边的事实源是本地
+    /// `parentCrewIds`(edge `detail.parents` 对本地 crew 恒空)。
+    private var liveSummary: CrewSummary? {
+        crewStore.crews.first(where: { $0.id == detail.crew.id })
+    }
+
+    /// 当前已挂的父 crew(实时)。
+    private var currentParents: [CrewSummary] {
+        let ids = liveSummary?.parentCrewIds ?? []
+        return ids.compactMap { pid in crewStore.crews.first(where: { $0.id == pid }) }
+    }
+
+    /// 可挂的候选父 crew:排除自己、已挂的父、以及会成环的(本 crew 的后代)。
+    private var attachCandidates: [CrewSummary] {
+        let selfId = detail.crew.id
+        let already = Set(liveSummary?.parentCrewIds ?? [])
+        let descendants = descendantIds(of: selfId)
+        return crewStore.crews.filter { c in
+            c.id != selfId && !already.contains(c.id) && !descendants.contains(c.id)
+        }
+    }
+
+    /// 从 `crewStore.crews` 反推某 crew 的全部后代(child = 其 parentCrewIds 含
+    /// 该 crew)。带 visited 自保防脏数据成环。挂到后代会成环,故从候选里剔除。
+    private func descendantIds(of crewId: String) -> Set<String> {
+        var result: Set<String> = []
+        var queue: [String] = [crewId]
+        while let current = queue.popLast() {
+            for c in crewStore.crews where c.parentCrewIds.contains(current) {
+                if result.insert(c.id).inserted { queue.append(c.id) }
+            }
+        }
+        return result
+    }
+
     @ViewBuilder
-    private func linkSection(_ title: String, links: [CrewDetail.CrewLink]) -> some View {
-        sectionHeader(title)
-        if links.isEmpty {
-            Text("(无)").foregroundStyle(.secondary)
-        } else {
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(links, id: \.crewId) { link in
-                    HStack(spacing: 8) {
-                        Image(systemName: "link").foregroundStyle(.secondary)
-                        Text(link.title)
-                        Spacer()
-                        Text("\(sharePercent(link.childShareBps))%")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+    private var parentDAGSection: some View {
+        HStack {
+            sectionHeader("父 crew")
+            Spacer()
+            Menu {
+                if attachCandidates.isEmpty {
+                    Text("没有可挂的 crew").foregroundStyle(.secondary)
+                } else {
+                    ForEach(attachCandidates) { cand in
+                        Button(cand.title) { attach(parentId: cand.id) }
                     }
                 }
+            } label: {
+                Label("挂到父 crew", systemImage: "arrow.up.to.line")
+                    .font(.caption)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .disabled(dagBusy || attachCandidates.isEmpty)
+        }
+        if currentParents.isEmpty {
+            Text("(根 crew，未挂到任何父)").foregroundStyle(.secondary)
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(currentParents) { parent in
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrow.up.forward.square").foregroundStyle(.secondary)
+                        Text(parent.title).lineLimit(1)
+                        Spacer()
+                        Button {
+                            detach(parentId: parent.id)
+                        } label: {
+                            Image(systemName: "minus.circle")
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(dagBusy)
+                        .help("解绑这个父 crew")
+                    }
+                }
+            }
+        }
+        if let dagError {
+            Text(dagError)
+                .font(.caption)
+                .foregroundStyle(.red)
+                .textSelection(.enabled)
+        }
+    }
+
+    private func attach(parentId: String) {
+        dagBusy = true
+        dagError = nil
+        let crewId = detail.crew.id
+        Task {
+            defer { dagBusy = false }
+            do {
+                try await crewStore.attachParent(crewId: crewId, parentCrewId: parentId)
+            } catch {
+                dagError = error.localizedDescription
+            }
+        }
+    }
+
+    private func detach(parentId: String) {
+        dagBusy = true
+        dagError = nil
+        let crewId = detail.crew.id
+        Task {
+            defer { dagBusy = false }
+            do {
+                try await crewStore.detachParent(crewId: crewId, parentCrewId: parentId)
+            } catch {
+                dagError = error.localizedDescription
             }
         }
     }

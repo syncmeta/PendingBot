@@ -115,6 +115,30 @@ final class CrewStore: ObservableObject {
         return response
     }
 
+    /// 把 `crewId` 挂到父 crew `parentCrewId` 之下(本地 DAG 父边)。
+    /// 成功后刷新列表(侧栏树重算)+ 两端 detail。禁环错误向上抛给 UI 提示。
+    func attachParent(crewId: String, parentCrewId: String) async throws {
+        guard let backend = currentBackend() else {
+            throw PendingCrewBackendError.notAuthenticated
+        }
+        try await backend.attachParent(
+            crewId: crewId, parentCrewId: parentCrewId, childKeepsBps: 10000)
+        await refreshList()
+        await refreshDetail(crewId)
+        await refreshDetail(parentCrewId)
+    }
+
+    /// 解绑 `crewId` 的父边 `parentCrewId`。成功后刷新列表 + 两端 detail。
+    func detachParent(crewId: String, parentCrewId: String) async throws {
+        guard let backend = currentBackend() else {
+            throw PendingCrewBackendError.notAuthenticated
+        }
+        try await backend.detachParent(crewId: crewId, parentCrewId: parentCrewId)
+        await refreshList()
+        await refreshDetail(crewId)
+        await refreshDetail(parentCrewId)
+    }
+
     // MARK: - Auth lifecycle
 
     /// 用户退出登录时调，清掉所有内存态。`AppModel.clearAuth` 时一并调。

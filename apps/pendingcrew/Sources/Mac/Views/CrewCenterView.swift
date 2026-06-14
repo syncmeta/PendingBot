@@ -4,18 +4,41 @@ import SwiftUI
 /// 中栏（spec v2 §9）：选中 crew 的**群聊会话页**（白板 + 沟通渠道）。
 ///
 /// crew 元数据 / 机长 / DAG / 责任比例从这里搬到了 `CrewDetailInspector`
-/// (顶栏 ⓘ 打开)。「服务端 session」viewer 仍从顶栏进。新建/常驻 session 在
-/// 右栏（`CrewSessionWindowView`）。
+/// (顶栏 ⓘ 打开)。session 终端不再常驻,收进按需 inspector（`CrewSessionWindowView`,
+/// 由 MacThreePaneView 挂在 .inspector），从 toolbar 终端开关弹出。
 struct CrewCenterView: View {
+    /// session inspector 呈现态（提升在 MacThreePaneView）。toolbar 终端开关翻它。
+    @Binding var inspectorPresented: Bool
+
     @EnvironmentObject private var crewStore: CrewStore
     @EnvironmentObject private var sessionRunner: CrewSessionRunner
     @State private var showingDetail = false
     @State private var showingRemoteSessions = false
+    /// chunk2 T5（captain 唤醒=app 注入）：已通知过 captain 的 decision id ——
+    /// 防止每个 tick 重复注入同一条。**放在常驻中栏**（而非按需 inspector），
+    /// captain 编排不能依赖 session 终端面板是否打开。
+    @State private var notifiedDecisionIds: Set<String> = []
+    /// 2s 轮询 LocalApprovalStore（helper 跨进程写文件、本进程读），有新待决策
+    /// 就注入 captain PTY。
+    private let captainTick = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
     var body: some View {
         Group {
             if let detail = crewStore.selectedDetail {
-                CrewChatView(crewId: detail.crew.id, crewTitle: detail.crew.title)
+                CrewChatView(
+                    crewId: detail.crew.id,
+                    crewTitle: detail.crew.title,
+                    onOpenSession: { runId in
+                        sessionRunner.select(runId)
+                        sessionRunner.viewingTerminal = true
+                        inspectorPresented = true
+                    },
+                    onNewSession: {
+                        sessionRunner.composeNew()
+                        sessionRunner.viewingTerminal = true
+                        inspectorPresented = true
+                    }
+                )
             } else if let id = crewStore.selectedCrewId, crewStore.loadingDetailIds.contains(id) {
                 ProgressView("加载 crew 详情…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -28,7 +51,11 @@ struct CrewCenterView: View {
         .toolbar {
             if let detail = crewStore.selectedDetail {
                 ToolbarItem(placement: .principal) {
-                    Text(detail.crew.title).font(.headline)
+                    // crew 头像 + 名字,对齐 PendingBot 群聊抬头。
+                    HStack(spacing: 8) {
+                        CrewGroupAvatar(seed: detail.crew.id, size: 22)
+                        Text(detail.crew.title).font(.headline)
+                    }
                 }
                 ToolbarItem {
                     Button { showingDetail = true } label: {
@@ -45,17 +72,47 @@ struct CrewCenterView: View {
                         Label("刷新", systemImage: "arrow.clockwise")
                     }
                 }
+                ToolbarItem {
+                    Button { inspectorPresented.toggle() } label: {
+                        Label("Session 终端", systemImage: "sidebar.trailing")
+                    }
+                    .keyboardShortcut("s", modifiers: [.command, .option])
+                    .help("打开/收起 session 终端")
+                }
             }
         }
         .sheet(isPresented: $showingDetail) {
             if let detail = crewStore.selectedDetail {
                 CrewDetailInspector(detail: detail)
+                    .environmentObject(crewStore)
             }
         }
         .sheet(isPresented: $showingRemoteSessions) {
             if let detail = crewStore.selectedDetail {
                 RemoteSessionsView(crewId: detail.crew.id, crewTitle: detail.crew.title)
             }
+        }
+        // chunk2 T5：captain 唤醒 = app 注入。常驻中栏轮询待决策，有新的（非 captain
+        // 自己 raise 的）就把提示注入在跑的 captain PTY。不依赖 inspector 是否打开。
+        .onReceive(captainTick) { _ in notifyCaptainOfNewDecisions() }
+    }
+
+    /// 发现新待决策 → 注入运行中的 captain session（spec §2 唤醒=app 注入）。
+    /// 没有在跑的 captain 就什么都不做（等 captain 启动后第一个 tick 再补通知）。
+    private func notifyCaptainOfNewDecisions() {
+        guard let crewId = crewStore.selectedDetail?.crew.id,
+              let captainRun = sessionRunner.runs.first(where: {
+                  $0.crewId == crewId && $0.role == .captain && $0.status == .running
+              })
+        else { return }
+        let items = LocalApprovalStore.shared.pending(crewId: crewId).filter {
+            $0.kind == "decision"
+                && $0.sessionId != captainRun.sessionId
+                && !notifiedDecisionIds.contains($0.id)
+        }
+        for item in items {
+            captainRun.send("有新的待决策 #\(item.id)（来自 session \(item.sessionId)）：\(item.summary)\n能拍板就用 answer_decision 工具答它（reqId=\(item.id)）；拍不了就用 post_to_crew 发消息 @human 说明需要人类决策的理由与你的建议。")
+            notifiedDecisionIds.insert(item.id)
         }
     }
 
