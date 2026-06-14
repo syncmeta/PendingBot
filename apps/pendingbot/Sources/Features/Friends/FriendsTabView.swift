@@ -235,35 +235,51 @@ struct FriendsTabView: View {
 
     /// Mac 壳:行内容在圆角卡片里的内边距(content 缩进,让头像/文字不贴卡片边)。
     /// iOS 返回 nil → 默认插入,行为不变。与 `cardRowBackground` 配套。
+    /// Mac:贴 rail 右沿(leading 14 内缩让头像不顶卡边)、右留 gutter。
     private var cardRowInsets: EdgeInsets? {
         renderAsMacListColumn
-            ? EdgeInsets(top: 9, leading: 12, bottom: 9, trailing: Theme.Metrics.gutter + 12)
+            ? EdgeInsets(top: 7, leading: 14, bottom: 7, trailing: Theme.Metrics.gutter + 14)
             : nil
     }
 
-    /// 行背景:Mac 壳是**圆角卡片**(贴 rail 右沿、右留 gutter,与消息列表卡片
-    /// 同款),iOS 维持满宽 surface。`card=false`(「我」未选中)→ 透明、无白底。
+    /// 行在分组里的位置 —— 决定圆角加在哪几个角(模拟 iOS insetGrouped:
+    /// **整组一个圆角**,组内行用细线分隔,而非每行各自圆角)。
+    enum RowPos { case single, first, middle, last }
+
+    /// 行背景:Mac 壳下,一个 Section = 一张整体圆角卡片(surface)。首行圆上两
+    /// 角、尾行圆下两角、中间方角,行与行之间靠 List 分隔线(hairline)断开。
+    /// iOS 维持满宽 surface 行为不变。
     @ViewBuilder
-    private func cardRowBackground(selected: Bool, card: Bool = true) -> some View {
+    private func cardRowBackground(selected: Bool, pos: RowPos = .single) -> some View {
         if renderAsMacListColumn {
-            if card || selected {
-                RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
-                    .fill(selected ? Theme.Palette.accentBg : Theme.Palette.surface)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
-                            .strokeBorder(
-                                selected ? Theme.Palette.accent.opacity(0.5) : Theme.Palette.hairline,
-                                lineWidth: selected ? 1 : 0.5
-                            )
-                    )
-                    .padding(.trailing, Theme.Metrics.gutter)
-                    .padding(.vertical, 3)
-            } else {
-                Color.clear
-            }
+            let r = Theme.Metrics.cardRadius
+            let topR: CGFloat = (pos == .single || pos == .first) ? r : 0
+            let botR: CGFloat = (pos == .single || pos == .last) ? r : 0
+            UnevenRoundedRectangle(
+                topLeadingRadius: topR, bottomLeadingRadius: botR,
+                bottomTrailingRadius: botR, topTrailingRadius: topR,
+                style: .continuous
+            )
+            .fill(selected ? Theme.Palette.accentBg : Theme.Palette.surface)
+            .padding(.trailing, Theme.Metrics.gutter)
         } else {
             (selected ? Theme.Palette.accentBg : Theme.Palette.surface)
         }
+    }
+
+    /// 分隔线:Mac 上只在组内"行与行之间"画细线(first/middle 行底部),
+    /// 末行/单行不画(避免线压在圆角卡片下沿);iOS 维持默认。
+    private func cardRowSeparator(_ pos: RowPos) -> Visibility {
+        guard renderAsMacListColumn else { return .automatic }
+        return (pos == .first || pos == .middle) ? .visible : .hidden
+    }
+
+    /// 由下标 + 总数算出行在分组里的位置。
+    private func rowPos(_ idx: Int, of count: Int) -> RowPos {
+        if count <= 1 { return .single }
+        if idx == 0 { return .first }
+        if idx == count - 1 { return .last }
+        return .middle
     }
 
     /// 表头操作 = 排序菜单 + "+" 弹层(加好友 / 加机器人 / 新建机器人)。抽出来
@@ -337,10 +353,11 @@ struct FriendsTabView: View {
                             onTap: { Task { await tapSelf() } },
                             onQR: { showingQR = true; Haptics.tap() }
                         )
-                        // 「我」行:Mac 上去掉满宽白底 —— 未选中透明、选中才染色卡片。
-                        .listRowBackground(cardRowBackground(selected: selfSelected, card: false))
+                        // 「我」行:单行分组 → 整体圆角卡片(去掉原满宽白底)。
+                        .listRowBackground(cardRowBackground(selected: selfSelected, pos: .single))
                         .listRowInsets(cardRowInsets)
-                        .listRowSeparator(renderAsMacListColumn ? .hidden : .automatic)
+                        .listRowSeparator(cardRowSeparator(.single))
+                        .listRowSeparatorTint(Theme.Palette.hairline)
                     }
 
                     Section {
@@ -356,30 +373,34 @@ struct FriendsTabView: View {
                     // Hidden when there's nothing pending.
                     if !pendingFriendRequests.isEmpty {
                         Section("好友申请") {
-                            ForEach(pendingFriendRequests) { req in
+                            ForEach(Array(pendingFriendRequests.enumerated()), id: \.element.id) { idx, req in
+                                let pos = rowPos(idx, of: pendingFriendRequests.count)
                                 FriendRequestRow(
                                     request: req,
                                     onAccept: { Task { await respondToRequest(req, accept: true) } },
                                     onDecline: { Task { await respondToRequest(req, accept: false) } }
                                 )
-                                .listRowBackground(cardRowBackground(selected: false))
+                                .listRowBackground(cardRowBackground(selected: false, pos: pos))
                                 .listRowInsets(cardRowInsets)
-                                .listRowSeparator(renderAsMacListColumn ? .hidden : .automatic)
+                                .listRowSeparator(cardRowSeparator(pos))
+                                .listRowSeparatorTint(Theme.Palette.hairline)
                             }
                         }
                     }
 
                     if !pendingGroupInvitations.isEmpty {
                         Section("群邀请") {
-                            ForEach(pendingGroupInvitations) { invite in
+                            ForEach(Array(pendingGroupInvitations.enumerated()), id: \.element.id) { idx, invite in
+                                let pos = rowPos(idx, of: pendingGroupInvitations.count)
                                 GroupInvitationRow(
                                     invitation: invite,
                                     onAccept: { Task { await respondToGroupInvitation(invite, accept: true) } },
                                     onDecline: { Task { await respondToGroupInvitation(invite, accept: false) } }
                                 )
-                                .listRowBackground(cardRowBackground(selected: false))
+                                .listRowBackground(cardRowBackground(selected: false, pos: pos))
                                 .listRowInsets(cardRowInsets)
-                                .listRowSeparator(renderAsMacListColumn ? .hidden : .automatic)
+                                .listRowSeparator(cardRowSeparator(pos))
+                                .listRowSeparatorTint(Theme.Palette.hairline)
                             }
                         }
                     }
@@ -388,7 +409,8 @@ struct FriendsTabView: View {
                     // alphabetical order. Filter chips above narrow by type.
                     if !friendsForFilter.isEmpty {
                         Section {
-                            ForEach(friendsForFilter) { item in
+                            ForEach(Array(friendsForFilter.enumerated()), id: \.element.id) { idx, item in
+                                let pos = rowPos(idx, of: friendsForFilter.count)
                                 switch item {
                                 case .bot(let bot):
                                     let selected = sidebarLayout && isSelected(kind: "bot", id: bot.id)
@@ -397,9 +419,10 @@ struct FriendsTabView: View {
                                               name: bot.display_name,
                                               modelSlug: bot.model_id,
                                               botVisibility: bot.visibility)
-                                        .listRowBackground(cardRowBackground(selected: selected))
+                                        .listRowBackground(cardRowBackground(selected: selected, pos: pos))
                                         .listRowInsets(cardRowInsets)
-                                        .listRowSeparator(renderAsMacListColumn ? .hidden : .automatic)
+                                        .listRowSeparator(cardRowSeparator(pos))
+                                        .listRowSeparatorTint(Theme.Palette.hairline)
                                         .contentShape(Rectangle())
                                         .onTapGesture { Task { await tapBot(bot) } }
                                         .modifier(BotRowOwnerActions(
@@ -415,9 +438,10 @@ struct FriendsTabView: View {
                                               name: c.rowName,
                                               modelSlug: nil,
                                               botVisibility: nil)
-                                        .listRowBackground(cardRowBackground(selected: selected))
+                                        .listRowBackground(cardRowBackground(selected: selected, pos: pos))
                                         .listRowInsets(cardRowInsets)
-                                        .listRowSeparator(renderAsMacListColumn ? .hidden : .automatic)
+                                        .listRowSeparator(cardRowSeparator(pos))
+                                        .listRowSeparatorTint(Theme.Palette.hairline)
                                         .contentShape(Rectangle())
                                         .onTapGesture { Task { await tapHuman(c) } }
                                         .contextMenu {
@@ -436,9 +460,10 @@ struct FriendsTabView: View {
                         Section {
                             Text(emptyText)
                                 .foregroundStyle(.secondary)
-                                .listRowBackground(cardRowBackground(selected: false))
+                                .listRowBackground(cardRowBackground(selected: false, pos: .single))
                                 .listRowInsets(cardRowInsets)
-                                .listRowSeparator(renderAsMacListColumn ? .hidden : .automatic)
+                                .listRowSeparator(cardRowSeparator(.single))
+                                .listRowSeparatorTint(Theme.Palette.hairline)
                         }
                     }
                 }
@@ -1263,7 +1288,7 @@ private struct SelfRow: View {
         HStack(spacing: 10) {
             UserAvatar(seed: avatarSeed, attachmentId: attachmentId, size: 36)
             Text(name)
-                .font(Theme.Fonts.serif(size: 16, weight: .semibold))
+                .font(Theme.Fonts.scriptTitle(name, size: 16))
                 .foregroundStyle(Theme.Palette.ink)
                 .lineLimit(1)
             Spacer(minLength: 8)
@@ -1314,7 +1339,7 @@ private struct FriendRow: View {
             // message list's model badge.
             HStack(spacing: 6) {
                 Text(name)
-                    .font(Theme.Fonts.serif(size: 16, weight: .semibold))
+                    .font(Theme.Fonts.scriptTitle(name, size: 16))
                     .foregroundStyle(Theme.Palette.ink)
                     .lineLimit(1)
                 if kind == .bot, let slug = modelSlug, !slug.isEmpty {
@@ -1367,7 +1392,7 @@ private struct FriendRequestRow: View {
             UserAvatar(seed: request.peerAvatarSeed, attachmentId: nil, size: 36)
             VStack(alignment: .leading, spacing: 4) {
                 Text(request.peerDisplayName)
-                    .font(Theme.Fonts.serif(size: 16, weight: .semibold))
+                    .font(Theme.Fonts.scriptTitle(request.peerDisplayName, size: 16))
                     .foregroundStyle(Theme.Palette.ink)
                     .lineLimit(1)
                 if let msg = request.message, !msg.isEmpty {
@@ -1419,7 +1444,7 @@ private struct GroupInvitationRow: View {
                        size: 36)
             VStack(alignment: .leading, spacing: 4) {
                 Text(invitation.groupTitle)
-                    .font(Theme.Fonts.serif(size: 16, weight: .semibold))
+                    .font(Theme.Fonts.scriptTitle(invitation.groupTitle, size: 16))
                     .foregroundStyle(Theme.Palette.ink)
                     .lineLimit(1)
                 Text("\(invitation.inviterName) 邀请你入群")
