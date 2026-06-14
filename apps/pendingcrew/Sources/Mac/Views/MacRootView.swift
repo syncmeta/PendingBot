@@ -48,6 +48,14 @@ struct MacThreePaneView: View {
         .onChange(of: inspectorPresented) { _, open in
             withAnimation { columnVisibility = open ? .detailOnly : .all }
         }
+        // 反向：手动展开左 sidebar(翻回 .all)就收起 inspector —— 二者互斥,
+        // 任一展开都不会把另一段连同窗口撑出屏幕外。inspector 自己开时只设
+        // .detailOnly(不是 .all),不会触发这里,无回环。
+        .onChange(of: columnVisibility) { _, vis in
+            if vis == .all && inspectorPresented {
+                withAnimation { inspectorPresented = false }
+            }
+        }
         .task {
             // 首次进入时把列表 + subjects 都拉一遍 —— subjects 用于创建
             // crew sheet 的 picker，提前 prefetch 避免 sheet 打开时空。
