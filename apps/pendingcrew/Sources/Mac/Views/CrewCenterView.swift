@@ -25,7 +25,18 @@ struct CrewCenterView: View {
     var body: some View {
         Group {
             if let detail = crewStore.selectedDetail {
-                CrewChatView(crewId: detail.crew.id, crewTitle: detail.crew.title)
+                CrewChatView(
+                    crewId: detail.crew.id,
+                    crewTitle: detail.crew.title,
+                    onOpenSession: { runId in
+                        sessionRunner.select(runId)
+                        inspectorPresented = true
+                    },
+                    onNewSession: {
+                        sessionRunner.composeNew()
+                        inspectorPresented = true
+                    }
+                )
             } else if let id = crewStore.selectedCrewId, crewStore.loadingDetailIds.contains(id) {
                 ProgressView("加载 crew 详情…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
