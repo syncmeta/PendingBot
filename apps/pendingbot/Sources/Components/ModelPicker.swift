@@ -747,7 +747,10 @@ private enum ArenaPoolDefaults {
 }
 
 struct ArenaModelPoolEditor: View {
-    @Environment(\.api) private var api
+    // Single source of truth for the catalog — the shared, disk-cached
+    // ModelCatalog rather than an independent /v1/models fetch. Painting from
+    // the cache makes re-entering this editor instant on a warm catalog.
+    @EnvironmentObject private var catalog: ModelCatalog
 
     @Binding var selection: ArenaModelSelection
     /// New-bot creation: seed the sliders + sort from the user's last-used
@@ -880,14 +883,17 @@ struct ArenaModelPoolEditor: View {
             }
         }
         .task { await load() }
+        // The catalog fetch is async; when it lands (or the disk-cache paint
+        // updates the shared store), rebuild our local pool + re-sort.
+        .onChange(of: catalog.models) { _, rows in applyCatalog(rows) }
         .onChange(of: priceMinValue) { _, _ in syncSelection(); savePrefs() }
         .onChange(of: priceMaxValue) { _, _ in syncSelection(); savePrefs() }
         .onChange(of: releaseMonthsValue) { _, _ in syncSelection(); savePrefs() }
         .onChange(of: selectedVendors) { _, _ in syncSelection() }
         // Sort order changes are the only thing that needs a re-sort; the
         // price/release/vendor filters above just re-filter the cached pool.
-        .onChange(of: sortKey) { _, _ in resort(); savePrefs() }
-        .onChange(of: sortDirection) { _, _ in resort(); savePrefs() }
+        .onChange(of: sortKey) { _, _ in Task { await resort() }; savePrefs() }
+        .onChange(of: sortDirection) { _, _ in Task { await resort() }; savePrefs() }
     }
 
     private var filterBar: some View {
@@ -1061,50 +1067,53 @@ struct ArenaModelPoolEditor: View {
     }
 
     private func load() async {
-        loading = true; defer { loading = false }
-        // fail-loud:`\.api` 没注入时报错,而不是 `return` 留 spinner 永转
-        // (此前 Mac @main 漏注 \.api 就是卡在这里,一直转圈)。
-        guard let api else {
-            error = "内部错误:API 客户端未注入"
-            return
-        }
-        do {
-            allModels = try await api.get("v1/models")
-            include = Set(selection.models)
-            exclude = Set(selection.exclude)
-            selectedVendors = selection.vendors.map(Set.init)
-            if selection.priceMin == nil,
-               selection.priceMax == nil,
-               selection.models.isEmpty,
-               selection.exclude.isEmpty,
-               selection.releaseWindowDays == nil,
-               selection.vendors == nil {
-                // Fresh (new bot): seed from remembered prefs when this is the
-                // create flow, otherwise the hard defaults.
-                if rememberDefaults {
-                    priceMinValue = prefPriceMin
-                    priceMaxValue = max(prefPriceMin, prefPriceMax)
-                    releaseMonthsValue = prefReleaseMonths
-                    sortKey = ArenaModelSortKey(id: prefSortKeyID) ?? .releaseDate
-                    sortDirection = ArenaSortDirection(rawValue: prefSortDir) ?? .descending
-                } else {
-                    priceMinValue = ArenaPoolDefaults.priceMinSlider
-                    priceMaxValue = ArenaPoolDefaults.priceMaxSlider
-                    releaseMonthsValue = ArenaPoolDefaults.releaseSlider
-                }
+        // Seed the include/exclude/vendor + slider knobs from the bound
+        // selection (independent of the catalog fetch).
+        include = Set(selection.models)
+        exclude = Set(selection.exclude)
+        selectedVendors = selection.vendors.map(Set.init)
+        if selection.priceMin == nil,
+           selection.priceMax == nil,
+           selection.models.isEmpty,
+           selection.exclude.isEmpty,
+           selection.releaseWindowDays == nil,
+           selection.vendors == nil {
+            // Fresh (new bot): seed from remembered prefs when this is the
+            // create flow, otherwise the hard defaults.
+            if rememberDefaults {
+                priceMinValue = prefPriceMin
+                priceMaxValue = max(prefPriceMin, prefPriceMax)
+                releaseMonthsValue = prefReleaseMonths
+                sortKey = ArenaModelSortKey(id: prefSortKeyID) ?? .releaseDate
+                sortDirection = ArenaSortDirection(rawValue: prefSortDir) ?? .descending
             } else {
-                priceMinValue = ArenaPriceRangeScale.sliderLower(fromPriceMin: selection.priceMin)
-                priceMaxValue = max(
-                    priceMinValue,
-                    ArenaPriceRangeScale.sliderUpper(fromPriceMax: selection.priceMax))
-                releaseMonthsValue = ArenaReleaseRangeScale.sliderValue(fromDays: selection.releaseWindowDays)
+                priceMinValue = ArenaPoolDefaults.priceMinSlider
+                priceMaxValue = ArenaPoolDefaults.priceMaxSlider
+                releaseMonthsValue = ArenaPoolDefaults.releaseSlider
             }
-            error = nil
-            resort()
-            syncSelection()
-        } catch {
-            self.error = error.localizedDescription
+        } else {
+            priceMinValue = ArenaPriceRangeScale.sliderLower(fromPriceMin: selection.priceMin)
+            priceMaxValue = max(
+                priceMinValue,
+                ArenaPriceRangeScale.sliderUpper(fromPriceMax: selection.priceMax))
+            releaseMonthsValue = ArenaReleaseRangeScale.sliderValue(fromDays: selection.releaseWindowDays)
         }
+        error = nil
+        // Single source of truth: the shared disk-cached catalog. Painting
+        // from the in-memory rows is instant when warm; otherwise the
+        // onChange(of: catalog.models) above rebuilds once the fetch lands.
+        catalog.loadIfNeeded()
+        if !catalog.models.isEmpty {
+            applyCatalog(catalog.models)
+        }
+        syncSelection()
+    }
+
+    /// Rebuild the local pool from the shared catalog rows and re-sort.
+    private func applyCatalog(_ rows: [OpenRouterModel]) {
+        allModels = rows
+        loading = rows.isEmpty
+        Task { await resort() }
     }
 
     private func isInPriceRange(_ model: OpenRouterModel) -> Bool {
@@ -1182,15 +1191,23 @@ struct ArenaModelPoolEditor: View {
         include = []
         exclude = []
         selectedVendors = nil
-        resort()
+        Task { await resort() }
         syncSelection()
         savePrefs()
     }
 
-    // Recompute the cached sorted pool. Cheap relative to per-frame sorting
-    // because it runs only on sort-key/direction change or catalog load.
-    private func resort() {
-        sortedPool = ArenaModelSort.sorted(pool, key: sortKey, direction: sortDirection)
+    // Recompute the cached sorted pool off the main thread, then assign back
+    // on the main actor. Sorting hundreds of models is heavy enough to drop
+    // frames if done inline; it runs only on sort-key/direction change or
+    // catalog load, so the detached hop is cheap and keeps the UI responsive.
+    private func resort() async {
+        let rows = pool
+        let key = sortKey
+        let dir = sortDirection
+        let sorted = await Task.detached(priority: .userInitiated) {
+            ArenaModelSort.sorted(rows, key: key, direction: dir)
+        }.value
+        sortedPool = sorted
     }
 
     private func toggleVendor(_ vendor: String) {

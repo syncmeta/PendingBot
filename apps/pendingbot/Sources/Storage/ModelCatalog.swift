@@ -14,32 +14,71 @@ final class ModelCatalog: ObservableObject {
     /// Catalog rows keyed by every slug they can be referenced under —
     /// the OpenRouter id and, when curated, our local slug.
     @Published private(set) var bySlug: [String: OpenRouterModel] = [:]
+    /// Full row list in server order — the model-pool editor builds its
+    /// browse list from this (single source of truth, no second fetch).
+    @Published private(set) var models: [OpenRouterModel] = []
 
     private var loaded = false
     private var inFlight: Task<Void, Never>?
+
+    /// Disk cache of the last successful catalog fetch. Read on first
+    /// `loadIfNeeded()` for an instant (offline-tolerant) paint, then
+    /// refreshed from the network in the background.
+    private static let cacheURL: URL? = {
+        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+        return dir?.appendingPathComponent("model_catalog.json")
+    }()
 
     private init() {}
 
     /// Fetch the catalog once. Safe to call from every view's `.task` —
     /// later calls join the in-flight task or no-op once loaded. A failed
-    /// fetch leaves `loaded` false so the next caller retries.
+    /// fetch leaves `loaded` false so the next caller retries. On the first
+    /// call the disk cache is painted synchronously-fast before the network
+    /// refresh lands.
     func loadIfNeeded() {
         guard !loaded, inFlight == nil else { return }
+        // Instant paint from disk while the network fetch is in flight.
+        // Only seeds when empty so a fresher in-memory map is never clobbered.
+        if bySlug.isEmpty, let cached = Self.readDiskCache() {
+            apply(cached)
+        }
         inFlight = Task {
             defer { inFlight = nil }
             do {
-                let models: [OpenRouterModel] = try await APIClient().get("v1/models")
-                var map: [String: OpenRouterModel] = [:]
-                for m in models {
-                    map[m.slug] = m
-                    if let local = m.local_slug { map[local] = m }
-                }
-                bySlug = map
+                let fetched: [OpenRouterModel] = try await APIClient().get("v1/models")
+                apply(fetched)
                 loaded = true
+                Self.writeDiskCache(fetched)
             } catch {
                 // Leave `loaded` false — a later view appearance retries.
+                // The disk-cache paint (if any) keeps the UI usable offline.
             }
         }
+    }
+
+    /// Build the slug map + ordered list from a row array.
+    private func apply(_ rows: [OpenRouterModel]) {
+        var map: [String: OpenRouterModel] = [:]
+        for m in rows {
+            map[m.slug] = m
+            if let local = m.local_slug { map[local] = m }
+        }
+        bySlug = map
+        models = rows
+    }
+
+    private static func readDiskCache() -> [OpenRouterModel]? {
+        guard let url = cacheURL,
+              let data = try? Data(contentsOf: url),
+              let rows = try? JSONDecoder().decode([OpenRouterModel].self, from: data),
+              !rows.isEmpty else { return nil }
+        return rows
+    }
+
+    private static func writeDiskCache(_ rows: [OpenRouterModel]) {
+        guard let url = cacheURL, let data = try? JSONEncoder().encode(rows) else { return }
+        try? data.write(to: url, options: .atomic)
     }
 
     /// Friendly model name for a stored slug. Falls back to the slug's tail
