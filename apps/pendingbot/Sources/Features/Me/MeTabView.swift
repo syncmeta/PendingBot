@@ -328,7 +328,9 @@ struct MeTabView: View {
             .shadow(color: .black.opacity(0.14), radius: 14, x: 0, y: 7)
             VStack(spacing: 6) {
                 Text(displayLabel)
-                    .font(Theme.Fonts.serif(size: 24, weight: .semibold))
+                    // 英文衬线 / 中文无衬线(按串内 CJK 选 design)—— 与消息/好友
+                    // 列表标题同款,iOS/Mac 一致;不再用纯 serif(Mac 中文会发"黑")。
+                    .font(Theme.Fonts.scriptTitle(displayLabel, size: 24))
                     .foregroundStyle(Theme.Palette.ink)
                     .lineLimit(1)
                 if let email = store.current?.email, !email.isEmpty {
@@ -414,7 +416,8 @@ extension MeTabView: FeatureSurface {
                 }
                 .id(section)
             } else {
-                EmptyDetailHint(text: "挑一项看看", systemImage: "person.crop.circle")
+                // 文字去掉,只留图标(与消息/Crew 等 tab 的宽屏右栏空态同款)。
+                EmptyDetailHint(systemImage: "person.crop.circle")
             }
         }
     }
