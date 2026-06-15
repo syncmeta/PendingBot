@@ -334,8 +334,11 @@ struct CreateBotSheet: View {
 
     private var canCreate: Bool {
         let nameOK = !displayName.trimmingCharacters(in: .whitespaces).isEmpty
+        // Preset path needs a resolved fallback model too — a preset that
+        // resolved to zero models (e.g. 速度快 with no data) would otherwise
+        // enable Create but dead-end in create()'s guard.
         let modelOK = usingCustom ? customSelection.fallbackModel != nil
-                                  : !selectedPresetSlugs.isEmpty
+                                  : (!selectedPresetSlugs.isEmpty && fallbackModelSlug != nil)
         return nameOK && modelOK
     }
 
