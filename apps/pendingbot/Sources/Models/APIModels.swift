@@ -302,6 +302,33 @@ struct RandomModelConfig: Codable, Equatable, Hashable {
     var exclude: [String]?
     var vendors: [String]?
     var release_window_days: Int?
+    /// Selected model-preset slugs (`model_presets.slug`). The edge expands
+    /// these into a model union at chat time (see edge `pickRandomModel`).
+    /// nil/empty = no preset refs (an explicit / custom pool, or single model).
+    /// Defaulted so the memberwise init stays source-compatible with the
+    /// explicit-pool call sites that don't carry presets.
+    var presets: [String]? = nil
+}
+
+/// One model preset returned by `GET /v1/model-presets`. The edge resolves
+/// each preset's rule (旗舰 / 最新 / 最热门 / 速度快 …) against the live
+/// OpenRouter catalog, so `models` is the concrete, already-resolved set the
+///新建机器人 first screen shows. Bots store only the `slug` (in
+/// `RandomModelConfig.presets`); the union is re-resolved server-side per turn.
+struct ModelPreset: Codable, Identifiable, Hashable {
+    let slug: String
+    let title: String
+    let description: String
+    let default_selected: Bool
+    let models: [Entry]
+
+    var id: String { slug }
+
+    struct Entry: Codable, Hashable {
+        let slug: String
+        let display_name: String
+        let provider: String
+    }
 }
 
 /// Conversation-level model state — returned by `GET /v1/conversations/:id/model`.

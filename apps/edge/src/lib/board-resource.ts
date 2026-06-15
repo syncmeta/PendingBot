@@ -90,6 +90,23 @@ export interface BoardResourceOpts {
   updateSchema: z.ZodTypeAny;
   // true = 不挂 DELETE 路由(同上:tools 之类不该被 board 删)。
   disableDelete?: boolean;
+  // 写入成功后(create/update/delete)调用,用于让相关 KV 缓存失效——否则 board
+  // 改动要等缓存 TTL 过期才生效。第二参是被写行的主键值(create 取返回行、
+  // update/delete 取路径 id)。失败只 warn,不影响写本身。
+  onWrite?: (env: AppBindings['Bindings'], id: string | null) => Promise<void>;
+}
+
+async function runOnWrite(
+  opts: BoardResourceOpts,
+  env: AppBindings['Bindings'],
+  id: string | null,
+): Promise<void> {
+  if (!opts.onWrite) return;
+  try {
+    await opts.onWrite(env, id);
+  } catch (err) {
+    console.warn(`[board-resource] onWrite for ${opts.table} failed`, err);
+  }
 }
 
 export function boardResource(opts: BoardResourceOpts): Hono<AppBindings> {
@@ -155,6 +172,7 @@ export function boardResource(opts: BoardResourceOpts): Hono<AppBindings> {
       before: null,
       after: data,
     });
+    await runOnWrite(opts, c.env, (data as Record<string, unknown> | null)?.[opts.pk] as string ?? null);
     return c.json({ data });
   });
 
@@ -186,6 +204,7 @@ export function boardResource(opts: BoardResourceOpts): Hono<AppBindings> {
       before,
       after,
     });
+    await runOnWrite(opts, c.env, id);
     return c.json({ data: after });
   });
 
@@ -209,6 +228,7 @@ export function boardResource(opts: BoardResourceOpts): Hono<AppBindings> {
       before,
       after: null,
     });
+    await runOnWrite(opts, c.env, id);
     return c.json({});
   });
 

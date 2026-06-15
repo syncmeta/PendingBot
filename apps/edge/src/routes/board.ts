@@ -6,6 +6,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { requireCfAccess, requireBoardAdmin } from '../lib/cf-access';
 import { boardResource } from '../lib/board-resource';
+import { bustModelPresetCaches } from '../lib/model-presets';
 import { boardFeatureFlagsRoutes } from './board-feature-flags';
 import type { AppBindings } from '../types';
 
@@ -119,6 +120,37 @@ boardRoutes.route(
     orderBy: { col: 'slug', ascending: true },
     createSchema: presetLetterCreate,
     updateSchema: presetLetterCreate.partial(),
+  }),
+);
+
+// ── 模型预设(新建机器人用) ───────────────────────────────────
+// pendingbot.model_presets(slug 主键)。board 管"规则"(resolver_kind + params),
+// 内容由 OpenRouter 目录动态解析(见 lib/model-presets.ts)。params 是 jsonb:
+// 如 { "authors":["openai","anthropic"], "flagship":"most_expensive" }。
+const modelPresetCreate = z.object({
+  slug: z.string().min(1),
+  title: z.string().min(1),
+  description: z.string().default(''),
+  resolver_kind: z.enum([
+    'top_flagship', 'chinese_flagship', 'latest_per_vendor', 'fastest', 'most_popular', 'manual',
+  ]),
+  params: z.record(z.string(), z.unknown()).default({}),
+  default_selected: z.boolean().default(false),
+  enabled: z.boolean().default(true),
+  sort_order: z.number().int().default(100),
+});
+boardRoutes.route(
+  '/model-presets',
+  boardResource({
+    table: 'model_presets',
+    pk: 'slug',
+    targetKind: 'model_preset',
+    cols: 'slug, title, description, resolver_kind, params, default_selected, enabled, sort_order, updated_at',
+    orderBy: { col: 'sort_order', ascending: true },
+    createSchema: modelPresetCreate,
+    updateSchema: modelPresetCreate.partial(),
+    // 写后立即失效预设缓存,board 改动不等 TTL(列表 1h / 单预设 6h)。
+    onWrite: (env, slug) => bustModelPresetCaches(env, slug ?? undefined),
   }),
 );
 
