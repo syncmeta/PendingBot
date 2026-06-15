@@ -25,6 +25,11 @@ struct CrewSummary: Decodable, Identifiable, Equatable, Hashable {
     /// `LocalCrewStore` 填值;edge 不下发 → 缺键兜底 nil（下游回落 `.codex`）。
     let captainAgentKind: String?
 
+    /// crew 所属机器（nil = 本机/本地）。**Mac 本地路径**由 `LocalCrewStore` 透传
+    /// `LocalCrew.machineId`；edge `GET /v1/crews` 缺键时兜 nil（向后兼容）。
+    /// 侧栏「按机器分组」的分组键。
+    let machineId: String?
+
     /// memberwise init —— `LocalCrewStore.summary` 等本地构造点用。
     init(
         id: String,
@@ -36,7 +41,8 @@ struct CrewSummary: Decodable, Identifiable, Equatable, Hashable {
         createdAt: String,
         updatedAt: String,
         parentCrewIds: [String] = [],
-        captainAgentKind: String? = nil
+        captainAgentKind: String? = nil,
+        machineId: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -48,6 +54,7 @@ struct CrewSummary: Decodable, Identifiable, Equatable, Hashable {
         self.updatedAt = updatedAt
         self.parentCrewIds = parentCrewIds
         self.captainAgentKind = captainAgentKind
+        self.machineId = machineId
     }
 
     /// 显式 decoder —— edge `GET /v1/crews` 不下发 `parentCrewIds` / `captainAgentKind`,缺键兜底。
@@ -63,12 +70,13 @@ struct CrewSummary: Decodable, Identifiable, Equatable, Hashable {
         updatedAt = try c.decode(String.self, forKey: .updatedAt)
         parentCrewIds = try c.decodeIfPresent([String].self, forKey: .parentCrewIds) ?? []
         captainAgentKind = try c.decodeIfPresent(String.self, forKey: .captainAgentKind)
+        machineId = try c.decodeIfPresent(String.self, forKey: .machineId)
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, title, responsibleSubjectId, runtimeLocation
         case captainBotId, status, createdAt, updatedAt, parentCrewIds
-        case captainAgentKind
+        case captainAgentKind, machineId
     }
 
     enum RuntimeLocation: String {
