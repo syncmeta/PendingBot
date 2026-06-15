@@ -12,6 +12,15 @@
 
 ---
 
+### 🟡 去轮询 Phase 5 — 本地跨进程靠目录监听、远端 hub 真推 + iOS 实时通道未验
+- **发现**: 2026-06-15 · `feat/crew-comms-rework`（Phase 5：群聊去 3s/2s 轮询，改事件驱动）
+- **背景**: `PendingCrewBackend` 加 `whiteboardChanges(crewId:) -> AsyncStream<Void>`，`CrewChatView`/`CrewSessionWindowView` 删 `pollLoop`/`rosterPollLoop`(3s) + `badgeTimer`(2s)，改 `for await` 订阅。Local 走 `LocalWhiteboardStore.changes`(进程内 append) + `directoryChanged`(DispatchSource 监 whiteboards 目录，补 helper 子进程 `post_to_crew` 跨进程写)；Edge 走 `CrewRealtimeClient` hub `.changed` 帧。
+- **未验证尾巴**:
+  1. **远端 hub 真推 → UI 刷新（活体）未验**：Edge `whiteboardChanges` 接 `CrewRealtimeClient`，但只到「编译 + 单测(codec/请求构造) + 双 build 绿」。真账号下 hub 发 `crew_announcements`/`crew_sessions`/`messages` 的 `change` 帧 → 中栏/右栏真刷新、断线重连后续推 —— 全未真机 E2E（与 Phase 4b 同源：`CrewRealtimeClient` 活体行为本就留手动验）。
+  2. **iOS 无实时通道**：`CrewRealtimeClient` 是 `#if os(macOS)`，`EdgeBackend.whiteboardChanges` 在 iOS 返回**立即 finish 的空流** —— iOS 订阅后只拿到首刷一次快照，此后不再有事件推送（轮询已删，没有定时兜底）。iOS 端 crew 群聊实时刷新待 realtime 客户端 / 本地后端跨平台后补。当前 iOS 端 crew 是过渡路径，影响可控但要记着。
+  3. **目录监听粒度到目录、不到 crewId**：`directoryChanged` 是 whiteboards 目录级 DispatchSource 事件（atomic write = temp+rename，per-file fd 会失效，只能监目录）。任一 crew 的 JSON 写都会让**所有**订阅者重拉自己那一份 —— 单用户低频可接受；多 crew 高频时会有放大（每个开着的 crew 视图都 refresh 一次）。
+  4. **badge 的「纯审批解决」边角**：未读角标 = pending 审批(`LocalApprovalStore`) + 白板新消息。`badgeTick` 现由 `whiteboardChanges` 事件 bump。新审批请求 / agent 进展都会写白板 → 触发事件，覆盖主场景；但**只改 `LocalApprovalStore`、不碰白板**的审批状态变化（BYOK 下 MCP server 跨进程解决一个 pending）不会即时 bump badge，要等下个白板事件才重算。`LocalApprovalStore` 无 publisher、又是跨进程文件写，事件化它需要再给它接一份目录监听（同 `directoryChanged` 套路）—— 本次未做，留待审批解决的实时性成问题时补。
+
 ### 🟡 PendingCrew codex app-server backend v1 — 核心闭环已落，真机链路 + 协议字段名未验
 - **发现**: 2026-06-14 · `feat/codex-app-server`（用户："让 codex 像在这个目录下直接跑一样，做成结构化 codex 客户端对标 codex desktop"）
 - **背景**: codex 从占位交互式终端搬到 `codex app-server`（本地子进程 + stdio 换行分隔 JSON-RPC 2.0）。spec `2026-06-14-codex-app-server-backend-design.md`、plan `2026-06-14-pendingcrew-codex-app-server-backend.md`、协议 bible `2026-06-05-codex-app-server-reference.md`。Phase 0–5 全落（SessionBackend 抽象 / RPC 帧+dispatcher / ThreadItem+transcript / 协议 builders / SessionConfig argv / env 守卫 / connection / backend / runner 接线 / 结构化视图）。**145 单测 0 失败 + macOS/iOS 双 build 绿**，但**所有验证都是单测 + 编译**——本环境没有真 codex 登录态，没 spawn 过真 app-server。
