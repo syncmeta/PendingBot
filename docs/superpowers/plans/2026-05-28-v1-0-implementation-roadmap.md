@@ -375,14 +375,22 @@
 
 **目标**：spec v2 §9 全套规则 —— 统一 @、整白板注入、`post_to_crew` tool。
 
+**✅ 实现状态（2026-06-15，`feat/crew-comms-rework` 已合 main `5068cc04`，见 progress.md 同日条目）**：
+基础件早落（#166–169：mailbox RPC 迁移 / edge 端点 / world-model prompt / post_to_crew tool）；
+本次重做把剩下的接通 —— 入站 @（人 @session/@captain → `resolveRecipientSessions` 定向落
+`session_mailbox_items`）、出站 @ + reply（session `post_to_crew` 带 mentions/reply_to）、白板
+发送者显示名、去轮询（本地进程内事件 / 远端复用 `RealtimeHubDO`，**未新建 DO**）、composer @ picker
++ 本地 @ 直接唤醒 idle session、对消息回复自动 @ 原发送者 + 可见引用。**"session 接收过滤 + 远端
+唤醒"那半（下面列表最后一条）代码就位但 dormant**，卡 block-3 本地↔edge 绑定（见 tech-debt + #373/#297）。
+
 **具体动作**：
-- 数据库：`session_mailbox` 表（session_id, message_id, status, queued_at）
-- 用户在群聊 @session：消息进 session mailbox
+- 数据库：`session_mailbox` 表（session_id, message_id, status, queued_at）— ✅ 已建（`session_mailbox_items`）
+- 用户在群聊 @session：消息进 session mailbox — ✅ 已接通
 - 每次 session 进入新轮次：
-  - 拉完整 crew 群聊消息（按时间序）注入 prompt context
-  - 拉 mailbox 待处理消息追加到 prompt
-- `post_to_crew(message)` tool：session 调用 → 写一条 crew 消息（发件人 = session）
-- session 接收过滤：只收 `@self` + 无 `@` 消息
+  - 拉完整 crew 群聊消息（按时间序）注入 prompt context — ✅
+  - 拉 mailbox 待处理消息追加到 prompt — ✅
+- `post_to_crew(message)` tool：session 调用 → 写一条 crew 消息（发件人 = session）— ✅（已扩 mentions/reply_to）
+- session 接收过滤：只收 `@self` + 无 `@` 消息 — ⏳ 代码就位但 dormant（卡 block-3）
 
 **估时**：4 天
 

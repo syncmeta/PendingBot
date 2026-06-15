@@ -58,4 +58,44 @@ final class HookEmitterTests: XCTestCase {
         XCTAssertNotNil(out)
         XCTAssertTrue(out!.contains("广播给全员"))
     }
+
+    // MARK: - 发送者名（Phase 3：白板看得见是谁发的）
+
+    func testSessionMessageWithNameRendersName() {
+        let dir = tempDir()
+        let store = LocalWhiteboardStore(directory: dir)
+        store.appendSessionMessage(crewId: "c", sessionId: "sess-abcdef12",
+                                   text: "我开始干活了", senderName: "小绿")
+        let out = emitter(store, dir).emitAndAdvance()
+        XCTAssertNotNil(out)
+        XCTAssertTrue(out!.contains("小绿"), "有 senderName 时应渲染名字")
+        XCTAssertFalse(out!.contains("session:sess-abcdef12"), "有名字时不再裸 uuid")
+    }
+
+    func testSessionMessageWithoutNameFallsBackToSessionId() {
+        let dir = tempDir()
+        let store = LocalWhiteboardStore(directory: dir)
+        store.appendSessionMessage(crewId: "c", sessionId: "sess-9", text: "无名发言")
+        let out = emitter(store, dir).emitAndAdvance()
+        XCTAssertNotNil(out)
+        XCTAssertTrue(out!.contains("session:sess-9"), "无 senderName 退回旧格式 session:<id>")
+    }
+
+    func testUserMessageWithNameRendersName() {
+        let dir = tempDir()
+        let store = LocalWhiteboardStore(directory: dir)
+        store.appendUserMessage(crewId: "c", text: "人类留言", senderName: "阿强")
+        let out = emitter(store, dir).emitAndAdvance()
+        XCTAssertNotNil(out)
+        XCTAssertTrue(out!.contains("阿强"))
+    }
+
+    func testUserMessageWithoutNameFallsBackToHuman() {
+        let dir = tempDir()
+        let store = LocalWhiteboardStore(directory: dir)
+        store.appendUserMessage(crewId: "c", text: "人类留言")
+        let out = emitter(store, dir).emitAndAdvance()
+        XCTAssertNotNil(out)
+        XCTAssertTrue(out!.contains("人类"), "无 senderName 退回旧格式「人类」")
+    }
 }

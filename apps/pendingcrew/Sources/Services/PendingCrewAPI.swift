@@ -432,7 +432,8 @@ struct PendingCrewAPI {
         mentions: [CrewMention] = [],
         attachmentIds: [String] = [],
         senderLabel: String? = nil,
-        localSessionId: String? = nil
+        localSessionId: String? = nil,
+        replyToId: String? = nil
     ) async throws -> String? {
         struct Body: Encodable {
             let content: String
@@ -440,6 +441,12 @@ struct PendingCrewAPI {
             let attachmentIds: [String]?
             let senderLabel: String?
             let localSessionId: String?
+            let replyTo: String?
+
+            enum CodingKeys: String, CodingKey {
+                case content, mentions, attachmentIds, senderLabel, localSessionId
+                case replyTo = "reply_to"
+            }
         }
         // The handler returns `{ messageId }`; `announcementId` stays nil (this
         // endpoint never emitted one). Decode both leniently so neither shape
@@ -452,7 +459,11 @@ struct PendingCrewAPI {
                 mentions: mentions,
                 attachmentIds: attachmentIds.isEmpty ? nil : attachmentIds,
                 senderLabel: senderLabel,
-                localSessionId: localSessionId
+                localSessionId: localSessionId,
+                // `reply_to`(#377):edge `CrewMessageBody` 已接受并落 attachments
+                // jsonb 的 `in_reply_to`,读模型 `mapMessageToEntry` 统一透出供气泡渲染
+                // 被回复引用。回复的「自动 @ 原发送者」另走 `mentions`(两端都生效)。
+                replyTo: replyToId
             )
         )
         return resp.messageId ?? resp.announcementId

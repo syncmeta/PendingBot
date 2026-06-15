@@ -52,6 +52,7 @@ import { jsonError } from '../lib/http-error';
 import type { Json } from '../db/schema';
 import type { AppBindings } from '../types';
 import { dispatchGroupTurn } from '../lib/group-dispatch';
+import { resolveOutboundRecipients } from '../lib/crew-outbound';
 
 // ── messages → chat-entry mapping (spec §9: crew chat IS the conversation's
 // `messages`, so the captain replies via the standard bot-reply pipeline and
@@ -149,9 +150,18 @@ async function hydrateCrewAttachments(
   return out;
 }
 
+// Resolved sender identity for a single row (Phase 3 — the whiteboard should
+// show *who* posted, not a bare uuid). Computed once per request from the crew
+// roster (see `resolveSender` below) and threaded into `mapMessageToEntry`.
+type SenderIdentity = {
+  senderName: string | null;
+  senderMemberId: string | null;
+};
+
 export function mapMessageToEntry(
   m: ChatMessageRow,
   resolvedAttachments?: CrewWireAttachment[],
+  sender?: SenderIdentity,
 ): Record<string, unknown> {
   const lp = (m.log_payload ?? {}) as Record<string, unknown>;
   // 接合 v2 block 3:Mac relay 上行的来源标注落在 attachments jsonb 上
@@ -167,6 +177,18 @@ export function mapMessageToEntry(
         localSessionId: typeof a.localSessionId === 'string' ? a.localSessionId : null,
       };
     }
+  }
+  // #377 — 统一透出 in_reply_to(被回复消息的 id)。两个载体:
+  //   * 人类消息 → attachments jsonb 的 `in_reply_to`(POST /messages 落)。
+  //   * session 帖 → log_payload.in_reply_to(post-to-crew 镜像消息落)。
+  // 读不出 → null。客户端据此本地在已加载 entries 里按 id 查被引用消息渲染。
+  let inReplyTo: string | null = null;
+  if (m.attachments && typeof m.attachments === 'object' && !Array.isArray(m.attachments)) {
+    const a = m.attachments as { in_reply_to?: unknown };
+    if (typeof a.in_reply_to === 'string') inReplyTo = a.in_reply_to;
+  }
+  if (inReplyTo == null && typeof lp.in_reply_to === 'string') {
+    inReplyTo = lp.in_reply_to;
   }
   const senderKind =
     m.role === 'user' || m.role === 'human' ? 'user'
@@ -194,8 +216,71 @@ export function mapMessageToEntry(
     attachments: resolvedAttachments && resolvedAttachments.length > 0 ? resolvedAttachments : null,
     // Mac relay 来源标记(null = 非 relay 上行)。
     relay,
+    // Phase 3 — 发送者显示名(+ 成员 id),由 caller 经 roster map 解析后传入;
+    // 解析不出 → null,客户端退回现有渲染(裸 session/人类),不报错。relay 上行
+    // 自带 senderLabel(远端真名)时优先用它,免再查 roster。
+    sender_display_name: sender?.senderName ?? (relay?.senderLabel as string | null | undefined) ?? null,
+    sender_member_id: sender?.senderMemberId ?? null,
+    // #377 — 被回复消息的 id(无 → null)。客户端在已加载 entries 里本地查它的
+    // 发送者 + 内容摘要,渲染成引用条。
+    in_reply_to: inReplyTo,
     created_at: m.created_at,
   };
+}
+
+// One crew roster row needed to resolve a message's sender display name. We
+// only pull the columns the resolver maps on (member id + the two id columns +
+// display_name), keyed once per request so reads don't go N+1.
+type RosterRow = {
+  id: string;
+  member_kind: string | null;
+  user_id: string | null;
+  code_session_id: string | null;
+  display_name: string | null;
+};
+
+// Build a sender resolver from a crew's active members. Returns a closure that
+// maps a `ChatMessageRow` → { senderName, senderMemberId }:
+//   * human prose (role user/human, has user_id) → member with that user_id
+//   * session post  (role log, log_payload.session_id) → code_session member
+//     with that code_session_id
+// Anything else (bot replies, unmatched ids) → nulls. Bot display names are
+// intentionally left to the client (it already knows the captain), so we only
+// resolve the two cases the bare-uuid problem actually bites.
+function makeSenderResolver(members: RosterRow[] | null | undefined): (m: ChatMessageRow) => SenderIdentity {
+  const byUserId = new Map<string, RosterRow>();
+  const bySessionId = new Map<string, RosterRow>();
+  for (const mem of members ?? []) {
+    if (mem.user_id && !byUserId.has(mem.user_id)) byUserId.set(mem.user_id, mem);
+    if (mem.code_session_id && !bySessionId.has(mem.code_session_id)) bySessionId.set(mem.code_session_id, mem);
+  }
+  return (m: ChatMessageRow): SenderIdentity => {
+    if ((m.role === 'user' || m.role === 'human') && m.user_id) {
+      const mem = byUserId.get(m.user_id);
+      if (mem) return { senderName: mem.display_name ?? null, senderMemberId: mem.id };
+    } else if (m.role === 'log') {
+      const lp = (m.log_payload ?? {}) as Record<string, unknown>;
+      const sid = typeof lp.session_id === 'string' ? lp.session_id : null;
+      if (sid) {
+        const mem = bySessionId.get(sid);
+        if (mem) return { senderName: mem.display_name ?? null, senderMemberId: mem.id };
+      }
+    }
+    return { senderName: null, senderMemberId: null };
+  };
+}
+
+// Fetch the crew's active roster (the rows the sender resolver needs) in one
+// query. Fail-soft: on error return [] so a roster hiccup degrades to "no
+// display names" rather than failing the whole whiteboard read.
+async function fetchRoster(svc: SupabaseClient, crewId: string): Promise<RosterRow[]> {
+  const { data, error } = await svc
+    .from('temporary_group_members')
+    .select('id, member_kind, user_id, code_session_id, display_name')
+    .eq('conversation_id', crewId)
+    .eq('status', 'active');
+  if (error || !data) return [];
+  return data as unknown as RosterRow[];
 }
 const CHAT_ROLES = ['user', 'human', 'bot', 'assistant', 'log'];
 const CHAT_SELECT = 'id, conversation_id, role, content, user_id, sender_bot_id, log_kind, log_payload, attachments, created_at';
@@ -261,6 +346,13 @@ const CrewMessageBody = z.object({
   // origin:'mac_relay',Mac 拉取侧靠它过滤自己的上行(回环防护在客户端)。
   senderLabel: z.string().trim().min(1).max(64).optional(),
   localSessionId: z.string().trim().min(1).max(64).optional(),
+  // #377 — "回复某条消息"的可见引用。被回复消息的白板 id。沿用 jsonb 方案
+  // (不加列):落进该人类消息的 attachments jsonb 的 `in_reply_to`(与 Phase 2
+  // session 帖 log_payload.in_reply_to 同语义,统一经 mapMessageToEntry 透出
+  // entry.in_reply_to)。自动 @ 原发送者由客户端 staged mention 走通,服务端
+  // 不在这重复解析。非法 uuid → zod 挡;指向同 crew 不存在的消息 → 400(与
+  // Phase 2 resolveOutboundRecipients 对 reply_to 的严格度一致)。
+  reply_to: z.string().uuid().optional(),
 });
 
 /// Translate the spec-v2 mention shape into recipient_session_ids the
@@ -373,6 +465,25 @@ crewMessagesRoutes.post('/:crewId/messages', requireSubjectAuth(['crew:write']),
     if (canView !== true) return jsonError(c, 403, 'forbidden');
   }
 
+  // #377 — reply_to 存在性校验(uuid 形已由 zod 挡)。给了就查同 crew 有没有
+  // 这条;没有 → 400(与 Phase 2 resolveOutboundRecipients 对 reply_to 的严格度
+  // 一致 —— 指向不存在的消息是 malformed 请求)。校验放 insert 前,坏 reply_to
+  // 不落消息。
+  if (parsed.reply_to) {
+    const { data: replied, error: repliedErr } = await svc
+      .from('messages')
+      .select('id')
+      .eq('id', parsed.reply_to)
+      .eq('conversation_id', crewId)
+      .maybeSingle();
+    if (repliedErr) return jsonError(c, 500, 'database_error', { detail: repliedErr.message });
+    if (!replied) {
+      return jsonError(c, 400, 'invalid_body', {
+        message: 'reply_to points at a message that does not exist in this crew',
+      });
+    }
+  }
+
   // spec §9: the crew chat IS the conversation's `messages`. Insert the human's
   // message synchronously (so the captain wake below sees it), then wake the
   // captain to reply via the standard bot-reply pipeline.
@@ -392,6 +503,11 @@ crewMessagesRoutes.post('/:crewId/messages', requireSubjectAuth(['crew:write']),
       ...(parsed.senderLabel ? { senderLabel: parsed.senderLabel } : {}),
       ...(parsed.localSessionId ? { localSessionId: parsed.localSessionId } : {}),
     };
+  }
+  // #377 — 把 reply_to 的可见引用落进同一个 attachments jsonb 载体(与附件
+  // ids / relay 标注共存,不加列)。读取侧 mapMessageToEntry 透出 entry.in_reply_to。
+  if (parsed.reply_to) {
+    attachmentsCell = { ...(attachmentsCell ?? {}), in_reply_to: parsed.reply_to };
   }
   // task_request:kind 落 log_kind、结构化指令落 log_payload(role 仍 'user',
   // 在群聊时间线上以发送者本人的气泡呈现)。读取侧 mapMessageToEntry 把
@@ -413,6 +529,37 @@ crewMessagesRoutes.post('/:crewId/messages', requireSubjectAuth(['crew:write']),
     attachments: attachmentsCell,
   } as never);
   if (insErr) return jsonError(c, 500, 'database_error', { detail: insErr.message });
+
+  // Directed mailbox fan-out (spec v2 §9.2 @ experience). @session / @captain
+  // resolve to explicit recipient session ids; each gets ONE directed mailbox
+  // row in addition to the broadcast above (the message already lives in
+  // `messages` for everyone). @broadcast / no @ → sessionIds === null → skip.
+  const recip = await resolveRecipientSessions(c.env, crewId, parsed.mentions);
+  if (recip.error) {
+    // A validation error (e.g. a session mention without target_id) is a
+    // malformed request — surface it. The message row already landed, but the
+    // caller should learn their @ was rejected. DB-level errors are NOT fatal
+    // (the broadcast succeeded); only 4xx validation errors bubble up.
+    if (recip.error.status >= 400 && recip.error.status < 500) {
+      return jsonError(c, 400, 'invalid_body', { message: recip.error.message });
+    }
+    console.warn('[crew] resolveRecipientSessions error', recip.error.message);
+  } else if (recip.sessionIds && recip.sessionIds.length > 0) {
+    // Best-effort: a mailbox enqueue failure must NOT fail the request — the
+    // message insert is the source of truth and the broadcast already happened.
+    for (const targetSessionId of recip.sessionIds) {
+      const { error: enqErr } = await untypedRpc(svc).rpc('enqueue_session_mailbox', {
+        p_session_id: targetSessionId,
+        p_message_kind: 'instruction',
+        p_summary: parsed.content,
+        p_payload: { source: 'crew_mention' },
+        p_source_message_id: messageId,
+      });
+      if (enqErr) {
+        console.warn('[crew] enqueue_session_mailbox failed', targetSessionId, enqErr.message);
+      }
+    }
+  }
 
   const captainId = meta.captain_bot_id as string | null;
   if (captainId) {
@@ -490,7 +637,9 @@ crewMessagesRoutes.get('/:crewId/messages', requireSubjectAuth(['crew:read']), a
   if (msgErr) return jsonError(c, 500, 'database_error', { detail: msgErr.message });
   const chatRows = (rows ?? []) as unknown as ChatMessageRow[];
   const attByMsg = await hydrateCrewAttachments(svc, chatRows);
-  const whiteboard = chatRows.map((r) => mapMessageToEntry(r, attByMsg.get(r.id)));
+  // Phase 3 — resolve sender display names off the roster (one query, no N+1).
+  const resolveSender = makeSenderResolver(await fetchRoster(svc, crewId));
+  const whiteboard = chatRows.map((r) => mapMessageToEntry(r, attByMsg.get(r.id), resolveSender(r)));
 
   // 接合 v2 block 3:lastCursor = 本批最大 created_at(rows 升序 → 末行),
   // Mac 同步代理存成 relayCursor,下次 `?since=` 续传;空批返回 null。
@@ -714,6 +863,18 @@ sessionInboxRoutes.get('/:sessionId/inbox', requireSubjectAuth(['crew:read']), a
     if (canView !== true) return jsonError(c, 403, 'session_forbidden');
   }
 
+  // Crew roster, fetched up front so it doubles as the sender-name resolver for
+  // the whiteboard (Phase 3) AND the crew.members payload below — one query, no
+  // N+1. Superset of RosterRow (adds bot_id / role / represents_crew_id for the
+  // world-model template).
+  const { data: members, error: memErr } = await svc
+    .from('temporary_group_members')
+    .select('id, member_kind, user_id, bot_id, code_session_id, display_name, role, status, represents_crew_id')
+    .eq('conversation_id', sessionRow.crew_conversation_id)
+    .eq('status', 'active');
+  if (memErr) return jsonError(c, 500, 'database_error', { detail: memErr.message });
+  const resolveSender = makeSenderResolver((members ?? []) as unknown as RosterRow[]);
+
   // Whiteboard = the crew conversation's `messages` (spec §9 unified store), so
   // the session's per-turn context injection sees the human chat + captain
   // replies + cards. Mapped onto the chat-entry shape; access gated above.
@@ -730,7 +891,7 @@ sessionInboxRoutes.get('/:sessionId/inbox', requireSubjectAuth(['crew:read']), a
   if (wbErr) return jsonError(c, 500, 'database_error', { detail: wbErr.message });
   const wbChatRows = (wbRows ?? []) as unknown as ChatMessageRow[];
   const wbAttByMsg = await hydrateCrewAttachments(svc, wbChatRows);
-  const whiteboard = wbChatRows.map((r) => mapMessageToEntry(r, wbAttByMsg.get(r.id)));
+  const whiteboard = wbChatRows.map((r) => mapMessageToEntry(r, wbAttByMsg.get(r.id), resolveSender(r)));
 
   // Mailbox tail for this session — anything not yet processed.
   // We include unread / pending / delivered / read (legacy=unread, new
@@ -754,13 +915,6 @@ sessionInboxRoutes.get('/:sessionId/inbox', requireSubjectAuth(['crew:read']), a
     .eq('conversation_id', sessionRow.crew_conversation_id)
     .maybeSingle();
   if (metaErr) return jsonError(c, 500, 'database_error', { detail: metaErr.message });
-
-  const { data: members, error: memErr } = await svc
-    .from('temporary_group_members')
-    .select('id, member_kind, user_id, bot_id, code_session_id, display_name, role, status, represents_crew_id')
-    .eq('conversation_id', sessionRow.crew_conversation_id)
-    .eq('status', 'active');
-  if (memErr) return jsonError(c, 500, 'database_error', { detail: memErr.message });
 
   const { data: shares, error: shareErr } = await svc
     .from('crew_responsibility_shares')
@@ -791,6 +945,12 @@ const MarkDeliveredBody = z.object({
 const SessionPostToCrewBody = z.object({
   content: z.string().trim().min(1).max(4_000),
   category: z.enum(['progress', 'question', 'milestone']).optional(),
+  // Phase 2 — outbound @ + reply_to. `mentions` reuses the spec-v2 mention
+  // shape (only 'session' / 'human' are meaningful on an outbound post);
+  // `reply_to` auto-@s the replied-to message's original sender. Both resolve
+  // via lib/crew-outbound.ts:resolveOutboundRecipients.
+  mentions: z.array(MentionItem).max(64).default([]),
+  reply_to: z.string().uuid().optional(),
 });
 
 // T4.3 — server-side reception for the `request_permission` agent tool.
@@ -856,6 +1016,23 @@ sessionInboxRoutes.post('/:sessionId/post-to-crew', requireSubjectAuth(['crew:wr
     });
   }
 
+  // Phase 2 — resolve outbound @ + reply_to into explicit recipient lists.
+  // @session / reply_to-of-a-session-post → session recipients (each gets a
+  // directed mailbox row); reply_to-of-a-human-message → member recipient
+  // (metadata-only, no mailbox). A malformed @ / reply_to is a 400.
+  const recip = await resolveOutboundRecipients(
+    c.env,
+    sessionRow.crew_conversation_id,
+    parsed.mentions,
+    parsed.reply_to,
+  );
+  if (recip.error) {
+    if (recip.error.status >= 400 && recip.error.status < 500) {
+      return jsonError(c, 400, 'invalid_body', { message: recip.error.message });
+    }
+    return jsonError(c, 500, 'database_error', { detail: recip.error.message });
+  }
+
   const dbMessageKind = parsed.category === 'question' ? 'question' : 'status';
   const payload: Record<string, unknown> = {
     text: parsed.content,
@@ -867,8 +1044,8 @@ sessionInboxRoutes.post('/:sessionId/post-to-crew', requireSubjectAuth(['crew:wr
     p_runner_host_id: sessionRow.runner_host_id,
     p_responsible_subject_id: sessionRow.responsible_subject_id,
     p_crew_session_id: sessionRow.id,
-    p_recipient_session_ids: [] as Json,
-    p_recipient_member_ids: [] as Json,
+    p_recipient_session_ids: recip.sessionIds as unknown as Json,
+    p_recipient_member_ids: recip.memberIds as unknown as Json,
     p_message_kind: dbMessageKind,
     p_summary: parsed.content,
     p_payload: payload as Json,
@@ -888,9 +1065,12 @@ sessionInboxRoutes.post('/:sessionId/post-to-crew', requireSubjectAuth(['crew:wr
   // card (role='log' → mapMessageToEntry senderKind='session', attributed via
   // log_payload.session_id). Best-effort: a failure must NOT fail the request
   // — the announcement already succeeded.
+  // `reply_to` linkage rides in the mirror's log_payload.in_reply_to (no new
+  // column) so future UI can thread the conversation.
+  const mirrorMessageId = crypto.randomUUID();
   try {
     const { error: msgErr } = await svc.from('messages').insert({
-      id: crypto.randomUUID(),
+      id: mirrorMessageId,
       client_message_id: crypto.randomUUID(),
       conversation_id: sessionRow.crew_conversation_id,
       role: 'log',
@@ -900,6 +1080,7 @@ sessionInboxRoutes.post('/:sessionId/post-to-crew', requireSubjectAuth(['crew:wr
         session_id: sessionId,
         text: parsed.content,
         category: parsed.category ?? null,
+        ...(recip.inReplyTo ? { in_reply_to: recip.inReplyTo } : {}),
       },
       content: parsed.content,
       status: 'done',
@@ -909,6 +1090,24 @@ sessionInboxRoutes.post('/:sessionId/post-to-crew', requireSubjectAuth(['crew:wr
     }
   } catch (e) {
     console.warn('[session post-to-crew] messages mirror insert threw', e);
+  }
+
+  // Directed mailbox fan-out for each @session / reply_to-of-a-session target
+  // (Phase 2, parity with the human-sender path). Member recipients (a human
+  // auto-@d via reply_to) get NO mailbox — humans read the group chat directly.
+  // Best-effort: an enqueue failure must NOT fail the post (announcement +
+  // mirror already landed).
+  for (const targetSessionId of recip.sessionIds) {
+    const { error: enqErr } = await untypedRpc(svc).rpc('enqueue_session_mailbox', {
+      p_session_id: targetSessionId,
+      p_message_kind: 'instruction',
+      p_summary: parsed.content,
+      p_payload: { source: recip.inReplyTo ? 'crew_reply' : 'crew_mention' },
+      p_source_message_id: mirrorMessageId,
+    });
+    if (enqErr) {
+      console.warn('[session post-to-crew] enqueue_session_mailbox failed', targetSessionId, enqErr.message);
+    }
   }
 
   return c.json({ announcementId: data, category: parsed.category ?? null });

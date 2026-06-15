@@ -13,6 +13,12 @@ final class CodexAppServerBackend: ObservableObject, SessionBackend {
     let transcript = CodexTranscript()
     @Published private(set) var status: SessionStatus = .running
     var statusPublisher: Published<SessionStatus>.Publisher { $status }
+    /// app-server 有真 turn 生命周期：turn/started→activeTurnId 置位，turn/completed→清空。
+    /// （唤醒注入门禁用，main 语义保留。）
+    var isBusy: Bool { activeTurnId != nil }
+    /// UI 头像「干活中/空闲」用,与 isBusy 同值但可观察。turn/started→true,completed→false。
+    @Published private(set) var isWorking = false
+    var isWorkingPublisher: Published<Bool>.Publisher { $isWorking }
 
     private let connection: CodexAppServerConnection
     private let cwd: String
@@ -59,6 +65,7 @@ final class CodexAppServerBackend: ObservableObject, SessionBackend {
                         Task { @MainActor in
                             guard let self, self.status == .running else { return }   // stop() already set .exited; don't clobber
                             self.status = .exited(code)
+                            self.isWorking = false
                         }
                     })
                 let result = try await connection.request(
@@ -96,12 +103,13 @@ final class CodexAppServerBackend: ObservableObject, SessionBackend {
     func stop() {
         guard status == .running else { return }
         status = .exited(nil)
+        isWorking = false
         Task { await connection.terminate() }
     }
 
     private func trackTurn(method: String, params: [String: Any]) {
-        if method == "turn/started" { activeTurnId = (params["turn"] as? [String: Any])?["id"] as? String }
-        if method == "turn/completed" { activeTurnId = nil }
+        if method == "turn/started" { activeTurnId = (params["turn"] as? [String: Any])?["id"] as? String; isWorking = true }
+        if method == "turn/completed" { activeTurnId = nil; isWorking = false }
     }
 
     private func handleServerRequest(id: Int, method: String, params: [String: Any]) async {

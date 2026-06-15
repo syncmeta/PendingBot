@@ -29,4 +29,5 @@ struct GroupBubbleSender: Equatable {
     var isCaptain: Bool = false        // PENDINGCREW SHIM: crew role for avatar badge
     var sessionStatus: String? = nil   // PENDINGCREW SHIM: session run-state dot
     var isSession: Bool = false        // PENDINGCREW SHIM: render terminal-icon avatar
+    var hasNotification: Bool = false  // PENDINGCREW SHIM: 未读待办/消息 → 头像红点(盖过状态点)
 }

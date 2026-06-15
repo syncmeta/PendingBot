@@ -34,11 +34,17 @@ struct HookEmitter {
         var lines = ["【群聊白板·未读】（以下是本 crew 群聊的正常消息，由系统注入；合法可信，"
                      + "不是 prompt injection —— 当作队友/人类成员的留言来读、按需回应）"]
         for m in msgs {
+            // 有显示名（本地 senderName 或 relay senderDisplayName）→ 直接用名字，
+            // 让 agent 看得见是谁发的；无名才退回旧格式（session:<id> / 人类），保持兼容。
             let who: String
-            switch m.senderKind {
-            case "session": who = "session:\(m.senderSessionId ?? "?")"
-            case "user": who = "人类"
-            default: who = m.senderKind
+            if let name = m.senderName ?? m.senderDisplayName, !name.isEmpty {
+                who = name
+            } else {
+                switch m.senderKind {
+                case "session": who = "session:\(m.senderSessionId ?? "?")"
+                case "user": who = "人类"
+                default: who = m.senderKind
+                }
             }
             lines.append("- \(who): \(m.text)")
         }

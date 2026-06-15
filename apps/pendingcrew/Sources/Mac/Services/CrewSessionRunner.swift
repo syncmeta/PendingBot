@@ -83,6 +83,11 @@ final class CrewSessionRunner: ObservableObject {
     /// 同时 running 的 session 上限（资源护栏）。
     static let maxConcurrentRuns = 6
 
+    /// 事件驱动唤醒（Phase 4b）：**一个 crew 一个 waker**，该 crew 上的多个登录态
+    /// run 共用一条 hub 连接。登录态 run 启动时 `ensureMailboxWaker` 懒建，最后一个
+    /// 该 crew 的登录态 run 移除时收掉。BYOK/local-only 不建（无服务端 hub）。
+    private var mailboxWakers: [String: CrewMailboxWaker] = [:]
+
     init() {}
 
     /// 切换前台 run（退出「新建」态）。
@@ -98,18 +103,50 @@ final class CrewSessionRunner: ObservableObject {
 
     /// 停掉指定 run（保留在列表里，状态落 cancelled）。
     func stop(_ runId: UUID) {
-        runs.first { $0.runID == runId }?.stop()
+        guard let run = runs.first(where: { $0.runID == runId }) else { return }
+        let crewId = run.crewId
+        run.stop()
+        teardownMailboxWakerIfIdle(crewId: crewId)
     }
 
     /// 移除指定 run（仍在跑则先停）。被移除的是选中项时，回退选最后一个。
     func remove(_ runId: UUID) {
         guard let idx = runs.firstIndex(where: { $0.runID == runId }) else { return }
         let run = runs[idx]
+        let crewId = run.crewId
         if run.status == .running { run.stop() }
         runs.remove(at: idx)
         if selectedRunId == runId {
             selectedRunId = runs.last?.runID
         }
+        teardownMailboxWakerIfIdle(crewId: crewId)
+    }
+
+    // MARK: - 事件驱动唤醒（Phase 4b）
+
+    /// 为一个 crew 确保有一条 hub waker 在跑（一个 crew 一个，多 run 共用）。
+    /// 登录态 run 启动后由 call site 调（传入已鉴权的 `api` + device-grant `token`
+    /// + `baseURL`）。已存在则只补拉一次 inbox（刚起的 run 可能已有@我的待处理项，
+    /// 不等下一个 hub 事件）。
+    func ensureMailboxWaker(crewId: String, api: PendingCrewAPI, baseURL: URL, token: String) {
+        if let existing = mailboxWakers[crewId] {
+            Task { await existing.drain() }   // 新 run 加入，补一次
+            return
+        }
+        let client = CrewRealtimeClient(baseURL: baseURL, crewId: crewId, token: token)
+        let waker = CrewMailboxWaker(crewId: crewId, api: api, client: client, runner: self)
+        mailboxWakers[crewId] = waker
+        waker.start()
+        Task { await waker.drain() }          // 起手补一次，不等首个 hub 事件
+    }
+
+    /// 该 crew 已无登录态 running run → 收掉 waker（断 hub）。
+    func teardownMailboxWakerIfIdle(crewId: String) {
+        let stillActive = runs.contains {
+            $0.crewId == crewId && $0.status == .running && $0.hasServerSession
+        }
+        guard !stillActive, let waker = mailboxWakers.removeValue(forKey: crewId) else { return }
+        waker.stop()
     }
 
     /// 起一个新 session。pre-flight 失败抛错（工具未装 / 超并发上限）。成功后
@@ -293,8 +330,10 @@ final class CrewSessionRunner: ObservableObject {
     /// captain 与 worker 的差异只有两点：世界观后追加 captain persona
     /// （`crew-captain.zh.md`），MCP helper 带 `--captain` 解锁 answer_decision
     /// （chunk2 §2）。机长是调度者不改代码 —— 直接用 crew 目录，不开 isolation worktree。
-    /// `initialPrompt` 让它读白板 + `post_to_crew` 报到一句 ——「建 crew 即在群里发消息」
-    /// 走这条（不另写代码发系统消息，保持白板由 agent 自己写的一致语义）。
+    /// `initialPrompt` 只让它用 `post_to_crew` 报到一句 ——「建 crew 即在群里发消息」
+    /// 走这条（不另写代码发系统消息，保持白板由 agent 自己写的一致语义）。报到之外
+    /// 不预先指派任何动作：世界观/白板已随 system prompt 注入，待决策会另行通知，无需
+    /// 在开场 prompt 里堆"先读白板再待命"那套（用户定调：报到就行，别搞乱七八糟的）。
     /// 渲染世界观要 roster → 用传入的 `backend` 拉（best-effort，失败照样启动）。
     func startCaptain(detail: CrewDetail, backend: PendingCrewBackend?) async throws {
         let crewId = detail.crew.id
@@ -306,7 +345,7 @@ final class CrewSessionRunner: ObservableObject {
         }
         let workdir = URL(fileURLWithPath: (wd as NSString).expandingTildeInPath)
         let localSessionId = "captain-" + String(UUID().uuidString.lowercased().prefix(8))
-        let initialPrompt = "你是本 crew 的机长。先了解群聊白板的现状（系统会自动注入；需要时也可用 read_whiteboard 主动读一次），然后用 post_to_crew 简短报到一句并待命。后续有待决策会通知你。"
+        let initialPrompt = "你是本 crew 的机长，用 post_to_crew 报到一句即可。"
         // persona / members best-effort：加载失败不挡启动（只是少人设/世界观，与 worker 同策略）。
         let persona = try? LocalPromptLoader().rawTemplate(name: "crew-captain", locale: "zh")
         let members = (try? await backend?.listCrewMembers(crewId: crewId))?.members ?? []
@@ -326,7 +365,7 @@ final class CrewSessionRunner: ObservableObject {
                 detail: detail, members: members, taskBrief: initialPrompt, workdir: workdir,
                 sessionId: localSessionId, runnerKind: captainKind, appendPersona: persona)
             let comms = LocalSessionLaunch.prepareLocalCommsConfig(
-                crewId: crewId, sessionId: localSessionId, captain: true)
+                crewId: crewId, sessionId: localSessionId, captain: true, label: "机长")
             cfg.settingsFile = comms.settings
             cfg.mcpConfigFile = comms.mcp
         case .codex:
@@ -334,7 +373,7 @@ final class CrewSessionRunner: ObservableObject {
                 detail: detail, members: members, taskBrief: initialPrompt, workdir: workdir,
                 sessionId: localSessionId, appendPersona: persona)
             codexMcpServers = LocalSessionLaunch.codexMcpServers(
-                crewId: crewId, sessionId: localSessionId, captain: true)
+                crewId: crewId, sessionId: localSessionId, captain: true, label: "机长")
         }
         try await start(
             crewId: crewId,
@@ -398,8 +437,15 @@ final class CrewSessionRun: ObservableObject, Identifiable {
     /// 类型转换访问：仅当后端是终端（claude）时非 nil，供 `AgentTerminalView` 使用。
     var agentTerminalSession: AgentTerminalSession? { backend as? AgentTerminalSession }
 
+    /// 是否有服务端 session 行（登录态）。事件驱动唤醒（Phase 4b）只对这类 run
+    /// 拉 inbox —— BYOK/local-only run（serverLink == nil）没有服务端 mailbox。
+    var hasServerSession: Bool { serverLink != nil }
+
     @Published private(set) var status: Status = .running
     @Published private(set) var exitCode: Int32?
+    /// 干活中(跑回合) vs 空闲(存活等指令) —— 镜像后端 `isWorking`，驱动头像/切换条状态点。
+    /// (与 backend.isBusy 区分:那个是唤醒注入门禁;这个是 UI 活跃信号,见 SessionBackend。)
+    @Published private(set) var isWorking = false
 
     /// 用户主动停 → 终端退出时落 `.cancelled` 而非 `.failed`。
     private var cancelled = false
@@ -408,6 +454,7 @@ final class CrewSessionRun: ObservableObject, Identifiable {
     /// Server row lifecycle close (logged mode only; nil for BYOK/local-only).
     private let serverLink: CrewSessionServerLink?
     private var statusObservation: Task<Void, Never>?
+    private var workingObservation: Task<Void, Never>?
 
     nonisolated var id: UUID { runID }
 
@@ -434,7 +481,20 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         self.serverLink = serverLink
         self.role = role
         self.status = Self.map(backend.status, cancelled: false)
+        self.isWorking = backend.isWorking
         observeBackendStatus()
+        observeBackendWorking()
+    }
+
+    /// 镜像后端 `isWorking`(claude=输出活跃度;codex=turn 进行中)到 run 上,供 UI 观察。
+    private func observeBackendWorking() {
+        workingObservation = Task { [weak self] in
+            guard let self else { return }
+            for await working in self.backend.isWorkingPublisher.values {
+                if Task.isCancelled { return }
+                self.isWorking = working
+            }
+        }
     }
 
     /// 跟踪后端的 running/exited，映射到 run 的生命周期 status，并在退出时
@@ -470,6 +530,7 @@ final class CrewSessionRun: ObservableObject, Identifiable {
 
     deinit {
         statusObservation?.cancel()
+        workingObservation?.cancel()
     }
 
     /// 终端进程退出 —— 落 terminal status + 关 server row。Idempotent。
@@ -477,7 +538,9 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         guard !finalized else { return }
         finalized = true
         status = Self.map(.exited(exitCode), cancelled: cancelled)
+        isWorking = false
         statusObservation?.cancel()
+        workingObservation?.cancel()
         if let link = serverLink {
             let finalStatus = status
             Task { await link.finish(localStatus: finalStatus, summary: nil) }

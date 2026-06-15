@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
 /// BYOK 本地白板持久化（spec 2026-06-05-pendingcrew-local-first-crew-design §2
 /// 本地 crew-comms）。
@@ -39,9 +40,60 @@ final class LocalWhiteboardStore: @unchecked Sendable {
 
     private let directory: URL
 
+    /// 进程内变更信号（Phase 5：去轮询）。本进程每次 append 后发一个 `crewId` ——
+    /// `LocalBackend.whiteboardChanges` 订阅它、按 crewId 过滤，把中栏/右栏的
+    /// 「3s 轮询」换成「append 即刷新」。app 侧人类发送 + CrewRelayAgent 搬入的
+    /// relay 消息都走 app 进程内的 `.shared` 实例，立即推。
+    ///
+    /// **跨进程写**（helper `--mcp-serve` 子进程经 `post_to_crew` 写 agent 进展、
+    /// `--mcp-hook` 注入）走另一个进程的 `LocalWhiteboardStore` 实例、不经此
+    /// subject —— 由下面的 `directoryChanged` 文件监听补齐（FSEvents/DispatchSource
+    /// 监 whiteboards 目录），所以跨进程 agent 进展也能即时推到 UI，无需轮询。
+    ///
+    /// `PassthroughSubject` 是引用类型，作 `let` 持有不破坏 `@unchecked Sendable`
+    /// （实例状态仍全 `let`）；本仓低频单写、`.send` 在 MainActor app 路径 + helper
+    /// 进程各自调，无跨线程竞态热点。
+    let changes = PassthroughSubject<String, Never>()
+
+    /// **跨进程**白板目录变更信号。`startWatching()` 起一个 DispatchSource 目录
+    /// 监听，本进程**或子进程**对 `<dir>/*.json` 的写（atomic rename）会触发，
+    /// 发一个 `Void` tick。`LocalBackend.whiteboardChanges` 收到即重拉本 crew ——
+    /// 目录事件不带 crewId（rename 粒度到目录），但重拉单 crew 的 JSON 很廉价。
+    let directoryChanged = PassthroughSubject<Void, Never>()
+
+    /// 目录监听的可变状态 —— 锁保护，维持 `@unchecked Sendable`（实例其余皆 `let`）。
+    private let watchLock = NSLock()
+    private var watchSource: DispatchSourceFileSystemObject?
+    private var watchFD: Int32 = -1
+
     init(directory: URL? = nil) {
         self.directory = directory ?? Self.defaultDirectory
         try? FileManager.default.createDirectory(at: self.directory, withIntermediateDirectories: true)
+    }
+
+    // MARK: - Cross-process directory watch（去轮询：补齐 helper 子进程的写）
+
+    /// 起目录监听（幂等）。监 whiteboards 目录的写/rename —— atomic write 落盘
+    /// （写临时文件 → rename 覆盖）在目录上表现为写/rename 事件，per-file fd 会因
+    /// inode 被换而失效，所以监**目录**而非单文件。事件 → `directoryChanged` tick。
+    /// app UI（`LocalBackend`）首次订阅时调；短命的 helper stdio 进程不调（无需）。
+    func startWatching() {
+        watchLock.lock()
+        defer { watchLock.unlock() }
+        guard watchSource == nil else { return }
+        let fd = open(directory.path, O_EVTONLY)
+        guard fd >= 0 else { return }
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd,
+            eventMask: [.write, .rename, .delete],
+            queue: .global(qos: .utility))
+        source.setEventHandler { [weak self] in
+            self?.directoryChanged.send(())
+        }
+        source.setCancelHandler { close(fd) }
+        watchFD = fd
+        watchSource = source
+        source.resume()
     }
 
     // MARK: - Public
@@ -58,8 +110,10 @@ final class LocalWhiteboardStore: @unchecked Sendable {
         return Array(all.suffix(from: all.index(after: idx)))
     }
 
-    /// 追加一条本机人类消息。
-    func appendUserMessage(crewId: String, text: String) {
+    /// 追加一条本机人类消息。`senderName` = 人类显示名（如已知；nil → 渲染退回「我/人类」）。
+    /// `inReplyTo` = 被回复消息的白板 id（Phase 6 回复；nil = 非回复）。
+    func appendUserMessage(
+        crewId: String, text: String, senderName: String? = nil, inReplyTo: String? = nil) {
         append(crewId: crewId, LocalWhiteboardMessage(
             id: UUID().uuidString.lowercased(),
             senderKind: "user",
@@ -67,11 +121,23 @@ final class LocalWhiteboardStore: @unchecked Sendable {
             senderSessionId: nil,
             category: nil,
             text: text,
-            createdAt: ISO8601DateFormatter().string(from: Date())))
+            createdAt: ISO8601DateFormatter().string(from: Date()),
+            senderName: senderName,
+            inReplyTo: inReplyTo))
     }
 
-    /// 追加一条 session（编码 agent）消息（chunk 4：`post_to_crew`）。
-    func appendSessionMessage(crewId: String, sessionId: String, text: String, category: String? = nil) {
+    /// 追加一条 session（编码 agent）消息（chunk 4：`post_to_crew`）。`senderName` =
+    /// 该 session 的显示 label（如「机长」/「Claude Code · abc123」；nil → 渲染退回
+    /// `session:<id>`，给 agent 看的白板就不再只剩裸 uuid）。
+    ///
+    /// `mentions` = `post_to_crew` 的定向 @ 列表（Phase 7；nil/空 = 广播）。
+    /// `inReplyTo` = 被回复消息的白板 id（Phase 7 reply_to；nil = 非回复）。
+    /// 本地先**记录保留**这两项（不静默吞）；把它们一路路由到 edge 信箱 / hub
+    /// 还需本地↔edge 同步链（block 3 relay），那条尾巴见 CrewRelayAgent.push。
+    func appendSessionMessage(crewId: String, sessionId: String, text: String,
+                              category: String? = nil, senderName: String? = nil,
+                              mentions: [LocalWhiteboardMention]? = nil,
+                              inReplyTo: String? = nil) {
         append(crewId: crewId, LocalWhiteboardMessage(
             id: UUID().uuidString.lowercased(),
             senderKind: "session",
@@ -79,7 +145,10 @@ final class LocalWhiteboardStore: @unchecked Sendable {
             senderSessionId: sessionId,
             category: category,
             text: text,
-            createdAt: ISO8601DateFormatter().string(from: Date())))
+            createdAt: ISO8601DateFormatter().string(from: Date()),
+            senderName: senderName,
+            inReplyTo: inReplyTo,
+            mentions: (mentions?.isEmpty == true) ? nil : mentions))
     }
 
     /// 追加一条 **relay 拉下来的** 消息（接合 v2 block 3：CrewRelayAgent 把
@@ -129,6 +198,9 @@ final class LocalWhiteboardStore: @unchecked Sendable {
         rows.append(msg)
         guard let data = try? JSONEncoder().encode(rows) else { return }
         try? data.write(to: fileURL(crewId), options: .atomic)
+        // 单一写入漏斗 —— 所有 public append 变体都经此，发一个变更信号即覆盖全部
+        // （人类发送 / session 进展 / relay 搬入）。订阅方按 crewId 过滤。
+        changes.send(crewId)
     }
 }
 
@@ -153,4 +225,33 @@ struct LocalWhiteboardMessage: Codable, Equatable {
     var relayRemoteId: String? = nil
     /// relay 消息在 edge 侧的发送者显示名（iOS 用户名 / bot 名）。本地消息 nil。
     var senderDisplayName: String? = nil
+    /// 本地产生消息（session post_to_crew / 人类输入）的发送者显示名 ——
+    /// 给 agent 看的白板（`HookEmitter.render`）用它替掉裸 `session:<uuid>` / 「人类」。
+    /// 与 `senderDisplayName`（relay 远端名）区分来源；渲染时两者皆可作回退。
+    /// 新增可选字段向后兼容（旧 JSON 缺键 → nil）。
+    var senderName: String? = nil
+    /// 被回复消息的白板 id（Phase 6 回复）。非 nil = 这条是对 `inReplyTo` 的回复。
+    /// 新增可选字段向后兼容（旧 JSON 缺键 → nil）。
+    var inReplyTo: String? = nil
+    /// 定向 @ 列表（Phase 7：session `post_to_crew(mentions:)`）。非 nil/非空 = 这条
+    /// 点名了某些对象（@session / @captain / @human）。本地先记录保留（不静默吞）；
+    /// 真正按 mention 投递到 edge 信箱 / 唤醒目标 session 还需 block 3 relay 同步。
+    /// 新增可选字段向后兼容（旧 JSON 缺键 → nil）。
+    var mentions: [LocalWhiteboardMention]? = nil
+}
+
+/// 一条定向 @（Phase 7）。形状对齐 edge `MentionItem`（`{kind, target_id?}`），
+/// 便于将来 block 3 relay 直接透传给 edge `post_to_crew`/`POST /messages`。
+struct LocalWhiteboardMention: Codable, Equatable {
+    /// 'session' | 'captain' | 'human'
+    let kind: String
+    /// kind == "session" 时是目标 session 的 id；其余 kind 可空。
+    let targetId: String?
+
+    // 序列化成 snake_case，真对齐 edge `MentionItem`（`{kind, target_id?}`）——
+    // block 3 relay 透传给 edge 时字段名直接对得上（默认 Codable 会是 camelCase）。
+    enum CodingKeys: String, CodingKey {
+        case kind
+        case targetId = "target_id"
+    }
 }
