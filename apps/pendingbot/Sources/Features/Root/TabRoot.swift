@@ -149,28 +149,36 @@ struct TabRoot: View {
         // presented views the way a hand-positioned overlay did.
         TabView(selection: selected) {
             MessageTabView()
-                .tabItem { Label(TopTab.message.label, systemImage: TopTab.message.systemImage) }
+                .tabItem { tabItem(TopTab.message) }
                 .badge(unread.totalUnreadCount)
                 .tag(TopTab.message)
 
             FriendsTabView()
-                .tabItem { Label(TopTab.friends.label, systemImage: TopTab.friends.systemImage) }
+                .tabItem { tabItem(TopTab.friends) }
                 .tag(TopTab.friends)
 
             CrewTabV2View()
-                .tabItem { Label(TopTab.crew.label, systemImage: TopTab.crew.systemImage) }
+                .tabItem { tabItem(TopTab.crew) }
                 .tag(TopTab.crew)
 
             EnvelopeTabView()
-                .tabItem { Label(TopTab.envelope.label, systemImage: TopTab.envelope.systemImage) }
+                .tabItem { tabItem(TopTab.envelope) }
                 // System tab badge doesn't have a dot-only variant — a
                 // bullet glyph is the closest we get to "small red dot".
                 .badge(unread.hasUnreadEnvelopes ? Text(verbatim: "●") : nil)
                 .tag(TopTab.envelope)
 
             MeTabView()
-                .tabItem { Label(TopTab.me.label, systemImage: TopTab.me.systemImage) }
+                .tabItem { tabItem(TopTab.me) }
                 .tag(TopTab.me)
+        }
+    }
+
+    private func tabItem(_ tab: TopTab) -> some View {
+        Label {
+            Text(tab.label)
+        } icon: {
+            tab.symbol.image
         }
     }
 

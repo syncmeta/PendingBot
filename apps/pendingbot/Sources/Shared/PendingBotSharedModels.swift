@@ -19,6 +19,8 @@ public enum PendingBotBigScreenTab: String, CaseIterable, Identifiable, Hashable
         }
     }
 
+    /// SF Symbol fallback for non-custom-symbol callers. SwiftUI surfaces map
+    /// `.crew` to the PendingCrew custom symbol instead.
     public var systemImage: String {
         switch self {
         case .message: "bubble.left.and.bubble.right"

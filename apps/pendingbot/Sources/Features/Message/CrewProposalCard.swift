@@ -54,7 +54,7 @@ struct CrewProposalCardView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Image(systemName: "person.3.fill")
+            AppSymbol.pendingCrew.image
                 .foregroundStyle(Color.accentColor)
             Text("\(proposingBotName) 提议创建 crew")
                 .font(.subheadline)

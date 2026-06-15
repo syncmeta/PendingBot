@@ -31,12 +31,22 @@ extension EnvironmentValues {
 struct EmptyDetailHint: View {
     /// nil / 空串 → 只渲染图标(宽屏右栏占位「文字去掉,只留图标」)。
     var text: String? = nil
-    var systemImage: String? = nil
+    var symbol: AppSymbol? = nil
+
+    init(text: String? = nil, systemImage: String? = nil) {
+        self.text = text
+        self.symbol = systemImage.map(AppSymbol.system)
+    }
+
+    init(text: String? = nil, symbol: AppSymbol) {
+        self.text = text
+        self.symbol = symbol
+    }
 
     var body: some View {
         VStack(spacing: 14) {
-            if let systemImage {
-                Image(systemName: systemImage)
+            if let symbol {
+                symbol.image
                     .font(Theme.Fonts.glyph(size: 36, weight: .light))
                     .foregroundStyle(Theme.Palette.inkMuted.opacity(0.55))
             }

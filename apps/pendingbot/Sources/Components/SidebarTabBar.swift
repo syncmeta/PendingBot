@@ -35,7 +35,7 @@ struct SidebarTabBar: View {
                     selection = tab
                 } label: {
                     VStack(spacing: 3) {
-                        Image(systemName: tab.systemImage)
+                        tab.symbol.image
                             .font(Theme.Fonts.glyph(size: 20, weight: .regular))
                             .overlay(alignment: .topTrailing) {
                                 if tab == .message, unread.totalUnreadCount > 0 {

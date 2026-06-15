@@ -48,7 +48,11 @@ public struct PendingBotBigScreenAppView: View {
                 List(selection: $selectedTab) {
                     Section("PendingBot") {
                         ForEach(PendingBotBigScreenTab.allCases) { tab in
-                            Label(tab.title, systemImage: tab.systemImage)
+                            Label {
+                                Text(tab.title)
+                            } icon: {
+                                tab.symbol.image
+                            }
                                 .tag(tab)
                         }
                     }
@@ -60,7 +64,11 @@ public struct PendingBotBigScreenAppView: View {
                             Button {
                                 selectedTab = tab
                             } label: {
-                                Label(tab.title, systemImage: tab.systemImage)
+                                Label {
+                                    Text(tab.title)
+                                } icon: {
+                                    tab.symbol.image
+                                }
                             }
                             .buttonStyle(.plain)
                         }
@@ -133,7 +141,13 @@ public struct PendingBotBigScreenAppView: View {
                 }
             )
         } else {
-            ContentUnavailableView(selectedTab.title, systemImage: selectedTab.systemImage)
+            ContentUnavailableView {
+                Label {
+                    Text(selectedTab.title)
+                } icon: {
+                    selectedTab.symbol.image
+                }
+            }
         }
     }
 
@@ -218,7 +232,13 @@ public struct PendingBotCrewWorkspaceView: View {
                     }
                 )
             } else {
-                ContentUnavailableView("选择一个机组", systemImage: "person.3.sequence")
+                ContentUnavailableView {
+                    Label {
+                        Text("选择一个机组")
+                    } icon: {
+                        AppSymbol.pendingCrew.image
+                    }
+                }
             }
         }
         .onAppear(perform: selectCrewIfNeeded)
@@ -253,7 +273,13 @@ private struct PendingBotCrewList: View {
             List(selection: $selectedCrewId) {
                 Section("机组") {
                     if crews.isEmpty {
-                        ContentUnavailableView("还没有机组", systemImage: "person.3.sequence")
+                        ContentUnavailableView {
+                            Label {
+                                Text("还没有机组")
+                            } icon: {
+                                AppSymbol.pendingCrew.image
+                            }
+                        }
                             .frame(minHeight: 220)
                     } else {
                         ForEach(PendingBotCrewSidebarRow.rows(for: crews)) { row in
@@ -278,7 +304,13 @@ private struct PendingBotCrewList: View {
             List {
                 Section("机组") {
                     if crews.isEmpty {
-                        ContentUnavailableView("还没有机组", systemImage: "person.3.sequence")
+                        ContentUnavailableView {
+                            Label {
+                                Text("还没有机组")
+                            } icon: {
+                                AppSymbol.pendingCrew.image
+                            }
+                        }
                             .frame(minHeight: 220)
                     } else {
                         ForEach(PendingBotCrewSidebarRow.rows(for: crews)) { row in
@@ -366,7 +398,7 @@ private struct PendingBotCrewDetailView: View {
                     PendingBotCrewStatusPanel(
                         title: "选择机组后会显示详情",
                         message: "这里会显示成员、关系、责任分摊、Session 和机组公告。",
-                        systemImage: "person.3.sequence"
+                        symbol: .pendingCrew
                     )
                 }
             }
@@ -567,6 +599,12 @@ private struct PendingBotCrewDetailView: View {
     }
 }
 
+private extension PendingBotBigScreenTab {
+    var symbol: AppSymbol {
+        self == .crew ? .pendingCrew : .system(systemImage)
+    }
+}
+
 private struct PendingBotCrewSection<Content: View>: View {
     let title: String
     let systemImage: String
@@ -625,11 +663,27 @@ private struct PendingBotCrewEmptyLine: View {
 private struct PendingBotCrewStatusPanel: View {
     let title: String
     let message: String
-    let systemImage: String
+    let symbol: AppSymbol
+
+    init(title: String, message: String, systemImage: String) {
+        self.title = title
+        self.message = message
+        self.symbol = .system(systemImage)
+    }
+
+    init(title: String, message: String, symbol: AppSymbol) {
+        self.title = title
+        self.message = message
+        self.symbol = symbol
+    }
 
     var body: some View {
         ContentUnavailableView {
-            Label(title, systemImage: systemImage)
+            Label {
+                Text(title)
+            } icon: {
+                symbol.image
+            }
         } description: {
             Text(message)
         }

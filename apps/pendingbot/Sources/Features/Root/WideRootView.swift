@@ -123,9 +123,9 @@ struct WideRootView: View {
         return Button {
             if binding.wrappedValue != tab { binding.wrappedValue = tab }
         } label: {
-            Image(systemName: tab.systemImage)
+            tab.symbol.image
                 .font(Theme.Fonts.glyph(size: 16, weight: .regular))
-                // 没有 fill 变体的字形(如 command)会优雅回退到原线条形。
+                // 自定义 symbol 没有 fill 变体也会优雅回退到原轮廓。
                 .symbolVariant(selected ? .fill : .none)
                 .foregroundStyle(selected ? Theme.Palette.accent : Theme.Palette.inkMuted)
                 .frame(maxWidth: .infinity)

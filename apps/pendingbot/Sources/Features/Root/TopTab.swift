@@ -1,5 +1,21 @@
 import SwiftUI
 
+enum AppSymbol: Hashable {
+    case system(String)
+    case custom(String)
+
+    static let pendingCrew = AppSymbol.custom("PendingCrewSymbol")
+
+    var image: Image {
+        switch self {
+        case .system(let name):
+            Image(systemName: name)
+        case .custom(let name):
+            Image(name)
+        }
+    }
+}
+
 /// One of the top-level tabs (消息 / 好友 / 机组 / 来信 / 我).
 ///
 /// 跨平台共享:iOS 的 `SidebarTabBar` / `TabRoot` 用它驱动 regular-size-class
@@ -25,13 +41,13 @@ enum TopTab: String, Hashable, CaseIterable, Identifiable {
         }
     }
 
-    var systemImage: String {
+    var symbol: AppSymbol {
         switch self {
-        case .message:  return "bubble.left"
-        case .friends:  return "person.2"
-        case .crew:     return "command"
-        case .envelope: return "envelope.open"
-        case .me:       return "person.crop.circle"
+        case .message:  return .system("bubble.left")
+        case .friends:  return .system("person.2")
+        case .crew:     return .pendingCrew
+        case .envelope: return .system("envelope.open")
+        case .me:       return .system("person.crop.circle")
         }
     }
 }

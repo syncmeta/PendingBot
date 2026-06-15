@@ -40,7 +40,7 @@ struct CrewChildSummaryCard: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: "person.3.sequence.fill")
+            AppSymbol.pendingCrew.image
                 .font(.callout)
                 .foregroundStyle(.tint)
             VStack(alignment: .leading, spacing: 2) {

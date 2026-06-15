@@ -187,7 +187,11 @@ struct CrewTabV2View: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if crews.isEmpty {
             ContentUnavailableView {
-                Label("还没有机组", systemImage: "command")
+                Label {
+                    Text("还没有机组")
+                } icon: {
+                    AppSymbol.pendingCrew.image
+                }
             } description: {
                 Text("机组 = 一组群聊 + coding agent 的权限边界。\n点右上角 + 新建一个，或者在 PendingCrew 桌面端创建。")
                     .multilineTextAlignment(.center)
@@ -345,7 +349,7 @@ extension CrewTabV2View: FeatureSurface {
                     // chat store / realtime subscription state.
                     .id(crewId)
             } else {
-                EmptyDetailHint(systemImage: "command")
+                EmptyDetailHint(symbol: .pendingCrew)
             }
         }
     }
@@ -385,7 +389,7 @@ private struct CrewRowV2: View {
             ZStack {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(Color.accentColor.opacity(0.12))
-                Image(systemName: "command")
+                AppSymbol.pendingCrew.image
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(Color.accentColor)
             }
