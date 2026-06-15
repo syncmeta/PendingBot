@@ -1,11 +1,16 @@
 import { Hono } from 'hono';
+import { requireSession } from '@pendingbot/identity';
 import type { Env } from '../types';
 import { serviceClient } from '../lib/supabase';
-import { resolveModelPreset, type PresetDef } from '../lib/model-presets';
+import { resolveModelPreset, MODEL_PRESETS_LIST_CACHE_KEY, type PresetDef } from '../lib/model-presets';
 
 export const modelPresetsRoutes = new Hono<{ Bindings: Env }>();
 
-const LIST_CACHE_KEY = 'model_presets:list:v1';
+// Auth like /v1/models — preset resolution can trigger up-to-40 per-model
+// OpenRouter endpoint fetches on a cold cache, so don't expose it anonymously.
+modelPresetsRoutes.use('*', requireSession());
+
+const LIST_CACHE_KEY = MODEL_PRESETS_LIST_CACHE_KEY;
 const LIST_TTL_SEC = 60 * 60;
 
 modelPresetsRoutes.get('/', async (c) => {

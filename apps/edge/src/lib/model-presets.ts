@@ -41,6 +41,16 @@ const PRESET_CACHE_PREFIX = 'model_preset:v1:';
 const PRESET_TTL_SEC = 6 * 60 * 60;
 const FASTEST_CANDIDATE_CAP = 40;
 
+// Aggregate cache for the GET /v1/model-presets list response (route owns the TTL).
+export const MODEL_PRESETS_LIST_CACHE_KEY = 'model_presets:list:v1';
+
+// Invalidate preset caches after a board edit so changes take effect immediately
+// rather than waiting out the TTL. slug omitted = list cache only.
+export async function bustModelPresetCaches(env: Env, slug?: string): Promise<void> {
+  await env.MEMORY.delete(MODEL_PRESETS_LIST_CACHE_KEY).catch(() => {});
+  if (slug) await env.MEMORY.delete(PRESET_CACHE_PREFIX + slug).catch(() => {});
+}
+
 // 可上 bot 的 chat 行：排除 native-backed OpenRouter 双胞胎、非 chat、以及
 // 不该当预设内容的噪声——`:free` 档、OpenRouter 自家 meta 模型（openrouter/*）、
 // `-fast` 延迟路由变体。实测发现 latest_per_vendor 会捞到 openrouter/fusion、

@@ -174,19 +174,33 @@ export async function expandPresets(
   resolve: PresetResolver,
 ): Promise<RandomModelConfig> {
   if (!cfg.presets || cfg.presets.length === 0) return cfg;
-  const presetSlugs = await resolve(cfg.presets);
+  let presetSlugs: string[];
+  try {
+    presetSlugs = await resolve(cfg.presets);
+  } catch (err) {
+    // Resolution (DB read / catalog fetch) failed — degrade to an empty pool
+    // so the caller falls back to the pinned model, never aborts the turn.
+    console.warn('[random-model] preset resolution failed', err);
+    presetSlugs = [];
+  }
   const merged = [...new Set([...(cfg.models ?? []), ...presetSlugs])];
-  return { ...cfg, models: merged.length ? merged : null, presets: null };
+  // presets were requested → `models` is now an EXPLICIT pool (possibly empty).
+  // Keep it an array even when empty: filterPool then yields nothing →
+  // pickRandomModel returns null → caller falls back to bots.model_id. Leaving
+  // it null would make filterPool treat it as "no filter" and draw from the
+  // WHOLE catalog (an off-pool model), violating the fallback contract.
+  return { ...cfg, models: merged, presets: null };
 }
 
 // 读 model_presets 定义（service role 绕过 RLS）→ resolveModelPreset（KV 缓存）→ 模型并集。
 async function resolvePresetsToSlugs(env: Env, presetSlugs: string[]): Promise<string[]> {
   const db = serviceClient(env).schema('pendingbot');
-  const { data } = await db
+  const { data, error } = await db
     .from('model_presets')
     .select('slug, title, description, resolver_kind, params, default_selected')
     .in('slug', presetSlugs)
     .eq('enabled', true);
+  if (error) console.warn('[random-model] model_presets read failed', error.message);
   const defs = (data ?? []) as unknown as PresetDef[];
   const resolved = await Promise.all(defs.map((d) => resolveModelPreset(env, d)));
   return [...new Set(resolved.flatMap((r) => r.models.map((m) => m.slug)))];

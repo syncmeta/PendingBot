@@ -6,6 +6,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { requireCfAccess, requireBoardAdmin } from '../lib/cf-access';
 import { boardResource } from '../lib/board-resource';
+import { bustModelPresetCaches } from '../lib/model-presets';
 import { boardFeatureFlagsRoutes } from './board-feature-flags';
 import type { AppBindings } from '../types';
 
@@ -148,6 +149,8 @@ boardRoutes.route(
     orderBy: { col: 'sort_order', ascending: true },
     createSchema: modelPresetCreate,
     updateSchema: modelPresetCreate.partial(),
+    // 写后立即失效预设缓存,board 改动不等 TTL(列表 1h / 单预设 6h)。
+    onWrite: (env, slug) => bustModelPresetCaches(env, slug ?? undefined),
   }),
 );
 
