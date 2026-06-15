@@ -162,7 +162,7 @@ struct BubbleView<Menu: View>: View {
 
             Spacer(minLength: 32)
         }
-        .padding(.horizontal, Theme.Metrics.gutter)
+        .padding(.horizontal, Theme.Metrics.conversationGutter)
         .padding(.vertical, 4)
     }
 
@@ -220,7 +220,7 @@ struct BubbleView<Menu: View>: View {
             }
             .contextMenu { menu() }
         }
-        .padding(.horizontal, Theme.Metrics.gutter)
+        .padding(.horizontal, Theme.Metrics.conversationGutter)
         .padding(.vertical, 4)
     }
 }

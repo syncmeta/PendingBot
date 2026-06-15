@@ -1403,8 +1403,16 @@ struct ConversationView: View {
             .accessibilityLabel("会话设置")
         }
         .animation(.easeInOut(duration: 0.2), value: pending)
-        .padding(.horizontal, Theme.Metrics.gutter)
+        .padding(.horizontal, Theme.Metrics.conversationGutter)
+        // macOS hides the title bar and the detail pane ignores the top safe
+        // area (so there's no blank strip) — that left the header glued to the
+        // window edge. Add the breathing room back ourselves here; on iOS the
+        // safe-area inset already sits above this 6pt.
+        #if os(macOS)
+        .padding(.top, 20)
+        #else
         .padding(.top, 6)
+        #endif
         .padding(.bottom, 8)
     }
 

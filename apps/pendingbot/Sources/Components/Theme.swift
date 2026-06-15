@@ -211,6 +211,16 @@ enum Theme {
 
     enum Metrics {
         static let gutter: CGFloat = 16
+
+        /// Left/right inset for the conversation surface (header + bubbles).
+        /// macOS windows are wider and the content sat too close to the edge,
+        /// so give it a touch more breathing room there; iOS keeps `gutter`.
+        #if os(macOS)
+        static let conversationGutter: CGFloat = 24
+        #else
+        static let conversationGutter: CGFloat = gutter
+        #endif
+
         static let rowVPad: CGFloat = 10
         static let bubbleRadius: CGFloat = 18
         static let cardRadius: CGFloat = 14
