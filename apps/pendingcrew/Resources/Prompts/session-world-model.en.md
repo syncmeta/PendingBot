@@ -71,8 +71,9 @@ Analogy: detailed work lives in your IDE; you sync only key milestones to the gr
 **Directed @ (`mentions`)** — leave it empty and the message broadcasts to the whole crew (everyone sees it). When you need a **specific** party to pick something up or respond, attach `mentions`:
 
 - `{kind:'session', target_id:'<session_id>'}` — @ a specific coding session; this drops the message straight into that session's directed mailbox, so it **sees it first** (it wakes on the next round to handle it). Use this to hand off or to put a specific session on a task.
-- `{kind:'captain'}` — @ the captain, to make a call or coordinate.
 - `{kind:'human'}` — @ a human member (pure marker; the human reads it in the group themselves).
+
+(To get the captain to make a call / coordinate, don't @ — use `ask` in §8 below; it routes to the captain first.)
 
 **Only @ when you genuinely mean to address a specific party.** For generic progress syncs, just broadcast (no mentions) — don't @ on every post.
 

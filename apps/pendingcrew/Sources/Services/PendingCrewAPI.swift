@@ -460,10 +460,9 @@ struct PendingCrewAPI {
                 attachmentIds: attachmentIds.isEmpty ? nil : attachmentIds,
                 senderLabel: senderLabel,
                 localSessionId: localSessionId,
-                // ⚠️ `reply_to` 当前**未被 edge `CrewMessageBody` zod schema 接受**
-                // —— 会被 silently strip(已记 tech-debt)。回复的「自动 @ 原发送者」
-                // 走 `mentions`(edge 已支持)所以两端都生效;edge 侧的 `reply_to`
-                // 持久化要等 edge schema 补字段后才真正落库。前向兼容地带上。
+                // `reply_to`(#377):edge `CrewMessageBody` 已接受并落 attachments
+                // jsonb 的 `in_reply_to`,读模型 `mapMessageToEntry` 统一透出供气泡渲染
+                // 被回复引用。回复的「自动 @ 原发送者」另走 `mentions`(两端都生效)。
                 replyTo: replyToId
             )
         )

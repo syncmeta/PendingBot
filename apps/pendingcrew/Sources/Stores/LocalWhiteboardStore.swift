@@ -247,4 +247,11 @@ struct LocalWhiteboardMention: Codable, Equatable {
     let kind: String
     /// kind == "session" 时是目标 session 的 id；其余 kind 可空。
     let targetId: String?
+
+    // 序列化成 snake_case，真对齐 edge `MentionItem`（`{kind, target_id?}`）——
+    // block 3 relay 透传给 edge 时字段名直接对得上（默认 Codable 会是 camelCase）。
+    enum CodingKeys: String, CodingKey {
+        case kind
+        case targetId = "target_id"
+    }
 }
