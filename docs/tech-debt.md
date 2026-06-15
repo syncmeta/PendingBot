@@ -12,6 +12,15 @@
 
 ---
 
+### 🟡 新建机器人模型预设 — 数据源近似 + 端到端待部署后真验
+- **发现**: 2026-06-15 · `feat/create-bot-presets`（新建机器人一页式 + 模型预设）
+- **背景**: bot 模型池从手挑改成 board 管规则、OpenRouter 目录动态解析的"预设"。spec `2026-06-15-create-bot-presets-design.md`、plan `2026-06-15-create-bot-presets.md`。edge typecheck 0 + 599 vitest 全绿 + iOS build 绿，但 **E2E 全未真验**（见下）。
+- **尾巴**:
+  1. **端点冒烟 + 模拟器 E2E 未做**：`GET /v1/model-presets` 的 curl 冒烟、以及 iOS 模拟器走一遍（建私有/公有/自定义/换名字/点预设看模型/进自定义页是否秒开/无外部采用者公有 bot 可删）都**需要 worker 部署后才能验** —— 代码已 committed 但未 deploy，DB 迁移已 db push prod（表存在但服务端代码未上线）。合并 + 部署后必须补这轮真验，别在单测/build 绿就判 done（按 `feedback_no_shortcut_debt`：verify 要覆盖最终使用路径）。**这也是 plan Task 4.1 Step4 / 4.2 的"中国旗舰真实 slug + 原生路由是否生效"实测点**。
+  2. **最热门 = LMArena 评分代理，非真实使用量榜**：OR 官方用量榜(`datasets/get-rankings-daily`)要 `OPENROUTER_API_KEY`，edge 没有(目录公开/推理走 AI Gateway 统一计费)，用户拍板 v1 不加 secret。现用 LMArena `text` 子集 rating 排序——语义是"评测质量榜"。将来要"真热门"再加 OR key + 换 `most_popular` resolver 数据源。
+  3. **旗舰 most_expensive 会选到 pro/ultra 档**：实测真目录，`top_flagship` 的 openai 落到 `o1-pro`(blended≈195)而非 GPT-5.1 主线档（`blended_usd_per_million` 是混合成本估算,缓存权重大,不完全等于"档位"）。board 可把该预设 `params.flagship` 切 `latest_in_series`(配 `series` glob)兜。中国厂同理可能落到 code/preview/turbo 变体。
+  4. **速度快候选集 cap 40 + min_rating 1200 是拍的**：`resolveFastest` 候选筛选阈值（质量下限、候选规模）按当时真实数据拍的，未长期观察；模型生态变了可能需调。
+
 ### 🟡 PendingCrew codex app-server backend v1 — 核心闭环已落，真机链路 + 协议字段名未验
 - **发现**: 2026-06-14 · `feat/codex-app-server`（用户："让 codex 像在这个目录下直接跑一样，做成结构化 codex 客户端对标 codex desktop"）
 - **背景**: codex 从占位交互式终端搬到 `codex app-server`（本地子进程 + stdio 换行分隔 JSON-RPC 2.0）。spec `2026-06-14-codex-app-server-backend-design.md`、plan `2026-06-14-pendingcrew-codex-app-server-backend.md`、协议 bible `2026-06-05-codex-app-server-reference.md`。Phase 0–5 全落（SessionBackend 抽象 / RPC 帧+dispatcher / ThreadItem+transcript / 协议 builders / SessionConfig argv / env 守卫 / connection / backend / runner 接线 / 结构化视图）。**145 单测 0 失败 + macOS/iOS 双 build 绿**，但**所有验证都是单测 + 编译**——本环境没有真 codex 登录态，没 spawn 过真 app-server。

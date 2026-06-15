@@ -2,6 +2,15 @@
 
 **最近对账：2026-06-15**（对照实际代码 / 迁移 / git，不是看 task 标记）
 
+> **2026-06-15 新建机器人一页式 + 模型预设（`feat/create-bot-presets`，未合，subagent-driven）**：spec `docs/superpowers/specs/2026-06-15-create-bot-presets-design.md`、plan `docs/superpowers/plans/2026-06-15-create-bot-presets.md`、ledger task #378–394。用户定调 —— 新建机器人收敛单页（名字+模型预设多选+自定义+公开程度，无下一步），预设由 board 管规则、OpenRouter 目录动态解析，bot 存预设引用对话时解析；名字走 GeoNames 世界地名；vanity slug 彻底退役（bot=显示名+自动id,对齐人类账号）。
+> - **心智模型**：预设 = 活的查询（5 个全规则驱动：头两家旗舰=固定 openai+anthropic 各取旗舰；中国旗舰=中国厂白名单；各家最新=按发布；速度快=per-model endpoints 吞吐+质量下限；最热门=LMArena 评分代理）；bot 存 `config.modelPool.presets`，`pickRandomModel` 对话时展开成模型并集→复用现有池逻辑。自定义=一次性冻结成显式清单。
+> - **实测纠偏（关键）**：直接打 OpenRouter 真 API 证伪了文档 —— 稳定版 `/api/v1/models` 的 `order=` 参数**完全无效**（前端专用）、前端/rankings 端点全 404、edge 无 OR key（目录走公开端点、推理走 AI Gateway 统一计费）。故速度快改走 per-model `/endpoints` 吞吐、最热门改 LMArena 评分代理（用户拍板不加 OR key）。又实测发现 `latest_per_vendor` 会捞到 `openrouter/fusion`/`nvidia content-safety:free` 等噪声 → 收紧 chatRows（排 `:free`/openrouter meta/`-fast`）+ 各家最新要付费档。
+> - **DB（2 迁移,已 db push prod + schema regen）**：`model_presets` 表(slug PK,resolver_kind,params jsonb,default_selected,RLS 锁死)+ seed 5 预设；放宽 `bots_creator_delete` RLS —— 公有 bot 无外部采用者(user_bot_contacts 无他人 + 无 bot_invites)可删（UPDATE 不可变触发器不动）。
+> - **edge**：`lib/model-presets.ts`(解析器+KV 缓存) + `RandomModelConfig.presets`(parse+zod) + `routes/model-presets.ts`(`GET /v1/model-presets`,聚合 KV) + `pickRandomModel` 展开 presets + board `model_presets` CRUD 资源。typecheck 0 + **599 vitest 全绿**。
+> - **board**：`apps/admin` 模型预设管理页(resolver_kind 下拉 + params JsonField)，build 绿。
+> - **iOS**：`CreateBotSheet` 单页重构(预设多选默认前三 + 自定义入口 seed 预设并集 + 名字 GeoNames 11756 城市 + 换一个 + 公开程度默认私有,**全程自动 slug**)；`ModelPreset` 模型 + `ModelPresetsAPI`；slug 彻底退役(删 `BotSlugRule` + ManageBotSheet slug 编辑)；`ModelCatalog` 磁盘缓存 + ArenaPoolEditor 收口单一来源 + 排序离主线程；**`BotConfigView` 保留 `modelPool.presets` 往返**(否则编辑设置会清空预设)。iOS build 绿。
+> - **尾巴（见 tech-debt，未合 main）**：① 端点 curl 冒烟 + 模拟器 E2E（建私有/公有/自定义/换名/看预设/秒开/删除）需 worker 部署后才能真验（代码 committed 未 deploy）；② 最热门=LMArena 评测榜非真实使用量；③ 旗舰 most_expensive 实测会选到 o1-pro（pro 档），board 可切 latest_in_series 兜。
+
 > **2026-06-15 PendingCrew 侧栏按 machine 组织（`feat/sidebar-by-machine`，未合，subagent-driven）**：spec `docs/superpowers/specs/2026-06-15-pendingcrew-sidebar-by-machine-design.md`、plan `docs/superpowers/plans/2026-06-15-pendingcrew-sidebar-by-machine.md`。用户定调 —— 侧栏不要「Crew 平铺树 + 死占位 Machines」两段并列，改成**按 machine 分组**（每台机器一组、crew 住其下）。
 > - **心智模型纠偏**：Mac 上 `AppModel.backend` 本就**恒 LocalBackend**（登录不切 edge、本地 crew 不消失，6-10「本地为家」已定）；缺的是另一半——登录该做的「注册本机 + 拉账号其它机器」在 Mac 上一直**空转**（`registerSelfMachine` 打 LocalBackend no-op、`listMachines` 只返合成本机）。用户定数据模型：**每台机器对自己的 crew 本地优先（否决「登录即上云」）；账号层共享的只有「机器清单」；跨机器看/控走遥控（relay），不走 edge crew-mirror。**
 > - **数据层接通**：`CrewStore.registerSelfMachine`/`refreshMachines` 改走 edge（`AppModel.loggedAPIClient()`，authed 时真 `POST register-self` + `GET /v1/machines`，按 deviceId 去重本机），未登录回落仅本机；crew 数据源不动（仍本地 home）。`CrewSummary` 加 `machineId`（decoder 缺键兜 nil）+ `LocalCrewStore.summary` 透传；edge `GET /v1/crews` 也补回 `machineId`（给 iPad/遥控投影）。
