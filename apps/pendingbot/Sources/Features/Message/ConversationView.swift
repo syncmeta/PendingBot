@@ -754,6 +754,13 @@ struct ConversationView: View {
             }
         }
         .background(Theme.Palette.canvas.ignoresSafeArea())
+        #if os(macOS)
+        // The main macOS scene hides the title bar, but SwiftUI still reserves
+        // its top safe area for the toolbar. The conversation header lives in
+        // the detail pane, away from the traffic lights, so let it occupy that
+        // space instead of leaving a blank strip above the chat.
+        .ignoresSafeArea(.container, edges: .top)
+        #endif
         #if os(iOS)
         // System nav bar stays hidden — this view paints its own `chatHeader`.
         // Only valid on iOS; macOS NavigationStack detail has no nav bar to hide.

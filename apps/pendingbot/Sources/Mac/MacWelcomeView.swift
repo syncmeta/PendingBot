@@ -35,11 +35,11 @@ struct MacRootGate: View {
             } else if store.current == nil {
                 MacWelcomeView()
             } else {
-                // 登录后才声明主 app 尺寸 → 窗口从登录小窗长到 1100×700。
+                // 登录后才声明主 app 尺寸 → 窗口从登录小窗长到紧凑的 IM 主窗。
                 // A8:登录后渲染跨平台三列 shell WideRootView(已取代旧的
                 // Mac 专属 MacRootView,后者连同消息/好友 Mac 平行列已删)。
                 WideRootView()
-                    .frame(minWidth: 1100, minHeight: 700)
+                    .frame(minWidth: 920, minHeight: 620)
             }
         }
     }
@@ -56,8 +56,8 @@ struct MacWelcomeView: View {
 
     var body: some View {
         // Logo + form sit as one centered cluster (not pushed to opposite
-        // edges), on a compact window — much smaller than the main app's
-        // 1100×700 (which is restored once signed in via MacRootGate).
+        // edges), on a compact window — smaller than the main app window
+        // restored once signed in via MacRootGate.
         HStack(spacing: 96) {
             Image("BrandMark")
                 .resizable()
