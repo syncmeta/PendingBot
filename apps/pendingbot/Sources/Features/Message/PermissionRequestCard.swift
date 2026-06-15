@@ -1,8 +1,7 @@
 import SwiftUI
 
 // PendingBot rendering for a session's `request_permission` card
-// (spec v2 §10). Sister card to CrewProposalCard — mostly the same
-// shape, just a different vocabulary.
+// (spec v2 §10).
 //
 // Backend story:
 //   • A session (agent in Claude Code / Codex) calls the

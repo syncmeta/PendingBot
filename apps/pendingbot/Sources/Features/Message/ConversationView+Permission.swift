@@ -2,22 +2,20 @@ import Foundation
 import SwiftUI
 
 // Permission-request decide handler for spec v2 §10's manual mode.
-// Sister of ConversationView+CrewProposal — same shape, different
-// vocabulary. Lives alongside ConversationView state via an extension;
-// the card view is rendered in ConversationView.swift's main timeline
-// loop, which calls into here when the user taps a button.
+// Lives alongside ConversationView state via an extension; the card
+// view is rendered in ConversationView.swift's main timeline loop,
+// which calls into here when the user taps a button.
 
 extension ConversationView {
 
     /// Decision payload mirrors the edge enum exactly so the iOS user of
-    /// this method doesn't need to know about CrewAPI's nested enum.
+    /// this method doesn't need to know about the API client's nested enum.
     enum PermissionRequestDecisionKind {
         case approve
         case reject
 
-        // APIClient.PermissionRequestDecision lives in the now-cross-platform
-        // Crew slice (Features/Crew/CrewAPI.swift), so this bridge compiles on
-        // both iOS and macOS.
+        // APIClient.PermissionRequestDecision lives in
+        // Features/Message/PermissionRequestAPI.swift.
         fileprivate var apiValue: APIClient.PermissionRequestDecision {
             switch self {
             case .approve: return .approve
@@ -35,9 +33,9 @@ extension ConversationView {
     /// `messageId` is the messages.id of the synthesised log row; the
     /// underlying permission_requests.id is read from the payload.
     ///
-    /// Cross-platform: the decide endpoint (`api.decidePermissionRequest`) now
-    /// lives in the cross-platform Crew slice, so permission approve/deny works
-    /// on both iOS and macOS.
+    /// Cross-platform: the decide endpoint (`api.decidePermissionRequest`)
+    /// lives in `Features/Message/PermissionRequestAPI.swift`, so permission
+    /// approve/deny works on both iOS and macOS.
     func decidePermissionRequest(_ messageId: String, decision: PermissionRequestDecisionKind) async {
         guard let api else { return }
         guard let payload = permissionRequestsByMsgId[messageId],

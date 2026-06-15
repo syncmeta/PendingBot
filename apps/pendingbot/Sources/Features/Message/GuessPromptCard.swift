@@ -2,9 +2,9 @@ import SwiftUI
 
 // Model Blind Box (Task 9.1) — inline timeline card for the
 // `prompt_model_guess` tool's `role='log'`, `log_kind='guess_prompt'`
-// row. Sibling to CrewProposalCard / PermissionRequestCard: rendered
-// instead of a bubble for that log message id. Unlike those, it carries
-// no per-row payload — the reveal state comes from the conv-level
+// row. Sibling to PermissionRequestCard: rendered instead of a bubble
+// for that log message id. Unlike that one, it carries no per-row
+// payload — the reveal state comes from the conv-level
 // `convModelState`, so the card just takes flattened props.
 struct GuessPromptCard: View {
     let revealed: Bool

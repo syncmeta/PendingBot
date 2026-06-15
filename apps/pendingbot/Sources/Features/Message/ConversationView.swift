@@ -488,11 +488,9 @@ struct ConversationView: View {
                                 // (spec v2 §10). 批准 / 拒绝 while
                                 // payload.status == 'pending'; once
                                 // decided it just shows a status badge.
-                                // sessionLabel uses "Session" since
-                                // P2 doesn't yet thread session names
-                                // through to ConversationView — T4.6
-                                // will surface them when crew
-                                // conversations get full timeline UI.
+                                // sessionLabel uses a generic "Session"
+                                // since session names aren't threaded
+                                // through to ConversationView yet.
                                 PermissionRequestCardView(
                                     sessionLabel: "Session",
                                     payload: payload,

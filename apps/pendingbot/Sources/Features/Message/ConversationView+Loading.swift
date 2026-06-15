@@ -433,10 +433,9 @@ extension ConversationView {
                     } else if r.log_kind == "permission_request", let any = r.log_payload,
                               let payload = decodeLogPayload(any, as: PermissionRequestPayload.self) {
                         // permission_request — agent's request_permission
-                        // tool dropped a card here (spec v2 §10). Same
-                        // pattern as crew_proposal: synthesise a host
-                        // ChatMessage + stash typed payload in the
-                        // sibling dict for the renderer.
+                        // tool dropped a card here (spec v2 §10).
+                        // Synthesise a host ChatMessage + stash the typed
+                        // payload in the sibling dict for the renderer.
                         permissionRequestsLoaded[r.id] = payload
                         viewMessages.append(ChatMessage(
                             id: r.id,
