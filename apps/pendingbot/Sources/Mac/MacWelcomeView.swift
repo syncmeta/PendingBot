@@ -59,7 +59,7 @@ struct MacWelcomeView: View {
         // edges), on a compact window — smaller than the main app window
         // restored once signed in via MacRootGate.
         HStack(spacing: 96) {
-            // 左侧是个固定 180 宽的槽(=二维码宽):logo 居中、二维码填满,两者共享
+            // 左侧是个固定 140 宽的槽(=二维码宽):logo 居中、二维码填满,两者共享
             // 同一中心。切换 logo↔二维码不改变整簇宽度,所以右侧表单纹丝不动。
             Group {
                 if showingQRLogin {
@@ -76,7 +76,7 @@ struct MacWelcomeView: View {
                         .shadow(color: .black.opacity(0.06), radius: 18, y: 5)
                 }
             }
-            .frame(width: 180)
+            .frame(width: 140)
 
             VStack(alignment: .leading, spacing: 0) {
                 if vm.stage == .humanCheck {
@@ -534,10 +534,10 @@ private struct PendingBotMacQRLoginView: View {
     // 取代 logo 的二维码卡片:白底圆角方卡,只有码(失败/超时则白色模糊 + 刷新图标)。
     var body: some View {
         content
-            .frame(width: 180, height: 180)
-            .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(.white))
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .shadow(color: .black.opacity(0.08), radius: 16, y: 5)
+            .frame(width: 140, height: 140)
+            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(.white))
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .shadow(color: .black.opacity(0.08), radius: 14, y: 4)
             .task { start() }
             .onDisappear { pollTask?.cancel() }
     }
@@ -585,7 +585,7 @@ private struct PendingBotMacQRLoginView: View {
                 .resizable()
                 .interpolation(.none)
                 .scaledToFit()
-                .frame(width: 152, height: 152)
+                .frame(width: 116, height: 116)
                 .blur(radius: blurred ? 7 : 0)
         } else {
             Color.clear.frame(width: 152, height: 152)
