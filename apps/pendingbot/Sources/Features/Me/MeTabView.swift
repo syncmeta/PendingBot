@@ -59,7 +59,7 @@ struct MeTabView: View {
     /// without the sheet ever appearing (most visible on Mac Catalyst).
     /// Drive a single dialog off this enum instead.
     private enum ConfirmAction: Identifiable {
-        case signOut, delete
+        case signOut, delete, reset
         var id: Self { self }
     }
 
@@ -139,12 +139,28 @@ struct MeTabView: View {
                         Task { await deleteAccount(sentiment: .farewellForever) }
                     }
                     Button("取消", role: .cancel) {}
+                case .reset:
+                    if LocalDataReset.sharedLoginPresent {
+                        Button("清除(保留与 PendingCrew 共享的登录状态)", role: .destructive) {
+                            Task { await LocalDataReset.performReset(accountStore: store, clearSharedLogin: false) }
+                        }
+                        Button("清除,并清除与 PendingCrew 共享的登录状态", role: .destructive) {
+                            Task { await LocalDataReset.performReset(accountStore: store, clearSharedLogin: true) }
+                        }
+                    } else {
+                        Button("清除本机所有数据", role: .destructive) {
+                            Task { await LocalDataReset.performReset(accountStore: store, clearSharedLogin: false) }
+                        }
+                    }
+                    Button("取消", role: .cancel) {}
                 case .none:
                     EmptyView()
                 }
             } message: {
                 if pendingConfirm == .delete {
                     Text("若去意已决，28天后将会删除你在这个应用里的所有数据，期间在任意设备登录可恢复账号\n两个选项触发同一个流程，我只是想知道你的态度")
+                } else if pendingConfirm == .reset {
+                    Text("此操作不可恢复,仅清除本机数据(不会删除你的服务器账号)。")
                 }
             }
     }
@@ -153,6 +169,7 @@ struct MeTabView: View {
         switch pendingConfirm {
         case .signOut: return "确定？"
         case .delete:  return "确定注销账号？"
+        case .reset:   return "清除本机所有数据?"
         case .none:    return ""
         }
     }
@@ -206,6 +223,16 @@ struct MeTabView: View {
                         }
                         .buttonStyle(.plain)
                         .disabled(store.current == nil)
+
+                        optionDivider
+
+                        Button {
+                            pendingConfirm = .reset
+                            Haptics.tap()
+                        } label: {
+                            OptionRow(title: "清除本机所有数据", role: .destructive, showsChevron: false)
+                        }
+                        .buttonStyle(.plain)
 
                         optionDivider
 
