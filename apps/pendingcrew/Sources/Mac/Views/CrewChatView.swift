@@ -47,8 +47,6 @@ struct CrewChatView: View {
     @State private var showPhotoPicker = false
     @State private var showCamera = false
 
-    private let pollInterval: UInt64 = 3_000_000_000 // 3s
-
     /// Bridge: convert PendingComposerAttachment → PendingAttachment for ComposerView's
     /// pending tray display. Data already in memory (eagerly read at pick time), so
     /// uploadState = .uploaded (no async pipeline in the tray; upload happens on send).
@@ -83,7 +81,7 @@ struct CrewChatView: View {
     var body: some View {
         content
         .background(Theme.Palette.canvas)
-        .task(id: crewId) { await pollLoop() }
+        .task(id: crewId) { await subscribe() }
         // File importer — .fileImporter is available on iOS 14+ and macOS 11+.
         // On iOS the system presents a document picker; on macOS a Finder sheet.
         .fileImporter(
@@ -270,11 +268,21 @@ struct CrewChatView: View {
 
     // MARK: - data
 
-    private func pollLoop() async {
+    /// 事件驱动订阅（Phase 5：去 3s 轮询）。建立订阅前先 refresh 一次兜住订阅前
+    /// 的状态，再 `for await` backend 的白板变更流 —— 每个 tick refresh 一次。
+    /// 流由 backend 在远端重连后会续推（hub client 自带退避重连），所以无需本地
+    /// 定时兜底。`.task(id: crewId)` 切 crew / 视图消失时取消本 Task，AsyncStream
+    /// 的 `onTermination` 随之退订上游（Local 退 Combine / Edge 关 hub）。
+    private func subscribe() async {
         entries = []
-        while !Task.isCancelled {
+        guard let backend = appModel.backend else {
+            loadError = "未配置 backend"
+            return
+        }
+        await refresh()
+        for await _ in backend.whiteboardChanges(crewId: crewId) {
+            if Task.isCancelled { return }
             await refresh()
-            try? await Task.sleep(nanoseconds: pollInterval)
         }
     }
 
