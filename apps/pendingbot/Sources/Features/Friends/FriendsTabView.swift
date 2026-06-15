@@ -288,7 +288,7 @@ struct FriendsTabView: View {
                 if !pendingFriendRequests.isEmpty {
                     macSectionHeader("好友申请")
                     ForEach(Array(pendingFriendRequests.enumerated()), id: \.element.id) { idx, req in
-                        if idx > 0 { macRowDivider }
+                        if idx > 0 { macRowDivider() }
                         macRow(selected: false) {
                             FriendRequestRow(
                                 request: req,
@@ -302,7 +302,7 @@ struct FriendsTabView: View {
                 if !pendingGroupInvitations.isEmpty {
                     macSectionHeader("群邀请")
                     ForEach(Array(pendingGroupInvitations.enumerated()), id: \.element.id) { idx, invite in
-                        if idx > 0 { macRowDivider }
+                        if idx > 0 { macRowDivider() }
                         macRow(selected: false) {
                             GroupInvitationRow(
                                 invitation: invite,
@@ -315,11 +315,12 @@ struct FriendsTabView: View {
 
                 if !friendsForFilter.isEmpty {
                     ForEach(Array(friendsForFilter.enumerated()), id: \.element.id) { idx, item in
-                        // 分隔线两侧只要有一行被选中就不画 —— 选中框边缘不被线压。
-                        if idx > 0,
-                           !isFriendSelected(item),
-                           !isFriendSelected(friendsForFilter[idx - 1]) {
-                            macRowDivider
+                        // 分隔线**始终占位**(高度不变,避免选中时布局跳动);相邻有
+                        // 行被选中时只把线变透明,这样选中框边缘不被线压、间距也不变。
+                        if idx > 0 {
+                            macRowDivider(visible:
+                                !isFriendSelected(item) &&
+                                !isFriendSelected(friendsForFilter[idx - 1]))
                         }
                         switch item {
                         case .bot(let bot):
@@ -379,20 +380,22 @@ struct FriendsTabView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background {
                 if selected {
+                    // 染色块填满整行高(无竖向内缩)→ 与"分隔线之间"的行高一致,
+                    // 选中时不会显得比别的行矮。
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .fill(Theme.Palette.accentBg)
                         .padding(.horizontal, 8)
-                        .padding(.vertical, 1)
                 }
             }
             .contentShape(Rectangle())
     }
 
-    /// 分隔线:水平内缩 16 = 选中框内缩 8 + 圆角半径 8 —— 正好落在选中框上下边
-    /// 的**直边段**,压在框边缘上、不伸进圆角弧线。
-    private var macRowDivider: some View {
+    /// 分隔线:水平内缩 16 = 选中框内缩 8 + 圆角半径 8 —— 落在选中框直边段。
+    /// `visible=false` 时只变透明、**仍占位**(高度不变),避免选中切换时布局跳。
+    private func macRowDivider(visible: Bool = true) -> some View {
         Divider()
             .overlay(Theme.Palette.hairline)
+            .opacity(visible ? 1 : 0)
             .padding(.horizontal, 16)
     }
 
