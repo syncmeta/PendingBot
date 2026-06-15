@@ -109,29 +109,15 @@ struct CrewChatView: View {
     private var content: some View {
         #if os(macOS)
         // 成员列表 + 待审批已搬进 inspector(CrewSessionWindowView 的成员列表模式)。
-        // 中栏只留群聊本体。composer 悬浮在消息流底部，背景走「渐进模糊」——对齐 PendingBot：
-        // ultraThinMaterial 用上→下(透明→不透明)的渐变遮罩，顶部淡出所以**没有硬边线**，
-        // 消息滚到底会从 composer 背后透出渐进模糊。不再用硬 Divider 分隔。
+        // 中栏只留群聊本体。macOS 宿主跟 PendingBot 一样给 composer 用纯 canvas
+        // 底色；输入胶囊自身的轻阴影留在 vendored ComposerView 里。
         timeline
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(spacing: 0) {
                     errorBar
                     composer
                 }
-                .background {
-                    Rectangle()
-                        .fill(.ultraThinMaterial)
-                        .mask(
-                            LinearGradient(
-                                stops: [
-                                    .init(color: .clear, location: 0),
-                                    .init(color: .black, location: 0.45),
-                                ],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                }
+                .background(Theme.Palette.canvas)
             }
         #else
         VStack(spacing: 0) {
