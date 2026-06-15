@@ -78,7 +78,13 @@ public struct SessionConfig: Sendable, Equatable {
             if let mc = mcpConfigFile, !mc.isEmpty { a += ["--mcp-config", mc] }
             if let m = model, !m.isEmpty { a += ["--model", m] }
             if let e = effort, !e.isEmpty { a += ["--effort", e] }
-            if let p = initialPrompt, !p.isEmpty { a.append(p) } // positional prompt LAST
+            // `--` terminates option parsing so the positional prompt is never swallowed by a
+            // preceding variadic flag. `--mcp-config <configs...>` is variadic (claude --help);
+            // when it's the last flag (captain launch has no `--model` to separate them) it
+            // otherwise eats the prompt as a second config path → "MCP config file not found:
+            // <cwd>/<prompt>". Verified against claude 2.1.170. Also makes a prompt starting
+            // with `-` safe. positional prompt LAST.
+            if let p = initialPrompt, !p.isEmpty { a += ["--", p] }
             return a
         case .codex:
             // codex runs as an app-server (stdio JSON-RPC), NOT an interactive TUI.
