@@ -105,24 +105,42 @@ final class CrewStore: ObservableObject {
         }
     }
 
-    /// 拉本账号机器列表（CreateCrewSheet 的 machine 选择数据源）。失败静默
-    /// 兜本机 —— machine 选择只是锦上添花，拉不到不该挡新建。
+    /// 拉机器清单：本机始终在；登录态额外并入账号其它机器（edge `GET /v1/machines`）。
+    /// 机器是账号概念 → 走 edge，**不**经 crew backend（crew 仍本地优先）。
+    /// 失败静默回落「仅本机」—— 机器清单只是侧栏分组数据源，拉不到不挡用。
     func refreshMachines() async {
-        guard let backend = currentBackend() else { return }
+        let localMachine = Machine(
+            id: DeviceIdentity.current,
+            kind: Machine.Kind.computer.rawValue,
+            deviceId: DeviceIdentity.current,
+            displayName: DeviceIdentity.displayName,
+            flyMachineId: nil,
+            status: "online",
+            lastSeenAt: nil
+        )
+        guard appModel.isAuthenticated, let api = try? appModel.loggedAPIClient() else {
+            machines = [localMachine]
+            return
+        }
         do {
-            machines = try await backend.listMachines()
+            let remote = try await api.listMachines()
+            // edge 已含本机行（deviceId == 本机）则用 edge 行，否则把合成本机置顶补上。
+            machines = remote.contains { $0.deviceId == DeviceIdentity.current }
+                ? remote
+                : [localMachine] + remote
         } catch {
-            // 失败回落空 —— CreateCrewSheet count<=1 不显示选择，默认本机。
-            machines = []
+            machines = [localMachine]
         }
     }
 
-    /// 把当前设备注册成本账号的一台机器（登录后调，幂等）。失败静默 ——
-    /// 注册是 best-effort，失败不该挡用户用 app。
+    /// 把本机真注册进账号 machine 表（edge，幂等 upsert by device_id）。登录后调。
+    /// 失败静默 —— best-effort，不挡用户用 app。未登录直接跳过（返回 nil）。
     @discardableResult
     func registerSelfMachine() async -> String? {
-        guard let backend = currentBackend() else { return nil }
-        return try? await backend.registerSelfMachine()
+        guard appModel.isAuthenticated, let api = try? appModel.loggedAPIClient() else {
+            return nil
+        }
+        return try? await api.registerSelfMachine()
     }
 
     // MARK: - Mutations
