@@ -16,7 +16,11 @@ final class AgentTerminalSession: ObservableObject, SessionBackend {
     private final class Delegate: NSObject, LocalProcessTerminalViewDelegate {
         var onExit: ((Int32?) -> Void)?
         func processTerminated(source: TerminalView, exitCode: Int32?) { onExit?(exitCode) }
-        func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
+        func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {
+            // 诊断：确认内嵌终端实际网格列/行数（TUI 渲染乱的根因是列太少）。
+            // Claude/Codex 全屏 TUI 需 ~58–80 列；< ~55 会开始撑乱。验证后可删。
+            NSLog("[AgentTerminal] sizeChanged cols=\(newCols) rows=\(newRows)")
+        }
         func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
         func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
     }
