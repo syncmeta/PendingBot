@@ -17,6 +17,7 @@ describe('modelPoolConfigFromBotConfig', () => {
       exclude: ['b'],
       vendors: null,
       release_window_days: null,
+      presets: null,
     });
 
     expect(modelPoolConfigFromBotConfig({
@@ -28,6 +29,7 @@ describe('modelPoolConfigFromBotConfig', () => {
       exclude: null,
       vendors: null,
       release_window_days: null,
+      presets: null,
     });
   });
 });
