@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
 /// BYOK 本地白板持久化（spec 2026-06-05-pendingcrew-local-first-crew-design §2
 /// 本地 crew-comms）。
@@ -39,9 +40,60 @@ final class LocalWhiteboardStore: @unchecked Sendable {
 
     private let directory: URL
 
+    /// 进程内变更信号（Phase 5：去轮询）。本进程每次 append 后发一个 `crewId` ——
+    /// `LocalBackend.whiteboardChanges` 订阅它、按 crewId 过滤，把中栏/右栏的
+    /// 「3s 轮询」换成「append 即刷新」。app 侧人类发送 + CrewRelayAgent 搬入的
+    /// relay 消息都走 app 进程内的 `.shared` 实例，立即推。
+    ///
+    /// **跨进程写**（helper `--mcp-serve` 子进程经 `post_to_crew` 写 agent 进展、
+    /// `--mcp-hook` 注入）走另一个进程的 `LocalWhiteboardStore` 实例、不经此
+    /// subject —— 由下面的 `directoryChanged` 文件监听补齐（FSEvents/DispatchSource
+    /// 监 whiteboards 目录），所以跨进程 agent 进展也能即时推到 UI，无需轮询。
+    ///
+    /// `PassthroughSubject` 是引用类型，作 `let` 持有不破坏 `@unchecked Sendable`
+    /// （实例状态仍全 `let`）；本仓低频单写、`.send` 在 MainActor app 路径 + helper
+    /// 进程各自调，无跨线程竞态热点。
+    let changes = PassthroughSubject<String, Never>()
+
+    /// **跨进程**白板目录变更信号。`startWatching()` 起一个 DispatchSource 目录
+    /// 监听，本进程**或子进程**对 `<dir>/*.json` 的写（atomic rename）会触发，
+    /// 发一个 `Void` tick。`LocalBackend.whiteboardChanges` 收到即重拉本 crew ——
+    /// 目录事件不带 crewId（rename 粒度到目录），但重拉单 crew 的 JSON 很廉价。
+    let directoryChanged = PassthroughSubject<Void, Never>()
+
+    /// 目录监听的可变状态 —— 锁保护，维持 `@unchecked Sendable`（实例其余皆 `let`）。
+    private let watchLock = NSLock()
+    private var watchSource: DispatchSourceFileSystemObject?
+    private var watchFD: Int32 = -1
+
     init(directory: URL? = nil) {
         self.directory = directory ?? Self.defaultDirectory
         try? FileManager.default.createDirectory(at: self.directory, withIntermediateDirectories: true)
+    }
+
+    // MARK: - Cross-process directory watch（去轮询：补齐 helper 子进程的写）
+
+    /// 起目录监听（幂等）。监 whiteboards 目录的写/rename —— atomic write 落盘
+    /// （写临时文件 → rename 覆盖）在目录上表现为写/rename 事件，per-file fd 会因
+    /// inode 被换而失效，所以监**目录**而非单文件。事件 → `directoryChanged` tick。
+    /// app UI（`LocalBackend`）首次订阅时调；短命的 helper stdio 进程不调（无需）。
+    func startWatching() {
+        watchLock.lock()
+        defer { watchLock.unlock() }
+        guard watchSource == nil else { return }
+        let fd = open(directory.path, O_EVTONLY)
+        guard fd >= 0 else { return }
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd,
+            eventMask: [.write, .rename, .delete],
+            queue: .global(qos: .utility))
+        source.setEventHandler { [weak self] in
+            self?.directoryChanged.send(())
+        }
+        source.setCancelHandler { close(fd) }
+        watchFD = fd
+        watchSource = source
+        source.resume()
     }
 
     // MARK: - Public
@@ -134,6 +186,9 @@ final class LocalWhiteboardStore: @unchecked Sendable {
         rows.append(msg)
         guard let data = try? JSONEncoder().encode(rows) else { return }
         try? data.write(to: fileURL(crewId), options: .atomic)
+        // 单一写入漏斗 —— 所有 public append 变体都经此，发一个变更信号即覆盖全部
+        // （人类发送 / session 进展 / relay 搬入）。订阅方按 crewId 过滤。
+        changes.send(crewId)
     }
 }
 
