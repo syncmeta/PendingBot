@@ -88,9 +88,9 @@ struct MacThreePaneView: View {
             // crew sheet 的 picker，提前 prefetch 避免 sheet 打开时空。
             await crewStore.refreshList()
             await crewStore.refreshSubjects()
-            // 首屏注册本机 + 拉机器清单（侧栏按机器分组的数据源）。
-            _ = await crewStore.registerSelfMachine()
-            await crewStore.refreshMachines()
+            // 机器清单（侧栏按机器分组的数据源）由 authenticatedRoot.task 的
+            // registerSelfMachine + refreshMachines 负责（它包着 MacThreePaneView，
+            // 首屏即跑），登录态切换再由 PendingCrewApp.onChange 刷一次 —— 这里不重复。
             // relay 同步代理常开（幂等启动）；未登录时 tick 是 no-op。
             // sessionRunner 一并注入 —— relay 拉到 task_request 时在本机自动
             // 起 session（#242 遥控 v1），与 inspector 手动起的 run 同一个切换条。
