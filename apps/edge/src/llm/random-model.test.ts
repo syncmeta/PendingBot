@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { filterPool, parseRandomModelConfig, poolFromCatalog } from './random-model';
+import { expandPresets, filterPool, parseRandomModelConfig, poolFromCatalog } from './random-model';
 import type { OpenRouterModelOut } from '../routes/models';
 
 function model(
@@ -86,5 +86,32 @@ describe('parseRandomModelConfig presets', () => {
   it('null presets when absent', () => {
     const cfg = parseRandomModelConfig({ models: ['openai/gpt-5.1'] });
     expect(cfg?.presets).toBeNull();
+  });
+});
+
+describe('expandPresets', () => {
+  const base = {
+    price_min: null,
+    price_max: null,
+    exclude: null,
+    vendors: null,
+    release_window_days: null,
+  };
+
+  it('unions resolved preset slugs into models and clears presets', async () => {
+    const cfg = { ...base, models: ['x/explicit'], presets: ['top-flagship'] };
+    const out = await expandPresets(cfg, async (slugs) =>
+      slugs.includes('top-flagship') ? ['openai/gpt-5.1', 'anthropic/claude'] : [],
+    );
+    expect(out.models?.slice().sort()).toEqual(['anthropic/claude', 'openai/gpt-5.1', 'x/explicit']);
+    expect(out.presets).toBeNull();
+  });
+
+  it('passes through unchanged when no presets', async () => {
+    const cfg = { ...base, models: ['a'], presets: null };
+    const out = await expandPresets(cfg, async () => {
+      throw new Error('should not call resolver');
+    });
+    expect(out.models).toEqual(['a']);
   });
 });

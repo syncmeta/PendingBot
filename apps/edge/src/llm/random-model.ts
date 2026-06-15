@@ -21,6 +21,8 @@ import {
   isNativeBackedOpenRouterSlug,
   looksNonChat,
 } from '../routes/models';
+import { resolveModelPreset, type PresetDef } from '../lib/model-presets';
+import { serviceClient } from '../lib/supabase';
 
 export interface RandomModelConfig {
   // Inclusive bounds on blended_usd_per_million (the same number the iOS
@@ -163,6 +165,33 @@ function releaseCutoff(releaseWindowDays: number | null): string | null {
 // already used under the same prompt (so a regenerated variant lands a
 // DIFFERENT model when the constrained pool still has alternatives).
 // Returns null when no candidate qualifies — caller falls back.
+export type PresetResolver = (presetSlugs: string[]) => Promise<string[]>;
+
+// 把 cfg.presets 解析成模型并集并入 cfg.models；展开后清空 presets，避免下游重复解析。
+// 无 presets 时原样返回。resolve 注入以便单测。
+export async function expandPresets(
+  cfg: RandomModelConfig,
+  resolve: PresetResolver,
+): Promise<RandomModelConfig> {
+  if (!cfg.presets || cfg.presets.length === 0) return cfg;
+  const presetSlugs = await resolve(cfg.presets);
+  const merged = [...new Set([...(cfg.models ?? []), ...presetSlugs])];
+  return { ...cfg, models: merged.length ? merged : null, presets: null };
+}
+
+// 读 model_presets 定义（service role 绕过 RLS）→ resolveModelPreset（KV 缓存）→ 模型并集。
+async function resolvePresetsToSlugs(env: Env, presetSlugs: string[]): Promise<string[]> {
+  const db = serviceClient(env).schema('pendingbot');
+  const { data } = await db
+    .from('model_presets')
+    .select('slug, title, description, resolver_kind, params, default_selected')
+    .in('slug', presetSlugs)
+    .eq('enabled', true);
+  const defs = (data ?? []) as unknown as PresetDef[];
+  const resolved = await Promise.all(defs.map((d) => resolveModelPreset(env, d)));
+  return [...new Set(resolved.flatMap((r) => r.models.map((m) => m.slug)))];
+}
+
 export async function pickRandomModel(
   env: Env,
   cfg: RandomModelConfig,
@@ -171,7 +200,8 @@ export async function pickRandomModel(
   const pool = await getPool(env);
   if (!pool || pool.length === 0) return null;
 
-  let candidates = filterPool(pool, cfg);
+  const effectiveCfg = await expandPresets(cfg, (slugs) => resolvePresetsToSlugs(env, slugs));
+  let candidates = filterPool(pool, effectiveCfg);
   const exclude = opts?.excludeSlugs;
   if (exclude && exclude.length > 0) {
     const without = candidates.filter((m) => !exclude.includes(m.slug));
