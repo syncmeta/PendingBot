@@ -109,13 +109,30 @@ struct CrewChatView: View {
     private var content: some View {
         #if os(macOS)
         // 成员列表 + 待审批已搬进 inspector(CrewSessionWindowView 的成员列表模式)。
-        // 中栏只留群聊本体：消息流 + composer，开 inspector 时窗口更省宽。
-        VStack(spacing: 0) {
-            timeline
-            errorBar
-            Divider()
-            composer
-        }
+        // 中栏只留群聊本体。composer 悬浮在消息流底部，背景走「渐进模糊」——对齐 PendingBot：
+        // ultraThinMaterial 用上→下(透明→不透明)的渐变遮罩，顶部淡出所以**没有硬边线**，
+        // 消息滚到底会从 composer 背后透出渐进模糊。不再用硬 Divider 分隔。
+        timeline
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                VStack(spacing: 0) {
+                    errorBar
+                    composer
+                }
+                .background {
+                    Rectangle()
+                        .fill(.ultraThinMaterial)
+                        .mask(
+                            LinearGradient(
+                                stops: [
+                                    .init(color: .clear, location: 0),
+                                    .init(color: .black, location: 0.45),
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                }
+            }
         #else
         VStack(spacing: 0) {
             if !members.isEmpty {
@@ -155,7 +172,7 @@ struct CrewChatView: View {
             onSend: { Task { await send() } },
             isStreaming: false,
             showsAttachments: true,
-            placeholder: "发消息…（不 @ = 广播给所有 session）"
+            placeholder: "发消息"
         )
     }
 
@@ -180,11 +197,20 @@ struct CrewChatView: View {
         #endif
     }
 
+    @ViewBuilder
     private var timeline: some View {
+        if timelineEntries.isEmpty {
+            // 空白态：只居中放一个聊天图标，别的什么都不要。
+            emptyState
+        } else {
+            messageScroll
+        }
+    }
+
+    private var messageScroll: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    if timelineEntries.isEmpty { emptyState }
                     ForEach(Array(timelineEntries.enumerated()), id: \.element.id) { idx, entry in
                         let prevDate = idx > 0 ? CrewTimeSeparator.parse(timelineEntries[idx - 1].createdAt) : nil
                         if let cur = CrewTimeSeparator.parse(entry.createdAt),
@@ -250,14 +276,10 @@ struct CrewChatView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "bubble.left.and.bubble.right")
-                .font(.system(size: 34)).foregroundStyle(.tertiary)
-            Text("群聊白板 —— 在这里给 session 留指令、看关键节点。\n@session 发给某个 session，不 @ 则广播给全部。")
-                .font(Theme.Fonts.callout).foregroundStyle(Theme.Palette.inkMuted)
-                .multilineTextAlignment(.center).frame(maxWidth: 420)
-        }
-        .frame(maxWidth: .infinity).padding(.vertical, 40)
+        Image(systemName: "bubble.left.and.bubble.right")
+            .font(.system(size: 40))
+            .foregroundStyle(.tertiary)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - data

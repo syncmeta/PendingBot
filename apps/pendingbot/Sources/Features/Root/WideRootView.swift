@@ -45,6 +45,10 @@ struct WideRootView: View {
     /// 壳把同一个 binding 喂给 list 列(写)和 detail 列(读);detail 列的
     /// `CrewDetailV2View` 按 id 自取机组(`getCrewV2`),所以只需带 id。
     @State private var crewSelection: String? = nil
+    /// 「我」tab 的选中项 —— 共享 `MeTabView` 的 `Selection`(`MeSection`)。
+    /// 壳把同一个 binding 喂给中间列表列(写)和右栏详情(读);右栏按
+    /// section 渲染对应详情(钱包/加好友方式/能力扩展/设置)。
+    @State private var meSelection: MeSection? = nil
 
     /// 统一 tab 选择来源:外部注入(iPad,跟 `TabRoot.selected`)优先,否则
     /// 用内部 `@State`(macOS @main)。侧栏 List 与 中/右栏 switch 全部读它,
@@ -67,19 +71,16 @@ struct WideRootView: View {
 
     // MARK: - Columns
 
-    /// 合并侧栏 = 窄图标 rail ＋ 当前 tab 的会话 list,整体作为 split view 的
+    /// 合并侧栏 = 窄图标 rail ＋ 当前 tab 的 list,整体作为 split view 的
     /// **唯一可折叠首列**(2 栏布局:sidebar | detail)。折叠按钮一下收起 rail+list,
-    /// 把整宽让给右侧会话。「我」tab 无 list → 仅留 rail,账号页占满右栏,列宽
-    /// 收到 72。其余 tab 列宽 = rail(72)+ list,可拖动 320–520。
+    /// 把整宽让给右侧详情。五个 tab 同构 —— 「我」也有列表列(账号/设置菜单),
+    /// 点条目右栏出详情。列宽 = rail(56)+ list,可拖动 300–520。
     private var combinedSidebar: some View {
-        let isMe = tabSelection.wrappedValue == .me
-        return HStack(spacing: 0) {
+        HStack(spacing: 0) {
             tabRail
                 .frame(width: 56)
-            if !isMe {
-                middleColumn
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
+            middleColumn
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxHeight: .infinity)
         // 不自铺任何背景 —— rail 与 list 都透明,直接露出 NavigationSplitView
@@ -87,11 +88,7 @@ struct WideRootView: View {
         // 所以整条侧栏是同一块原生底、中间无分隔。自糊 NSVisualEffectView 在
         // 这个被 MacMainWindowStyler 强制不透明的窗口里 behind-window 透不出来,
         // 反而发灰带渐变,故不用。
-        .navigationSplitViewColumnWidth(
-            min: isMe ? 56 : 300,
-            ideal: isMe ? 56 : 356,
-            max: isMe ? 56 : 520
-        )
+        .navigationSplitViewColumnWidth(min: 300, ideal: 356, max: 520)
     }
 
     private var tabRail: some View {
@@ -153,9 +150,9 @@ struct WideRootView: View {
             // (crew id)后右栏是机组群聊 detail。
             CrewTabV2View().listColumn(selection: $crewSelection)
         case .me:
-            // 「我」tab 无 list — `combinedSidebar` 已把它从侧栏中列里 guard 掉
-            // (仅留 rail,账号页占满右栏),这里只为 switch 穷尽兜个空。
-            EmptyView()
+            // 「我」tab 中列 = 共享 `MeTabView` 的列表列(账号头部 + 设置菜单);
+            // 选中一个 `MeSection`(钱包/加好友方式/能力扩展/设置)后右栏出详情。
+            MeTabView().listColumn(selection: $meSelection)
         }
     }
 
@@ -163,12 +160,9 @@ struct WideRootView: View {
     private var detailColumn: some View {
         switch tabSelection.wrappedValue {
         case .me:
-            // 「我」tab 直接把账号详情放到右栏(中间列保持空态),
-            // 因为「我」tab 没有可枚举的 list 内容。右栏取共享
-            // `MeTabView` 的 `detailColumn`(FeatureSurface「无列表型」),
-            // 取代已删的 Mac 平行 `MacMeView`。selection 对「我」无语义,
-            // 传 nil。
-            MeTabView().detailColumn(selection: nil)
+            // 「我」detail = 共享 surface 的 detail 列,按中列选中的 `MeSection`
+            // 渲染对应详情(钱包/加好友方式/能力扩展/设置);无选中 → 空态。
+            MeTabView().detailColumn(selection: meSelection)
         case .message:
             // 消息 detail = 共享 surface 的 detail 列,纯从 selection(ChatDest)
             // 解析。注意:这是与 list 列不同的 `MessageTabView()` 实例,二者
