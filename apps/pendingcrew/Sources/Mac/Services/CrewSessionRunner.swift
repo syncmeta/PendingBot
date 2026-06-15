@@ -67,6 +67,13 @@ final class CrewSessionRunner: ObservableObject {
     /// 开关只翻 inspector 呈现态，不强制 true —— 让用户先落在成员列表。
     @Published var viewingTerminal = false
 
+    /// 最近一次「启动 Captain」失败的人类可读原因（手动按钮 + 建 crew 自动起共用）。
+    /// 错误从前台终端模式（composer 里渲染 `localError`）和成员列表模式（按钮所在
+    /// 那屏）两处都看不到会让人误以为「点了没反应」—— 所以放在 runner 上，让按钮所在
+    /// 的成员列表模式也能显，且自动起（MacRootView，无 view-local error）失败时同样有处可落。
+    /// 成功启动或下一次尝试开始时清空。
+    @Published var lastStartError: String?
+
     /// 前台 run：选中的那个；没选中（或选中的已被移除）时回退最后一个。
     /// 保留这个名字让既有 call site（composer / auto-claim）继续编译。
     var current: CrewSessionRun? {

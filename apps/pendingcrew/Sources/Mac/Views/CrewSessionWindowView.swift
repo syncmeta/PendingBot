@@ -192,6 +192,17 @@ struct CrewSessionWindowView: View {
                 memberListHeader
                 Divider()
             }
+            // 启动 Captain 失败原因（含「未在 PATH 中找到 codex/claude」「无工作目录」）——
+            // 按钮就在这屏，错误必须在这显，否则点了像没反应。
+            if let err = sessionRunner.lastStartError {
+                Text(err)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                Divider()
+            }
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     if !pendingInteractions.isEmpty {
@@ -680,11 +691,13 @@ struct CrewSessionWindowView: View {
         guard let detail = crewStore.selectedDetail else { return }
         starting = true
         defer { starting = false }
-        localError = nil
+        // 走 runner 上的共享错误通道（不是 view-local 的 localError）—— 这样错误能在
+        // 按钮所在的成员列表模式里显出来，而不是只在终端模式 composer 里（点了像没反应）。
+        sessionRunner.lastStartError = nil
         do {
             try await sessionRunner.startCaptain(detail: detail, backend: appModel.backend)
         } catch {
-            localError = error.localizedDescription
+            sessionRunner.lastStartError = error.localizedDescription
         }
     }
 

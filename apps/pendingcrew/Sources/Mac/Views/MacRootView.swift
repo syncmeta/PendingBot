@@ -69,7 +69,13 @@ struct MacThreePaneView: View {
             guard let crewId = req else { return }
             Task {
                 if let detail = crewStore.details[crewId], detail.captain != nil {
-                    try? await sessionRunner.startCaptain(detail: detail, backend: model.backend)
+                    do {
+                        try await sessionRunner.startCaptain(detail: detail, backend: model.backend)
+                    } catch {
+                        // 不再静默吞错：落到 runner 的共享通道，inspector 成员列表模式会显
+                        // （否则建完 crew captain 没起、用户也不知道为什么）。
+                        sessionRunner.lastStartError = error.localizedDescription
+                    }
                 }
                 crewStore.captainAutostartRequest = nil
             }
