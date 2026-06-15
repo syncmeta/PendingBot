@@ -38,6 +38,18 @@ struct CrewChatView: View {
     @State private var members: [CrewMember] = []
     @State private var captainBotId: String?
 
+    // MARK: - @-mention / reply state (Phase 6)
+    /// Mentions staged for the next send, paired with the readable `@token`
+    /// sitting in `draft`. `send()` flushes these; `reconcile` (on draft change)
+    /// drops any whose token the user deleted.
+    @State private var stagedMentions: [CrewStagedMention] = []
+    /// The in-progress `@<prefix>` token the user is mid-typing, if any —
+    /// drives the autocomplete popover's visibility + candidate filter.
+    @State private var activeMentionQuery: CrewComposerMentionParser.ActiveQuery?
+    /// Active "reply to this message" target — shows the quote banner above the
+    /// composer and carries `reply_to` + an auto-@ on send. nil = not replying.
+    @State private var replyTarget: CrewReplyTarget?
+
     // MARK: - ComposerView bindings
     /// Forwarded to ComposerView; ChatActionSheet flips this to open
     /// the system document picker (.fileImporter works on iOS 14+ too).
@@ -144,20 +156,142 @@ struct CrewChatView: View {
     }
 
     private var composer: some View {
-        ComposerView(
-            input: $draft,
-            pending: pendingForDisplay,
-            photoItems: $photoItems,
-            cameraImage: $cameraImage,
-            showFileImporter: $showFileImporter,
-            showPhotoPicker: $showPhotoPicker,
-            showCamera: $showCamera,
-            canSend: canSend,
-            onSend: { Task { await send() } },
-            isStreaming: false,
-            showsAttachments: true,
-            placeholder: "发消息"
-        )
+        VStack(spacing: 0) {
+            // Inline @-mention autocomplete, rendered as a sibling directly
+            // above the composer (so it floats just over the input, Slack-style)
+            // rather than mutating the vendored `ComposerView`. Driven entirely
+            // from `$draft` via `onDraftChange` below.
+            if let query = activeMentionQuery {
+                let cands = mentionCandidates(for: query.prefix)
+                if !cands.isEmpty {
+                    CrewMentionPicker(candidates: cands) { pickMention($0) }
+                        .padding(.horizontal, Theme.Metrics.gutter)
+                        .padding(.bottom, 4)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .transition(.opacity)
+                }
+            }
+            if let replyTarget {
+                replyBanner(replyTarget)
+            }
+            ComposerView(
+                input: $draft,
+                pending: pendingForDisplay,
+                photoItems: $photoItems,
+                cameraImage: $cameraImage,
+                showFileImporter: $showFileImporter,
+                showPhotoPicker: $showPhotoPicker,
+                showCamera: $showCamera,
+                canSend: canSend,
+                onSend: { Task { await send() } },
+                isStreaming: false,
+                showsAttachments: true,
+                placeholder: "发消息（@ 某人定向，不 @ = 广播）"
+            )
+        }
+        .onChange(of: draft) { _, newValue in onDraftChange(newValue) }
+        .animation(.easeOut(duration: 0.12), value: activeMentionQuery)
+    }
+
+    // MARK: - @-mention picker plumbing (Phase 6)
+
+    /// Re-evaluate the open `@`-token + drop staged mentions whose token text
+    /// the user deleted. Called on every `draft` change.
+    private func onDraftChange(_ newValue: String) {
+        activeMentionQuery = CrewComposerMentionParser.activeQuery(in: newValue)
+        stagedMentions = CrewComposerMentionParser.reconcile(
+            staged: stagedMentions, draft: newValue)
+    }
+
+    /// The roster member id that represents "me" (skipped from the candidate
+    /// list — you don't @ yourself). Local human uses the synthetic local id;
+    /// logged-in matches the current user.
+    private var selfMemberId: String? {
+        let uid = localUserId
+        return members.first {
+            $0.memberKind == "human" && $0.userId != nil && $0.userId == uid
+        }?.id
+    }
+
+    /// Candidates for the current `@<prefix>`, filtered from the roster.
+    private func mentionCandidates(for prefix: String) -> [CrewMentionCandidate] {
+        crewMentionCandidates(
+            members: members,
+            captainBotId: captainBotId,
+            prefix: prefix,
+            selfMemberId: selfMemberId)
+    }
+
+    /// Pick a candidate: replace the open `@prefix` token with `@label ` and
+    /// stage the mention. Closes the popover.
+    private func pickMention(_ candidate: CrewMentionCandidate) {
+        guard let ins = CrewComposerMentionParser.insert(candidate: candidate, into: draft) else {
+            activeMentionQuery = nil
+            return
+        }
+        draft = ins.newDraft
+        stagedMentions.append(ins.staged)
+        // `draft` mutation re-fires onDraftChange → activeMentionQuery becomes
+        // nil (token now closed by the trailing space), so the popover closes.
+    }
+
+    // MARK: - reply plumbing (Phase 6)
+
+    /// Begin replying to `entry`: show the quote banner. The auto-@ on the
+    /// original sender lives implicitly in `replyTarget.mention` and is merged
+    /// at send time — it is NOT pushed into `stagedMentions` (those are
+    /// token-backed and would be reconciled away since no `@token` is typed).
+    private func beginReply(to entry: CrewWhiteboardEntry) {
+        let sender = CrewSenderResolver.resolve(
+            entry, members: members, captainBotId: captainBotId, localUserId: localUserId)
+        replyTarget = CrewReplyTargetBuilder.make(entry: entry, senderName: sender.displayName)
+    }
+
+    /// Cancel the active reply — clears the banner (and its implicit auto-@).
+    private func cancelReply() {
+        replyTarget = nil
+    }
+
+    /// The full mention set to send: token-backed staged mentions + the reply
+    /// auto-@ (if any), de-duplicated.
+    private func mentionsForSend() -> [CrewMention] {
+        var all = stagedMentions
+        if let replyMention = replyTarget?.mention {
+            all.append(CrewStagedMention(token: "", mention: replyMention))
+        }
+        return CrewComposerMentionParser.mentionsToSend(all)
+    }
+
+    /// The reply quote banner shown above the composer while a reply is staged.
+    @ViewBuilder
+    private func replyBanner(_ target: CrewReplyTarget) -> some View {
+        HStack(spacing: 8) {
+            Rectangle()
+                .fill(Theme.Palette.accent)
+                .frame(width: 2)
+                .frame(maxHeight: .infinity)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("回复 \(target.quotedSender)")
+                    .font(Theme.Fonts.caption2)
+                    .foregroundStyle(Theme.Palette.accent)
+                Text(target.quotedSnippet)
+                    .font(Theme.Fonts.caption)
+                    .foregroundStyle(Theme.Palette.inkMuted)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            Button {
+                cancelReply()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(Theme.Fonts.glyph(size: 15))
+                    .foregroundStyle(Theme.Palette.inkMuted)
+            }
+            .buttonStyle(.plain)
+        }
+        .frame(height: 34)
+        .padding(.horizontal, Theme.Metrics.gutter)
+        .padding(.top, 6)
     }
 
     // 本机用户哨兵 id —— 接合 v2 后 macOS 白板恒为本地，本机人类消息都标
@@ -250,11 +384,14 @@ struct CrewChatView: View {
                             onOpenSession?(run.runID)
                         }
                     }
+                    .modifier(ReplyContextMenu(entry: entry) { beginReply(to: entry) })
             } else {
                 bubble
+                    .modifier(ReplyContextMenu(entry: entry) { beginReply(to: entry) })
             }
             #else
             bubble
+                .modifier(ReplyContextMenu(entry: entry) { beginReply(to: entry) })
             #endif
         }
     }
@@ -328,14 +465,44 @@ struct CrewChatView: View {
                     attachmentIds.append(id)
                 }
             }
+            let mentions = mentionsForSend()
+            let replyToId = replyTarget?.replyToId
             try await backend.postCrewMessage(
-                crewId: crewId, text: text, mentions: [], attachmentIds: attachmentIds)
+                crewId: crewId, text: text, mentions: mentions,
+                attachmentIds: attachmentIds, replyToId: replyToId)
+            // Local-first @ wake: after the message lands on the (local)
+            // whiteboard, directly inject it into any idle local run that was
+            // @-mentioned — idle runs have no next turn to pull it in (Phase 6
+            // 单元 3). No-op for the edge backend (那走 Phase 4b hub→inbox→waker).
+            injectMentionedLocalRuns(mentions: mentions, text: text)
             draft = ""
             pendingAttachments = []
+            stagedMentions = []
+            replyTarget = nil
+            activeMentionQuery = nil
             await refresh()
         } catch {
             loadError = error.localizedDescription
         }
+    }
+
+    /// Local直投唤醒（Phase 6 单元 3）：对每个 `@session` 目标，找到对应的本地
+    /// 活跃 run，空闲就直接 `send(...)` 唤醒；busy 不打断。决策抽在
+    /// `CrewLocalMentionInjectLogic`（纯函数 + 单测），这里只做「拿 run 快照 →
+    /// 决策 → 对命中的 run send」的 IO 编排。仅 macOS（本地 run 在 macOS）。
+    private func injectMentionedLocalRuns(mentions: [CrewMention], text: String) {
+        #if os(macOS)
+        let runStates: [CrewLocalMentionInjectLogic.RunState] = sessionRunner.runs
+            .filter { $0.status == .running }
+            .map { .init(sessionId: $0.sessionId, isBusy: $0.backend.isBusy) }
+        let injections = CrewLocalMentionInjectLogic.decide(
+            mentions: mentions, runs: runStates, messageText: text, senderName: "我")
+        for inj in injections {
+            sessionRunner.runs
+                .first { $0.sessionId == inj.sessionId && $0.status == .running }?
+                .send(inj.text)
+        }
+        #endif
     }
 
     private func answer(_ reqId: String) async {
@@ -401,4 +568,26 @@ struct CrewChatView: View {
         photoItems = []
     }
     #endif
+}
+
+/// 「回复某条消息」入口的统一手势（Phase 6 单元 4）。`.contextMenu` 在 macOS
+/// （右键 / control-click）与 iPad（长按）上都给同一个干净入口，无需为两端各写
+/// 一套手势。仅对真实消息挂（交互卡不挂 —— 那有自己的回答框）。
+private struct ReplyContextMenu: ViewModifier {
+    let entry: CrewWhiteboardEntry
+    let onReply: () -> Void
+
+    func body(content: Content) -> some View {
+        if entry.isInteraction {
+            content
+        } else {
+            content.contextMenu {
+                Button {
+                    onReply()
+                } label: {
+                    Label("回复", systemImage: "arrowshape.turn.up.left")
+                }
+            }
+        }
+    }
 }
