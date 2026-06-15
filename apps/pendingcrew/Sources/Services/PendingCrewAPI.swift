@@ -432,7 +432,8 @@ struct PendingCrewAPI {
         mentions: [CrewMention] = [],
         attachmentIds: [String] = [],
         senderLabel: String? = nil,
-        localSessionId: String? = nil
+        localSessionId: String? = nil,
+        replyToId: String? = nil
     ) async throws -> String? {
         struct Body: Encodable {
             let content: String
@@ -440,6 +441,12 @@ struct PendingCrewAPI {
             let attachmentIds: [String]?
             let senderLabel: String?
             let localSessionId: String?
+            let replyTo: String?
+
+            enum CodingKeys: String, CodingKey {
+                case content, mentions, attachmentIds, senderLabel, localSessionId
+                case replyTo = "reply_to"
+            }
         }
         // The handler returns `{ messageId }`; `announcementId` stays nil (this
         // endpoint never emitted one). Decode both leniently so neither shape
@@ -452,7 +459,12 @@ struct PendingCrewAPI {
                 mentions: mentions,
                 attachmentIds: attachmentIds.isEmpty ? nil : attachmentIds,
                 senderLabel: senderLabel,
-                localSessionId: localSessionId
+                localSessionId: localSessionId,
+                // ⚠️ `reply_to` 当前**未被 edge `CrewMessageBody` zod schema 接受**
+                // —— 会被 silently strip(已记 tech-debt)。回复的「自动 @ 原发送者」
+                // 走 `mentions`(edge 已支持)所以两端都生效;edge 侧的 `reply_to`
+                // 持久化要等 edge schema 补字段后才真正落库。前向兼容地带上。
+                replyTo: replyToId
             )
         )
         return resp.messageId ?? resp.announcementId

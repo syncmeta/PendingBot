@@ -111,7 +111,9 @@ final class LocalWhiteboardStore: @unchecked Sendable {
     }
 
     /// 追加一条本机人类消息。`senderName` = 人类显示名（如已知；nil → 渲染退回「我/人类」）。
-    func appendUserMessage(crewId: String, text: String, senderName: String? = nil) {
+    /// `inReplyTo` = 被回复消息的白板 id（Phase 6 回复；nil = 非回复）。
+    func appendUserMessage(
+        crewId: String, text: String, senderName: String? = nil, inReplyTo: String? = nil) {
         append(crewId: crewId, LocalWhiteboardMessage(
             id: UUID().uuidString.lowercased(),
             senderKind: "user",
@@ -120,7 +122,8 @@ final class LocalWhiteboardStore: @unchecked Sendable {
             category: nil,
             text: text,
             createdAt: ISO8601DateFormatter().string(from: Date()),
-            senderName: senderName))
+            senderName: senderName,
+            inReplyTo: inReplyTo))
     }
 
     /// 追加一条 session（编码 agent）消息（chunk 4：`post_to_crew`）。`senderName` =
@@ -218,4 +221,7 @@ struct LocalWhiteboardMessage: Codable, Equatable {
     /// 与 `senderDisplayName`（relay 远端名）区分来源；渲染时两者皆可作回退。
     /// 新增可选字段向后兼容（旧 JSON 缺键 → nil）。
     var senderName: String? = nil
+    /// 被回复消息的白板 id（Phase 6 回复）。非 nil = 这条是对 `inReplyTo` 的回复。
+    /// 新增可选字段向后兼容（旧 JSON 缺键 → nil）。
+    var inReplyTo: String? = nil
 }
