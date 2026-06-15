@@ -129,8 +129,15 @@ final class LocalWhiteboardStore: @unchecked Sendable {
     /// 追加一条 session（编码 agent）消息（chunk 4：`post_to_crew`）。`senderName` =
     /// 该 session 的显示 label（如「机长」/「Claude Code · abc123」；nil → 渲染退回
     /// `session:<id>`，给 agent 看的白板就不再只剩裸 uuid）。
+    ///
+    /// `mentions` = `post_to_crew` 的定向 @ 列表（Phase 7；nil/空 = 广播）。
+    /// `inReplyTo` = 被回复消息的白板 id（Phase 7 reply_to；nil = 非回复）。
+    /// 本地先**记录保留**这两项（不静默吞）；把它们一路路由到 edge 信箱 / hub
+    /// 还需本地↔edge 同步链（block 3 relay），那条尾巴见 CrewRelayAgent.push。
     func appendSessionMessage(crewId: String, sessionId: String, text: String,
-                              category: String? = nil, senderName: String? = nil) {
+                              category: String? = nil, senderName: String? = nil,
+                              mentions: [LocalWhiteboardMention]? = nil,
+                              inReplyTo: String? = nil) {
         append(crewId: crewId, LocalWhiteboardMessage(
             id: UUID().uuidString.lowercased(),
             senderKind: "session",
@@ -139,7 +146,9 @@ final class LocalWhiteboardStore: @unchecked Sendable {
             category: category,
             text: text,
             createdAt: ISO8601DateFormatter().string(from: Date()),
-            senderName: senderName))
+            senderName: senderName,
+            inReplyTo: inReplyTo,
+            mentions: (mentions?.isEmpty == true) ? nil : mentions))
     }
 
     /// 追加一条 **relay 拉下来的** 消息（接合 v2 block 3：CrewRelayAgent 把
@@ -224,4 +233,18 @@ struct LocalWhiteboardMessage: Codable, Equatable {
     /// 被回复消息的白板 id（Phase 6 回复）。非 nil = 这条是对 `inReplyTo` 的回复。
     /// 新增可选字段向后兼容（旧 JSON 缺键 → nil）。
     var inReplyTo: String? = nil
+    /// 定向 @ 列表（Phase 7：session `post_to_crew(mentions:)`）。非 nil/非空 = 这条
+    /// 点名了某些对象（@session / @captain / @human）。本地先记录保留（不静默吞）；
+    /// 真正按 mention 投递到 edge 信箱 / 唤醒目标 session 还需 block 3 relay 同步。
+    /// 新增可选字段向后兼容（旧 JSON 缺键 → nil）。
+    var mentions: [LocalWhiteboardMention]? = nil
+}
+
+/// 一条定向 @（Phase 7）。形状对齐 edge `MentionItem`（`{kind, target_id?}`），
+/// 便于将来 block 3 relay 直接透传给 edge `post_to_crew`/`POST /messages`。
+struct LocalWhiteboardMention: Codable, Equatable {
+    /// 'session' | 'captain' | 'human'
+    let kind: String
+    /// kind == "session" 时是目标 session 的 id；其余 kind 可空。
+    let targetId: String?
 }

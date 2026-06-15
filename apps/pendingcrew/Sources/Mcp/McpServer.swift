@@ -55,12 +55,28 @@ final class McpServer {
             var tools: [[String: Any]] = [
                 [
                     "name": "post_to_crew",
-                    "description": "把关键节点发到 crew 群聊白板（只发要紧的：开始/完成/卡住/交接/重要发现，别倒 IO 日志）。",
+                    "description": "把关键节点发到 crew 群聊白板（只发要紧的：开始/完成/卡住/交接/重要发现，别倒 IO 日志）。可带 mentions 定向 @ 某个 session/captain/人类，或 reply_to 回复某条（自动 @ 原发送者）。",
                     "inputSchema": [
                         "type": "object",
                         "properties": [
                             "message": ["type": "string"],
                             "category": ["type": "string", "enum": ["progress", "question", "milestone"]],
+                            "mentions": [
+                                "type": "array",
+                                "description": "可选定向 @ 列表 —— 要某个具体对象接手/回应时带上；不填=广播给全 crew。@session 会把这条投进那个 session 的定向信箱（它优先看到）。",
+                                "items": [
+                                    "type": "object",
+                                    "properties": [
+                                        "kind": ["type": "string", "enum": ["session", "captain", "human"]],
+                                        "target_id": ["type": "string", "description": "kind=session 时必填：目标 session 的 id。"],
+                                    ],
+                                    "required": ["kind"],
+                                ],
+                            ],
+                            "reply_to": [
+                                "type": "string",
+                                "description": "可选：你在回复哪条群聊消息的 id —— 给了会自动 @ 那条的原发送者。",
+                            ],
                         ],
                         "required": ["message"],
                     ],
@@ -113,9 +129,15 @@ final class McpServer {
             guard !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 return toolResult(id: id, text: "ERROR: message 不能为空")
             }
+            // Phase 7：解析定向 @ + reply_to,记进本地白板（不静默吞）。把它们按
+            // mention 投递到 edge 信箱 / 唤醒目标 session 还需 block 3 relay 同步链
+            // （见 CrewRelayAgent.push）—— 本地这步只负责把信息留住。
+            let mentions = parseMentions(args["mentions"])
+            let replyTo = (args["reply_to"] as? String).flatMap { $0.isEmpty ? nil : $0 }
             store.appendSessionMessage(crewId: crewId, sessionId: sessionId,
                                        text: message, category: args["category"] as? String,
-                                       senderName: sessionLabel)
+                                       senderName: sessionLabel,
+                                       mentions: mentions, inReplyTo: replyTo)
             return toolResult(id: id, text: "已发到 crew 群聊白板。")
         case "read_whiteboard":
             let rows = store.list(crewId: crewId).map(renderRow)
@@ -173,6 +195,19 @@ final class McpServer {
             waits += 1
             Thread.sleep(forTimeInterval: pollInterval)
         }
+    }
+
+    /// 把 `post_to_crew` 的 `mentions` 参数（JSON 数组）解析成本地 mention 模型。
+    /// 宽容解析：丢掉缺 `kind` 的坏条目，但保留其余 —— 别因一条坏 mention 把整条
+    /// 消息或全部 mention 静默吞掉。空 / 非数组 → nil（= 广播）。
+    private func parseMentions(_ raw: Any?) -> [LocalWhiteboardMention]? {
+        guard let arr = raw as? [[String: Any]] else { return nil }
+        let parsed: [LocalWhiteboardMention] = arr.compactMap { item in
+            guard let kind = item["kind"] as? String, !kind.isEmpty else { return nil }
+            let target = (item["target_id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            return LocalWhiteboardMention(kind: kind, targetId: target)
+        }
+        return parsed.isEmpty ? nil : parsed
     }
 
     private func renderRow(_ m: LocalWhiteboardMessage) -> String {
