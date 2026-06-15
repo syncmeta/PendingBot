@@ -149,9 +149,18 @@ async function hydrateCrewAttachments(
   return out;
 }
 
+// Resolved sender identity for a single row (Phase 3 — the whiteboard should
+// show *who* posted, not a bare uuid). Computed once per request from the crew
+// roster (see `resolveSender` below) and threaded into `mapMessageToEntry`.
+type SenderIdentity = {
+  senderName: string | null;
+  senderMemberId: string | null;
+};
+
 export function mapMessageToEntry(
   m: ChatMessageRow,
   resolvedAttachments?: CrewWireAttachment[],
+  sender?: SenderIdentity,
 ): Record<string, unknown> {
   const lp = (m.log_payload ?? {}) as Record<string, unknown>;
   // 接合 v2 block 3:Mac relay 上行的来源标注落在 attachments jsonb 上
@@ -194,8 +203,68 @@ export function mapMessageToEntry(
     attachments: resolvedAttachments && resolvedAttachments.length > 0 ? resolvedAttachments : null,
     // Mac relay 来源标记(null = 非 relay 上行)。
     relay,
+    // Phase 3 — 发送者显示名(+ 成员 id),由 caller 经 roster map 解析后传入;
+    // 解析不出 → null,客户端退回现有渲染(裸 session/人类),不报错。relay 上行
+    // 自带 senderLabel(远端真名)时优先用它,免再查 roster。
+    sender_display_name: sender?.senderName ?? (relay?.senderLabel as string | null | undefined) ?? null,
+    sender_member_id: sender?.senderMemberId ?? null,
     created_at: m.created_at,
   };
+}
+
+// One crew roster row needed to resolve a message's sender display name. We
+// only pull the columns the resolver maps on (member id + the two id columns +
+// display_name), keyed once per request so reads don't go N+1.
+type RosterRow = {
+  id: string;
+  member_kind: string | null;
+  user_id: string | null;
+  code_session_id: string | null;
+  display_name: string | null;
+};
+
+// Build a sender resolver from a crew's active members. Returns a closure that
+// maps a `ChatMessageRow` → { senderName, senderMemberId }:
+//   * human prose (role user/human, has user_id) → member with that user_id
+//   * session post  (role log, log_payload.session_id) → code_session member
+//     with that code_session_id
+// Anything else (bot replies, unmatched ids) → nulls. Bot display names are
+// intentionally left to the client (it already knows the captain), so we only
+// resolve the two cases the bare-uuid problem actually bites.
+function makeSenderResolver(members: RosterRow[] | null | undefined): (m: ChatMessageRow) => SenderIdentity {
+  const byUserId = new Map<string, RosterRow>();
+  const bySessionId = new Map<string, RosterRow>();
+  for (const mem of members ?? []) {
+    if (mem.user_id && !byUserId.has(mem.user_id)) byUserId.set(mem.user_id, mem);
+    if (mem.code_session_id && !bySessionId.has(mem.code_session_id)) bySessionId.set(mem.code_session_id, mem);
+  }
+  return (m: ChatMessageRow): SenderIdentity => {
+    if ((m.role === 'user' || m.role === 'human') && m.user_id) {
+      const mem = byUserId.get(m.user_id);
+      if (mem) return { senderName: mem.display_name ?? null, senderMemberId: mem.id };
+    } else if (m.role === 'log') {
+      const lp = (m.log_payload ?? {}) as Record<string, unknown>;
+      const sid = typeof lp.session_id === 'string' ? lp.session_id : null;
+      if (sid) {
+        const mem = bySessionId.get(sid);
+        if (mem) return { senderName: mem.display_name ?? null, senderMemberId: mem.id };
+      }
+    }
+    return { senderName: null, senderMemberId: null };
+  };
+}
+
+// Fetch the crew's active roster (the rows the sender resolver needs) in one
+// query. Fail-soft: on error return [] so a roster hiccup degrades to "no
+// display names" rather than failing the whole whiteboard read.
+async function fetchRoster(svc: SupabaseClient, crewId: string): Promise<RosterRow[]> {
+  const { data, error } = await svc
+    .from('temporary_group_members')
+    .select('id, member_kind, user_id, code_session_id, display_name')
+    .eq('conversation_id', crewId)
+    .eq('status', 'active');
+  if (error || !data) return [];
+  return data as unknown as RosterRow[];
 }
 const CHAT_ROLES = ['user', 'human', 'bot', 'assistant', 'log'];
 const CHAT_SELECT = 'id, conversation_id, role, content, user_id, sender_bot_id, log_kind, log_payload, attachments, created_at';
@@ -521,7 +590,9 @@ crewMessagesRoutes.get('/:crewId/messages', requireSubjectAuth(['crew:read']), a
   if (msgErr) return jsonError(c, 500, 'database_error', { detail: msgErr.message });
   const chatRows = (rows ?? []) as unknown as ChatMessageRow[];
   const attByMsg = await hydrateCrewAttachments(svc, chatRows);
-  const whiteboard = chatRows.map((r) => mapMessageToEntry(r, attByMsg.get(r.id)));
+  // Phase 3 — resolve sender display names off the roster (one query, no N+1).
+  const resolveSender = makeSenderResolver(await fetchRoster(svc, crewId));
+  const whiteboard = chatRows.map((r) => mapMessageToEntry(r, attByMsg.get(r.id), resolveSender(r)));
 
   // 接合 v2 block 3:lastCursor = 本批最大 created_at(rows 升序 → 末行),
   // Mac 同步代理存成 relayCursor,下次 `?since=` 续传;空批返回 null。
@@ -745,6 +816,18 @@ sessionInboxRoutes.get('/:sessionId/inbox', requireSubjectAuth(['crew:read']), a
     if (canView !== true) return jsonError(c, 403, 'session_forbidden');
   }
 
+  // Crew roster, fetched up front so it doubles as the sender-name resolver for
+  // the whiteboard (Phase 3) AND the crew.members payload below — one query, no
+  // N+1. Superset of RosterRow (adds bot_id / role / represents_crew_id for the
+  // world-model template).
+  const { data: members, error: memErr } = await svc
+    .from('temporary_group_members')
+    .select('id, member_kind, user_id, bot_id, code_session_id, display_name, role, status, represents_crew_id')
+    .eq('conversation_id', sessionRow.crew_conversation_id)
+    .eq('status', 'active');
+  if (memErr) return jsonError(c, 500, 'database_error', { detail: memErr.message });
+  const resolveSender = makeSenderResolver((members ?? []) as unknown as RosterRow[]);
+
   // Whiteboard = the crew conversation's `messages` (spec §9 unified store), so
   // the session's per-turn context injection sees the human chat + captain
   // replies + cards. Mapped onto the chat-entry shape; access gated above.
@@ -761,7 +844,7 @@ sessionInboxRoutes.get('/:sessionId/inbox', requireSubjectAuth(['crew:read']), a
   if (wbErr) return jsonError(c, 500, 'database_error', { detail: wbErr.message });
   const wbChatRows = (wbRows ?? []) as unknown as ChatMessageRow[];
   const wbAttByMsg = await hydrateCrewAttachments(svc, wbChatRows);
-  const whiteboard = wbChatRows.map((r) => mapMessageToEntry(r, wbAttByMsg.get(r.id)));
+  const whiteboard = wbChatRows.map((r) => mapMessageToEntry(r, wbAttByMsg.get(r.id), resolveSender(r)));
 
   // Mailbox tail for this session — anything not yet processed.
   // We include unread / pending / delivered / read (legacy=unread, new
@@ -785,13 +868,6 @@ sessionInboxRoutes.get('/:sessionId/inbox', requireSubjectAuth(['crew:read']), a
     .eq('conversation_id', sessionRow.crew_conversation_id)
     .maybeSingle();
   if (metaErr) return jsonError(c, 500, 'database_error', { detail: metaErr.message });
-
-  const { data: members, error: memErr } = await svc
-    .from('temporary_group_members')
-    .select('id, member_kind, user_id, bot_id, code_session_id, display_name, role, status, represents_crew_id')
-    .eq('conversation_id', sessionRow.crew_conversation_id)
-    .eq('status', 'active');
-  if (memErr) return jsonError(c, 500, 'database_error', { detail: memErr.message });
 
   const { data: shares, error: shareErr } = await svc
     .from('crew_responsibility_shares')

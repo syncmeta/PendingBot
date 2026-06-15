@@ -258,9 +258,12 @@ final class LocalBackend: PendingCrewBackend {
                     action: nil, taskBrief: nil, runnerKind: nil),
                 attachments: nil,
                 relay: nil,
-                // relay 搬进来的消息带 edge 侧发送者名字,resolver 优先显示它
-                // (本地消息恒 nil,走 members 解析,行为不变)。
-                senderDisplayName: m.senderDisplayName
+                // 发送者名:relay 搬进来的带 edge 侧名字(senderDisplayName);本地
+                // 产生的(session post_to_crew / 人类)带 senderName。两者皆喂给中栏
+                // resolver,优先显示;都无则走 members 解析,行为不变。
+                senderDisplayName: m.senderDisplayName ?? m.senderName,
+                // 本地白板消息没有 edge 成员 id —— 恒 nil。
+                senderMemberId: nil
             )
         }
     }

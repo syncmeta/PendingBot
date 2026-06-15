@@ -360,6 +360,63 @@ describe('GET /v1/crews/:crewId/messages — lastCursor (接合 v2 block 3)', ()
     expect(body.whiteboard.length).toBe(0);
     expect(body.lastCursor).toBeNull();
   });
+
+  // Phase 3:白板读模型透出发送者显示名 —— 人类经 user_id→member.display_name,
+  // session 帖经 log_payload.session_id→code_session member.display_name。一次性
+  // 把 roster 查出来做 map(不 N+1)。
+  it('resolves sender_display_name for human + session rows via the roster', async () => {
+    const db = makeFakeDb();
+    seed(db);
+    db.rows.temporary_group_members = [
+      { id: 'mem-human', conversation_id: CREW_ID, member_kind: 'human', user_id: USER,
+        display_name: '阿强', status: 'active' },
+      { id: 'mem-sess', conversation_id: CREW_ID, member_kind: 'code_session',
+        code_session_id: SESSION_A, display_name: '小绿', status: 'active' },
+    ];
+    db.rows.messages = [
+      { id: 'm1', conversation_id: CREW_ID, role: 'user', content: '人类说', user_id: USER,
+        sender_bot_id: null, log_kind: null, log_payload: null, attachments: null, status: 'done',
+        created_at: '2026-06-11T00:00:01Z' },
+      { id: 'm2', conversation_id: CREW_ID, role: 'log', content: '进度', user_id: null,
+        sender_bot_id: null, log_kind: 'session_post',
+        log_payload: { session_id: SESSION_A, text: '进度' }, attachments: null, status: 'done',
+        created_at: '2026-06-11T00:00:02Z' },
+    ];
+    const res = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
+      headers: { 'x-test-user-id': USER },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      whiteboard: Array<{ id: string; sender_kind: string; sender_display_name: string | null; sender_member_id: string | null }>;
+    };
+    const human = body.whiteboard.find((e) => e.id === 'm1')!;
+    const session = body.whiteboard.find((e) => e.id === 'm2')!;
+    expect(human.sender_display_name).toBe('阿强');
+    expect(human.sender_member_id).toBe('mem-human');
+    expect(session.sender_kind).toBe('session');
+    expect(session.sender_display_name).toBe('小绿');
+    expect(session.sender_member_id).toBe('mem-sess');
+  });
+
+  it('leaves sender_display_name null when no roster match', async () => {
+    const db = makeFakeDb();
+    seed(db);
+    // No members seeded → nothing to resolve; entries must still come back.
+    db.rows.messages = [
+      { id: 'm1', conversation_id: CREW_ID, role: 'user', content: 'orphan', user_id: 'stranger',
+        sender_bot_id: null, log_kind: null, log_payload: null, attachments: null, status: 'done',
+        created_at: '2026-06-11T00:00:01Z' },
+    ];
+    const res = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
+      headers: { 'x-test-user-id': USER },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      whiteboard: Array<{ sender_display_name: string | null }>;
+    };
+    expect(body.whiteboard.length).toBe(1);
+    expect(body.whiteboard[0].sender_display_name).toBeNull();
+  });
 });
 
 describe('POST /v1/crews/:crewId/messages — mac_relay 上行标注 (接合 v2 block 3)', () => {
@@ -620,6 +677,31 @@ describe('mapMessageToEntry sender identity', () => {
       log_kind: 'interaction', log_payload: { kind: 'interaction', session_id: 's1', question: 'ok?' } } as any);
     expect(e.sender_kind).toBe('session');
     expect(e.sender_session_id).toBe('s1');
+  });
+
+  it('exposes sender_display_name from the resolver (human + session)', () => {
+    const human = mapMessageToEntry(
+      { ...base, role: 'user', content: 'hi', user_id: 'u1', sender_bot_id: null } as any,
+      undefined,
+      { senderName: '阿强', senderMemberId: 'mem-human' },
+    );
+    expect(human.sender_display_name).toBe('阿强');
+    expect(human.sender_member_id).toBe('mem-human');
+
+    const session = mapMessageToEntry(
+      { ...base, role: 'log', content: '进度', user_id: null, sender_bot_id: null,
+        log_kind: 'session_post', log_payload: { session_id: 's1', text: '进度' } } as any,
+      undefined,
+      { senderName: '小绿', senderMemberId: 'mem-sess' },
+    );
+    expect(session.sender_display_name).toBe('小绿');
+    expect(session.sender_member_id).toBe('mem-sess');
+  });
+
+  it('sender_display_name is null when the resolver yields nothing', () => {
+    const e = mapMessageToEntry({ ...base, role: 'user', content: 'hi', user_id: 'u1', sender_bot_id: null } as any);
+    expect(e.sender_display_name).toBeNull();
+    expect(e.sender_member_id).toBeNull();
   });
 
   it('passes resolved attachments through; null when none', () => {

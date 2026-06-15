@@ -125,10 +125,15 @@ struct CrewWhiteboardEntry: Decodable, Identifiable, Equatable {
     /// "mac_relay"` = 这条是 Mac 自己推上去的 —— 拉取侧据此过滤防回环。
     /// edge 老消息 / 非 relay 消息为 nil。
     let relay: Relay?
-    /// 发送者显示名。**edge 不下发这个字段**（恒 nil）；`LocalBackend` 把
-    /// relay 搬进本地白板的消息映射成 entry 时回填 edge 侧名字，
-    /// `CrewSenderResolver` 优先用它。
+    /// 发送者显示名。**edge 现在会下发这个字段**（Phase 3：白板读模型经 roster
+    /// 解析人类 user_id / session log_payload.session_id → member.display_name）；
+    /// 解析不出 / relay 老消息为 nil。`LocalBackend` 把 relay 搬进本地白板的消息
+    /// 映射成 entry 时也回填 edge 侧名字。`CrewSenderResolver` 优先用它。
     let senderDisplayName: String?
+    /// 发送者对应的 crew 成员 id（`temporary_group_members.id`）。edge Phase 3 随
+    /// `sender_display_name` 一起下发（解析不出为 nil）。客户端可据此关联 roster
+    /// 行（头像/状态徽标），无强依赖。
+    let senderMemberId: String?
 
     struct Relay: Decodable, Equatable {
         let origin: String
@@ -170,6 +175,7 @@ struct CrewWhiteboardEntry: Decodable, Identifiable, Equatable {
         case attachments
         case relay
         case senderDisplayName = "sender_display_name"
+        case senderMemberId = "sender_member_id"
     }
 
     /// Best display text: explicit payload text → summary → empty.
