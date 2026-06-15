@@ -34,6 +34,19 @@ it('most_popular ranks by lmarena text rating', () => {
   expect(resolvePresetModelsFromCatalog(def, catalog)).toEqual(['meta-llama/llama-4']);
 });
 
+it('latest_per_vendor excludes :free, openrouter meta, and unpriced/noise rows', () => {
+  const noisy: OpenRouterModelOut[] = [
+    M({ slug: 'openrouter/fusion', provider: 'openrouter', blended_usd_per_million: -1, release_date: '2026-06-20' }),
+    M({ slug: 'nvidia/nemotron-content-safety:free', provider: 'nvidia', blended_usd_per_million: 0, release_date: '2026-06-19' }),
+    M({ slug: 'nex-agi/nex-n2:free', provider: 'nex-agi', blended_usd_per_million: 0, release_date: '2026-06-18' }),
+    // 非 native-backed 厂商、有真实定价 → 唯一应留下的行
+    M({ slug: 'mistralai/mistral-large', provider: 'mistralai', source: 'openrouter', blended_usd_per_million: 4, release_date: '2026-05-01' }),
+  ];
+  const def: PresetDef = { slug: 'latest', resolver_kind: 'latest_per_vendor', params: { count: 8 }, title: '', description: '' };
+  const out = resolvePresetModelsFromCatalog(def, noisy);
+  expect(out).toEqual(['mistralai/mistral-large']); // meta/free/占位 三个噪声行都被过滤
+});
+
 it('fastest ranks candidates by injected throughput, respects min_rating', async () => {
   const cat = [
     M({ slug: 'a/fast-strong', provider: 'a', blended_usd_per_million: 1, lmarena_scores: { text: { rating: 1300, rank: 1, vote_count: 1, category: 'overall', leaderboard_publish_date: null } } }),

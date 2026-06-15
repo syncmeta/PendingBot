@@ -41,14 +41,26 @@ const PRESET_CACHE_PREFIX = 'model_preset:v1:';
 const PRESET_TTL_SEC = 6 * 60 * 60;
 const FASTEST_CANDIDATE_CAP = 40;
 
-// chat-only catalog 行（排除 native-backed OpenRouter 双胞胎 + 非 chat）
+// 可上 bot 的 chat 行：排除 native-backed OpenRouter 双胞胎、非 chat、以及
+// 不该当预设内容的噪声——`:free` 档、OpenRouter 自家 meta 模型（openrouter/*）、
+// `-fast` 延迟路由变体。实测发现 latest_per_vendor 会捞到 openrouter/fusion、
+// nvidia/*-content-safety:free 之类，故收紧。
 function chatRows(catalog: OpenRouterModelOut[]): OpenRouterModelOut[] {
   return catalog.filter((m) => {
     if (m.source === 'openrouter' && isNativeBackedOpenRouterSlug(m.slug)) return false;
+    if (m.slug.endsWith(':free')) return false;
+    if (m.slug.startsWith('openrouter/')) return false;
+    if (m.slug.endsWith('-fast')) return false;
     const slash = m.slug.indexOf('/');
     const tail = slash > 0 ? m.slug.slice(slash + 1) : m.slug;
     return !looksNonChat(tail);
   });
+}
+
+// 有真实付费定价的行（blended > 0）。free / 占位（-1）/ 无价行排除——
+// "各家最新" 之类按时间排序时避免捞到免费档与 meta 模型。
+function isPaid(m: OpenRouterModelOut): boolean {
+  return (m.blended_usd_per_million ?? 0) > 0;
 }
 
 function ratingOf(m: OpenRouterModelOut): number | null {
@@ -88,6 +100,7 @@ export function resolvePresetModelsFromCatalog(def: PresetDef, catalog: OpenRout
     case 'latest_per_vendor': {
       const byVendor = new Map<string, OpenRouterModelOut>();
       for (const m of rows) {
+        if (!isPaid(m)) continue; // 免费/占位档不算"最新"
         const cur = byVendor.get(m.provider);
         if (!cur || (m.release_date ?? '') > (cur.release_date ?? '')) byVendor.set(m.provider, m);
       }
