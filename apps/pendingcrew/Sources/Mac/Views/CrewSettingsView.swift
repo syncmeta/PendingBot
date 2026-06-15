@@ -10,6 +10,7 @@ import SwiftUI
 /// iPad shell 暂为占位页(task B2)，外观 Picker 届时在 iPad 设置入口再暴露。
 struct CrewSettingsView: View {
     @AppStorage(AppearanceMode.storageKey) private var appearanceRaw = AppearanceMode.default.rawValue
+    @State private var showResetConfirm = false
 
     private var appearance: AppearanceMode {
         AppearanceMode(rawValue: appearanceRaw) ?? .default
@@ -31,6 +32,38 @@ struct CrewSettingsView: View {
                 Text("外观")
             } footer: {
                 Text("「跟随系统」随设备的浅色/深色自动切换；也可固定为浅色或深色。")
+            }
+
+            Section {
+                Button(role: .destructive) {
+                    showResetConfirm = true
+                } label: {
+                    Text("清除本机所有数据")
+                        .foregroundStyle(.red)
+                }
+            } header: {
+                Text("危险区")
+            } footer: {
+                Text("清除本机缓存的登录状态、设置和所有本地 crew 数据，清除后 app 将重启。")
+            }
+            .confirmationDialog(
+                "清除本机所有数据?此操作不可恢复,仅清除本机数据。",
+                isPresented: $showResetConfirm,
+                titleVisibility: .visible
+            ) {
+                if LocalDataReset.sharedLoginPresent {
+                    Button("清除(保留与 PendingBot 共享的登录状态)", role: .destructive) {
+                        LocalDataReset.performReset(clearSharedLogin: false)
+                    }
+                    Button("清除,并清除与 PendingBot 共享的登录状态", role: .destructive) {
+                        LocalDataReset.performReset(clearSharedLogin: true)
+                    }
+                } else {
+                    Button("清除本机所有数据", role: .destructive) {
+                        LocalDataReset.performReset(clearSharedLogin: false)
+                    }
+                }
+                Button("取消", role: .cancel) {}
             }
         }
         .formStyle(.grouped)

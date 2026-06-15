@@ -232,9 +232,18 @@ final class AccountStore: ObservableObject {
     /// SQLite cache — deleting the DB file and rotating its SQLCipher key — so
     /// the next user neither sees leftover conversations nor inherits a key
     /// that could decrypt a forensic copy of the prior user's data.
-    func signOut() async {
+    ///
+    /// - Parameter clearSharedLogin: When `true` (the default), the macOS
+    ///   shared-keychain credential used by PendingCrew's family-SSO is also
+    ///   removed. `LocalDataReset.performReset` passes `false` when the user
+    ///   chooses to keep that credential intact.
+    /// - Parameter scope: Supabase revoke scope. Defaults to `.global` (the
+    ///   normal "sign out" semantics — revoke the user's sessions). The local
+    ///   data reset passes `.local` so clearing data on THIS machine does not
+    ///   sign the user out on their other devices.
+    func signOut(clearSharedLogin: Bool = true, scope: SignOutScope = .global) async {
         do {
-            try await SupabaseStack.shared.auth.signOut()
+            try await SupabaseStack.shared.auth.signOut(scope: scope)
         } catch {
             // signOut hits a best-effort token revoke + local clear; even if
             // the network half fails the local session is gone.
@@ -244,7 +253,9 @@ final class AccountStore: ObservableObject {
         #if os(macOS)
         // 主动登出也清掉共享组里的家族凭据 —— 凭据是账号级的，下个登录者
         // 不能继承上个账号的 PendingCrew 静默登录能力。
-        FamilyCredentialWriter.clear()
+        if clearSharedLogin {
+            FamilyCredentialWriter.clear()
+        }
         #endif
         #if os(iOS)
         // AvatarCache lives in Sources/Components/UserAvatar.swift, which

@@ -24,12 +24,8 @@ import SwiftUI
 final class AppModel: ObservableObject {
     @Published var apiBaseURL: String
     @Published private(set) var credential: PendingCrewAuthCredential?
-    /// 当前 BYOK 配置快照。nil = 没填 key。**注意**：本机模式不需要 key，这里
-    /// 只是给未来 SDK/`-p` API-key 额度池路径用的选填凭据，不再决定 mode。
-    @Published private(set) var byokConfig: BYOKConfig?
 
     /// 用户是否显式选了**本机模式**（驱动本机已登录的 claude/codex，不需要 key）。
-    /// 与 `byokConfig` 解耦 —— 进本机模式不再被"有没有 key"门禁。
     @Published private(set) var localModeSelected: Bool
 
     /// 登录这台机的 PendingCrew 用户(auth.users.id)。best-effort:在
@@ -37,7 +33,6 @@ final class AppModel: ObservableObject {
     /// `user_id`)之前为 nil。群聊 `CrewChatView` 用它把
     /// `CrewWhiteboardEntry.senderUserId` 等于本值的消息识别成"自己的气泡"
     /// (右对齐、无头像);多 human crew 里其他人的消息因此不会被误判成自己。
-    /// BYOK 假 subject 没有真用户 → 保持 nil。
     @Published private(set) var currentUserId: String?
 
     private let defaults: UserDefaults
@@ -56,19 +51,8 @@ final class AppModel: ObservableObject {
             KeychainStore.get(account: KeychainAccount.deviceGrant)
         )
         self.credential = cred
-        // BYOK key 启动时只在没有 device grant 的情况下读 —— 登录态优先。
-        let loadedByok: BYOKConfig?
-        if cred == nil {
-            let snapshot = BYOKConfig.load()
-            loadedByok = snapshot.hasAnyKey ? snapshot : nil
-        } else {
-            loadedByok = nil
-        }
-        self.byokConfig = loadedByok
-        // 本机模式标记：登录态优先（登录时不进本机模式）。向后兼容 —— 老用户填过
-        // key（loadedByok 非 nil）也视为选过本机模式，不至于重启后退回 Welcome。
-        self.localModeSelected = cred == nil
-            && (defaults.bool(forKey: DefaultsKey.localModeSelected) || loadedByok?.hasAnyKey == true)
+        // 本机模式标记：登录态优先（登录时不进本机模式）。
+        self.localModeSelected = cred == nil && defaults.bool(forKey: DefaultsKey.localModeSelected)
     }
 
     /// 当前生效的 backend(接合 v2:**不再按 mode 路由**)。
@@ -95,8 +79,7 @@ final class AppModel: ObservableObject {
         #endif
     }
 
-    /// `isAuthenticated` 仅指"登录态(device grant)",**不**包含 BYOK key
-    /// (那个用 `byokConfig?.hasAnyKey` 判)。接合 v2 后这是唯一的能力门:
+    /// `isAuthenticated` 仅指"登录态(device grant)"。接合 v2 后这是唯一的能力门:
     /// 登录 = 账号级能力叠加(遥控/未来信箱),不再有 `mode` 路由。
     var isAuthenticated: Bool { credential != nil }
 
@@ -109,13 +92,6 @@ final class AppModel: ObservableObject {
     func saveDeviceGrantToken(_ token: String) throws {
         try KeychainStore.set(token, account: KeychainAccount.deviceGrant)
         credential = PendingCrewAuthCredential.resolveDeviceGrant(token)
-        // 切到登录态后,清掉 BYOK config —— 一台机不能同时两条路。
-        // (本次 scope 内"任一模式选完不可切换"是简化版,但万一启动时两边都有
-        // 凭据,优先登录;BYOK 清掉避免 mode 判定歧义。)
-        if credential != nil {
-            BYOKConfig.clear()
-            byokConfig = nil
-        }
     }
 
     func clearAuth() {
@@ -169,8 +145,7 @@ final class AppModel: ObservableObject {
     }
 
     /// 由 `CrewStore.refreshSubjects` 在解析到 subject 时回填(best-effort)。
-    /// 只在拿到非 nil 值时更新,避免 BYOK 假 subject(userId == nil)把已
-    /// 解析出的真实 user id 清掉。
+    /// 只在拿到非 nil 值时更新,避免空 userId 覆盖已解析出的真实 user id。
     func setCurrentUserIdIfResolved(_ userId: String?) {
         guard let userId, !userId.isEmpty else { return }
         currentUserId = userId
@@ -181,21 +156,6 @@ final class AppModel: ObservableObject {
     func enterLocalMode() {
         localModeSelected = true
         defaults.set(true, forKey: DefaultsKey.localModeSelected)
-    }
-
-    /// 把（选填的）BYOK key 写到 keychain 并落地到内存态。
-    /// 不再决定 mode —— 进本机模式走 `enterLocalMode()`。空 config 也合法（清空 key）。
-    func saveByokConfig(_ config: BYOKConfig) throws {
-        try config.save()
-        byokConfig = config.hasAnyKey ? config : nil
-    }
-
-    /// 退出本机模式 + 清掉 BYOK key。切回 WelcomeView / 登录态时调。
-    func clearByokConfig() {
-        BYOKConfig.clear()
-        byokConfig = nil
-        localModeSelected = false
-        defaults.set(false, forKey: DefaultsKey.localModeSelected)
     }
 
     // MARK: - T4.5 crew-session server lifecycle
@@ -244,15 +204,10 @@ final class AppModel: ObservableObject {
 
 private enum DefaultsKey {
     static let apiBaseURL = "PendingCrew.apiBaseURL"
-    /// 用户显式选了"本机模式"（与有没有 BYOK key 解耦）。
+    /// 用户显式选了"本机模式"（驱动本机已登录的 claude/codex）。
     static let localModeSelected = "PendingCrew.localModeSelected"
 }
 
 enum KeychainAccount {
     static let deviceGrant = "device-grant"
-    /// BYOK provider key 三件套。三个分开存,删/查/写都 per-key 走 Keychain
-    /// 的 generic-password。命名前缀 `byok-` 跟 `device-grant` 区分。
-    static let byokAnthropic = "byok-anthropic"
-    static let byokOpenAI = "byok-openai"
-    static let byokGemini = "byok-gemini"
 }

@@ -2,20 +2,18 @@ import SwiftUI
 
 /// PendingCrew 启动选择页(T5.1 + T5.2)。
 ///
-/// 首次进入(没有 device-grant token **也**没有 BYOK key)显示这页,让用户在
-/// 两条路径里挑:
+/// 首次进入(没有 device-grant token)显示这页,让用户在两条路径里挑:
 /// - **登录 PendingBot 账号** — 走 device-login QR(`LoginView`),享 unified
 ///   billing + 云端 crew(Fly machine)。
-/// - **不登录直接用(BYOK)** — 仅 Mac 路径,本机存 provider key,本机 crew,
-///   `LocalSetupView` 填三个 SecureField 即可上路。
+/// - **本机模式(Mac 专属)** — 驱动本机已登录的 claude/codex,无需 key,
+///   只在本机跑 crew。`LocalSetupView` 点"进入"即可。
 ///
-/// iOS / iPad 不显 BYOK 按钮 — BYOK 仅 Mac 上做,iPad 在 v1.1 才适配(spec
-/// v2 §5.2)。iOS 启动只能走登录路径。
+/// iOS / iPad 不显本机模式按钮 — 本机后端(LocalRunner)是 macOS-only。
 ///
 /// 选择信号通过 closure 返回 RootView,由 RootView 切换 `flow` state。这里
 /// **不直接** 操作 AppModel —— 状态切换的真正触发是 LoginView 拿到 token
-/// 或 LocalSetupView 写完 keychain 后 `AppModel.mode` 变化,RootView
-/// `@Published` 重新求值自动 route。
+/// 或 LocalSetupView 调 `model.enterLocalMode()` 后 `AppModel.localModeSelected`
+/// 变化,RootView `@Published` 重新求值自动 route。
 struct WelcomeView: View {
     enum Choice {
         case login
@@ -114,7 +112,7 @@ struct WelcomeView: View {
     private var footnote: some View {
         VStack(spacing: 4) {
             #if os(macOS)
-            Text("两种模式各有取舍:登录走 PendingBot 账户管线、可用 Fly 云端机器;BYOK 全本地,凭据自己 own,只本机 crew。")
+            Text("两种模式各有取舍:登录走 PendingBot 账户管线、可用 Fly 云端机器;本机模式驱动本机已登录的 claude/codex,无需 key,只在本机跑 crew。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
