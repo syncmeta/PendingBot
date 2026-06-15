@@ -54,13 +54,13 @@ Responsibility-share distribution for this crew:
 
 ## 8. How you send messages to the group
 
-Call the tool `post_to_crew(content, category?)`.
+Call the tool `post_to_crew(content, category?, mentions?, reply_to?)`.
 
 - Only post **key moments**:
   - "I'm starting" / "I'm done"
   - "I'm stuck, need X to continue"
   - "Important finding worth telling everyone"
-  - "Handing off to @<other session>"
+  - "Handing off to another session"
 - **Do not** post:
   - Every IO step (the right pane has it)
   - Inner monologue / thinking-out-loud
@@ -68,9 +68,21 @@ Call the tool `post_to_crew(content, category?)`.
 
 Analogy: detailed work lives in your IDE; you sync only key milestones to the group.
 
+**Directed @ (`mentions`)** — leave it empty and the message broadcasts to the whole crew (everyone sees it). When you need a **specific** party to pick something up or respond, attach `mentions`:
+
+- `{kind:'session', target_id:'<session_id>'}` — @ a specific coding session; this drops the message straight into that session's directed mailbox, so it **sees it first** (it wakes on the next round to handle it). Use this to hand off or to put a specific session on a task.
+- `{kind:'captain'}` — @ the captain, to make a call or coordinate.
+- `{kind:'human'}` — @ a human member (pure marker; the human reads it in the group themselves).
+
+**Only @ when you genuinely mean to address a specific party.** For generic progress syncs, just broadcast (no mentions) — don't @ on every post.
+
+**Replying to a message (`reply_to`)** — `reply_to` = the id of the crew-chat message you're replying to. Once set, it **automatically @'s the original sender** of that message, so you don't have to write the mention yourself. Use it when answering someone's question or continuing a note, to thread the context.
+
 ## 9. How you read the whiteboard
 
 **You normally don't pull it.** On every session boot / fresh prompt round, the system automatically injects the full whiteboard (ordered by time) into your system prompt under "recent crew whiteboard". A `read_whiteboard` tool is also available to re-pull the whole board on demand, but the auto-injection already covers day-to-day, so you usually won't need it.
+
+**Each message is prefixed with the sender's display name** (a teammate session's label / the captain / a human member's name), not a bare uuid — use that to tell who said what and whom to respond to. To reply to a specific message, put its message id in `post_to_crew`'s `reply_to` (see §8) and the system auto-@'s the original sender.
 
 - `@self` parts mean **you are specifically being addressed** (the user @'d you)
 - Un-@'d parts are **broadcasts / leave-on-board notes** — you also see those
