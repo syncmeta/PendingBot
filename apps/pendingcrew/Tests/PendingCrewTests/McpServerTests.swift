@@ -44,6 +44,40 @@ final class McpServerTests: XCTestCase {
         XCTAssertEqual(msgs[0].category, "progress")
     }
 
+    // Phase 7：post_to_crew schema 暴露 mentions + reply_to。
+    func testToolsListPostToCrewHasMentionsAndReplyTo() {
+        let r = server(tempDir()).handleLine(#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#)!
+        XCTAssertTrue(r.contains("mentions"))
+        XCTAssertTrue(r.contains("reply_to"))
+    }
+
+    // Phase 7：带 mentions + reply_to → 不报错,且两者被记进本地白板(不静默吞)。
+    func testPostToCrewPreservesMentionsAndReplyTo() {
+        let s = server(tempDir())
+        let r = s.handleLine(#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"post_to_crew","arguments":{"message":"交给你了","mentions":[{"kind":"session","target_id":"sess-2"},{"kind":"captain"}],"reply_to":"msg-orig"}}}"#)!
+        XCTAssertFalse(r.contains("ERROR"))
+        let msgs = s.store.list(crewId: "c")
+        XCTAssertEqual(msgs.count, 1)
+        XCTAssertEqual(msgs[0].text, "交给你了")
+        XCTAssertEqual(msgs[0].inReplyTo, "msg-orig")
+        XCTAssertEqual(msgs[0].mentions?.count, 2)
+        XCTAssertEqual(msgs[0].mentions?[0].kind, "session")
+        XCTAssertEqual(msgs[0].mentions?[0].targetId, "sess-2")
+        XCTAssertEqual(msgs[0].mentions?[1].kind, "captain")
+        XCTAssertNil(msgs[0].mentions?[1].targetId)
+    }
+
+    // Phase 7：不带 mentions/reply_to 的发送仍是广播(两字段保持 nil),且坏 mention
+    // (缺 kind)被丢弃而非吞掉整条。
+    func testPostToCrewBroadcastLeavesMentionsNil() {
+        let s = server(tempDir())
+        _ = s.handleLine(#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"post_to_crew","arguments":{"message":"广播一下","mentions":[{"target_id":"oops"}]}}}"#)
+        let msgs = s.store.list(crewId: "c")
+        XCTAssertEqual(msgs.count, 1)
+        XCTAssertNil(msgs[0].mentions)   // 唯一一条坏 mention 被丢 → 空 → nil
+        XCTAssertNil(msgs[0].inReplyTo)
+    }
+
     func testPostToCrewEmptyMessageRejected() {
         let s = server(tempDir())
         let r = s.handleLine(#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"post_to_crew","arguments":{"message":"   "}}}"#)!

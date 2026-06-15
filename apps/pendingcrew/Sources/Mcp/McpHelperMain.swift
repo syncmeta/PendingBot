@@ -25,9 +25,12 @@ enum McpHelperMain {
         if serve {
             // newline-delimited JSON-RPC over stdin/stdout（MCP stdio）。
             // `--captain` → 解锁机长专用 answer_decision 工具（chunk2 T4）。
+            // `--label` → post_to_crew 写白板时的发送者显示名（白板不再裸 uuid）。
             let captain = args.contains("--captain")
+            let label = value("--label", args)
             let server = McpServer(store: store, approvals: LocalApprovalStore(directory: dir),
-                                   crewId: crewId, sessionId: sessionId, isCaptain: captain)
+                                   crewId: crewId, sessionId: sessionId, isCaptain: captain,
+                                   sessionLabel: label)
             while let line = readLine(strippingNewline: true) {
                 if let out = server.handleLine(line) {
                     print(out)

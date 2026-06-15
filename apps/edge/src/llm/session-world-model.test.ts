@@ -33,7 +33,9 @@ vi.mock('./prompt-loader', () => {
 {{sharesBlock}}
 冲突时听 {{tiebreakerBlock}}
 ## 8. 你怎么发消息 — post_to_crew
+带 mentions 定向 @ 某个 session / @captain;reply_to 回复某条会自动 @ 原发送者。
 ## 9. 你怎么读群聊白板
+每条消息前缀是发送者的显示名,据此判断是谁说的、该回应谁。
 ## 10. Permission Request 模式: {{permissionMode}}
 crew: {{crewTitle}} ({{crewId}}) at {{runtimeLocation}}:{{workingDirectory}}
 `;
@@ -51,7 +53,9 @@ Captain bot: {{captainBlock}}
 {{sharesBlock}}
 On conflict, listen to {{tiebreakerBlock}}
 ## 8. How you send messages — post_to_crew
+Attach mentions to @ a specific session / @captain; reply_to to a message auto-@'s the original sender.
 ## 9. How you read the whiteboard
+Each message is prefixed with the sender's display name, so you know who said what and whom to respond to.
 ## 10. Permission Request mode: {{permissionMode}}
 crew: {{crewTitle}} ({{crewId}}) at {{runtimeLocation}}:{{workingDirectory}}
 `;
@@ -236,5 +240,34 @@ describe('renderSessionWorldModel', () => {
     expect(out).toContain('Your World');     // English title
     expect(out).toContain('Captain bot');    // English label
     expect(out).not.toMatch(/\{\{[a-zA-Z]+\}\}/);
+  });
+
+  // Phase 7 — the world-model must teach the new crew-comms abilities:
+  // directed @ via mentions, reply_to (auto-@ original sender), and that the
+  // whiteboard now shows sender display names. Assert in both locales.
+  it('explains @ / reply / sender-identity (zh)', async () => {
+    const db = makeFakeDb();
+    seedHappyPath(db);
+    const env = makeFakeEnv(db);
+    const out = await renderSessionWorldModel(env, SESSION_ID);
+    expect(out).toBeTruthy();
+    if (!out) return;
+    expect(out).toContain('mentions');        // directed @ ability
+    expect(out).toContain('reply_to');        // reply-to-a-message ability
+    expect(out).toContain('原发送者');         // auto-@ original sender
+    expect(out).toContain('发送者的显示名');   // whiteboard shows sender name
+  });
+
+  it('explains @ / reply / sender-identity (en)', async () => {
+    const db = makeFakeDb();
+    seedHappyPath(db);
+    const env = makeFakeEnv(db);
+    const out = await renderSessionWorldModel(env, SESSION_ID, { locale: 'en' });
+    expect(out).toBeTruthy();
+    if (!out) return;
+    expect(out).toContain('mentions');             // directed @ ability
+    expect(out).toContain('reply_to');             // reply-to-a-message ability
+    expect(out).toContain('original sender');      // auto-@ original sender
+    expect(out).toContain("sender's display name"); // whiteboard shows sender name
   });
 });

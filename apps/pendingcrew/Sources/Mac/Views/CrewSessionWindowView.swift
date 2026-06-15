@@ -15,9 +15,9 @@ import SwiftUI
 /// `@EnvironmentObject` 持有 runner 时不会订阅到 run 自己的 `@Published`，否则
 /// status 更新了 UI 不刷新。
 ///
-/// **重复轮询说明**：成员列表模式这里自己 poll 本 crew 的白板/roster
-/// （`listCrewWhiteboard` / `listCrewMembers`），中栏 CrewChatView 也在 poll 同一
-/// 份数据 —— 两端各拉各的。v1 单用户低频可接受，未做共享数据层的重构。
+/// **数据刷新（Phase 5：去轮询）**：成员列表模式订阅 `backend.whiteboardChanges`
+/// （事件驱动）刷本 crew 的白板/roster，中栏 CrewChatView 各自订阅同一条流 ——
+/// 两端各订各的，但都已无 3s/2s 定时器。未做共享数据层的合并（v1 可接受）。
 struct CrewSessionWindowView: View {
     @EnvironmentObject private var sessionRunner: CrewSessionRunner
     @EnvironmentObject private var appModel: AppModel
@@ -39,16 +39,14 @@ struct CrewSessionWindowView: View {
     @State private var captainBotId: String?
     /// 待审批卡的回复草稿，按 permission_request_id 存。
     @State private var replyDrafts: [String: String] = [:]
-    private let rosterPollInterval: UInt64 = 3_000_000_000 // 3s
     /// Sessions this app has already claimed+run (or is running), so the
     /// auto-claim loop (K: captain-created queued sessions) doesn't double-run
     /// them. Includes both manual starts and auto-claimed ones.
     @State private var handledSessionIds: Set<String> = []
-    /// 未读角标刷新 ticker（chunk2 T6）—— 仅驱动 inspector 里切换条的角标重算
-    /// （store 数据在文件里，无 ObservableObject 推送）。captain 唤醒不在这——它
-    /// 必须不依赖 inspector 是否打开，已搬到常驻的 CrewCenterView。
-    private let badgeTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
-    /// 未读角标的轻量刷新计数（chunk2 T6）—— 每个 tick 自增，逼 badgeCount 重算。
+    /// 未读角标的轻量刷新计数（chunk2 T6）—— 每次白板变更事件自增，逼 badgeCount
+    /// 重算（store 数据在文件里，无 ObservableObject 推送）。Phase 5 把驱动从 2s
+    /// 墙钟 timer 换成 `whiteboardChanges` 订阅：agent 经 `post_to_crew` 写白板
+    /// （跨进程，目录监听捕获）或本进程 append 都会推一个事件 → bump 一次。
     @State private var badgeTick = 0
 
     /// spec §9.3 + 用户心智：右栏是**常驻**和 claude/codex 交互的面（像 Codex
@@ -71,12 +69,8 @@ struct CrewSessionWindowView: View {
         // the captain queued on the server (status='queued'). local_host = this
         // Mac is the executor; the captain just creates the queued row on edge.
         .task(id: crewStore.selectedDetail?.crew.id) { await autoClaimLoop() }
-        // 成员列表模式要的白板/roster 数据 —— 自轮询（与中栏各拉各的，见类型注释）。
-        .task(id: crewStore.selectedDetail?.crew.id) { await rosterPollLoop() }
-        // 未读角标随 ticker 刷新（T6）。captain 唤醒已移到 CrewCenterView。
-        .onReceive(badgeTimer) { _ in
-            badgeTick &+= 1
-        }
+        // 成员列表模式要的白板/roster 数据 —— 事件驱动订阅（去 3s 轮询，与中栏各订各的）。
+        .task(id: crewStore.selectedDetail?.crew.id) { await subscribeRoster() }
         // 切前台 = 看过了：清掉新选中 run 的未读（T6）。
         .onChange(of: sessionRunner.selectedRunId) { _, newId in
             if let run = sessionRunner.runs.first(where: { $0.runID == newId }) {
@@ -435,16 +429,23 @@ struct CrewSessionWindowView: View {
             sessionStatus: run.status == .running ? "running" : "exited", isSession: true)
     }
 
-    // MARK: - 成员列表模式数据轮询 + 答复
+    // MARK: - 成员列表模式数据订阅 + 答复
 
-    /// 3s 轮询本 crew 的白板（取待审批 + 最新动作）和 roster。与中栏 CrewChatView
-    /// 各拉各的（见类型注释，v1 可接受）。
-    private func rosterPollLoop() async {
+    /// 事件驱动订阅本 crew 的白板（待审批 + 最新动作）和 roster（去 3s 轮询）。
+    /// 先 refresh 一次兜住订阅前状态，再 `for await` backend 变更流：每个 tick
+    /// refresh 一次并 bump `badgeTick`（驱动切换条角标重算 —— agent 跨进程 post
+    /// 进白板会经目录监听推一个事件）。与中栏 CrewChatView 各订各的，但都已无定时器。
+    private func subscribeRoster() async {
         entries = []
         members = []
-        while !Task.isCancelled {
+        guard let crewId = crewStore.selectedDetail?.crew.id,
+              let backend = appModel.backend else { return }
+        await refreshRoster()
+        badgeTick &+= 1
+        for await _ in backend.whiteboardChanges(crewId: crewId) {
+            if Task.isCancelled { return }
             await refreshRoster()
-            try? await Task.sleep(nanoseconds: rosterPollInterval)
+            badgeTick &+= 1
         }
     }
 
@@ -488,10 +489,11 @@ struct CrewSessionWindowView: View {
     }
 
     /// 未读数（chunk2 T6）：本 session 的 pending 待办 + 上次查看后该 session
-    /// 发的白板消息。`badgeTick` 由 2s 轮询 bump，强制重算（store 数据在文件里，
-    /// 没有 ObservableObject 推送）。前台选中的 run 不显角标（看着呢）。
+    /// 发的白板消息。`badgeTick` 由 `subscribeRoster` 的白板变更事件 bump，强制
+    /// 重算（store 数据在文件里，没有 ObservableObject 推送）。前台选中的 run 不显
+    /// 角标（看着呢）。
     private func badgeCount(for run: CrewSessionRun) -> Int {
-        _ = badgeTick // 依赖 tick，让 SwiftUI 每 2s 重算一次
+        _ = badgeTick // 依赖 tick，白板变更事件到来时让 SwiftUI 重算
         if run.runID == sessionRunner.selectedRunId { return 0 }
         return SessionUnreadStore.shared.unreadCount(
             crewId: run.crewId, sessionId: run.sessionId,
@@ -654,18 +656,22 @@ struct CrewSessionWindowView: View {
             // best-effort：渲染失败 nil 不挡 session 启动。
             var codexDevInstructions: String? = nil
             var codexMcp: [String: Any]? = nil
+            // worker session 的白板发送者名：agent 名 + 本地 session id 前缀（与
+            // CrewSessionRun.displayName 同款），让 post_to_crew 写的白板不再裸 uuid。
+            let workerLabel = selectedKind.displayName + " · " + String(localSessionId.prefix(6))
             switch selectedKind {
             case .claudeCode:
                 cfg.appendSystemPromptFile = await renderWorldModelFile(
                     detail: detail, taskBrief: firstPrompt, workdir: workdir, sessionId: localSessionId)
-                let comms = prepareLocalCommsConfig(crewId: detail.crew.id, sessionId: localSessionId)
+                let comms = prepareLocalCommsConfig(
+                    crewId: detail.crew.id, sessionId: localSessionId, label: workerLabel)
                 cfg.settingsFile = comms.settings
                 cfg.mcpConfigFile = comms.mcp
             case .codex:
                 codexDevInstructions = await renderWorldModelString(
                     detail: detail, taskBrief: firstPrompt, workdir: workdir, sessionId: localSessionId)
                 codexMcp = LocalSessionLaunch.codexMcpServers(
-                    crewId: detail.crew.id, sessionId: localSessionId)
+                    crewId: detail.crew.id, sessionId: localSessionId, label: workerLabel)
             }
             try await sessionRunner.start(
                 crewId: detail.crew.id,
@@ -730,8 +736,10 @@ struct CrewSessionWindowView: View {
     }
 
     private func prepareLocalCommsConfig(crewId: String, sessionId: String,
-                                         captain: Bool = false) -> (settings: String?, mcp: String?) {
-        LocalSessionLaunch.prepareLocalCommsConfig(crewId: crewId, sessionId: sessionId, captain: captain)
+                                         captain: Bool = false,
+                                         label: String? = nil) -> (settings: String?, mcp: String?) {
+        LocalSessionLaunch.prepareLocalCommsConfig(
+            crewId: crewId, sessionId: sessionId, captain: captain, label: label)
     }
 
     // MARK: - auto-claim (K: captain-created queued sessions)
@@ -787,7 +795,9 @@ struct CrewSessionWindowView: View {
             if kind == .codex {
                 codexDevInstructions = await renderWorldModelString(
                     detail: detail, taskBrief: s.taskBrief, workdir: dir, sessionId: s.id)
-                codexMcp = LocalSessionLaunch.codexMcpServers(crewId: detail.crew.id, sessionId: s.id)
+                let workerLabel = kind.displayName + " · " + String(s.id.prefix(6))
+                codexMcp = LocalSessionLaunch.codexMcpServers(
+                    crewId: detail.crew.id, sessionId: s.id, label: workerLabel)
             }
             try await sessionRunner.start(
                 crewId: detail.crew.id,
@@ -799,11 +809,23 @@ struct CrewSessionWindowView: View {
                 developerInstructions: codexDevInstructions,
                 codexMcpServers: codexMcp
             )
+            // 登录态 run → 接上事件驱动唤醒（Phase 4b）：一个 crew 一条 hub 连接，
+            // 收到「该 crew 有动静」→ 拉本 session inbox → 空闲且有@我的项 → 注入唤醒。
+            attachMailboxWaker(crewId: detail.crew.id, api: api)
             // taskBrief 已在 argv —— 不再 0.6s sleep + send(brief)。
         } catch {
             localError = "自动认领 session 失败: \(error.localizedDescription)"
             handledSessionIds.remove(s.id) // allow a retry next poll
         }
+    }
+
+    /// 登录态 run 起好后接上 crew 的事件驱动唤醒 waker（Phase 4b）。需要
+    /// device-grant token + baseURL —— 用 `appModel.imageAuth`（同一对 (baseURL,
+    /// token)）取，非登录态返回 nil 时静默跳过（理论上走到这里必登录，防御性）。
+    private func attachMailboxWaker(crewId: String, api: PendingCrewAPI) {
+        guard let auth = appModel.imageAuth else { return }
+        sessionRunner.ensureMailboxWaker(
+            crewId: crewId, api: api, baseURL: auth.baseURL, token: auth.token)
     }
 
     /// `taskBrief` is the session's first instruction — the edge requires a

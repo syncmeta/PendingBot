@@ -13,6 +13,8 @@ final class CodexAppServerBackend: ObservableObject, SessionBackend {
     let transcript = CodexTranscript()
     @Published private(set) var status: SessionStatus = .running
     var statusPublisher: Published<SessionStatus>.Publisher { $status }
+    /// app-server 有真 turn 生命周期：turn/started→activeTurnId 置位，turn/completed→清空。
+    var isBusy: Bool { activeTurnId != nil }
 
     private let connection: CodexAppServerConnection
     private let cwd: String

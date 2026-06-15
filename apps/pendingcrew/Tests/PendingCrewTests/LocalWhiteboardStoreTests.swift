@@ -1,4 +1,5 @@
 import XCTest
+import Combine
 // 不 `@testable import PendingCrew` —— PendingCrewTests 是 standalone bundle
 // （TEST_HOST=""），不链 app module；待测源码直接编进 bundle（见 project.yml
 // 把 Sources/Stores/LocalWhiteboardStore.swift 列进 test target sources）。
@@ -74,5 +75,41 @@ final class LocalWhiteboardStoreTests: XCTestCase {
         s.appendUserMessage(crewId: "c", text: "x")
         XCTAssertEqual(s.entries(crewId: "c", afterId: nil).map(\.text), ["x"])
         XCTAssertEqual(s.entries(crewId: "c", afterId: "no-such-id").map(\.text), ["x"])
+    }
+
+    // MARK: - changes publisher（Phase 5：去轮询 —— append 即发 tick）
+
+    func testAppendEmitsChangeWithCrewId() {
+        let s = LocalWhiteboardStore(directory: tempDir())
+        var received: [String] = []
+        let c = s.changes.sink { received.append($0) }
+        defer { c.cancel() }
+        s.appendUserMessage(crewId: "crew-a", text: "hi")
+        XCTAssertEqual(received, ["crew-a"])
+    }
+
+    func testEachAppendVariantEmitsOnce() {
+        let s = LocalWhiteboardStore(directory: tempDir())
+        var count = 0
+        let c = s.changes.sink { _ in count += 1 }
+        defer { c.cancel() }
+        s.appendUserMessage(crewId: "c", text: "u")
+        s.appendSessionMessage(crewId: "c", sessionId: "sess", text: "s")
+        s.appendRelayMessage(crewId: "c", remoteId: "r1", senderKind: "user",
+                             senderDisplayName: "Bob", text: "r", createdAt: "2026-06-15T00:00:00Z")
+        XCTAssertEqual(count, 3)
+    }
+
+    func testRelayDuplicateDoesNotEmit() {
+        // 幂等去重命中（同 remoteId 已存在）→ no-op，不该发 tick。
+        let s = LocalWhiteboardStore(directory: tempDir())
+        s.appendRelayMessage(crewId: "c", remoteId: "dup", senderKind: "user",
+                             senderDisplayName: nil, text: "first", createdAt: "2026-06-15T00:00:00Z")
+        var count = 0
+        let c = s.changes.sink { _ in count += 1 }
+        defer { c.cancel() }
+        s.appendRelayMessage(crewId: "c", remoteId: "dup", senderKind: "user",
+                             senderDisplayName: nil, text: "second", createdAt: "2026-06-15T00:00:01Z")
+        XCTAssertEqual(count, 0)
     }
 }

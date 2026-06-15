@@ -10,6 +10,8 @@ final class AgentTerminalSession: ObservableObject, SessionBackend {
     let terminalView: LocalProcessTerminalView
     @Published private(set) var status: SessionStatus = .running
     var statusPublisher: Published<SessionStatus>.Publisher { $status }
+    /// PTY 终端无可编程 turn-state；交互式 claude 自带输入排队，注入随时安全 → 恒 false。
+    var isBusy: Bool { false }
 
     private final class Delegate: NSObject, LocalProcessTerminalViewDelegate {
         var onExit: ((Int32?) -> Void)?
