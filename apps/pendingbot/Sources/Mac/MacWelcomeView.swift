@@ -59,21 +59,24 @@ struct MacWelcomeView: View {
         // edges), on a compact window — smaller than the main app window
         // restored once signed in via MacRootGate.
         HStack(spacing: 96) {
-            // 左侧:平时是 logo;点了扫码后,二维码在 logo 这个位置取而代之。
-            // 右侧登录表单始终在(扫码胶囊高亮 = 再点一下收起二维码)。
-            if showingQRLogin {
-                PendingBotMacQRLoginView()
-                    .transition(.opacity)
-            } else {
-                Image("BrandMark")
-                    .resizable()
-                    .interpolation(.high)
-                    .antialiased(true)
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 92, height: 92)
-                    .clipShape(RoundedRectangle(cornerRadius: 21, style: .continuous))
-                    .shadow(color: .black.opacity(0.06), radius: 18, y: 5)
+            // 左侧是个固定 180 宽的槽(=二维码宽):logo 居中、二维码填满,两者共享
+            // 同一中心。切换 logo↔二维码不改变整簇宽度,所以右侧表单纹丝不动。
+            Group {
+                if showingQRLogin {
+                    PendingBotMacQRLoginView()
+                        .transition(.opacity)
+                } else {
+                    Image("BrandMark")
+                        .resizable()
+                        .interpolation(.high)
+                        .antialiased(true)
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 92, height: 92)
+                        .clipShape(RoundedRectangle(cornerRadius: 21, style: .continuous))
+                        .shadow(color: .black.opacity(0.06), radius: 18, y: 5)
+                }
             }
+            .frame(width: 180)
 
             VStack(alignment: .leading, spacing: 0) {
                 if vm.stage == .humanCheck {
