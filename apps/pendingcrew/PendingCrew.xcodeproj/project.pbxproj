@@ -151,6 +151,7 @@
 		CD478DB6A5F0A7917027EBE6 /* CrewChatAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B201B1F85B5578B8544DCA69 /* CrewChatAdapter.swift */; };
 		CD745099DE66AF9B57A3886F /* McpServerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E3D5A6F8A84FAAF37EEC934 /* McpServerTests.swift */; };
 		CE06A7EA4B6D5EFE69AC833A /* SessionConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69B4AFC537A8402CC846122F /* SessionConfig.swift */; };
+		CF27C4A3380DE3F9638A7A51 /* LocalDataReset.swift in Sources */ = {isa = PBXBuildFile; fileRef = 250E9F715D6468C774F3F176 /* LocalDataReset.swift */; };
 		CFFCCE0BBDE3D119D2140C41 /* ImageViewer.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBB0C1A453530F00E8B6D49F /* ImageViewer.swift */; };
 		D0314E5A7888AB1A42BEA8AA /* PlatformModifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 898C59DF68CE3C7C8872DF67 /* PlatformModifiers.swift */; };
 		D1DD2B27650D223B37D4B295 /* CrewChatAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B201B1F85B5578B8544DCA69 /* CrewChatAdapter.swift */; };
@@ -210,6 +211,7 @@
 		1A4D1C7DBA64FB676E8F61FF /* GitWorktreeServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitWorktreeServiceTests.swift; sourceTree = "<group>"; };
 		219AD4E22DF4542909B2067A /* PendingCrewEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingCrewEntry.swift; sourceTree = "<group>"; };
 		23CBE414E3726AB27DCA90AA /* FirstLaunchDisclosureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirstLaunchDisclosureView.swift; sourceTree = "<group>"; };
+		250E9F715D6468C774F3F176 /* LocalDataReset.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalDataReset.swift; sourceTree = "<group>"; };
 		25C60304AA7A9C4591A0B591 /* SessionProxyProtocolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionProxyProtocolTests.swift; sourceTree = "<group>"; };
 		266E200D180EDF283E63D525 /* LocalApprovalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalApprovalStore.swift; sourceTree = "<group>"; };
 		269AFDA6030BA0078188CAF2 /* CrewAvatarBadges.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewAvatarBadges.swift; sourceTree = "<group>"; };
@@ -688,6 +690,7 @@
 				1507798CBA5E3C31D801C08A /* DeviceIdentity.swift */,
 				266E200D180EDF283E63D525 /* LocalApprovalStore.swift */,
 				EBB438AE76CF441D4A9A071F /* LocalCrewStore.swift */,
+				250E9F715D6468C774F3F176 /* LocalDataReset.swift */,
 				AF6AF2AE2C93EB875D8DBFF8 /* LocalPromptLoader.swift */,
 				8F1C7822F4F8AFCC1F3AC147 /* LocalSessionWorldModel.swift */,
 				E09E12D071816B5362AD7626 /* LocalWhiteboardStore.swift */,
@@ -885,6 +888,7 @@
 				99B5BB04A0E197AE03535A86 /* LocalCodingAgentKind.swift in Sources */,
 				5BBFB39FEFADFBC3E3A905C8 /* LocalCodingAgentSpec.swift in Sources */,
 				A6CB5E9580950D91CF149907 /* LocalCrewStore.swift in Sources */,
+				CF27C4A3380DE3F9638A7A51 /* LocalDataReset.swift in Sources */,
 				8A23157D010EB9F45781BDE6 /* LocalPromptLoader.swift in Sources */,
 				945CD4E64E68F0005D687FBC /* LocalRunnerPlaceholder.swift in Sources */,
 				E8A4CD9994C8276834D659F3 /* LocalSessionLaunch.swift in Sources */,
