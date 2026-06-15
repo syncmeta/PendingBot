@@ -315,7 +315,12 @@ struct FriendsTabView: View {
 
                 if !friendsForFilter.isEmpty {
                     ForEach(Array(friendsForFilter.enumerated()), id: \.element.id) { idx, item in
-                        if idx > 0 { macRowDivider }
+                        // 分隔线两侧只要有一行被选中就不画 —— 选中框边缘不被线压。
+                        if idx > 0,
+                           !isFriendSelected(item),
+                           !isFriendSelected(friendsForFilter[idx - 1]) {
+                            macRowDivider
+                        }
                         switch item {
                         case .bot(let bot):
                             let selected = sidebarLayout && isSelected(kind: "bot", id: bot.id)
@@ -596,6 +601,16 @@ struct FriendsTabView: View {
     private func isSelected(kind: String, id: String) -> Bool {
         guard let peer = effectiveSelection else { return false }
         return peer.kind == kind && peer.peerId == id
+    }
+
+    /// 该好友行(bot/human)是否为当前右栏选中项 —— Mac 自绘列表里用它决定
+    /// 相邻分隔线是否隐藏。
+    private func isFriendSelected(_ item: FriendRowItem) -> Bool {
+        guard sidebarLayout else { return false }
+        switch item {
+        case .bot(let b):   return isSelected(kind: "bot", id: b.id)
+        case .human(let h): return isSelected(kind: "user", id: h.id)
+        }
     }
 
     // ── Sort menu ───────────────────────────────────────────────────────────
