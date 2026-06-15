@@ -262,6 +262,36 @@ struct CrewChatView: View {
         return CrewComposerMentionParser.mentionsToSend(all)
     }
 
+    // MARK: - in-bubble reply reference (#377)
+
+    /// Resolve the "被回复" reference for a timeline entry against the currently
+    /// loaded entries (local lookup, no server join). nil when the entry isn't a
+    /// reply; a degraded placeholder when the target is outside the loaded window.
+    private func replyReference(for entry: CrewWhiteboardEntry) -> CrewReplyReference? {
+        CrewReplyReferenceResolver.resolve(
+            for: entry, in: entries,
+            members: members, captainBotId: captainBotId, localUserId: localUserId)
+    }
+
+    /// Small quote strip rendered above a reply bubble: an accent rule + the
+    /// quoted sender + a one-line snippet. The degraded case (`found == false`)
+    /// shows just the generic placeholder snippet, no sender prefix.
+    @ViewBuilder
+    private func replyQuoteStrip(_ ref: CrewReplyReference) -> some View {
+        HStack(spacing: 6) {
+            Rectangle()
+                .fill(Theme.Palette.accent.opacity(0.6))
+                .frame(width: 2)
+            Text(ref.found ? "回复 \(ref.senderName)：\(ref.snippet)" : ref.snippet)
+                .font(Theme.Fonts.caption)
+                .foregroundStyle(Theme.Palette.inkMuted)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.horizontal, Theme.Metrics.gutter)
+    }
+
     /// The reply quote banner shown above the composer while a reply is staged.
     @ViewBuilder
     private func replyBanner(_ target: CrewReplyTarget) -> some View {
@@ -363,7 +393,11 @@ struct CrewChatView: View {
                 captainBotId: captainBotId,
                 localUserId: localUserId
             )
-            let bubble = BubbleView(
+            // #377 — 被回复引用条:在已加载 entries 里本地查 entry.inReplyTo 指向的
+            // 那条,取发送者名 + 摘要渲染成「回复 X:…」。找不到 → 退化占位,不崩。
+            // mine(右对齐)时引用条也右对齐贴齐气泡。
+            let replyRef = replyReference(for: entry)
+            let bubbleBody = BubbleView(
                 message: msg,
                 botName: sender?.displayName ?? "机组",
                 conversationID: crewId,
@@ -373,6 +407,17 @@ struct CrewChatView: View {
                 onRetry: nil,
                 menu: { EmptyView() }
             )
+            let bubble = Group {
+                if let replyRef {
+                    VStack(alignment: msg.mine ? .trailing : .leading, spacing: 2) {
+                        replyQuoteStrip(replyRef)
+                        bubbleBody
+                    }
+                    .frame(maxWidth: .infinity, alignment: msg.mine ? .trailing : .leading)
+                } else {
+                    bubbleBody
+                }
+            }
             #if os(macOS)
             // session 发的消息可点 → 右栏切到对应 session（chunk2 T6 中栏跳转）。
             // 找不到对应 run（已移除/别的 crew）则点击无事发生。

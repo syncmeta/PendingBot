@@ -327,7 +327,9 @@ final class LocalBackend: PendingCrewBackend {
                 // resolver,优先显示;都无则走 members 解析,行为不变。
                 senderDisplayName: m.senderDisplayName ?? m.senderName,
                 // 本地白板消息没有 edge 成员 id —— 恒 nil。
-                senderMemberId: nil
+                senderMemberId: nil,
+                // #377 — 本地白板消息的回复引用(Phase 6 已加 LocalWhiteboardMessage.inReplyTo)。
+                inReplyTo: m.inReplyTo
             )
         }
     }

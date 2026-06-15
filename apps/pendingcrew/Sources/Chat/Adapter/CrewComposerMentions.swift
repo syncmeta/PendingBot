@@ -264,3 +264,66 @@ enum CrewReplyTargetBuilder {
         return String(oneLine.prefix(snippetLimit)) + "…"
     }
 }
+
+// MARK: - Reply-reference resolution (#377)
+
+/// The quoted reference rendered inside/above a bubble that replies to another
+/// message. `senderName` + `snippet` come from the referenced message (resolved
+/// locally from the already-loaded entries — no server join). `found == false`
+/// degrades to a generic "回复了一条消息" label when the replied-to message is
+/// outside the loaded window.
+struct CrewReplyReference: Equatable {
+    let senderName: String
+    let snippet: String
+    /// false when the replied-to id wasn't in the loaded entries (degraded).
+    let found: Bool
+
+    /// Generic placeholder shown when the referenced message isn't loaded.
+    static let notLoaded = CrewReplyReference(
+        senderName: "", snippet: "回复了一条消息", found: false)
+}
+
+enum CrewReplyReferenceResolver {
+
+    /// Max length of the quoted snippet shown in a reply bubble's quote strip.
+    static let snippetLimit = 64
+
+    /// Resolve the reply reference for an entry against the loaded entries.
+    ///
+    /// - `entry`:    the (replying) entry — its `inReplyTo` points at the
+    ///               quoted message. nil `inReplyTo` ⇒ returns nil (not a reply).
+    /// - `entries`:  the full loaded whiteboard window to search by id.
+    /// - `members` / `captainBotId` / `localUserId`: passed through to
+    ///   `CrewSenderResolver` so the quoted sender shows its display name.
+    ///
+    /// Returns nil when `entry` isn't a reply. Returns `CrewReplyReference`
+    /// (with `found == false`) when it IS a reply but the target isn't loaded,
+    /// so the UI shows a non-crashing placeholder instead of nothing.
+    static func resolve(
+        for entry: CrewWhiteboardEntry,
+        in entries: [CrewWhiteboardEntry],
+        members: [CrewMember],
+        captainBotId: String?,
+        localUserId: String?
+    ) -> CrewReplyReference? {
+        guard let targetId = entry.inReplyTo else { return nil }
+        guard let referenced = entries.first(where: { $0.id == targetId }) else {
+            return .notLoaded
+        }
+        let sender = CrewSenderResolver.resolve(
+            referenced, members: members, captainBotId: captainBotId, localUserId: localUserId)
+        return CrewReplyReference(
+            senderName: sender.displayName,
+            snippet: snippet(referenced.displayText),
+            found: true)
+    }
+
+    /// Single-line, length-capped snippet for the in-bubble quote strip.
+    static func snippet(_ text: String) -> String {
+        let oneLine = text
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if oneLine.count <= snippetLimit { return oneLine }
+        return String(oneLine.prefix(snippetLimit)) + "…"
+    }
+}

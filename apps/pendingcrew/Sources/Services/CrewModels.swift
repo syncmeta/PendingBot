@@ -134,6 +134,11 @@ struct CrewWhiteboardEntry: Decodable, Identifiable, Equatable {
     /// `sender_display_name` 一起下发（解析不出为 nil）。客户端可据此关联 roster
     /// 行（头像/状态徽标），无强依赖。
     let senderMemberId: String?
+    /// 被回复消息的白板 id（#377）。edge `in_reply_to` —— 人类消息从 attachments
+    /// jsonb、session 帖从 log_payload.in_reply_to 统一透出。非 nil = 这条是对
+    /// `inReplyTo` 那条的回复;客户端在已加载 entries 里按 id 本地查被引用消息的
+    /// 发送者 + 内容摘要,渲染成引用条(IM 式「回复 小绿:…」)。解析不出 / 老消息为 nil。
+    let inReplyTo: String?
 
     struct Relay: Decodable, Equatable {
         let origin: String
@@ -176,6 +181,7 @@ struct CrewWhiteboardEntry: Decodable, Identifiable, Equatable {
         case relay
         case senderDisplayName = "sender_display_name"
         case senderMemberId = "sender_member_id"
+        case inReplyTo = "in_reply_to"
     }
 
     /// Best display text: explicit payload text → summary → empty.

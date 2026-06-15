@@ -25,14 +25,16 @@ final class CrewComposerMentionsTests: XCTestCase {
         senderKind: String,
         sessionId: String? = nil,
         userId: String? = nil,
-        text: String = "hi"
+        text: String = "hi",
+        displayName: String? = nil,
+        inReplyTo: String? = nil
     ) -> CrewWhiteboardEntry {
         CrewWhiteboardEntry(
             id: id, senderKind: senderKind, senderSessionId: sessionId,
             senderUserId: userId, senderBotId: nil, messageKind: "instruction",
             summary: text, createdAt: "2026-06-15T00:00:00Z",
             payload: nil, attachments: nil, relay: nil,
-            senderDisplayName: nil, senderMemberId: nil)
+            senderDisplayName: displayName, senderMemberId: nil, inReplyTo: inReplyTo)
     }
 
     // MARK: - candidates
@@ -191,5 +193,57 @@ final class CrewComposerMentionsTests: XCTestCase {
         XCTAssertFalse(t.quotedSnippet.contains("\n"))
         XCTAssertTrue(t.quotedSnippet.hasSuffix("…"))
         XCTAssertLessThanOrEqual(t.quotedSnippet.count, CrewReplyTargetBuilder.snippetLimit + 1)
+    }
+
+    // MARK: - reply reference resolution (#377 — 气泡里渲染被回复引用)
+
+    func testReplyReferenceResolvesSenderAndSnippetFromLoadedEntries() {
+        let original = entry(id: "orig", senderKind: "session", sessionId: "sess-xyz",
+                             text: "我先开了个头")
+        let reply = entry(id: "rep", senderKind: "user", userId: "u-me",
+                          text: "收到，我接着干", inReplyTo: "orig")
+        let members = [
+            member(id: "s1", kind: "code_session", sessionId: "sess-xyz", name: "小绿"),
+        ]
+        let ref = CrewReplyReferenceResolver.resolve(
+            for: reply, in: [original, reply],
+            members: members, captainBotId: nil, localUserId: "u-me")
+        XCTAssertNotNil(ref)
+        XCTAssertTrue(ref!.found)
+        XCTAssertEqual(ref!.senderName, "小绿")
+        XCTAssertEqual(ref!.snippet, "我先开了个头")
+    }
+
+    func testReplyReferenceNilWhenEntryIsNotAReply() {
+        let e = entry(id: "e", senderKind: "user", userId: "u1", text: "普通消息")
+        let ref = CrewReplyReferenceResolver.resolve(
+            for: e, in: [e], members: [], captainBotId: nil, localUserId: nil)
+        XCTAssertNil(ref)
+    }
+
+    func testReplyReferenceDegradesWhenTargetNotLoaded() {
+        // inReplyTo points outside the loaded window → placeholder, never crash.
+        let reply = entry(id: "rep", senderKind: "user", userId: "u-me",
+                          text: "回复一条没加载的", inReplyTo: "off-window")
+        let ref = CrewReplyReferenceResolver.resolve(
+            for: reply, in: [reply], members: [], captainBotId: nil, localUserId: "u-me")
+        XCTAssertNotNil(ref)
+        XCTAssertFalse(ref!.found)
+        XCTAssertEqual(ref, CrewReplyReference.notLoaded)
+        XCTAssertEqual(ref!.snippet, "回复了一条消息")
+    }
+
+    func testReplyReferenceSnippetCollapsesAndTruncates() {
+        let long = String(repeating: "字", count: 200)
+        let original = entry(id: "orig", senderKind: "user", userId: "u1",
+                             text: "头一行\n第二行 " + long)
+        let reply = entry(id: "rep", senderKind: "user", userId: "u2",
+                          text: "ok", inReplyTo: "orig")
+        let ref = CrewReplyReferenceResolver.resolve(
+            for: reply, in: [original, reply],
+            members: [], captainBotId: nil, localUserId: nil)!
+        XCTAssertFalse(ref.snippet.contains("\n"))
+        XCTAssertTrue(ref.snippet.hasSuffix("…"))
+        XCTAssertLessThanOrEqual(ref.snippet.count, CrewReplyReferenceResolver.snippetLimit + 1)
     }
 }
