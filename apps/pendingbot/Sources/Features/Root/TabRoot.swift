@@ -1,7 +1,7 @@
 #if os(iOS)
 import SwiftUI
 
-/// Five-tab root: 消息 / 好友 / 机组 / 来信 / 我.
+/// Four-tab root: 消息 / 好友 / 来信 / 我.
 ///
 /// 来信 (Envelopes) hosts a feed of articles each bot has written for
 /// the user; new envelopes are triggered from each conversation's
@@ -156,10 +156,6 @@ struct TabRoot: View {
             FriendsTabView()
                 .tabItem { tabItem(TopTab.friends) }
                 .tag(TopTab.friends)
-
-            CrewTabV2View()
-                .tabItem { tabItem(TopTab.crew) }
-                .tag(TopTab.crew)
 
             EnvelopeTabView()
                 .tabItem { tabItem(TopTab.envelope) }

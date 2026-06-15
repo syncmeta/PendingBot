@@ -203,8 +203,7 @@ private struct SplashView: View {
 #elseif os(macOS)
 
 /// PendingBot Mac 端 @main — 已登录走跨平台三列壳 `WideRootView`;消息 /
-/// 好友 / 来信 / 我 tab 均接共享 `FeatureSurface`,仅 Crew tab 还留 Mac
-/// 平行列(最后一个 slice)。
+/// 好友 / 来信 / 我 tab 均接共享 `FeatureSurface`。
 ///
 /// AccountStore 是单例,本来不依赖 EnvironmentObject 注入,但 SwiftUI
 /// `@EnvironmentObject` 在 Mac 端 + macOS 14 起对 ObservableObject 的

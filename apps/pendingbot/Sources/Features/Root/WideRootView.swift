@@ -13,7 +13,7 @@ import SwiftUI
 /// └──────────┴────────────────┴───────────────────────────┘
 /// ```
 ///
-/// macOS @main 与 iPad regular 共用同一个壳。**五个 tab 全部**取共享
+/// macOS @main 与 iPad regular 共用同一个壳。**四个 tab 全部**取共享
 /// `FeatureSurface` 的 `listColumn` / `detailColumn`(「我」无 list,壳给中列
 /// 空态、右栏放 `detailColumn`),不再有任何 Mac 平行列。每个 tab 持有各自的
 /// 强类型 selection,壳把同一个 binding 喂给中列(写)和右栏(读)。
@@ -41,10 +41,6 @@ struct WideRootView: View {
     /// 字符串)。壳把同一个 binding 喂给 feed 列(写)和正文列(读);正文列的
     /// `EnvelopeArticleView` 按 id 自取行,所以只需带 id。
     @State private var envelopeSelection: String? = nil
-    /// Crew tab 的选中项 —— 共享 `CrewTabV2View` 的 `Selection`(crew id 字符串)。
-    /// 壳把同一个 binding 喂给 list 列(写)和 detail 列(读);detail 列的
-    /// `CrewDetailV2View` 按 id 自取机组(`getCrewV2`),所以只需带 id。
-    @State private var crewSelection: String? = nil
     /// 「我」tab 的选中项 —— 共享 `MeTabView` 的 `Selection`(`MeSection`)。
     /// 壳把同一个 binding 喂给中间列表列(写)和右栏详情(读);右栏按
     /// section 渲染对应详情(钱包/加好友方式/能力扩展/设置)。
@@ -179,10 +175,6 @@ struct WideRootView: View {
             // 来信 tab 中列 = 共享 `EnvelopeTabView` 的 feed 列;选中一封来信
             // (envelope_runs.id)后右栏是正文 detail。
             EnvelopeTabView().listColumn(selection: $envelopeSelection)
-        case .crew:
-            // Crew tab 中列 = 共享 `CrewTabV2View` 的 list 列;选中一个 crew
-            // (crew id)后右栏是机组群聊 detail。
-            CrewTabV2View().listColumn(selection: $crewSelection)
         case .me:
             // 「我」tab 中列 = 共享 `MeTabView` 的列表列(账号头部 + 设置菜单);
             // 选中一个 `MeSection`(钱包/加好友方式/能力扩展/设置)后右栏出详情。
@@ -205,11 +197,6 @@ struct WideRootView: View {
             // `pendingPeer?.peerId ?? conversation.bot_id` 自行解析 botId,所以
             // 仍可用(Phase 7 真机验证 bot 元信息渲染)。
             MessageTabView().detailColumn(selection: messagesSelection)
-        case .crew:
-            // Crew detail = 共享 surface 的 detail 列,纯从 selection(crew id)
-            // 解析;`CrewDetailV2View` 按 id 自取机组 + 订阅 Realtime,与中列
-            // 是不同 `CrewTabV2View()` 实例也无妨。
-            CrewTabV2View().detailColumn(selection: crewSelection)
         case .friends:
             // 好友 detail = 共享 surface 的 detail 列,纯从 selection(PendingPeer)
             // 解析(同上 separate-@State 注意点:`bot: nil`,ConversationView 自解析)。
