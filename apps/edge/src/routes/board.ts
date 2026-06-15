@@ -122,6 +122,35 @@ boardRoutes.route(
   }),
 );
 
+// ── 模型预设(新建机器人用) ───────────────────────────────────
+// pendingbot.model_presets(slug 主键)。board 管"规则"(resolver_kind + params),
+// 内容由 OpenRouter 目录动态解析(见 lib/model-presets.ts)。params 是 jsonb:
+// 如 { "authors":["openai","anthropic"], "flagship":"most_expensive" }。
+const modelPresetCreate = z.object({
+  slug: z.string().min(1),
+  title: z.string().min(1),
+  description: z.string().default(''),
+  resolver_kind: z.enum([
+    'top_flagship', 'chinese_flagship', 'latest_per_vendor', 'fastest', 'most_popular', 'manual',
+  ]),
+  params: z.record(z.string(), z.unknown()).default({}),
+  default_selected: z.boolean().default(false),
+  enabled: z.boolean().default(true),
+  sort_order: z.number().int().default(100),
+});
+boardRoutes.route(
+  '/model-presets',
+  boardResource({
+    table: 'model_presets',
+    pk: 'slug',
+    targetKind: 'model_preset',
+    cols: 'slug, title, description, resolver_kind, params, default_selected, enabled, sort_order, updated_at',
+    orderBy: { col: 'sort_order', ascending: true },
+    createSchema: modelPresetCreate,
+    updateSchema: modelPresetCreate.partial(),
+  }),
+);
+
 // ── tool 管理(P3) ───────────────────────────────────────────
 // pendingbot.tools(id 主键)。**只读+改,不建不删**:每行映射一个代码 handler
 // (key→实现),board 凭空建行会造出无 handler 的死工具。可改的是运行时配置:
