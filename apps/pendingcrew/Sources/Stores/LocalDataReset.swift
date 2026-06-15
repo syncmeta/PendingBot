@@ -1,5 +1,7 @@
 import Foundation
+#if os(macOS)
 import AppKit
+#endif
 
 /// PendingCrew「清除本机所有数据」协调器。仅本地清除;清完重启 app 以达到真·全新安装。
 @MainActor
@@ -22,10 +24,14 @@ enum LocalDataReset {
         if let dir = support?.appendingPathComponent("PendingCrew", isDirectory: true) {
             try? FileManager.default.removeItem(at: dir)
         }
-        // 5. 重启 app（绕开 isConfigured 恒 true + 内存单例/@State/disclosure 缓存）
+        // 5. macOS 重启 app（绕开 isConfigured 恒 true + 内存单例/@State/disclosure 缓存）。
+        //    iOS 不能自重启，清完凭据和 defaults 后交给现有 app 状态流回到未配置态。
+        #if os(macOS)
         relaunch()
+        #endif
     }
 
+    #if os(macOS)
     private static func relaunch() {
         let url = Bundle.main.bundleURL
         let config = NSWorkspace.OpenConfiguration()
@@ -34,4 +40,5 @@ enum LocalDataReset {
             DispatchQueue.main.async { NSApp.terminate(nil) }
         }
     }
+    #endif
 }
