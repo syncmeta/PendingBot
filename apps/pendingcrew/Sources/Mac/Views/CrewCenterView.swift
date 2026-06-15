@@ -45,7 +45,7 @@ struct CrewCenterView: View {
             } else if crewStore.selectedCrewId != nil {
                 empty("详情加载中…")
             } else {
-                empty("在左侧选一个 crew，或者点 \"+\" 新建一个。")
+                placeholder
             }
         }
         // 标题走原生 navigationTitle —— 位置/收合行为和系统窗口标题完全一致（不会跑到
@@ -135,6 +135,11 @@ struct CrewCenterView: View {
                 .frame(maxWidth: 360)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var placeholder: some View {
+        PendingCrewPlaceholderIcon(size: 64)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 #endif

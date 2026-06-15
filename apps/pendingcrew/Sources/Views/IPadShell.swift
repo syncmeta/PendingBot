@@ -26,7 +26,8 @@ struct IPadShell: View {
                 CrewChatView(crewId: id, crewTitle: title)
                     .id(id) // 切换 crew 时强制重建 chat view（清空旧 state）
             } else {
-                ContentUnavailableView("选择一个机组", systemImage: "person.3")
+                PendingCrewPlaceholderIcon(size: 64)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .onChange(of: selectedCrewId) { _, id in

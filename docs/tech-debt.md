@@ -186,6 +186,14 @@
 
 ## 🟡 拆东墙补西墙
 
+### 🟡 PendingCrew shared target 混入未 guard 的 AppKit，iOS build 当前被卡死
+- **发现**: 2026-06-15 · `codex/pendingcrew-empty-placeholder`（给 PendingCrew 未选中 crew 空态换 custom symbol 时跑 iOS build）
+- **位置**: `apps/pendingcrew/Sources/Stores/LocalDataReset.swift`
+- **问题**: `PendingCrew` target 的 `supportedDestinations` 同时包含 iOS/macOS，`project.yml` 又把整个 `Sources` 编进同一个 app target；但 `LocalDataReset.swift` 在 shared `Sources/Stores` 下直接 `import AppKit` 并调用 `NSWorkspace` / `NSApp`，没有 `#if os(macOS)` guard 或文件级排除。结果 `xcodebuild -project apps/pendingcrew/PendingCrew.xcodeproj -scheme PendingCrew -destination 'generic/platform=iOS Simulator' build` 在解析 AppKit 时直接失败。
+- **影响**: macOS build 仍绿，但 iPad/PendingCrew iOS 目标已经不是可验证状态；任何 shared UI 改动都无法用 iOS build 做回归检查，容易把“支持 iOS”的 project 配置变成纸面承诺。
+- **建议**: 把 `LocalDataReset` 拆成 cross-platform 协调器 + macOS-only relaunch 实现（或把该文件搬到 `Sources/Mac` 并给 iOS 提供 no-op/替代实现），同时让 `project.yml` 的 source inclusion 明确区分 shared 与 platform-only。
+- **状态**: 待办（本次只记录，不顺手修）
+
 ### 🟡 本地白板 app↔helper 并发读写同一 JSON（无锁，last-write-wins 偶丢消息）
 - **发现**: 2026-06-08 · feat/session-crew-comms（chunk 4 实装 L7）
 - **位置**: `apps/pendingcrew/Sources/Stores/LocalWhiteboardStore.swift`（`append` = load→mutate→atomic write）
