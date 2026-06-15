@@ -27,7 +27,7 @@
 - **发现**: 2026-06-14 · `feat/crew-machine`（machine 概念 + 新建流程精简）
 - **三条尾巴**:
   1. **`temporary_group_meta.runtime_location` 现为派生镜像列**：本次把 crew 的运行位置收口成单个 `machine_id` FK（事实源），但因 `runtime_location`/`runtime_kind` 被 6+ 处读取（`session-world-model.ts`、`crew-comms.ts`、`messages.ts`、`crew.ts` 等），没物理删——改成 `create_crew_with_captain` RPC **写入时从所选 machine 派生**（NULL→local_host / kind=fly→fly_machine）。两个真值（machine_id + 派生的 runtime_location）并存有漂移风险（若以后有别的写路径绕过 RPC 直写 runtime_location）。**根治**：读取方逐个改成从 machine 派生 / 读 machine_id，然后 drop `runtime_location` 列 + Swift `RuntimeLocation` 枚举。
-  2. **CrewGround 地名 corpus 与服务端 `place_names` 分家**：CrewGround 随机目录名用 app 内置 `apps/pendingcrew/Resources/crewground_places.txt`（414 条**世界**地名，离线可用），服务端 `random_place_name()` 用的是 `place_names` 表（**中文**地名，建群/会话标题用）。两份独立、风格不同（世界 vs 中文）。本是有意（CrewGround 离线也要能用 + 用户要"全世界地名"），但若以后要统一来源需对齐。
+  2. **CrewGround 地名 corpus 与服务端 `place_names` 分家**：CrewGround 随机目录名用 app 内置 `apps/pendingcrew/Resources/crewground_places.txt`（**GeoNames cities15000，CC BY 4.0，asciiname 去标点/空格去重，~3.2 万条**，离线可用），服务端 `random_place_name()` 用的是 `place_names` 表（**中文**地名，建群/会话标题用）。两份独立、来源不同（GeoNames 全球英文 vs 中文）。本是有意（CrewGround 离线也要能用 + 用户要权威全球地名），但若以后要统一来源需对齐。corpus 刷新：重跑 `cities15000.txt` → asciiname 去标点去重即可。
   3. **`captainAgentKind` 只在本地 crew 持久**：建 crew 选的 captain coding-agent（claude_code/codex）存在 `LocalCrew` + 穿过客户端模型，但 **edge crew 表无此列**——relay/登录态远端 crew 不记住 captain kind（解码恒 nil→默认 Codex）。pre-launch + captain 跑本机，可接受；要远端 crew 记住时给 `temporary_group_meta` 加列 + RPC 透传。
 - **状态**: 常驻参考（1 是日后清理项；2/3 是有意取舍，记着别当 bug）。
 
