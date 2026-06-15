@@ -383,11 +383,12 @@ struct FriendsTabView: View {
             .contentShape(Rectangle())
     }
 
-    /// 分隔线:水平内缩 8,与选中框左右边缘对齐(不再缩到头像右侧右偏)。
+    /// 分隔线:水平内缩 16 = 选中框内缩 8 + 圆角半径 8 —— 正好落在选中框上下边
+    /// 的**直边段**,压在框边缘上、不伸进圆角弧线。
     private var macRowDivider: some View {
         Divider()
             .overlay(Theme.Palette.hairline)
-            .padding(.horizontal, 8)
+            .padding(.horizontal, 16)
     }
 
     private func macSectionHeader(_ text: String) -> some View {

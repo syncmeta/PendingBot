@@ -92,9 +92,9 @@ struct WideRootView: View {
         // 这个被 MacMainWindowStyler 强制不透明的窗口里 behind-window 透不出来,
         // 反而发灰带渐变,故不用。
         .navigationSplitViewColumnWidth(
-            min: isMe ? 56 : 300,
-            ideal: isMe ? 56 : 356,
-            max: isMe ? 56 : 520
+            min: isMe ? 56 : 320,
+            ideal: isMe ? 56 : 420,
+            max: isMe ? 56 : 560
         )
     }
 
