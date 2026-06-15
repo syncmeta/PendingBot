@@ -438,6 +438,31 @@ export const POST_TO_CREW_TOOL: ChatCompletionTool = {
           description:
             '可选分类: progress (进度更新) / question (需要别人回答的问题) / milestone (节点完成 / 交接)。',
         },
+        mentions: {
+          type: 'array',
+          description:
+            '可选 @ 列表 —— 要定向通知谁。@session 会把这条直接投进那个 session 的信箱(让它下一轮看到);@human 仅作元数据(人在群聊里自己看,不进信箱)。不填 = 广播给全 crew。',
+          items: {
+            type: 'object',
+            properties: {
+              kind: {
+                type: 'string',
+                enum: ['session', 'human'],
+                description: 'session = 定向某个编码 session;human = @ 某个人(纯元数据)。',
+              },
+              target_id: {
+                type: 'string',
+                description: 'kind=session 时必填:目标 session 的 id(uuid)。',
+              },
+            },
+            required: ['kind'],
+          },
+        },
+        reply_to: {
+          type: 'string',
+          description:
+            '可选:你在回复哪条群聊消息的 id(uuid)。给了之后会自动 @ 那条消息的原发送者 —— 原帖是某 session 发的就投进它信箱,是人发的就把人标成收件人。',
+        },
       },
       required: ['content'],
     },

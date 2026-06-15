@@ -26,6 +26,7 @@
 
 import type { Env } from '../../../types';
 import { serviceClient } from '../../supabase';
+import { coerceMentions, resolveOutboundRecipients } from '../../crew-outbound';
 import type { ToolCtx } from '../tool-runner';
 
 const CONTENT_MAX = 4_000;
@@ -67,6 +68,22 @@ export async function postToCrewTool(
     });
   }
 
+  // Phase 2 — resolve outbound @ + reply_to into explicit recipient lists
+  // (shared with the HTTP endpoint via lib/crew-outbound). @session / a
+  // reply_to of a session post → session recipients (each gets a mailbox row);
+  // a reply_to of a human message → member recipient (no mailbox). A malformed
+  // @ / reply_to surfaces as an error envelope (the model can retry).
+  const replyTo = typeof args.reply_to === 'string' ? args.reply_to : null;
+  const recip = await resolveOutboundRecipients(
+    env,
+    ctx.conversationId,
+    coerceMentions(args.mentions),
+    replyTo,
+  );
+  if (recip.error) {
+    return JSON.stringify({ error: recip.error.message });
+  }
+
   // Map category → board payload + a message_kind compatible with the
   // crew_announcements check constraint. We don't surface 'progress' or
   // 'milestone' as DB enums; they live in payload.category.
@@ -86,8 +103,8 @@ export async function postToCrewTool(
     p_crew_conversation_id: ctx.conversationId,
     p_responsible_subject_id: meta.responsible_subject_id,
     p_actor_user_id: ctx.userId,
-    p_recipient_session_ids: [],
-    p_recipient_member_ids: [],
+    p_recipient_session_ids: recip.sessionIds,
+    p_recipient_member_ids: recip.memberIds,
     p_message_kind: dbMessageKind,
     p_summary: content,
     p_payload: payload,
@@ -101,23 +118,45 @@ export async function postToCrewTool(
   // Also mirror the post into the crew group chat (spec §9: the chat IS the
   // conversation's `messages`). The announcement above is the board source of
   // truth; this extra row is what makes the post visible in the group stream
-  // as a bot card (role='bot', sender_bot_id). Best-effort: a failure here
-  // must NOT fail the tool call — the announcement already succeeded.
+  // as a bot card (role='bot', sender_bot_id). The reply_to linkage rides in
+  // log_payload.in_reply_to (no new column). Best-effort: a failure here must
+  // NOT fail the tool call — the announcement already succeeded.
+  const mirrorMessageId = crypto.randomUUID();
   try {
     const { error: msgErr } = await supa.from('messages').insert({
-      id: crypto.randomUUID(),
+      id: mirrorMessageId,
       client_message_id: crypto.randomUUID(),
       conversation_id: ctx.conversationId,
       sender_bot_id: ctx.botId,
       role: 'bot',
       content,
       status: 'done',
+      ...(recip.inReplyTo
+        ? { log_kind: 'crew_reply', log_payload: { in_reply_to: recip.inReplyTo } }
+        : {}),
     } as never);
     if (msgErr) {
       console.warn('[post_to_crew] messages mirror insert failed', msgErr.message);
     }
   } catch (e) {
     console.warn('[post_to_crew] messages mirror insert threw', e);
+  }
+
+  // Directed mailbox fan-out for each @session / reply_to-of-a-session target
+  // (Phase 2, parity with the HTTP endpoint). Member recipients (a human
+  // auto-@d via reply_to) get NO mailbox. Best-effort: an enqueue failure must
+  // NOT fail the tool call.
+  for (const targetSessionId of recip.sessionIds) {
+    const { error: enqErr } = await supa.rpc('enqueue_session_mailbox', {
+      p_session_id: targetSessionId,
+      p_message_kind: 'instruction',
+      p_summary: content,
+      p_payload: { source: recip.inReplyTo ? 'crew_reply' : 'crew_mention' },
+      p_source_message_id: mirrorMessageId,
+    } as never);
+    if (enqErr) {
+      console.warn('[post_to_crew] enqueue_session_mailbox failed', targetSessionId, enqErr.message);
+    }
   }
 
   ctx.emit('tool_result', { name: 'post_to_crew', announcement_id: data, category });
