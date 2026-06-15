@@ -28,6 +28,7 @@ struct LoginView: View {
     @State private var status: Status = .idle
     @State private var pollTask: Task<Void, Never>?
     @State private var errorMessage: String?
+    @State private var familySSOBusy = false
 
     enum Status: Equatable {
         case idle
@@ -83,12 +84,37 @@ struct LoginView: View {
 
     private var idleSection: some View {
         VStack(spacing: 12) {
+            if model.familySSOAvailable {
+                Button {
+                    Task {
+                        familySSOBusy = true
+                        let ok = await model.tryFamilySSO()
+                        familySSOBusy = false
+                        if ok {
+                            status = .approved
+                        } else {
+                            errorMessage = "本机 PendingBot 登录凭据可能已失效，请改用扫码登录。"
+                            status = .error
+                        }
+                    }
+                } label: {
+                    Label("用本机 PendingBot 账号登录", systemImage: "person.crop.circle.badge.checkmark")
+                        .frame(maxWidth: .infinity)
+                }
+                .controlSize(.large)
+                .buttonStyle(.borderedProminent)
+                .disabled(familySSOBusy)
+
+                Text("或")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Button {
                 start()
             } label: {
                 Label("扫码登录到 PendingBot 账号", systemImage: "qrcode")
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 4)
+                    .frame(maxWidth: .infinity)
             }
             .controlSize(.large)
             .buttonStyle(.borderedProminent)

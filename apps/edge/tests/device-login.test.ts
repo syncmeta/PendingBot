@@ -209,6 +209,12 @@ describe('POST /v1/device-login/challenges/:id/approve', () => {
     const db = makeFakeDb();
     const challenge = await createPendingBotMacChallenge(db);
     const subjectId = '11111111-1111-4111-8111-111111111111';
+    db.rows.subjects = [{
+      id: subjectId,
+      subject_type: 'user_account',
+      user_id: 'user-1',
+      status: 'active',
+    }];
     db.rpcs = {
       subject_can_authorize_device_grant: (args) => {
         expect(args).toEqual({
@@ -243,6 +249,44 @@ describe('POST /v1/device-login/challenges/:id/approve', () => {
       approved_by_user_id: 'user-1',
       grant_kind: 'pendingbot_client',
       requested_scopes: ['subject:read', 'crew:read', 'crew:write'],
+    });
+  });
+
+  it('rejects group subjects for PendingBot Mac session login', async () => {
+    const db = makeFakeDb();
+    const challenge = await createPendingBotMacChallenge(db);
+    const subjectId = '11111111-1111-4111-8111-111111111111';
+    db.rows.subjects = [{
+      id: subjectId,
+      subject_type: 'group_account',
+      user_id: null,
+      status: 'active',
+    }];
+    db.rpcs = {
+      subject_can_authorize_device_grant: () => ({ data: true, error: null }),
+    };
+
+    const approve = await appFor(db).request(`/v1/device-login/challenges/${challenge.challengeId}/approve`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-test-user-id': 'user-1',
+      },
+      body: JSON.stringify({
+        secret: challenge.secret,
+        subjectId,
+        grantKind: 'pendingbot_client',
+        scopes: ['subject:read', 'crew:read', 'crew:write'],
+      }),
+    });
+
+    expect(approve.status).toBe(403);
+    await expect(approve.json()).resolves.toMatchObject({
+      error: { code: 'forbidden' },
+    });
+    expect(db.rows.subject_device_login_challenges[0]).toMatchObject({
+      status: 'pending',
+      app_kind: 'pendingbot_macos',
     });
   });
 
@@ -424,5 +468,65 @@ describe('GET /v1/device-login/challenges/:id', () => {
 
     expect(db.rows.family_sso_credentials).toHaveLength(1);
     expect(db.rows.family_sso_credentials[0].token_hash).not.toBe(body.familyCredential);
+  });
+
+  it('returns a Supabase token hash when consuming a PendingBot Mac login', async () => {
+    const db = makeFakeDb();
+    const challenge = await createPendingBotMacChallenge(db);
+    const subjectId = '11111111-1111-4111-8111-111111111111';
+    const grantedByUserId = '22222222-2222-4222-8222-222222222222';
+    db.rows.subjects = [{
+      id: subjectId,
+      subject_type: 'user_account',
+      user_id: grantedByUserId,
+      status: 'active',
+    }];
+    db.auth = {
+      users: {
+        [grantedByUserId]: { email: 'user@example.com' },
+      },
+    };
+    db.rpcs = {
+      subject_can_authorize_device_grant: () => ({ data: true, error: null }),
+      consume_subject_device_login_challenge: (args) => {
+        const row = db.rows.subject_device_login_challenges[0];
+        row.status = 'consumed';
+        row.issued_grant_id = args.p_grant_id;
+        return {
+          data: {
+            grant_id: args.p_grant_id,
+            subject_id: subjectId,
+            grant_kind: 'pendingbot_client',
+            scopes: ['subject:read', 'crew:read', 'crew:write'],
+            granted_by_user_id: grantedByUserId,
+            device_name: 'PendingBot Mac',
+          },
+          error: null,
+        };
+      },
+    };
+
+    await appFor(db).request(`/v1/device-login/challenges/${challenge.challengeId}/approve`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-test-user-id': grantedByUserId,
+      },
+      body: JSON.stringify({
+        secret: challenge.secret,
+        subjectId,
+        grantKind: 'pendingbot_client',
+        scopes: ['subject:read', 'crew:read', 'crew:write'],
+      }),
+    });
+
+    const poll = await appFor(db).request(
+      `/v1/device-login/challenges/${challenge.challengeId}?secret=${encodeURIComponent(challenge.secret)}`,
+    );
+    expect(poll.status).toBe(200);
+    const body = await poll.json() as { supabaseTokenHash: string | null; deviceGrantToken: string };
+    expect(body.deviceGrantToken).toMatch(/^pdg_/);
+    expect(body.supabaseTokenHash).toBe('hash-for-user@example.com');
+    expect(db.auth.generatedLinks).toEqual([{ type: 'magiclink', email: 'user@example.com' }]);
   });
 });

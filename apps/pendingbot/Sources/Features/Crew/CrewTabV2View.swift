@@ -106,7 +106,7 @@ struct CrewTabV2View: View {
                     if let payload = DeviceLoginLink.parse(value) {
                         pendingDeviceLogin = payload
                     } else {
-                        error = "这不是 PendingCrew 登录二维码"
+                        error = "这不是可授权的登录二维码"
                     }
                 } onError: { err in
                     error = err.localizedDescription
@@ -294,7 +294,7 @@ struct CrewTabV2View: View {
                 )
             }
             notice = response.ok
-                ? "已以 \(label) 身份授权桌面端登录"
+                ? "已以 \(label) 身份授权 \(payload.appKind?.displayName ?? "桌面端") 登录"
                 : "扫码登录状态：\(response.status)"
         } catch {
             self.error = error.localizedDescription

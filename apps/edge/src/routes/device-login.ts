@@ -96,6 +96,40 @@ function rpcMessage(err: unknown): string {
   return err == null ? 'database error' : String(err);
 }
 
+async function supabaseTokenHashForUser(env: AppBindings['Bindings'], userId: string): Promise<string | null> {
+  const svc = serviceClient(env) as unknown as {
+    auth?: {
+      admin?: {
+        getUserById?: (id: string) => Promise<{
+          data?: { user?: { email?: string | null } | null } | null;
+          error?: { message?: string } | null;
+        }>;
+        generateLink?: (params: { type: 'magiclink'; email: string }) => Promise<{
+          data?: { properties?: { hashed_token?: string | null } | null } | null;
+          error?: { message?: string } | null;
+        }>;
+      };
+    };
+  };
+  const admin = svc.auth?.admin;
+  if (!admin?.getUserById || !admin.generateLink) return null;
+
+  const userResult = await admin.getUserById(userId);
+  if (userResult.error) {
+    console.error('auth.admin.getUserById failed', userResult.error.message);
+    return null;
+  }
+  const email = userResult.data?.user?.email;
+  if (!email) return null;
+
+  const linkResult = await admin.generateLink({ type: 'magiclink', email });
+  if (linkResult.error) {
+    console.error('auth.admin.generateLink failed', linkResult.error.message);
+    return null;
+  }
+  return linkResult.data?.properties?.hashed_token ?? null;
+}
+
 deviceLoginRoutes.post('/challenges', async (c) => {
   let parsed: z.infer<typeof CreateChallengeBody>;
   try {
@@ -218,6 +252,9 @@ deviceLoginRoutes.get('/challenges/:id', async (c) => {
   return c.json({
     status: 'approved',
     deviceGrantToken: grantToken,
+    supabaseTokenHash: challenge.app_kind === 'pendingbot_macos' && grantedByUserId
+      ? await supabaseTokenHashForUser(c.env, grantedByUserId)
+      : null,
     grantId: typeof grantRow.grant_id === 'string' ? grantRow.grant_id : grantId,
     subjectId: typeof grantRow.subject_id === 'string' ? grantRow.subject_id : null,
     grantKind: typeof grantRow.grant_kind === 'string' ? grantRow.grant_kind : null,
@@ -286,6 +323,20 @@ deviceLoginRoutes.post('/challenges/:id/approve', requireSession(), async (c) =>
   });
   if (allowedErr) return jsonError(c, 500, 'database_error', { detail: allowedErr.message });
   if (allowed !== true) return jsonError(c, 403, 'forbidden');
+
+  if (challenge.app_kind === 'pendingbot_macos') {
+    const { data: subject, error: subjectErr } = await svc
+      .from('subjects')
+      .select('id, subject_type, user_id')
+      .eq('id', parsed.subjectId)
+      .maybeSingle();
+    if (subjectErr) return jsonError(c, 500, 'database_error', { detail: subjectErr.message });
+    if (!subject || subject.subject_type !== 'user_account' || subject.user_id !== userId) {
+      return jsonError(c, 403, 'forbidden', {
+        message: 'PendingBot Mac login must use the approving user account',
+      });
+    }
+  }
 
   const { error: updateErr } = await svc
     .from('subject_device_login_challenges')

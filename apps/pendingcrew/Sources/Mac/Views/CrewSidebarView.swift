@@ -13,9 +13,6 @@ struct CrewSidebarView: View {
     @State private var confirmingSignOut = false
     /// 本机模式下侧栏的可选登录入口（登录 SSO C2）—— 弹 LoginView sheet 扫码。
     @State private var showingLogin = false
-    /// 家族 SSO 一键登录的进行中 / 失败态（不静默，用户手动点）。
-    @State private var familySSOBusy = false
-    @State private var familySSOFailed = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -112,11 +109,6 @@ struct CrewSidebarView: View {
         .onChange(of: model.isAuthenticated) { _, authed in
             if authed { showingLogin = false }
         }
-        .alert("登录失败", isPresented: $familySSOFailed) {
-            Button("好", role: .cancel) {}
-        } message: {
-            Text("本机授权凭据可能已失效或网络异常，请改用扫码登录。")
-        }
     }
 
     /// 接合 v2：按 `isAuthenticated`(能力叠加)切两种 placeholder ——
@@ -161,7 +153,7 @@ struct CrewSidebarView: View {
     /// Sidebar 底部固定条。
     /// - 已登录:显示代表的 subject + ⋯ 菜单(签出/切换身份)。
     /// - 未登录:整行就是一个「登录」入口(用户定调:别堆"本机/七七八八"解释)——
-    ///   点开选「用本机 PendingBot 身份登录」(共享组有家族凭据时)或「扫码登录」。
+    ///   点开窗口内登录面板；面板里再展示本机 PendingBot 直登或扫码登录。
     @ViewBuilder
     private var identityFooter: some View {
         Group {
@@ -196,27 +188,8 @@ struct CrewSidebarView: View {
                     .fixedSize()
                 }
             } else {
-                Menu {
-                    // 家族 SSO（不静默，登录必须手动点这一下）—— 共享 keychain
-                    // 组里有本机 PendingBot 留下的家族凭据才显示。
-                    if model.familySSOAvailable {
-                        Button {
-                            Task {
-                                familySSOBusy = true
-                                let ok = await model.tryFamilySSO()
-                                familySSOBusy = false
-                                if !ok { familySSOFailed = true }
-                            }
-                        } label: {
-                            Label("用本机 PendingBot 身份登录", systemImage: "person.crop.circle.badge.checkmark")
-                        }
-                        .disabled(familySSOBusy)
-                    }
-                    Button {
-                        showingLogin = true
-                    } label: {
-                        Label("扫码登录", systemImage: "qrcode")
-                    }
+                Button {
+                    showingLogin = true
                 } label: {
                     HStack(spacing: 10) {
                         Image(systemName: "person.crop.circle")
@@ -226,19 +199,18 @@ struct CrewSidebarView: View {
                         Text("登录")
                             .font(.callout.weight(.medium))
                         Spacer(minLength: 4)
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.caption2)
+                        Image(systemName: "arrow.right")
+                            .font(.caption)
                             .foregroundStyle(.tertiary)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
+                .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 14)
-        .background(.bar)
+        .padding(.vertical, 10)
     }
 
     // identity 三件套只在已登录 footer 渲染(未登录 footer 是登录菜单,
