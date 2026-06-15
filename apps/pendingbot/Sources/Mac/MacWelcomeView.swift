@@ -48,6 +48,7 @@ struct MacRootGate: View {
 struct MacWelcomeView: View {
     @StateObject private var vm = WelcomeViewModel()
     @FocusState private var focusedField: Field?
+    @State private var showingQRLogin = false
 
     enum Field { case email, code }
 
@@ -123,6 +124,7 @@ struct MacWelcomeView: View {
                     appleButton
                     googleButton
                 }
+                qrLoginButton
                 emailRow
             }
             .disabled(vm.isBusy)
@@ -351,6 +353,34 @@ struct MacWelcomeView: View {
         .accessibilityLabel("Sign in with Google")
     }
 
+    private var qrLoginButton: some View {
+        Button {
+            showingQRLogin = true
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "qrcode.viewfinder")
+                    .font(Theme.Fonts.glyph(size: 17, weight: .semibold))
+                Text("扫码登录")
+                    .font(Theme.Fonts.system(size: 16, weight: .medium))
+                Spacer()
+                Image(systemName: "arrow.up.right")
+                    .font(Theme.Fonts.glyph(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.inkMuted)
+            }
+            .foregroundStyle(Theme.Palette.ink)
+            .padding(.horizontal, 18)
+            .frame(maxWidth: .infinity)
+            .frame(height: 48)
+            .macGlassCapsule()
+            .shadow(color: .black.opacity(0.08), radius: 10, y: 4)
+        }
+        .buttonStyle(.plain)
+        .sheet(isPresented: $showingQRLogin) {
+            PendingBotMacQRLoginView()
+                .frame(minWidth: 420, minHeight: 520)
+        }
+    }
+
     /// Prefer the Apple-supplied logo-only artwork when present (shared
     /// asset catalog), falling back to the SF Symbol otherwise — mirrors iOS.
     private var appleLogoImage: AnyView {
@@ -464,6 +494,200 @@ struct MacWelcomeView: View {
     private func advance() {
         if vm.advanceToHumanCheck() {
             focusedField = nil
+        }
+    }
+}
+
+private struct PendingBotMacQRLoginView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var challenge: PendingBotDeviceLoginChallenge?
+    @State private var status: Status = .requesting
+    @State private var pollTask: Task<Void, Never>?
+    @State private var errorMessage: String?
+
+    enum Status: Equatable {
+        case requesting
+        case waiting
+        case approved
+        case error
+    }
+
+    var body: some View {
+        VStack(spacing: 22) {
+            HStack {
+                Spacer()
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
+                .help("关闭")
+            }
+
+            VStack(spacing: 8) {
+                Image(systemName: "qrcode.viewfinder")
+                    .font(.system(size: 42, weight: .medium))
+                    .foregroundStyle(Theme.Palette.accent)
+                Text("扫码登录 PendingBot Mac")
+                    .font(Theme.Fonts.system(size: 20, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.ink)
+                Text("用已登录的 PendingBot 手机端扫码授权这台 Mac")
+                    .font(Theme.Fonts.footnote)
+                    .foregroundStyle(Theme.Palette.inkMuted)
+                    .multilineTextAlignment(.center)
+            }
+
+            content
+            Spacer(minLength: 0)
+        }
+        .padding(28)
+        .background(Theme.Palette.canvas.ignoresSafeArea())
+        .task { start() }
+        .onDisappear { pollTask?.cancel() }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch status {
+        case .requesting:
+            ProgressView("正在生成登录二维码…")
+                .controlSize(.regular)
+                .padding(.top, 28)
+        case .waiting:
+            if let challenge {
+                VStack(spacing: 16) {
+                    if let bitmap = QRCode.image(challenge.qrPayload, quietModules: 2) {
+                        Image(platformImage: bitmap)
+                            .resizable()
+                            .interpolation(.none)
+                            .scaledToFit()
+                            .frame(width: 220, height: 220)
+                            .background(.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+
+                    VStack(spacing: 4) {
+                        Text("或在手机端输入验证码")
+                            .font(Theme.Fonts.footnote)
+                            .foregroundStyle(Theme.Palette.inkMuted)
+                        Text(challenge.code)
+                            .font(.system(.title2, design: .monospaced).weight(.semibold))
+                            .tracking(2)
+                            .foregroundStyle(Theme.Palette.ink)
+                    }
+
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("等待手机端批准")
+                        .font(Theme.Fonts.footnote)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                }
+            }
+        case .approved:
+            VStack(spacing: 10) {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 44))
+                    .foregroundStyle(.green)
+                Text("登录成功")
+                    .font(Theme.Fonts.system(size: 16, weight: .medium))
+                    .foregroundStyle(Theme.Palette.ink)
+            }
+            .padding(.top, 28)
+        case .error:
+            VStack(spacing: 12) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 34))
+                    .foregroundStyle(.orange)
+                Text(errorMessage ?? "登录失败")
+                    .font(Theme.Fonts.footnote)
+                    .foregroundStyle(Theme.Palette.inkMuted)
+                    .multilineTextAlignment(.center)
+                Button("重试") { start() }
+                    .buttonStyle(.borderedProminent)
+            }
+            .padding(.top, 28)
+        }
+    }
+
+    private func start() {
+        errorMessage = nil
+        status = .requesting
+        pollTask?.cancel()
+        Task {
+            do {
+                let api = PendingBotDeviceLoginAPI()
+                let created = try await api.createChallenge()
+                challenge = created
+                status = .waiting
+                startPolling(challenge: created, api: api)
+            } catch {
+                errorMessage = error.localizedDescription
+                status = .error
+            }
+        }
+    }
+
+    private func startPolling(challenge: PendingBotDeviceLoginChallenge, api: PendingBotDeviceLoginAPI) {
+        let deadline = Date().addingTimeInterval(4 * 60)
+        pollTask = Task {
+            while !Task.isCancelled {
+                if Date() > deadline {
+                    await MainActor.run {
+                        errorMessage = "等待批准超时，请重新发起。"
+                        status = .error
+                    }
+                    return
+                }
+                do {
+                    let response = try await api.poll(
+                        challengeId: challenge.challengeId,
+                        secret: challenge.secret
+                    )
+                    if response.status == "approved" {
+                        guard let tokenHash = response.supabaseTokenHash, !tokenHash.isEmpty else {
+                            await MainActor.run {
+                                errorMessage = "服务器没有返回可用的登录凭据，请重试。"
+                                status = .error
+                            }
+                            return
+                        }
+                        _ = try await EmailSignIn.verifyTokenHash(tokenHash)
+                        await MainActor.run {
+                            status = .approved
+                        }
+                        try? await Task.sleep(nanoseconds: 450_000_000)
+                        await MainActor.run { dismiss() }
+                        return
+                    }
+                    if response.status == "rejected" {
+                        await MainActor.run {
+                            errorMessage = "登录请求被拒绝。"
+                            status = .error
+                        }
+                        return
+                    }
+                    if response.status == "expired" {
+                        await MainActor.run {
+                            errorMessage = "二维码已过期，请重新发起。"
+                            status = .error
+                        }
+                        return
+                    }
+                } catch APIError.gone(let message) {
+                    await MainActor.run {
+                        errorMessage = message.isEmpty ? "二维码已过期，请重新发起。" : message
+                        status = .error
+                    }
+                    return
+                } catch {
+                    // Network jitter: keep polling until the client-side deadline.
+                }
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+            }
         }
     }
 }

@@ -87,15 +87,22 @@ struct SubjectPickerSheet: View {
                 } header: {
                     Text("以哪个身份授权")
                 } footer: {
-                    Text("只有自己是 owner / admin 的群账号才能用于桌面端登录；其他身份留给 Crew 的费用分摊。")
+                    Text(footerText)
                 }
             }
         }
     }
 
     private var payloadSummary: String {
-        let kind = payload.appKind?.rawValue ?? "未知客户端"
-        return "客户端类型：\(kind)\n会话编号：\(payload.challengeId.prefix(8))…"
+        let target = payload.appKind?.displayName ?? "未知客户端"
+        return "正在授权：\(target)\n会话编号：\(payload.challengeId.prefix(8))…"
+    }
+
+    private var footerText: String {
+        if payload.appKind == .pendingBotMacOS {
+            return "PendingBot Mac 登录会建立本人账号的正式会话，不能选择群账号。"
+        }
+        return "只有自己是 owner / admin 的群账号才能用于 PendingCrew 桌面端登录；其他身份留给 Crew 的费用分摊。"
     }
 
     // MARK: - Loading
@@ -109,15 +116,18 @@ struct SubjectPickerSheet: View {
         defer { loading = false }
         do {
             let items = try await api.meSubjects()
+            let selectableItems = payload.appKind == .pendingBotMacOS
+                ? items.filter { $0.kind == "user_account" }
+                : items
             // Surface user_account first, then group accounts; the API
             // already does this but be defensive against future changes.
-            subjects = items.sorted { lhs, rhs in
+            subjects = selectableItems.sorted { lhs, rhs in
                 if lhs.kind == rhs.kind { return lhs.displayName < rhs.displayName }
                 return lhs.kind == "user_account"
             }
             // Default selection: caller's personal subject if it's in the
             // list, otherwise the first row.
-            if let fallback = defaultSubject, items.contains(where: { $0.id == fallback.id }) {
+            if let fallback = defaultSubject, subjects.contains(where: { $0.id == fallback.id }) {
                 selectedSubjectId = fallback.id
             } else {
                 selectedSubjectId = subjects.first?.id

@@ -26,6 +26,11 @@ export interface FakeDb {
   updates: Array<{ table: string; patch: Row; filters: Filter[] }>;
   deletes: Array<{ table: string; filters: Filter[]; count: number }>;
   rpcs?: Record<string, (args: Record<string, unknown>) => { data?: unknown; error?: { code?: string; message: string } | null }>;
+  auth?: {
+    users?: Record<string, { email?: string | null }>;
+    generatedLinks?: Array<{ type: string; email: string }>;
+    generateLinkError?: { message: string } | null;
+  };
   /// Optional per-table error injection. When a function returns
   /// non-null for a given operation, that error replaces the result.
   errors?: {
@@ -430,6 +435,30 @@ function makeClient(db: FakeDb): unknown {
   };
 
   return {
+    auth: {
+      admin: {
+        getUserById: async (id: string) => {
+          const user = db.auth?.users?.[id] ?? null;
+          return { data: { user }, error: null };
+        },
+        generateLink: async (params: { type: string; email: string }) => {
+          if (db.auth?.generateLinkError) {
+            return { data: null, error: db.auth.generateLinkError };
+          }
+          db.auth ??= {};
+          db.auth.generatedLinks ??= [];
+          db.auth.generatedLinks.push(params);
+          return {
+            data: {
+              properties: {
+                hashed_token: `hash-for-${params.email}`,
+              },
+            },
+            error: null,
+          };
+        },
+      },
+    },
     schema(_name: string) {
       // schema('pendingbot').from(...) just unwraps to the same builder.
       return { from: builder };

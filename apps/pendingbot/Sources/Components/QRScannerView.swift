@@ -63,6 +63,13 @@ enum DeviceLoginLink {
     enum AppKind: String, Equatable {
         case pendingBotMacOS = "pendingbot_macos"
         case pendingCrewMacOS = "pendingcrew_macos"
+
+        var displayName: String {
+            switch self {
+            case .pendingBotMacOS: return "PendingBot Mac"
+            case .pendingCrewMacOS: return "PendingCrew"
+            }
+        }
     }
 
     struct Payload: Equatable, Identifiable {
