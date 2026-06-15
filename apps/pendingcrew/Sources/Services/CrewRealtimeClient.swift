@@ -1,7 +1,10 @@
-#if os(macOS)
 import Foundation
 
 /// 一个 crew 的实时 hub WebSocket 客户端（Phase 4b）。
+///
+/// **跨平台**：只依赖 Foundation（`URLSessionWebSocketTask`），无 macOS-only API，
+/// 所以 macOS（本地 runner 唤醒 `CrewMailboxWaker`）与 iOS/iPad（登录态 EdgeBackend
+/// 群聊实时刷新）共用同一条 hub 客户端，不再 `#if os(macOS)` gate。
 ///
 /// 连接 `GET /v1/realtime-hub/conv/:crewId`（crewId == crew_conversation_id，
 /// 是个 UUID），带 device-grant bearer。hub 是 **content-agnostic 的扇出层**：
@@ -232,4 +235,3 @@ enum CrewRealtimeEvent: Equatable, Sendable {
         }
     }
 }
-#endif
