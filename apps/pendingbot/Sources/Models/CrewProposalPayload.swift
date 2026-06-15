@@ -6,7 +6,6 @@ import Foundation
 struct CrewProposalPayload: Decodable, Hashable {
     let proposed_by_bot_id: String?
     let proposed_name: String?
-    let proposed_tag: String?
     let proposed_working_directory: String?
     let proposed_parent_crew_id: String?
     let proposed_initial_brief: String?

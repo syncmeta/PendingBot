@@ -464,11 +464,6 @@ export const START_CREW_TOOL: ChatCompletionTool = {
           description:
             '提议的 crew 名字（标题），1–80 字。会显示在确认卡片上，要让用户一眼看明白要拉的 crew 干什么。',
         },
-        tag: {
-          type: 'string',
-          description:
-            '可选的短分类标签，≤80 字（例如「研究」「投资」「文档」）。用户后续会用这个 tag 来归类多个 crew。',
-        },
         working_directory: {
           type: 'string',
           description:

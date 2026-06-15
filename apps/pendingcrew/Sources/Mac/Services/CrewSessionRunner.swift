@@ -265,6 +265,7 @@ final class CrewSessionRunner: ObservableObject {
     enum RunnerError: LocalizedError {
         case toolNotInstalled(kind: LocalCodingAgentKind)
         case tooManySessions
+        case captainNoWorkingDirectory
 
         var errorDescription: String? {
             switch self {
@@ -272,8 +273,71 @@ final class CrewSessionRunner: ObservableObject {
                 return "未在 PATH 中找到 \(kind.binaryName)，请先安装 \(kind.displayName) CLI。"
             case .tooManySessions:
                 return "同时运行的 session 已达上限（6），先停掉一些再开。"
+            case .captainNoWorkingDirectory:
+                return "这个 crew 没有工作目录 —— 在建 crew 时设置后再启动 Captain。"
             }
         }
+    }
+
+    /// 启动机长 session —— 手动按钮、建 crew 自动起共用这一份（单一事实源）。
+    /// 已有在跑的 captain 直接返回（每 crew 同时只允许一个，防重）。无工作目录抛错。
+    ///
+    /// captain 与 worker 的差异只有两点：世界观后追加 captain persona
+    /// （`crew-captain.zh.md`），MCP helper 带 `--captain` 解锁 answer_decision
+    /// （chunk2 §2）。机长是调度者不改代码 —— 直接用 crew 目录，不开 isolation worktree。
+    /// `initialPrompt` 让它读白板 + `post_to_crew` 报到一句 ——「建 crew 即在群里发消息」
+    /// 走这条（不另写代码发系统消息，保持白板由 agent 自己写的一致语义）。
+    /// 渲染世界观要 roster → 用传入的 `backend` 拉（best-effort，失败照样启动）。
+    func startCaptain(detail: CrewDetail, backend: PendingCrewBackend?) async throws {
+        let crewId = detail.crew.id
+        guard !runs.contains(where: {
+            $0.crewId == crewId && $0.role == .captain && $0.status == .running
+        }) else { return }
+        guard let wd = detail.crew.workingDirectory, !wd.isEmpty else {
+            throw RunnerError.captainNoWorkingDirectory
+        }
+        let workdir = URL(fileURLWithPath: (wd as NSString).expandingTildeInPath)
+        let localSessionId = "captain-" + String(UUID().uuidString.lowercased().prefix(8))
+        let initialPrompt = "你是本 crew 的机长。先用 read_whiteboard 了解群聊现状，然后简短报到（post_to_crew 一句）并待命。后续有待决策会通知你。"
+        // persona / members best-effort：加载失败不挡启动（只是少人设/世界观，与 worker 同策略）。
+        let persona = try? LocalPromptLoader().rawTemplate(name: "crew-captain", locale: "zh")
+        let members = (try? await backend?.listCrewMembers(crewId: crewId))?.members ?? []
+        // 机长用建 crew 时选定的 coding agent（crew 没记 → 默认 Codex）。
+        let captainKind = LocalCodingAgentKind.captainDefault(detail.crew.captainAgentKind)
+        var cfg = SessionConfig(kind: captainKind, initialPrompt: initialPrompt)
+        // 世界观 + crew 工具按 kind 分流：claude 走文件 flag（appendSystemPromptFile +
+        // settings/mcp-config），codex 走 app-server 通道（developerInstructions 字符串 +
+        // mcpServers dict）。captain 两边都带（persona 追加 + helper `--captain` 解锁
+        // answer_decision）。**默认 captain = codex**（captainDefault），所以 codex 这支必须接对，
+        // 否则机长无世界观、无 crew 工具。
+        var developerInstructions: String? = nil
+        var codexMcpServers: [String: Any]? = nil
+        switch captainKind {
+        case .claudeCode:
+            cfg.appendSystemPromptFile = LocalSessionLaunch.renderWorldModelFile(
+                detail: detail, members: members, taskBrief: initialPrompt, workdir: workdir,
+                sessionId: localSessionId, runnerKind: captainKind, appendPersona: persona)
+            let comms = LocalSessionLaunch.prepareLocalCommsConfig(
+                crewId: crewId, sessionId: localSessionId, captain: true)
+            cfg.settingsFile = comms.settings
+            cfg.mcpConfigFile = comms.mcp
+        case .codex:
+            developerInstructions = LocalSessionLaunch.renderWorldModelString(
+                detail: detail, members: members, taskBrief: initialPrompt, workdir: workdir,
+                sessionId: localSessionId, appendPersona: persona)
+            codexMcpServers = LocalSessionLaunch.codexMcpServers(
+                crewId: crewId, sessionId: localSessionId, captain: true)
+        }
+        try await start(
+            crewId: crewId,
+            sessionId: localSessionId,
+            config: cfg,
+            workingDirectory: workdir,
+            taskBrief: initialPrompt,
+            developerInstructions: developerInstructions,
+            codexMcpServers: codexMcpServers,
+            role: .captain
+        )
     }
 }
 

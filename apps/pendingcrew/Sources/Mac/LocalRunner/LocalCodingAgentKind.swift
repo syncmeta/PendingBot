@@ -35,5 +35,15 @@ public enum LocalCodingAgentKind: String, CaseIterable, Sendable, Hashable {
         case .codex: return "local_codex"
         }
     }
+
+    /// crew 存的 `captainAgentKind`("claude_code"/"codex"/nil) → 本机 agent kind。
+    /// **默认 Codex**(建 crew 时的默认;老 crew / edge crew 没记也走这里)。
+    public static func captainDefault(_ raw: String?) -> LocalCodingAgentKind {
+        switch raw {
+        case "claude_code": return .claudeCode
+        case "codex": return .codex
+        default: return .codex
+        }
+    }
 }
 #endif

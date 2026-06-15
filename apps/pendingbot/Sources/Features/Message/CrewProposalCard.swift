@@ -94,12 +94,6 @@ struct CrewProposalCardView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(payload.proposed_name ?? "未命名 crew")
                 .font(.title3.weight(.semibold))
-            if let tag = payload.proposed_tag?.trimmingCharacters(in: .whitespaces),
-               !tag.isEmpty {
-                Label(tag, systemImage: "tag")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
             if let wd = payload.proposed_working_directory?.trimmingCharacters(in: .whitespaces),
                !wd.isEmpty {
                 Label(wd, systemImage: "folder")

@@ -1,26 +1,58 @@
 import SwiftUI
 
+/// 「我」tab 的可选中条目 —— 跟其它 tab 的 `Selection` 同构(`ChatDest` /
+/// `PendingPeer`),驱动 iPhone 的 push 路径与 iPad/Mac 右栏的详情选中。
+/// 「设置」在 macOS 走 `SettingsLink` 独立窗口、不参与选中,但仍列在此处
+/// 让 iOS 端把它当普通可选中行(见 `settingsRow` / `destinationView`)。
+enum MeSection: String, Hashable, CaseIterable, Identifiable {
+    case addFriendMethods
+    case wallet
+    case capabilities
+    case settings
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .addFriendMethods: return "加我为好友的方式"
+        case .wallet:           return "钱包"
+        case .capabilities:     return "机器人能力扩展"
+        case .settings:         return "设置"
+        }
+    }
+}
+
 /// 我 — left-aligned header column (avatar / name / email, no card
 /// background) plus a native-style settings list. Tapping the header
 /// pushes into `ProfileBootstrapView` (the random-roll 头像 / 用户名
 /// 生成 page) so avatar + nickname share one editing surface.
 ///
-/// 跨平台:iOS 渲染 compact / iPad-landscape 两套;macOS 走 `FeatureSurface`
-/// 的「无列表型」装配(壳把整页放右栏,中列空态)。iOS-only 的部分(头像
-/// 重roll → `ProfileBootstrapView`,依赖 PhotosUI;「设置」原地 push)用
-/// `#if os(iOS)` 围起;macOS 上头像不可点、「设置」改成打开 ⌘, 独立窗口。
+/// 跨平台装配走标准 `FeatureSurface`「列表+详情型」(对齐好友/消息 tab):
+///   • iPhone(compact):菜单是落地第一页,点条目 push 对应详情。
+///   • iPad/Mac(壳三列):菜单是中间列表列,点条目右栏出详情(中列写
+///     selection、右栏读 selection)。
+/// 头像重 roll(`ProfileBootstrapView`,依赖 PhotosUI)用 `#if os(iOS)` 围起;
+/// 「退出登录 / 注销账号」是列表里的动作行(确认弹窗),不进详情列;
+/// 「设置」在 macOS 是 `SettingsLink`(开 ⌘, 独立窗口),不占详情列。
 struct MeTabView: View {
     @EnvironmentObject private var store: AccountStore
-    @Environment(\.useSidebarLayout) private var sidebarLayout
-    @Environment(\.topTabSelection) private var topTabSelection
 
     @State private var pendingConfirm: ConfirmAction?
     @State private var deleting = false
     @State private var error: String?
     @State private var showRandomize = false
 
-    /// detail 列模式开关:true = body 只渲染 chrome(coreContent)(Mac 壳右栏)。
-    var renderAsDetailColumn = false
+    /// iPhone(及任何 standalone 渲染)的 push 路径。点条目 append 一个
+    /// `MeSection`,`navigationDestination` 把它渲染成详情。
+    @State private var path: [MeSection] = []
+
+    /// 壳中间列表列模式的选中写入口 —— 由 `listColumn(selection:)` 注入。
+    /// 非 nil 时点条目写它(壳右栏读同一个 binding 出详情),而不是 push。
+    var externalSelection: Binding<MeSection?>? = nil
+
+    /// true = body 渲染「壳中间列表列」(`chrome(menu)`,无 push stack ——
+    /// 详情归壳右栏、tab 切换归壳 rail)。默认 false 走 iPhone push body。
+    var renderAsMacListColumn = false
 
     /// Two `.confirmationDialog`s attached to the same view collide on
     /// SwiftUI — one gets shadowed and its `isPresented` flag flips
@@ -41,41 +73,35 @@ struct MeTabView: View {
     }
 
     var body: some View {
-        // detail 列模式必须经 body 渲染(同 MessageTabView 的列模式:在图外
-        // 对 self 拷贝求值 chrome(coreContent) 会让 @EnvironmentObject 永不
-        // 灌注 → 首次读取断言崩溃)。
-        if renderAsDetailColumn {
-            chrome(coreContent)
+        if renderAsMacListColumn {
+            // 壳中间列表列:就是带 chrome 的菜单本身;行点击写 externalSelection,
+            // 壳右栏读同一 binding 渲染详情。经 body 渲染(而非在图外对 self 拷贝
+            // 求值 chrome(menu))才能让 @EnvironmentObject 正常灌注(见 #294)。
+            chrome(menu)
         } else {
-            chrome(
-                Group {
-                    if sidebarLayout {
-                        NavigationSplitView {
-                            VStack(spacing: 0) {
-                                coreContent
-                                if let topTabSelection {
-                                    SidebarTabBar(selection: topTabSelection)
-                                }
-                            }
-                            .sidebarColumnWidth()
-                        } detail: {
-                            EmptyDetailHint(text: "在左侧选项里走走", systemImage: "person.crop.circle")
-                        }
-                    } else {
-                        coreContent
-                    }
-                }
-            )
+            // iPhone(及 standalone):菜单是落地第一页,点条目 push 进详情。
+            chrome(compactBody)
         }
+    }
+
+    // ── Compact (iPhone) — 列表落地 + push 进详情 ────────────────────────────
+
+    private var compactBody: some View {
+        NavigationStack(path: $path) {
+            menu
+                .navigationDestination(for: MeSection.self) { section in
+                    destinationView(for: section)
+                        .platformTabBarVisibility(false)
+                }
+        }
+        .platformTabBarVisibility(path.isEmpty)
     }
 
     /// Wraps a root view with the tab's shared chrome — the reroll cover
     /// (iOS-only), the error alert, and the sign-out / delete-account
-    /// confirmation dialog. Pulled out of `body` so the Mac shell's
-    /// `detailColumn` and the `compactRoot` can each be self-contained:
-    /// both entry points carry the same actions, regardless of which
-    /// SwiftUI container hosts them. The iOS `body` calls this with the
-    /// exact same content it used to inline, so its behavior is unchanged.
+    /// confirmation dialog. Pulled out of `body` so the Mac shell's list
+    /// column and the iPhone push root carry the same actions regardless
+    /// of which SwiftUI container hosts them.
     @ViewBuilder
     private func chrome(_ content: some View) -> some View {
         content
@@ -131,116 +157,105 @@ struct MeTabView: View {
         }
     }
 
+    // ── Menu (list content shared by compact root + Mac list column) ─────────
+
+    /// 菜单本体:头像头部 + 玻璃分组条目 + 退出/注销动作组。compact 落地与
+    /// 壳中间列表列共用同一份内容;两条路径的差异只在「点条目做什么」
+    /// (`open(_:)`:push vs 写 selection)。
     @ViewBuilder
-    private var coreContent: some View {
-        NavigationStack {
-            ZStack {
-                Theme.Palette.canvas.ignoresSafeArea()
-                ScrollView {
-                    VStack(spacing: 28) {
-                        profileHeader
-                            .contentShape(Rectangle())
-                            // 点头像进重roll 页 —— iOS-only(ProfileBootstrapView
-                            // 是 iOS 限定);macOS 上头像是纯展示,不可点。
-                            #if os(iOS)
-                            .onTapGesture {
-                                showRandomize = true
-                                Haptics.tap()
-                            }
-                            #endif
-
-                        VStack(spacing: 0) {
-                            NavigationLink {
-                                AddMeMethodsView().platformTabBarVisibility(false)
-                            } label: {
-                                OptionRow(title: "加我为好友的方式")
-                            }
-                            .buttonStyle(.plain)
-
-                            optionDivider
-
-                            NavigationLink {
-                                WalletV2View().platformTabBarVisibility(false)
-                            } label: {
-                                OptionRow(title: "钱包")
-                            }
-                            .buttonStyle(.plain)
-
-                            optionDivider
-
-                            NavigationLink {
-                                BotCapabilitiesView().platformTabBarVisibility(false)
-                            } label: {
-                                OptionRow(title: "机器人能力扩展")
-                            }
-                            .buttonStyle(.plain)
-
-                            optionDivider
-
-                            // 设置入口:iOS 原地 push 共享 `SettingsView`;macOS 用
-                            // `SettingsLink` 打开原生 ⌘, 独立设置窗口(D4:两端指向
-                            // 同一份设置内容,Mac 走系统 Settings 场景)。
-                            settingsEntry
+    private var menu: some View {
+        ZStack {
+            Theme.Palette.canvas.ignoresSafeArea()
+            ScrollView {
+                VStack(spacing: 28) {
+                    profileHeader
+                        .contentShape(Rectangle())
+                        // 点头像进重roll 页 —— iOS-only(ProfileBootstrapView
+                        // 是 iOS 限定);macOS 上头像是纯展示,不可点。
+                        #if os(iOS)
+                        .onTapGesture {
+                            showRandomize = true
+                            Haptics.tap()
                         }
-                        .meGlassGroup()
+                        #endif
 
-                        VStack(spacing: 0) {
-                            Button {
-                                pendingConfirm = .signOut
-                                Haptics.tap()
-                            } label: {
-                                OptionRow(title: "退出登录", role: .destructive, showsChevron: false)
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(store.current == nil)
-
-                            optionDivider
-
-                            Button {
-                                pendingConfirm = .delete
-                                Haptics.tap()
-                            } label: {
-                                OptionRow(
-                                    title: deleting ? "提交中…" : "注销账号",
-                                    role: .destructive,
-                                    showsChevron: false
-                                )
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(deleting || store.current == nil)
-                        }
-                        .meGlassGroup()
-
-                        Text("很多功能还没做好 不可用")
-                            .font(Theme.Fonts.monoSmall)
-                            .foregroundStyle(Theme.Palette.inkMuted)
-                            .frame(maxWidth: .infinity, alignment: .center)
+                    VStack(spacing: 0) {
+                        navRow(.addFriendMethods)
+                        optionDivider
+                        navRow(.wallet)
+                        optionDivider
+                        navRow(.capabilities)
+                        optionDivider
+                        // 设置入口:iOS 当普通可选中行(push / 右栏详情);macOS 用
+                        // `SettingsLink` 打开原生 ⌘, 独立设置窗口(D4:两端指向
+                        // 同一份设置内容,Mac 走系统 Settings 场景)。
+                        settingsRow
                     }
-                    .padding(.horizontal, 28)
-                    .padding(.top, 72)
-                    .padding(.bottom, 32)
+                    .meGlassGroup()
+
+                    VStack(spacing: 0) {
+                        Button {
+                            pendingConfirm = .signOut
+                            Haptics.tap()
+                        } label: {
+                            OptionRow(title: "退出登录", role: .destructive, showsChevron: false)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(store.current == nil)
+
+                        optionDivider
+
+                        Button {
+                            pendingConfirm = .delete
+                            Haptics.tap()
+                        } label: {
+                            OptionRow(
+                                title: deleting ? "提交中…" : "注销账号",
+                                role: .destructive,
+                                showsChevron: false
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(deleting || store.current == nil)
+                    }
+                    .meGlassGroup()
+
+                    Text("很多功能还没做好 不可用")
+                        .font(Theme.Fonts.monoSmall)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                        .frame(maxWidth: .infinity, alignment: .center)
                 }
+                .padding(.horizontal, 28)
+                .padding(.top, 72)
+                .padding(.bottom, 32)
             }
-            .background(Theme.Palette.canvas.ignoresSafeArea())
-            #if os(iOS)
-            .toolbar(.hidden, for: .navigationBar)
-            #endif
         }
+        .background(Theme.Palette.canvas.ignoresSafeArea())
+        #if os(iOS)
+        .toolbar(.hidden, for: .navigationBar)
+        #endif
     }
 
-    /// 设置入口。iOS 是 `NavigationLink` 原地 push 共享 `SettingsView`;
-    /// macOS 用 `SettingsLink`(macOS 14+)打开原生 ⌘, 独立设置窗口 ——
-    /// 该窗口由 App 的 `Settings` 场景托管,内容同样是共享 `SettingsView`,
-    /// 所以两端落到同一份设置内容(D4)。
+    /// 一个可导航条目行。点击经 `open(_:)` 分流:壳列表列写 `externalSelection`
+    /// (右栏出详情),否则 push 到 `path`(iPhone)。
     @ViewBuilder
-    private var settingsEntry: some View {
-        #if os(iOS)
-        NavigationLink {
-            SettingsView().platformTabBarVisibility(false)
+    private func navRow(_ section: MeSection) -> some View {
+        Button {
+            Haptics.tap()
+            open(section)
         } label: {
-            OptionRow(title: "设置")
+            OptionRow(title: section.title)
         }
         .buttonStyle(.plain)
+    }
+
+    /// 设置行的平台分叉:iOS 当普通可选中条目;macOS 用 `SettingsLink`
+    /// (macOS 14+)打开原生 ⌘, 独立设置窗口 —— 该窗口由 App 的 `Settings`
+    /// 场景托管,内容同样是共享 `SettingsView`,两端落到同一份设置内容(D4)。
+    @ViewBuilder
+    private var settingsRow: some View {
+        #if os(iOS)
+        navRow(.settings)
         #else
         SettingsLink {
             OptionRow(title: "设置")
@@ -248,6 +263,36 @@ struct MeTabView: View {
         .buttonStyle(.plain)
         .simultaneousGesture(TapGesture().onEnded { Haptics.tap() })
         #endif
+    }
+
+    /// 点条目分流:壳中间列表列(`externalSelection` 非 nil)写 selection,
+    /// 由壳右栏渲染详情;否则(iPhone / standalone)push 进 `path`。
+    private func open(_ section: MeSection) {
+        if let externalSelection {
+            externalSelection.wrappedValue = section
+        } else {
+            path.append(section)
+        }
+    }
+
+    /// `MeSection` → 详情视图本体(各自带 `.navigationTitle`)。外层
+    /// NavigationStack 由调用方提供:compact 走 `navigationDestination`,
+    /// 壳右栏在 `detailColumn` 里包一层。
+    @ViewBuilder
+    private func destinationView(for section: MeSection) -> some View {
+        switch section {
+        case .addFriendMethods: AddMeMethodsView()
+        case .wallet:           WalletV2View()
+        case .capabilities:     BotCapabilitiesView()
+        case .settings:
+            #if os(iOS)
+            SettingsView()
+            #else
+            // macOS 的「设置」走 SettingsLink 独立窗口,selection 不会落到
+            // `.settings`,这里只为 switch 穷尽兜个空。
+            EmptyView()
+            #endif
+        }
     }
 
     /// Hairline separating two rows inside one glass group, inset to
@@ -329,44 +374,45 @@ struct MeTabView: View {
     }
 }
 
-// MARK: - FeatureSurface (Mac three-column shell)
+// MARK: - FeatureSurface (shared three-column shell)
 
-/// 「我」是 FeatureSurface 的「无列表型」装配:没有可枚举的 list 内容,
-/// 它本身就是一个自包含的设置/账号菜单(NavigationStack 内 push 子页)。
-/// 映射(对齐 FeatureSurface.swift 的「无列表型」约定 + 已删的 `MacMeView`
-/// 在 detail 列的位置):
-///   • `detailColumn` 承载真正的 `MeTabView` 菜单内容(壳的右栏);
-///     中列由壳给空态/入口,与「我没有 list」一致。
-///   • `listColumn` 给最小占位(协议要求该方法存在;壳实际中列用自己的
-///     `WidePlaceholderColumn`,不一定调它)。
-///   • `compactRoot` = 同一份菜单内容,自包含(带 chrome)。
-/// Selection 用占位 `String`(无实际选中语义),仅为满足
-/// `associatedtype Selection: Hashable`。iOS `body` 不受影响,这些方法
-/// 是 additive、只有 Mac 壳会调。
+/// 「我」是标准「列表+详情型」装配(对齐 `FriendsTabView` / `MessageTabView`):
+///   • `listColumn` = 中间列表列(菜单),点条目写 selection。
+///   • `detailColumn` = 右栏,按 selection 渲染对应详情(包一层 NavigationStack,
+///     因为各详情自带 `.navigationTitle`、`BotCapabilitiesView` 还要继续 push);
+///     无选中 → 空态。
+///   • `compactRoot` = iPhone 落地(同 body 的 compact 分支)。
+/// Selection = `MeSection`。
 extension MeTabView: FeatureSurface {
-    typealias Selection = String
+    typealias Selection = MeSection
 
-    func listColumn(selection: Binding<String?>) -> some View {
-        // 「我」没有可枚举 list —— 给一个最小空态占位(壳的中列通常用它
-        // 自己的 `WidePlaceholderColumn`,这里只为满足协议)。
-        EmptyDetailHint(text: "账号与设置在右侧", systemImage: "person.crop.circle")
-    }
-
-    func detailColumn(selection: String?) -> some View {
-        // 右栏 = 自包含的「我」菜单(NavigationStack 内 push 子页),带上
-        // 与 iOS `body` 同款的 chrome(错误 alert + 退出/注销确认 + iOS-only
-        // reroll cover),所以退出登录 / 注销账号从这一列照常工作。
-        // 返回配置过的 view 本体让 SwiftUI 装图(见 body 注释),渲染分支
-        // 在 body 里走 chrome(coreContent)。
+    func listColumn(selection: Binding<MeSection?>) -> some View {
+        // 返回配置过的 self,经 body(`renderAsMacListColumn` 分支)在图内渲染
+        // `chrome(menu)` —— 在图外求值会让 @EnvironmentObject 不灌注(#294)。
         var view = self
-        view.renderAsDetailColumn = true
+        view.externalSelection = selection
+        view.renderAsMacListColumn = true
         return view
     }
 
+    func detailColumn(selection: MeSection?) -> some View {
+        Group {
+            if let section = selection {
+                // 包一层 NavigationStack:详情各自带 `.navigationTitle`,
+                // `BotCapabilitiesView` 还会继续 push 子页 —— 都要落在右栏自己的
+                // 导航栈里。`.id(section)` 保证切条目时是干净实例。
+                NavigationStack {
+                    destinationView(for: section)
+                }
+                .id(section)
+            } else {
+                EmptyDetailHint(text: "挑一项看看", systemImage: "person.crop.circle")
+            }
+        }
+    }
+
     func compactRoot() -> some View {
-        // compact 入口同样是自包含菜单 + chrome。Mac 壳当前不走 compact,
-        // 但保持与 iOS 行为一致、可编译。
-        chrome(coreContent)
+        chrome(compactBody)
     }
 }
 

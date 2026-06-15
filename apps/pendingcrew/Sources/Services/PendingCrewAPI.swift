@@ -160,6 +160,27 @@ struct PendingCrewAPI {
         )]
     }
 
+    // MARK: - Machines
+
+    /// `GET /v1/machines` — 本账号可用机器列表（本机 / peer / Fly machine）。
+    func listMachines() async throws -> [Machine] {
+        struct Resp: Decodable { let machines: [Machine] }
+        let r: Resp = try await get(path: "v1/machines")
+        return r.machines
+    }
+
+    /// `POST /v1/machines/register-self` — 把当前设备 upsert 成本账号的一台
+    /// computer 机器，返回 machineId。幂等（服务端 upsert by device_id）。
+    func registerSelfMachine() async throws -> String {
+        struct Body: Encodable { let deviceId: String; let displayName: String }
+        struct Resp: Decodable { let machineId: String }
+        let r: Resp = try await post(
+            path: "v1/machines/register-self",
+            body: Body(deviceId: DeviceIdentity.current, displayName: DeviceIdentity.displayName)
+        )
+        return r.machineId
+    }
+
     // MARK: - Crews
 
     /// `GET /v1/crews`。

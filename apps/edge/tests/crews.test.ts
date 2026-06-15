@@ -104,7 +104,6 @@ describe('POST /v1/crews', () => {
         expect(args).toMatchObject({
           p_responsible_subject_id: USER_SUBJECT,
           p_title: '工程 Crew',
-          p_runtime_location: 'local_host',
           p_captain_source: 'system_generated',
         });
         // Seed the meta row the route SELECTs back to recover the
@@ -124,8 +123,7 @@ describe('POST /v1/crews', () => {
       body: JSON.stringify({
         responsibleSubjectId: USER_SUBJECT,
         title: '工程 Crew',
-        runtimeLocation: 'local_host',
-        captain: { source: 'system_generated' },
+        captain: { source:'system_generated' },
       }),
     });
     expect(res.status).toBe(200);
@@ -156,8 +154,7 @@ describe('POST /v1/crews', () => {
       body: JSON.stringify({
         responsibleSubjectId: USER_SUBJECT,
         title: '工程 Crew',
-        runtimeLocation: 'local_host',
-        captain: { source: 'reuse_bot', botId: reuseBotId },
+        captain: { source:'reuse_bot', botId: reuseBotId },
       }),
     });
     expect(res.status).toBe(200);
@@ -181,7 +178,6 @@ describe('POST /v1/crews', () => {
       body: JSON.stringify({
         responsibleSubjectId: USER_SUBJECT,
         title: '别人的 Crew',
-        runtimeLocation: 'local_host',
         captain: { source: 'system_generated' },
       }),
     });
@@ -210,7 +206,6 @@ describe('POST /v1/crews', () => {
       body: JSON.stringify({
         responsibleSubjectId: USER_SUBJECT,
         title: 'x',
-        runtimeLocation: 'local_host',
         captain: { source: 'system_generated' },
       }),
     });

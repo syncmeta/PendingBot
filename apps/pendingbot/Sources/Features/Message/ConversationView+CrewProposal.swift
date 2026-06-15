@@ -64,7 +64,6 @@ extension ConversationView {
                 patched = CrewProposalPayload(
                     proposed_by_bot_id: payload.proposed_by_bot_id,
                     proposed_name: payload.proposed_name,
-                    proposed_tag: payload.proposed_tag,
                     proposed_working_directory: payload.proposed_working_directory,
                     proposed_parent_crew_id: payload.proposed_parent_crew_id,
                     proposed_initial_brief: payload.proposed_initial_brief,
@@ -79,7 +78,6 @@ extension ConversationView {
                 patched = CrewProposalPayload(
                     proposed_by_bot_id: payload.proposed_by_bot_id,
                     proposed_name: payload.proposed_name,
-                    proposed_tag: payload.proposed_tag,
                     proposed_working_directory: payload.proposed_working_directory,
                     proposed_parent_crew_id: payload.proposed_parent_crew_id,
                     proposed_initial_brief: payload.proposed_initial_brief,

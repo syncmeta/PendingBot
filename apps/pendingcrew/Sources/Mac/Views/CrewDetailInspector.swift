@@ -24,6 +24,9 @@ struct CrewDetailInspector: View {
     /// 可用 bot 列表"端点存在后换成 picker（现在没有现成端点，不为此造新端点）。
     @State private var inviteBotId = ""
 
+    /// 「新建子 crew」sheet 显隐 —— 建完自动 attachParent 到本 crew 之下。
+    @State private var showingChildCrewSheet = false
+
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
@@ -46,7 +49,19 @@ struct CrewDetailInspector: View {
         .frame(minWidth: 420, minHeight: 440)
         .toolbar {
             ToolbarItem(placement: .principal) { Text("crew 详情").font(.headline) }
+            ToolbarItem(placement: .automatic) {
+                Button {
+                    showingChildCrewSheet = true
+                } label: {
+                    Label("新建子 crew", systemImage: "plus")
+                }
+                .help("在当前 crew 之下新建一个子 crew")
+            }
             ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } }
+        }
+        .sheet(isPresented: $showingChildCrewSheet) {
+            CreateCrewSheet(parentCrewId: detail.crew.id)
+                .environmentObject(crewStore)
         }
     }
 
@@ -57,9 +72,6 @@ struct CrewDetailInspector: View {
             HStack(spacing: 12) {
                 Label(detail.crew.runtimeLocationKind?.shortLabel ?? detail.crew.runtimeLocation,
                       systemImage: detail.crew.runtimeLocationKind?.displayIcon ?? "questionmark.circle")
-                if let tag = detail.crew.tag, !tag.isEmpty {
-                    Label(tag, systemImage: "tag")
-                }
             }
             .font(.callout)
             .foregroundStyle(.secondary)
@@ -161,7 +173,6 @@ struct CrewDetailInspector: View {
         relayError = nil
         let crewId = detail.crew.id
         let title = detail.crew.title
-        let tag = detail.crew.tag
         Task {
             defer { relayBusy = false }
             do {
@@ -170,11 +181,12 @@ struct CrewDetailInspector: View {
                     relayError = "没有可代表的 subject"
                     return
                 }
-                let resp = try await api.createCrew(.localHost(
+                let resp = try await api.createCrew(.make(
                     responsibleSubjectId: subject.id,
                     title: title,
+                    machineId: nil,
                     workingDirectory: nil,
-                    tag: tag,
+                    captainAgentKind: nil,   // edge relay crew —— captain kind 是本地概念，edge 不消费。
                     captain: .systemGenerated(templateName: nil)
                 ))
                 LocalCrewStore.shared.bindRemoteConversation(

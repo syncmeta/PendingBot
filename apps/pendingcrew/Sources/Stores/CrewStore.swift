@@ -18,11 +18,20 @@ final class CrewStore: ObservableObject {
     @Published private(set) var crews: [CrewSummary] = []
     @Published private(set) var details: [String: CrewDetail] = [:]
     @Published private(set) var subjects: [UserSubject] = []
+    /// 本账号可用机器（CreateCrewSheet 据 `count > 1` 决定显不显示 machine 选择）。
+    /// 本地态恒单元素 [本机]；登录态走 `GET /v1/machines`。
+    @Published private(set) var machines: [Machine] = []
     @Published var selectedCrewId: String?
     @Published private(set) var loadingList: Bool = false
     @Published private(set) var loadingDetailIds: Set<String> = []
     @Published private(set) var loadingSubjects: Bool = false
     @Published var error: String?
+
+    /// 建带 captain 的 crew 后，请求自动起机长（用户要的零摩擦：新建即启动 + 群里报到）。
+    /// `MacThreePaneView` 观察这个值（它持有 `CrewSessionRunner`），起完置 nil。
+    /// 放 store 而非建 crew 的 sheet：sheet 建完即 dismiss，且拿不到 window 级的
+    /// sessionRunner —— 信号经 store 冒泡给常驻的 three-pane 才能可靠落地。
+    @Published var captainAutostartRequest: String?
 
     private unowned let appModel: AppModel
 
@@ -96,6 +105,26 @@ final class CrewStore: ObservableObject {
         }
     }
 
+    /// 拉本账号机器列表（CreateCrewSheet 的 machine 选择数据源）。失败静默
+    /// 兜本机 —— machine 选择只是锦上添花，拉不到不该挡新建。
+    func refreshMachines() async {
+        guard let backend = currentBackend() else { return }
+        do {
+            machines = try await backend.listMachines()
+        } catch {
+            // 失败回落空 —— CreateCrewSheet count<=1 不显示选择，默认本机。
+            machines = []
+        }
+    }
+
+    /// 把当前设备注册成本账号的一台机器（登录后调，幂等）。失败静默 ——
+    /// 注册是 best-effort，失败不该挡用户用 app。
+    @discardableResult
+    func registerSelfMachine() async -> String? {
+        guard let backend = currentBackend() else { return nil }
+        return try? await backend.registerSelfMachine()
+    }
+
     // MARK: - Mutations
 
     /// 创建 crew 并把它选中。新 crew 进 `crews` 头部 + 自动选中。
@@ -112,6 +141,12 @@ final class CrewStore: ObservableObject {
         await refreshList()
         await refreshDetail(response.crewId)
         selectedCrewId = response.crewId
+        // 建完请求自动起机长（detail 已 refresh，three-pane 观察到就拉起 captain）。
+        // 当前建 crew 必带 systemGenerated captain；用 detail.captain 兜底判断，
+        // 防将来出现无 captain 的 crew 也误触发。
+        if details[response.crewId]?.captain != nil {
+            captainAutostartRequest = response.crewId
+        }
         return response
     }
 
@@ -146,6 +181,7 @@ final class CrewStore: ObservableObject {
         crews = []
         details = [:]
         subjects = []
+        machines = []
         selectedCrewId = nil
         error = nil
     }

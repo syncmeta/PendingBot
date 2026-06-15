@@ -92,19 +92,12 @@ const CaptainBody = z.discriminatedUnion('source', [
   }),
 ]);
 
-const RuntimeLocation = z.enum(['local_host', 'peer_device', 'fly_machine']);
-
 const CreateCrewBody = z.object({
   responsibleSubjectId: z.string().uuid(),
-  title: z.string().trim().min(1).max(80),
-  runtimeLocation: RuntimeLocation,
+  title: z.string().trim().max(80).optional(),   // optional/auto — empty allowed
   workingDirectory: z.string().trim().max(2048).optional(),
-  tag: z.string().trim().max(80).optional(),
+  machineId: z.string().uuid().optional(),        // null/absent = local
   captain: CaptainBody,
-  // Required when runtimeLocation = peer_device / fly_machine. The RPC
-  // enforces presence, but we surface a friendlier 400 here.
-  peerDeviceId: z.string().uuid().optional(),
-  flyMachineId: z.string().trim().max(120).optional(),
 });
 
 crewsRoutes.post('/', async (c) => {
@@ -113,15 +106,6 @@ crewsRoutes.post('/', async (c) => {
     parsed = CreateCrewBody.parse(await c.req.json());
   } catch (err) {
     return jsonError(c, 400, 'invalid_body', { detail: String(err) });
-  }
-  if (parsed.runtimeLocation === 'peer_device' && !parsed.peerDeviceId) {
-    return jsonError(c, 400, 'invalid_body', { message: 'peerDeviceId required when runtimeLocation=peer_device' });
-  }
-  if (parsed.runtimeLocation === 'fly_machine' && !parsed.flyMachineId) {
-    return jsonError(c, 400, 'invalid_body', { message: 'flyMachineId required when runtimeLocation=fly_machine' });
-  }
-  if (parsed.runtimeLocation === 'local_host' && (parsed.peerDeviceId || parsed.flyMachineId)) {
-    return jsonError(c, 400, 'invalid_body', { message: 'peerDeviceId/flyMachineId must be null for local_host' });
   }
 
   // Device grants may only create crews for the subject they represent;
@@ -148,16 +132,13 @@ crewsRoutes.post('/', async (c) => {
   const captain = parsed.captain;
   const { data: convId, error } = await supa.rpc('create_crew_with_captain', {
     p_responsible_subject_id: parsed.responsibleSubjectId,
-    p_title: parsed.title,
-    p_runtime_location: parsed.runtimeLocation,
+    p_title: parsed.title?.trim() || '',
     p_working_directory: parsed.workingDirectory ?? undefined,
-    p_tag: parsed.tag ?? undefined,
     p_captain_source: captain.source,
     p_captain_bot_id: captain.source === 'reuse_bot' ? captain.botId : undefined,
     p_captain_template_name: captain.source === 'system_generated' ? (captain.templateName ?? undefined) : undefined,
-    p_peer_device_id: parsed.peerDeviceId ?? undefined,
-    p_fly_machine_id: parsed.flyMachineId ?? undefined,
     p_actor_user_id: actorUserId ?? undefined,
+    p_machine_id: parsed.machineId ?? undefined,
   });
   if (error) {
     const code = rpcErrorCode(error);
@@ -289,7 +270,7 @@ crewsRoutes.get('/', async (c) => {
 
   const { data: rows, error } = await supa
     .from('temporary_group_meta')
-    .select('conversation_id, responsible_subject_id, captain_bot_id, runtime_location, tag, title, created_at, updated_at, status')
+    .select('conversation_id, responsible_subject_id, captain_bot_id, runtime_location, title, created_at, updated_at, status')
     .eq('temporary_kind', 'crew')
     .in('responsible_subject_id', subjectIds.ids)
     .order('created_at', { ascending: false })
@@ -302,7 +283,6 @@ crewsRoutes.get('/', async (c) => {
     title: row.title ?? '机组',
     responsibleSubjectId: row.responsible_subject_id,
     runtimeLocation: row.runtime_location,
-    tag: row.tag,
     captainBotId: row.captain_bot_id,
     status: row.status,
     createdAt: row.created_at,
@@ -349,7 +329,7 @@ crewsRoutes.get('/:crewId', async (c) => {
   const svc = serviceClient(c.env);
   const { data: crewRow, error: crewErr } = await svc
     .from('temporary_group_meta')
-    .select('conversation_id, responsible_subject_id, captain_bot_id, runtime_location, working_directory, tag, title, created_at, updated_at, status')
+    .select('conversation_id, responsible_subject_id, captain_bot_id, runtime_location, working_directory, title, created_at, updated_at, status')
     .eq('conversation_id', crewId)
     .eq('temporary_kind', 'crew')
     .maybeSingle();
@@ -433,7 +413,6 @@ crewsRoutes.get('/:crewId', async (c) => {
       responsibleSubjectId: crewRow.responsible_subject_id,
       runtimeLocation: crewRow.runtime_location,
       workingDirectory: crewRow.working_directory,
-      tag: crewRow.tag,
       captainBotId: crewRow.captain_bot_id,
       status: crewRow.status,
       createdAt: crewRow.created_at,
