@@ -83,9 +83,9 @@ struct CrewAvatarBadges: View {
 
     private func statusColor(_ s: String) -> Color {
         switch s {
-        case "running": return .green
-        case "queued":  return .yellow
-        default:        return .gray
+        case "working", "running": return .green   // 干活中
+        case "idle", "queued":     return .yellow  // 空闲/排队中
+        default:                   return .gray     // 已退出/停止
         }
     }
 }

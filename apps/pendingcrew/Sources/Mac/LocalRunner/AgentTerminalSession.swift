@@ -4,23 +4,38 @@ import SwiftTerm
 
 /// 一个内嵌真终端的 coding-agent 会话：在 PTY 里跑交互式 claude/codex(自动审批)。
 /// 读=终端原样显示，控=键盘(SwiftTerm 原生) + 程序化 send()/interrupt() 字节注入。
+/// `LocalProcessTerminalView` 子类，记录最近一次收到 PTY 输出的时刻 —— 用来近似
+/// 「agent 在干活」：claude TUI 干活时持续重绘(spinner/输出)→ 频繁有数据;空闲等
+/// 指令时几乎不吐数据(光标闪烁是 SwiftTerm 本地渲染，不经 PTY)。`dataReceived` 是
+/// `open`，覆盖它记时间戳即可(主线程，UI feed 路径)。
+final class ActivityTerminalView: LocalProcessTerminalView {
+    /// 最近一次收到子进程输出的时刻；busy 判定 = now - lastOutputAt < 阈值。
+    var lastOutputAt = Date.distantPast
+    override func dataReceived(slice: ArraySlice<UInt8>) {
+        super.dataReceived(slice: slice)
+        lastOutputAt = Date()
+    }
+}
+
 @MainActor
 final class AgentTerminalSession: ObservableObject, SessionBackend {
     let kind: LocalCodingAgentKind
-    let terminalView: LocalProcessTerminalView
+    let terminalView: ActivityTerminalView
     @Published private(set) var status: SessionStatus = .running
     var statusPublisher: Published<SessionStatus>.Publisher { $status }
-    /// PTY 终端无可编程 turn-state；交互式 claude 自带输入排队，注入随时安全 → 恒 false。
+    /// 唤醒注入门禁用：PTY 终端无可编程 turn-state，交互式 claude 自带输入排队，
+    /// 注入随时安全 → 恒 false（main 语义保留，别让 @我的定向消息因 busy 漏注入）。
     var isBusy: Bool { false }
+    /// UI 头像「干活中/空闲」用（与 isBusy 解耦）：最近 ~1s 还在吐 PTY 输出=干活，
+    /// 安静=空闲。0.6s 轮询 `terminalView.lastOutputAt` 重算；status 非 running 时恒 false。
+    @Published private(set) var isWorking = false
+    var isWorkingPublisher: Published<Bool>.Publisher { $isWorking }
+    private var busyTimer: Timer?
 
     private final class Delegate: NSObject, LocalProcessTerminalViewDelegate {
         var onExit: ((Int32?) -> Void)?
         func processTerminated(source: TerminalView, exitCode: Int32?) { onExit?(exitCode) }
-        func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {
-            // 诊断：确认内嵌终端实际网格列/行数（TUI 渲染乱的根因是列太少）。
-            // Claude/Codex 全屏 TUI 需 ~58–80 列；< ~55 会开始撑乱。验证后可删。
-            NSLog("[AgentTerminal] sizeChanged cols=\(newCols) rows=\(newRows)")
-        }
+        func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
         func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
         func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
     }
@@ -30,10 +45,14 @@ final class AgentTerminalSession: ObservableObject, SessionBackend {
     /// argv（含首条指令的 positional prompt、auto mode、effort）由 `config.argv()` 构建。
     init(config: SessionConfig, executable: String, workdir: String, env: [String: String]) {
         self.kind = config.kind
-        self.terminalView = LocalProcessTerminalView(frame: .zero)
+        self.terminalView = ActivityTerminalView(frame: .zero)
         self.terminalView.processDelegate = delegate
         delegate.onExit = { [weak self] code in
-            Task { @MainActor in self?.status = .exited(code) }
+            Task { @MainActor in
+                self?.status = .exited(code)
+                self?.isWorking = false
+                self?.busyTimer?.invalidate()
+            }
         }
         var envArr = env.map { "\($0.key)=\($0.value)" }
         if !envArr.contains(where: { $0.hasPrefix("TERM=") }) { envArr.append("TERM=xterm-256color") }
@@ -43,7 +62,20 @@ final class AgentTerminalSession: ObservableObject, SessionBackend {
             environment: envArr,
             currentDirectory: workdir
         )
+        // 0.6s 轮询输出活跃度 → 翻 isBusy。定时器在 main runloop 触发(init 是
+        // @MainActor)；[weak self] 不成环，exit/stop/deinit 时 invalidate。
+        busyTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.recomputeWorking() }
+        }
     }
+
+    /// 干活中 = 仍 running 且最近 1s 内还有 PTY 输出。
+    private func recomputeWorking() {
+        let working = status == .running && Date().timeIntervalSince(terminalView.lastOutputAt) < 1.0
+        if working != isWorking { isWorking = working }
+    }
+
+    deinit { busyTimer?.invalidate() }
 
     /// 程序化发文本(prompt / steer)：写文本 + 回车。
     func send(_ text: String) { inject(Array((text + "\r").utf8)) }

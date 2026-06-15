@@ -443,6 +443,9 @@ final class CrewSessionRun: ObservableObject, Identifiable {
 
     @Published private(set) var status: Status = .running
     @Published private(set) var exitCode: Int32?
+    /// 干活中(跑回合) vs 空闲(存活等指令) —— 镜像后端 `isWorking`，驱动头像/切换条状态点。
+    /// (与 backend.isBusy 区分:那个是唤醒注入门禁;这个是 UI 活跃信号,见 SessionBackend。)
+    @Published private(set) var isWorking = false
 
     /// 用户主动停 → 终端退出时落 `.cancelled` 而非 `.failed`。
     private var cancelled = false
@@ -451,6 +454,7 @@ final class CrewSessionRun: ObservableObject, Identifiable {
     /// Server row lifecycle close (logged mode only; nil for BYOK/local-only).
     private let serverLink: CrewSessionServerLink?
     private var statusObservation: Task<Void, Never>?
+    private var workingObservation: Task<Void, Never>?
 
     nonisolated var id: UUID { runID }
 
@@ -477,7 +481,20 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         self.serverLink = serverLink
         self.role = role
         self.status = Self.map(backend.status, cancelled: false)
+        self.isWorking = backend.isWorking
         observeBackendStatus()
+        observeBackendWorking()
+    }
+
+    /// 镜像后端 `isWorking`(claude=输出活跃度;codex=turn 进行中)到 run 上,供 UI 观察。
+    private func observeBackendWorking() {
+        workingObservation = Task { [weak self] in
+            guard let self else { return }
+            for await working in self.backend.isWorkingPublisher.values {
+                if Task.isCancelled { return }
+                self.isWorking = working
+            }
+        }
     }
 
     /// 跟踪后端的 running/exited，映射到 run 的生命周期 status，并在退出时
@@ -513,6 +530,7 @@ final class CrewSessionRun: ObservableObject, Identifiable {
 
     deinit {
         statusObservation?.cancel()
+        workingObservation?.cancel()
     }
 
     /// 终端进程退出 —— 落 terminal status + 关 server row。Idempotent。
@@ -520,7 +538,9 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         guard !finalized else { return }
         finalized = true
         status = Self.map(.exited(exitCode), cancelled: cancelled)
+        isWorking = false
         statusObservation?.cancel()
+        workingObservation?.cancel()
         if let link = serverLink {
             let finalStatus = status
             Task { await link.finish(localStatus: finalStatus, summary: nil) }
