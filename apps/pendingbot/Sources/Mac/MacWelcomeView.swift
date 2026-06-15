@@ -31,7 +31,7 @@ struct MacRootGate: View {
                         .font(Theme.Fonts.footnote)
                         .foregroundStyle(Theme.Palette.inkMuted)
                 }
-                .frame(minWidth: 740, minHeight: 420)
+                .frame(minWidth: 770, minHeight: 420)
             } else if store.current == nil {
                 MacWelcomeView()
             } else {
@@ -88,11 +88,12 @@ struct MacWelcomeView: View {
                         .padding(.top, 12)
                 }
             }
-            .frame(width: 280)
+            .frame(width: 310)
         }
         .padding(44)
         // 默认尺寸:窗口整体放大,内容簇保持原大小、居中,四周留更多空白。
-        .frame(minWidth: 740, minHeight: 420, alignment: .center)
+        // 内容簇加宽到 310(容下 Apple/Google/扫码 三件同排),窗口宽同步 +30。
+        .frame(minWidth: 770, minHeight: 420, alignment: .center)
         .background(Theme.Palette.canvas.ignoresSafeArea())
         .background(MacLoginWindowStyler())
         .onChange(of: vm.otpSent) { _, sent in
@@ -120,11 +121,15 @@ struct MacWelcomeView: View {
                 .padding(.bottom, 22)
 
             VStack(spacing: 14) {
-                HStack(spacing: 12) {
+                // Apple / Google / 扫码 同排:Apple pill 比 Google 略窄(122 固定),
+                // Google 吃掉剩余宽度,末尾跟一个无框的 qrcode 图标。三者总宽 = 下方
+                // 邮箱行宽,所以输入框天然与这一排对齐。
+                HStack(spacing: 10) {
                     appleButton
+                        .frame(width: 118)
                     googleButton
+                    qrLoginButton
                 }
-                qrLoginButton
                 emailRow
             }
             .disabled(vm.isBusy)
@@ -353,28 +358,22 @@ struct MacWelcomeView: View {
         .accessibilityLabel("Sign in with Google")
     }
 
+    /// 扫码登录入口——无框的 qrcode 图标,与 Apple/Google pill 同排。点开后弹
+    /// `PendingBotMacQRLoginView` 走设备授权登录(已登录的手机端扫码批准这台 Mac)。
+    /// 36×48 的命中区让它与两侧 48 高的 pill 垂直居中对齐。
     private var qrLoginButton: some View {
         Button {
             showingQRLogin = true
         } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "qrcode.viewfinder")
-                    .font(Theme.Fonts.glyph(size: 17, weight: .semibold))
-                Text("扫码登录")
-                    .font(Theme.Fonts.system(size: 16, weight: .medium))
-                Spacer()
-                Image(systemName: "arrow.up.right")
-                    .font(Theme.Fonts.glyph(size: 12, weight: .semibold))
-                    .foregroundStyle(Theme.Palette.inkMuted)
-            }
-            .foregroundStyle(Theme.Palette.ink)
-            .padding(.horizontal, 18)
-            .frame(maxWidth: .infinity)
-            .frame(height: 48)
-            .macGlassCapsule()
-            .shadow(color: .black.opacity(0.08), radius: 10, y: 4)
+            Image(systemName: "qrcode")
+                .font(Theme.Fonts.glyph(size: 27, weight: .regular))
+                .foregroundStyle(Theme.Palette.ink)
+                .frame(width: 36, height: 48)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("扫码登录")
+        .help("扫码登录")
         .sheet(isPresented: $showingQRLogin) {
             PendingBotMacQRLoginView()
                 .frame(minWidth: 420, minHeight: 520)
