@@ -16,6 +16,7 @@ import { PresetGroupList, PresetGroupCreate, PresetGroupEdit } from './pages/pre
 import { PresetLetterList, PresetLetterCreate, PresetLetterEdit } from './pages/preset-letters';
 import { ToolList, ToolEdit } from './pages/tools';
 import { McpServerList, McpServerCreate, McpServerEdit } from './pages/mcp-servers';
+import { ModelPresetList, ModelPresetCreate, ModelPresetEdit } from './pages/model-presets';
 import { FeatureFlagsPage } from './pages/feature-flags';
 
 // No authProvider / login route: the board is served same-origin under /board
@@ -75,6 +76,13 @@ export default function App() {
                 meta: { label: 'MCP 服务器' },
               },
               {
+                name: 'model_presets',
+                list: '/model-presets',
+                create: '/model-presets/create',
+                edit: '/model-presets/edit/:id',
+                meta: { label: '模型预设' },
+              },
+              {
                 name: 'feature_flags',
                 list: '/feature-flags',
                 meta: { label: '功能开关' },
@@ -101,6 +109,9 @@ export default function App() {
                 <Route path="/mcp-servers" element={<McpServerList />} />
                 <Route path="/mcp-servers/create" element={<McpServerCreate />} />
                 <Route path="/mcp-servers/edit/:id" element={<McpServerEdit />} />
+                <Route path="/model-presets" element={<ModelPresetList />} />
+                <Route path="/model-presets/create" element={<ModelPresetCreate />} />
+                <Route path="/model-presets/edit/:id" element={<ModelPresetEdit />} />
                 <Route path="/feature-flags" element={<FeatureFlagsPage />} />
                 <Route path="*" element={<NavigateToResource resource="preset_bots" />} />
               </Routes>

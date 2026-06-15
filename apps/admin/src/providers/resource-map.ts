@@ -77,6 +77,13 @@ export const RESOURCE_ROUTES: Record<string, ResourceRoute> = {
     listKey: 'items',
     note: 'EXISTING: /v1/board/mcp-servers CRUD (P4).',
   },
+  // 模型预设(新建机器人用)—— model_presets(slug 主键)。EXISTS。
+  model_presets: {
+    basePath: 'board/model-presets',
+    exists: true,
+    listKey: 'items',
+    note: 'EXISTING: /v1/board/model-presets CRUD.',
+  },
 };
 
 export function routeFor(resource: string): ResourceRoute {
