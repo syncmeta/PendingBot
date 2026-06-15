@@ -342,19 +342,40 @@ struct CrewSessionWindowView: View {
             }
             .buttonStyle(.plain)
             .help("打开这个 session 的终端")
-        } else {
-            // captain / human 行：只头像 + 名。
-            HStack(spacing: 8) {
-                CrewAvatarBadges(sender: item.sender, size: 26)
-                Text(item.sender.displayName)
-                    .font(Theme.Fonts.callout)
-                    .foregroundStyle(Theme.Palette.ink)
-                    .lineLimit(1)
-                Spacer(minLength: 0)
+        } else if item.sender.isCaptain {
+            // captain 没在跑:点头像即进入它的 session —— 没在跑就当场起一个再进。
+            // 用户定调:不要常驻/自动起,只要「点头像就进 session」;这条是纯点击触发,
+            // 起成功后切到终端,失败则留在成员列表(错误经 lastStartError 显示)。
+            Button {
+                Task {
+                    await startCaptain()
+                    if hasRunningCaptain { sessionRunner.viewingTerminal = true }
+                }
+            } label: {
+                memberPlainRow(item.sender)
+                    .contentShape(Rectangle())
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
+            .buttonStyle(.plain)
+            .disabled(starting)
+            .help("进入 Captain session（没在跑会先起一个）")
+        } else {
+            // human 行：只头像 + 名(无 session 可进)。
+            memberPlainRow(item.sender)
         }
+    }
+
+    /// 成员行的「头像 + 名」基础排版（captain 入口与 human 行共用）。
+    private func memberPlainRow(_ sender: GroupBubbleSender) -> some View {
+        HStack(spacing: 8) {
+            CrewAvatarBadges(sender: sender, size: 26)
+            Text(sender.displayName)
+                .font(Theme.Fonts.callout)
+                .foregroundStyle(Theme.Palette.ink)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
     }
 
     @ViewBuilder
