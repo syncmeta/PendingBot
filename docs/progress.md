@@ -2,7 +2,7 @@
 
 **最近对账：2026-06-15**（对照实际代码 / 迁移 / git，不是看 task 标记）
 
-> **2026-06-15 新建机器人一页式 + 模型预设（`feat/create-bot-presets`，未合，subagent-driven）**：spec `docs/superpowers/specs/2026-06-15-create-bot-presets-design.md`、plan `docs/superpowers/plans/2026-06-15-create-bot-presets.md`、ledger task #378–394。用户定调 —— 新建机器人收敛单页（名字+模型预设多选+自定义+公开程度，无下一步），预设由 board 管规则、OpenRouter 目录动态解析，bot 存预设引用对话时解析；名字走 GeoNames 世界地名；vanity slug 彻底退役（bot=显示名+自动id,对齐人类账号）。
+> **2026-06-15 新建机器人一页式 + 模型预设（`feat/create-bot-presets`，✅ 已合 main `02c122cf`，subagent-driven）**：spec `docs/superpowers/specs/2026-06-15-create-bot-presets-design.md`、plan `docs/superpowers/plans/2026-06-15-create-bot-presets.md`、ledger task #378–394。用户定调 —— 新建机器人收敛单页（名字+模型预设多选+自定义+公开程度，无下一步），预设由 board 管规则、OpenRouter 目录动态解析，bot 存预设引用对话时解析；名字走 GeoNames 世界地名；vanity slug 彻底退役（bot=显示名+自动id,对齐人类账号）。
 > - **心智模型**：预设 = 活的查询（5 个全规则驱动：头两家旗舰=固定 openai+anthropic 各取旗舰；中国旗舰=中国厂白名单；各家最新=按发布；速度快=per-model endpoints 吞吐+质量下限；最热门=LMArena 评分代理）；bot 存 `config.modelPool.presets`，`pickRandomModel` 对话时展开成模型并集→复用现有池逻辑。自定义=一次性冻结成显式清单。
 > - **实测纠偏（关键）**：直接打 OpenRouter 真 API 证伪了文档 —— 稳定版 `/api/v1/models` 的 `order=` 参数**完全无效**（前端专用）、前端/rankings 端点全 404、edge 无 OR key（目录走公开端点、推理走 AI Gateway 统一计费）。故速度快改走 per-model `/endpoints` 吞吐、最热门改 LMArena 评分代理（用户拍板不加 OR key）。又实测发现 `latest_per_vendor` 会捞到 `openrouter/fusion`/`nvidia content-safety:free` 等噪声 → 收紧 chatRows（排 `:free`/openrouter meta/`-fast`）+ 各家最新要付费档。
 > - **DB（2 迁移,已 db push prod + schema regen）**：`model_presets` 表(slug PK,resolver_kind,params jsonb,default_selected,RLS 锁死)+ seed 5 预设；放宽 `bots_creator_delete` RLS —— 公有 bot 无外部采用者(user_bot_contacts 无他人 + 无 bot_invites)可删（UPDATE 不可变触发器不动）。
