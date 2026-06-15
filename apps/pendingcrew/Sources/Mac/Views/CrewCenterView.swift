@@ -57,11 +57,10 @@ struct CrewCenterView: View {
         // 表现为"切换后 toolbar 闪一下"。用 selectedCrewId（切换瞬间即非 nil）+ 列表里的
         // title 兜底，整条就稳定不抖。
         .navigationTitle(crewStore.selectedDetail?.crew.title ?? crewStore.selectedCrew?.title ?? "")
-        // 那条灰线真因不是 hairline，是 toolbar 默认材质比内容浅一档形成的色差边界。
-        // 把 toolbar 背景刷成和内容(canvas:纯白/深)同色，边界就没了——这次 canvas 是
-        // 纯白，不再是之前那种暖白("淡黄")。配合 WindowSeparatorRemover 关掉 hairline。
-        .toolbarBackground(Theme.Palette.canvas, for: .windowToolbar)
-        .toolbarBackground(.visible, for: .windowToolbar)
+        // 灰线/无缝由 WindowSeparatorRemover(标题栏透明 + 内容铺满到顶)统一处理。
+        // **不能**在这里 .toolbarBackground 刷色：那是窗口级的，会连 sidebar 那半截 toolbar
+        // 一起刷白，把侧栏顶部的半透明材质盖住（"toolbar 挡住 sidebar"）。透明标题栏让
+        // sidebar 透出自己的侧栏材质、detail 透出白 canvas，两边各自对，互不打架。
         .toolbar {
             if let crewId = crewStore.selectedCrewId {
                 ToolbarItem {
