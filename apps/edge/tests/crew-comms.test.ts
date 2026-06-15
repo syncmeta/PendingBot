@@ -886,10 +886,9 @@ describe('GET /v1/sessions/:sessionId/inbox', () => {
 });
 
 // post-to-crew endpoint is device-grant-only, which the bare requireSession
-// mock doesn't satisfy. We skip the happy-path test (would need to seed a
-// real subject_device_grants row + bypass requireSubjectAuth) and only pin
-// the "supabase JWT path is rejected" contract — that runs through the
-// mocked requireSession and lands in the explicit 403 branch.
+// mock doesn't satisfy. The first two tests pin the JWT-rejection + bad-uuid
+// contracts via the mocked requireSession; the Phase-2 mention/reply_to tests
+// seed a real subject_device_grants row so the device-grant branch runs.
 describe('POST /v1/sessions/:sessionId/post-to-crew', () => {
   it('rejects supabase JWT (non-device-grant) callers with 403 forbidden', async () => {
     const db = makeFakeDb();
@@ -914,6 +913,167 @@ describe('POST /v1/sessions/:sessionId/post-to-crew', () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe('invalid_id');
+  });
+});
+
+// Phase 2 — session/bot outbound @ + reply_to. The session (coding agent)
+// posting to the crew can now @ a peer session / human and reply to a prior
+// message (auto-@ its sender). We pin the RPC recipient args + mailbox
+// enqueues + the mirror message's in_reply_to payload.
+describe('POST /v1/sessions/:sessionId/post-to-crew — mentions + reply_to (Phase 2)', () => {
+  const RUNNER_HOST = 'host-1';
+
+  // Seed a runnable session + device grant + capture the announcement RPC args
+  // and every mailbox enqueue. Returns the captured collections.
+  async function seedSession(db: FakeDb): Promise<{
+    annArgs: Record<string, unknown>[];
+    enqueues: Record<string, unknown>[];
+  }> {
+    await seedDeviceGrant(db, SUBJECT);
+    db.rows.crew_sessions = [
+      {
+        id: SESSION_A,
+        responsible_subject_id: SUBJECT,
+        runner_host_id: RUNNER_HOST,
+        status: 'running',
+        crew_conversation_id: CREW_ID,
+      },
+    ];
+    const annArgs: Record<string, unknown>[] = [];
+    const enqueues: Record<string, unknown>[] = [];
+    db.rpcs = {
+      create_crew_announcement_from_runner_for_subject: (args) => {
+        annArgs.push(args);
+        return { data: ANNOUNCEMENT_ID, error: null };
+      },
+      enqueue_session_mailbox: (args) => {
+        enqueues.push(args);
+        return { data: crypto.randomUUID(), error: null };
+      },
+    };
+    return { annArgs, enqueues };
+  }
+
+  function postToCrew(db: FakeDb, body: Record<string, unknown>) {
+    return appFor(db).request(`/v1/sessions/${SESSION_A}/post-to-crew`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${DEVICE_TOKEN}` },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it('@session B → announcement recipient_session_ids includes B + B mailbox +1', async () => {
+    const db = makeFakeDb();
+    const { annArgs, enqueues } = await seedSession(db);
+    const res = await postToCrew(db, {
+      content: '@B 接力一下',
+      mentions: [{ kind: 'session', target_id: SESSION_B }],
+    });
+    expect(res.status).toBe(200);
+
+    // The RPC's hard-coded [] for recipients is gone — B is targeted.
+    expect(annArgs.length).toBe(1);
+    expect(annArgs[0].p_recipient_session_ids).toEqual([SESSION_B]);
+
+    // B got exactly one directed mailbox row, linked to the new message id.
+    const bEnqueues = enqueues.filter((e) => e.p_session_id === SESSION_B);
+    expect(bEnqueues.length).toBe(1);
+    expect(bEnqueues[0]).toMatchObject({ p_session_id: SESSION_B });
+  });
+
+  it('reply_to a session post → that session is auto-@d into recipients + mailbox', async () => {
+    const db = makeFakeDb();
+    const { annArgs, enqueues } = await seedSession(db);
+    const REPLIED = '11111111-2222-4333-8444-555555555555';
+    // The message being replied to is a session post (role=log, session_id=B).
+    db.rows.messages = [
+      {
+        id: REPLIED,
+        conversation_id: CREW_ID,
+        role: 'log',
+        log_kind: 'session_post',
+        log_payload: { session_id: SESSION_B, text: '我先开了头' },
+        content: '我先开了头',
+        status: 'done',
+        created_at: '2026-06-11T00:00:01Z',
+      },
+    ];
+    const res = await postToCrew(db, { content: '收到，我接着干', reply_to: REPLIED });
+    expect(res.status).toBe(200);
+
+    // B (the original sender) is auto-@d even though no explicit mention given.
+    expect(annArgs[0].p_recipient_session_ids).toEqual([SESSION_B]);
+    expect(enqueues.filter((e) => e.p_session_id === SESSION_B).length).toBe(1);
+
+    // The mirror message carries the reply linkage in its log_payload.
+    const mirror = db.inserts.find(
+      (i) => i.table === 'messages' && i.row.role === 'log' && (i.row.log_payload as Record<string, unknown> | null)?.session_id === SESSION_A,
+    );
+    expect((mirror?.row.log_payload as Record<string, unknown>).in_reply_to).toBe(REPLIED);
+  });
+
+  it('reply_to a human message → human becomes a member recipient (no mailbox)', async () => {
+    const db = makeFakeDb();
+    const { annArgs, enqueues } = await seedSession(db);
+    const REPLIED = '22222222-3333-4444-8555-666666666666';
+    const HUMAN_MEMBER = 'mem-human-x';
+    db.rows.messages = [
+      {
+        id: REPLIED,
+        conversation_id: CREW_ID,
+        role: 'user',
+        user_id: USER,
+        log_kind: null,
+        log_payload: null,
+        content: '帮我看看这个',
+        status: 'done',
+        created_at: '2026-06-11T00:00:01Z',
+      },
+    ];
+    // The crew roster maps the human's user_id → a member row.
+    db.rows.temporary_group_members = [
+      { id: HUMAN_MEMBER, conversation_id: CREW_ID, member_kind: 'human', user_id: USER, status: 'active' },
+    ];
+    const res = await postToCrew(db, { content: '看完了，结论是…', reply_to: REPLIED });
+    expect(res.status).toBe(200);
+
+    // Human lands as a member recipient, NOT a session recipient, and gets NO mailbox.
+    expect(annArgs[0].p_recipient_member_ids).toEqual([HUMAN_MEMBER]);
+    expect(annArgs[0].p_recipient_session_ids).toEqual([]);
+    expect(enqueues.length).toBe(0);
+
+    // The mirror message still records what was replied to.
+    const mirror = db.inserts.find(
+      (i) => i.table === 'messages' && i.row.role === 'log',
+    );
+    expect((mirror?.row.log_payload as Record<string, unknown>).in_reply_to).toBe(REPLIED);
+  });
+
+  it('no mentions + no reply_to → broadcast preserved (empty recipients, no mailbox)', async () => {
+    const db = makeFakeDb();
+    const { annArgs, enqueues } = await seedSession(db);
+    const res = await postToCrew(db, { content: 'just a milestone', category: 'milestone' });
+    expect(res.status).toBe(200);
+    expect(annArgs[0].p_recipient_session_ids).toEqual([]);
+    expect(annArgs[0].p_recipient_member_ids).toEqual([]);
+    expect(enqueues.length).toBe(0);
+  });
+
+  it('reply_to is not a valid uuid → 400 invalid_body', async () => {
+    const db = makeFakeDb();
+    await seedSession(db);
+    const res = await postToCrew(db, { content: 'x', reply_to: 'not-a-uuid' });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('invalid_body');
+  });
+
+  it('reply_to points at a non-existent message → 400 invalid_body', async () => {
+    const db = makeFakeDb();
+    await seedSession(db);
+    const MISSING = '33333333-4444-4555-8666-777777777777';
+    const res = await postToCrew(db, { content: 'x', reply_to: MISSING });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('invalid_body');
   });
 });
 

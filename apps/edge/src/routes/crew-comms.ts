@@ -52,6 +52,7 @@ import { jsonError } from '../lib/http-error';
 import type { Json } from '../db/schema';
 import type { AppBindings } from '../types';
 import { dispatchGroupTurn } from '../lib/group-dispatch';
+import { resolveOutboundRecipients } from '../lib/crew-outbound';
 
 // ── messages → chat-entry mapping (spec §9: crew chat IS the conversation's
 // `messages`, so the captain replies via the standard bot-reply pipeline and
@@ -898,6 +899,12 @@ const MarkDeliveredBody = z.object({
 const SessionPostToCrewBody = z.object({
   content: z.string().trim().min(1).max(4_000),
   category: z.enum(['progress', 'question', 'milestone']).optional(),
+  // Phase 2 — outbound @ + reply_to. `mentions` reuses the spec-v2 mention
+  // shape (only 'session' / 'human' are meaningful on an outbound post);
+  // `reply_to` auto-@s the replied-to message's original sender. Both resolve
+  // via lib/crew-outbound.ts:resolveOutboundRecipients.
+  mentions: z.array(MentionItem).max(64).default([]),
+  reply_to: z.string().uuid().optional(),
 });
 
 // T4.3 — server-side reception for the `request_permission` agent tool.
@@ -963,6 +970,23 @@ sessionInboxRoutes.post('/:sessionId/post-to-crew', requireSubjectAuth(['crew:wr
     });
   }
 
+  // Phase 2 — resolve outbound @ + reply_to into explicit recipient lists.
+  // @session / reply_to-of-a-session-post → session recipients (each gets a
+  // directed mailbox row); reply_to-of-a-human-message → member recipient
+  // (metadata-only, no mailbox). A malformed @ / reply_to is a 400.
+  const recip = await resolveOutboundRecipients(
+    c.env,
+    sessionRow.crew_conversation_id,
+    parsed.mentions,
+    parsed.reply_to,
+  );
+  if (recip.error) {
+    if (recip.error.status >= 400 && recip.error.status < 500) {
+      return jsonError(c, 400, 'invalid_body', { message: recip.error.message });
+    }
+    return jsonError(c, 500, 'database_error', { detail: recip.error.message });
+  }
+
   const dbMessageKind = parsed.category === 'question' ? 'question' : 'status';
   const payload: Record<string, unknown> = {
     text: parsed.content,
@@ -974,8 +998,8 @@ sessionInboxRoutes.post('/:sessionId/post-to-crew', requireSubjectAuth(['crew:wr
     p_runner_host_id: sessionRow.runner_host_id,
     p_responsible_subject_id: sessionRow.responsible_subject_id,
     p_crew_session_id: sessionRow.id,
-    p_recipient_session_ids: [] as Json,
-    p_recipient_member_ids: [] as Json,
+    p_recipient_session_ids: recip.sessionIds as unknown as Json,
+    p_recipient_member_ids: recip.memberIds as unknown as Json,
     p_message_kind: dbMessageKind,
     p_summary: parsed.content,
     p_payload: payload as Json,
@@ -995,9 +1019,12 @@ sessionInboxRoutes.post('/:sessionId/post-to-crew', requireSubjectAuth(['crew:wr
   // card (role='log' → mapMessageToEntry senderKind='session', attributed via
   // log_payload.session_id). Best-effort: a failure must NOT fail the request
   // — the announcement already succeeded.
+  // `reply_to` linkage rides in the mirror's log_payload.in_reply_to (no new
+  // column) so future UI can thread the conversation.
+  const mirrorMessageId = crypto.randomUUID();
   try {
     const { error: msgErr } = await svc.from('messages').insert({
-      id: crypto.randomUUID(),
+      id: mirrorMessageId,
       client_message_id: crypto.randomUUID(),
       conversation_id: sessionRow.crew_conversation_id,
       role: 'log',
@@ -1007,6 +1034,7 @@ sessionInboxRoutes.post('/:sessionId/post-to-crew', requireSubjectAuth(['crew:wr
         session_id: sessionId,
         text: parsed.content,
         category: parsed.category ?? null,
+        ...(recip.inReplyTo ? { in_reply_to: recip.inReplyTo } : {}),
       },
       content: parsed.content,
       status: 'done',
@@ -1016,6 +1044,24 @@ sessionInboxRoutes.post('/:sessionId/post-to-crew', requireSubjectAuth(['crew:wr
     }
   } catch (e) {
     console.warn('[session post-to-crew] messages mirror insert threw', e);
+  }
+
+  // Directed mailbox fan-out for each @session / reply_to-of-a-session target
+  // (Phase 2, parity with the human-sender path). Member recipients (a human
+  // auto-@d via reply_to) get NO mailbox — humans read the group chat directly.
+  // Best-effort: an enqueue failure must NOT fail the post (announcement +
+  // mirror already landed).
+  for (const targetSessionId of recip.sessionIds) {
+    const { error: enqErr } = await untypedRpc(svc).rpc('enqueue_session_mailbox', {
+      p_session_id: targetSessionId,
+      p_message_kind: 'instruction',
+      p_summary: parsed.content,
+      p_payload: { source: recip.inReplyTo ? 'crew_reply' : 'crew_mention' },
+      p_source_message_id: mirrorMessageId,
+    });
+    if (enqErr) {
+      console.warn('[session post-to-crew] enqueue_session_mailbox failed', targetSessionId, enqErr.message);
+    }
   }
 
   return c.json({ announcementId: data, category: parsed.category ?? null });
