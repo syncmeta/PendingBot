@@ -59,39 +59,40 @@ struct MacWelcomeView: View {
         // edges), on a compact window — smaller than the main app window
         // restored once signed in via MacRootGate.
         HStack(spacing: 96) {
-            Image("BrandMark")
-                .resizable()
-                .interpolation(.high)
-                .antialiased(true)
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 92, height: 92)
-                .clipShape(RoundedRectangle(cornerRadius: 21, style: .continuous))
-                .shadow(color: .black.opacity(0.06), radius: 18, y: 5)
+            // 左侧:平时是 logo;点了扫码后,二维码在 logo 这个位置取而代之。
+            // 右侧登录表单始终在(扫码胶囊高亮 = 再点一下收起二维码)。
+            if showingQRLogin {
+                PendingBotMacQRLoginView()
+                    .transition(.opacity)
+            } else {
+                Image("BrandMark")
+                    .resizable()
+                    .interpolation(.high)
+                    .antialiased(true)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 92, height: 92)
+                    .clipShape(RoundedRectangle(cornerRadius: 21, style: .continuous))
+                    .shadow(color: .black.opacity(0.06), radius: 18, y: 5)
+            }
 
             VStack(alignment: .leading, spacing: 0) {
-                if showingQRLogin {
-                    // 扫码登录:不弹窗,直接把右半列整列换成二维码(自带返回按钮)。
-                    PendingBotMacQRLoginView(onBack: { showingQRLogin = false })
+                if vm.stage == .humanCheck {
+                    backButton
+                        .padding(.bottom, 18)
                         .transition(.opacity)
-                } else {
-                    if vm.stage == .humanCheck {
-                        backButton
-                            .padding(.bottom, 18)
-                            .transition(.opacity)
-                    }
+                }
 
-                    switch vm.stage {
-                    case .enteringEmail:
-                        enteringEmailBody
-                    case .humanCheck:
-                        humanCheckBody
-                            .transition(.opacity)
-                    }
+                switch vm.stage {
+                case .enteringEmail:
+                    enteringEmailBody
+                case .humanCheck:
+                    humanCheckBody
+                        .transition(.opacity)
+                }
 
-                    if let errorText = vm.errorText {
-                        errorBlock(text: errorText)
-                            .padding(.top, 12)
-                    }
+                if let errorText = vm.errorText {
+                    errorBlock(text: errorText)
+                        .padding(.top, 12)
                 }
             }
             .frame(width: 310)
@@ -366,24 +367,34 @@ struct MacWelcomeView: View {
         .accessibilityLabel("Sign in with Google")
     }
 
-    /// 扫码登录入口——qrcode 图标装在与 Apple/Google 同款玻璃胶囊里。点击不弹窗,
-    /// 而是把右半列整列换成二维码(见 body 的 `showingQRLogin` 分支)。
+    /// 扫码登录入口——qrcode 图标装在与 Apple/Google 同款玻璃胶囊里。点击把二维码
+    /// 显示在左侧 logo 的位置(见 body 的 `showingQRLogin` 分支);激活时胶囊填成
+    /// accent,再点一下收起二维码 / 还原 logo(等于返回)。
+    @ViewBuilder
     private var qrLoginButton: some View {
+        let glyph = Image(systemName: "qrcode")
+            .font(Theme.Fonts.glyph(size: 22, weight: .medium))
+            .frame(maxWidth: .infinity)
+            .frame(height: 48)
         Button {
-            showingQRLogin = true
+            showingQRLogin.toggle()
             focusedField = nil
         } label: {
-            Image(systemName: "qrcode")
-                .font(Theme.Fonts.glyph(size: 22, weight: .medium))
-                .foregroundStyle(Theme.Palette.ink)
-                .frame(maxWidth: .infinity)
-                .frame(height: 48)
-                .macGlassCapsule()
-                .shadow(color: .black.opacity(0.08), radius: 10, y: 4)
+            if showingQRLogin {
+                glyph
+                    .foregroundStyle(Color.white)
+                    .background(Capsule().fill(Theme.Palette.accent))
+                    .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
+            } else {
+                glyph
+                    .foregroundStyle(Theme.Palette.ink)
+                    .macGlassCapsule()
+                    .shadow(color: .black.opacity(0.08), radius: 10, y: 4)
+            }
         }
         .buttonStyle(.plain)
         .accessibilityLabel("扫码登录")
-        .help("扫码登录")
+        .help(showingQRLogin ? "收起二维码" : "扫码登录")
     }
 
     /// Prefer the Apple-supplied logo-only artwork when present (shared
@@ -499,12 +510,12 @@ struct MacWelcomeView: View {
     private func advance() {
         if vm.advanceToHumanCheck() {
             focusedField = nil
+            showingQRLogin = false   // 走邮箱流程时把 logo 还原
         }
     }
 }
 
 private struct PendingBotMacQRLoginView: View {
-    var onBack: () -> Void
     @State private var challenge: PendingBotDeviceLoginChallenge?
     @State private var status: Status = .requesting
     @State private var pollTask: Task<Void, Never>?
@@ -517,76 +528,64 @@ private struct PendingBotMacQRLoginView: View {
         case error
     }
 
+    // 取代 logo 的二维码卡片:白底圆角方卡,只有码(失败/超时则白色模糊 + 刷新图标)。
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // 返回钮:回到邮箱/三方登录(与 humanCheck 阶段返回钮同款玻璃圆钮)。
-            Button {
-                onBack()
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(Theme.Fonts.glyph(size: 16, weight: .semibold))
-                    .foregroundStyle(Theme.Palette.ink)
-                    .frame(width: 32, height: 32)
-                    .macGlassCircle()
-                    .shadow(color: .black.opacity(0.06), radius: 6, y: 2)
-            }
-            .buttonStyle(.plain)
-            .keyboardShortcut(.cancelAction)
-            .accessibilityLabel("返回")
-            .padding(.bottom, 20)
-
-            // 只显示二维码本身——标题/图标/说明/「等待批准」一律不要。
-            content
-                .frame(maxWidth: .infinity)
-        }
-        .task { start() }
-        .onDisappear { pollTask?.cancel() }
+        content
+            .frame(width: 180, height: 180)
+            .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(.white))
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .shadow(color: .black.opacity(0.08), radius: 16, y: 5)
+            .task { start() }
+            .onDisappear { pollTask?.cancel() }
     }
 
     @ViewBuilder
     private var content: some View {
         switch status {
         case .requesting:
-            // 生成二维码前的过渡:只一个 spinner,不带文字。
+            // 生成二维码前的过渡:只一个 spinner。
             ProgressView()
-                .controlSize(.regular)
-                .padding(.vertical, 60)
+                .controlSize(.large)
         case .waiting:
-            if let challenge, let bitmap = QRCode.image(challenge.qrPayload, quietModules: 2) {
-                // 只有码。
-                Image(platformImage: bitmap)
-                    .resizable()
-                    .interpolation(.none)
-                    .scaledToFit()
-                    .frame(width: 220, height: 220)
-                    .padding(12)
-                    .background(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .shadow(color: .black.opacity(0.06), radius: 8, y: 3)
-            }
+            qrImage(blurred: false)
         case .approved:
-            VStack(spacing: 10) {
-                Image(systemName: "checkmark.seal.fill")
-                    .font(.system(size: 44))
-                    .foregroundStyle(.green)
-                Text("登录成功")
-                    .font(Theme.Fonts.system(size: 16, weight: .medium))
-                    .foregroundStyle(Theme.Palette.ink)
-            }
-            .padding(.top, 28)
+            Image(systemName: "checkmark.seal.fill")
+                .font(.system(size: 52))
+                .foregroundStyle(.green)
         case .error:
-            VStack(spacing: 12) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 34))
-                    .foregroundStyle(.orange)
-                Text(errorMessage ?? "登录失败")
-                    .font(Theme.Fonts.footnote)
-                    .foregroundStyle(Theme.Palette.inkMuted)
-                    .multilineTextAlignment(.center)
-                Button("重试") { start() }
-                    .buttonStyle(.borderedProminent)
+            // 超时 / 过期 / 失败:二维码白色模糊,盖一个刷新图标,点了重新生成。
+            ZStack {
+                qrImage(blurred: true)
+                Color.white.opacity(0.72)
+                Button { start() } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 30, weight: .semibold))
+                        .foregroundStyle(Theme.Palette.accent)
+                        .frame(width: 60, height: 60)
+                        .background(Circle().fill(.white))
+                        .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help("刷新")
+                .accessibilityLabel("刷新二维码")
             }
-            .padding(.top, 28)
+        }
+    }
+
+    /// 当前 challenge 的二维码;失败态传 `blurred: true` 渲染成模糊。没生成出码就
+    /// 返回一块透明占位(由调用方盖白幕 + 刷新图标)。
+    @ViewBuilder
+    private func qrImage(blurred: Bool) -> some View {
+        if let challenge, let bitmap = QRCode.image(challenge.qrPayload, quietModules: 2) {
+            Image(platformImage: bitmap)
+                .resizable()
+                .interpolation(.none)
+                .scaledToFit()
+                .frame(width: 152, height: 152)
+                .blur(radius: blurred ? 7 : 0)
+        } else {
+            Color.clear.frame(width: 152, height: 152)
         }
     }
 
