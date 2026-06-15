@@ -342,19 +342,40 @@ struct CrewSessionWindowView: View {
             }
             .buttonStyle(.plain)
             .help("打开这个 session 的终端")
-        } else {
-            // captain / human 行：只头像 + 名。
-            HStack(spacing: 8) {
-                CrewAvatarBadges(sender: item.sender, size: 26)
-                Text(item.sender.displayName)
-                    .font(Theme.Fonts.callout)
-                    .foregroundStyle(Theme.Palette.ink)
-                    .lineLimit(1)
-                Spacer(minLength: 0)
+        } else if item.sender.isCaptain {
+            // captain 没在跑:点头像即进入它的 session —— 没在跑就当场起一个再进。
+            // 用户定调:不要常驻/自动起,只要「点头像就进 session」;这条是纯点击触发,
+            // 起成功后切到终端,失败则留在成员列表(错误经 lastStartError 显示)。
+            Button {
+                Task {
+                    await startCaptain()
+                    if hasRunningCaptain { sessionRunner.viewingTerminal = true }
+                }
+            } label: {
+                memberPlainRow(item.sender)
+                    .contentShape(Rectangle())
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
+            .buttonStyle(.plain)
+            .disabled(starting)
+            .help("进入 Captain session（没在跑会先起一个）")
+        } else {
+            // human 行：只头像 + 名(无 session 可进)。
+            memberPlainRow(item.sender)
         }
+    }
+
+    /// 成员行的「头像 + 名」基础排版（captain 入口与 human 行共用）。
+    private func memberPlainRow(_ sender: GroupBubbleSender) -> some View {
+        HStack(spacing: 8) {
+            CrewAvatarBadges(sender: sender, size: 26)
+            Text(sender.displayName)
+                .font(Theme.Fonts.callout)
+                .foregroundStyle(Theme.Palette.ink)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
     }
 
     @ViewBuilder
@@ -363,7 +384,10 @@ struct CrewSessionWindowView: View {
         HStack(alignment: .top, spacing: 8) {
             CrewAvatarBadges(sender: sender, size: 26)
             VStack(alignment: .leading, spacing: 2) {
-                Text(run.taskBrief.isEmpty ? "新 session" : run.taskBrief)
+                // captain 行标题用名字(Captain),不用 taskBrief —— captain 的 taskBrief
+                // 是开场报到 prompt,拿来当标题没意义。worker 仍用首条指令(taskBrief)。
+                Text(run.role == .captain ? run.displayName
+                     : (run.taskBrief.isEmpty ? run.displayName : run.taskBrief))
                     .font(Theme.Fonts.callout)
                     .foregroundStyle(Theme.Palette.ink)
                     .lineLimit(1)
@@ -404,7 +428,7 @@ struct CrewSessionWindowView: View {
         let seed = m.botId ?? m.userId ?? m.codeSessionId ?? m.id
         let name: String = {
             if let n = m.displayName, !n.isEmpty { return n }
-            if isCaptain { return "机长" }
+            if isCaptain { return "Captain" }
             if isHuman   { return "我" }
             if isSession { return "session" }
             return "bot"
@@ -426,7 +450,12 @@ struct CrewSessionWindowView: View {
             avatarPath: nil,
             avatarSeed: isCaptain ? (captainBotId ?? run.sessionId) : run.sessionId,
             isCaptain: isCaptain,
-            sessionStatus: run.status == .running ? "running" : "exited", isSession: true)
+            // 三态:退出=exited(灰)、跑着干活=working(绿)、存活空闲=idle(黄)。
+            sessionStatus: run.status != .running ? "exited" : (run.isWorking ? "working" : "idle"),
+            isSession: true,
+            // 头像红点 = 有未读待办/消息(非前台 run)。复用切换条同一份未读数,
+            // badgeCount 已排除选中的前台 run 且随 badgeTick 每 2s 重算。
+            hasNotification: badgeCount(for: run) > 0)
     }
 
     // MARK: - 成员列表模式数据订阅 + 答复
@@ -866,8 +895,9 @@ private struct SessionBarItemView: View {
 
     var body: some View {
         HStack(spacing: 5) {
+            // 退出=灰、干活中=绿、空闲=黄(与头像状态点一致)。
             Circle()
-                .fill(run.status == .running ? Color.green : Color.gray)
+                .fill(run.status != .running ? Color.gray : (run.isWorking ? Color.green : Color.yellow))
                 .frame(width: 7, height: 7)
             Text(run.displayName)
                 .font(.caption.weight(isSelected ? .semibold : .regular))
@@ -929,13 +959,17 @@ private struct SessionRunContentView: View {
     @ViewBuilder
     private var header: some View {
         HStack(spacing: 10) {
-            Image(systemName: run.kind == .claudeCode ? "sparkles" : "wand.and.stars")
+            Image(systemName: run.role == .captain ? "star.fill"
+                  : (run.kind == .claudeCode ? "sparkles" : "wand.and.stars"))
                 .foregroundStyle(.tint)
             VStack(alignment: .leading, spacing: 2) {
-                Text(run.kind.displayName)
+                // captain 的标题就是 Captain;副标题给 agent 类型(看得出底层是 codex/claude)。
+                // worker:标题 agent 类型,副标题首条指令(taskBrief)。
+                Text(run.role == .captain ? "Captain" : run.kind.displayName)
                     .font(.callout.weight(.semibold))
-                if !run.taskBrief.isEmpty {
-                    Text(run.taskBrief)
+                let subtitle = run.role == .captain ? run.kind.displayName : run.taskBrief
+                if !subtitle.isEmpty {
+                    Text(subtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)

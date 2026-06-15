@@ -46,7 +46,11 @@ struct MacThreePaneView: View {
                 // 内容 hosting view 不会在 present 当帧同步到列宽，要等一次对 inspector
                 // divider 的 geometry 变化才复位（用户手动"拖一下"）。CrewSessionWindowView
                 // 在 onAppear 后做一次程序化 divider 同步兜这个 bug（见那里 resyncInspectorDivider）。
-                .inspectorColumnWidth(min: 300, ideal: 400, max: 560)
+                // 列宽：右栏内嵌的是 Claude/Codex 全屏 TUI，列数 = 栏宽 / 字宽。配 11pt
+                // 紧凑字体(见 AgentTerminalView)后 cell ~6.6pt：min 360≈54 列、ideal 480≈72、
+                // max 560≈84(≈TUI 设计宽度)。**max 不抬过 560** —— tech-debt 有记「inspector 拖到
+                // max 时聊天栏被挤破」,抬 max 会加剧那个已知未决问题;真正治乱靠字体不靠更宽。
+                .inspectorColumnWidth(min: 360, ideal: 480, max: 560)
         }
         // inspector 开 → 若 sidebar 还展开着就收起它（用户要的：开 inspector 自动让
         // sidebar 收）。**关 inspector 不自动弹回 sidebar** —— sidebar 由用户手动控制。

@@ -265,7 +265,7 @@ final class CrewRelayAgent: ObservableObject {
         switch m.senderKind {
         case "user": return "我 (Mac)"
         case "session": return "session" + (m.senderSessionId.map { " · \($0.prefix(8))" } ?? "")
-        case "captain": return captainName ?? "机长"
+        case "captain": return captainName ?? "Captain"
         default: return m.senderKind
         }
     }
