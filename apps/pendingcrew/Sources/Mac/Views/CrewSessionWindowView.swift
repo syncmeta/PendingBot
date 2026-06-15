@@ -404,7 +404,7 @@ struct CrewSessionWindowView: View {
         let seed = m.botId ?? m.userId ?? m.codeSessionId ?? m.id
         let name: String = {
             if let n = m.displayName, !n.isEmpty { return n }
-            if isCaptain { return "机长" }
+            if isCaptain { return "Captain" }
             if isHuman   { return "我" }
             if isSession { return "session" }
             return "bot"
@@ -426,7 +426,10 @@ struct CrewSessionWindowView: View {
             avatarPath: nil,
             avatarSeed: isCaptain ? (captainBotId ?? run.sessionId) : run.sessionId,
             isCaptain: isCaptain,
-            sessionStatus: run.status == .running ? "running" : "exited", isSession: true)
+            sessionStatus: run.status == .running ? "running" : "exited", isSession: true,
+            // 头像红点 = 有未读待办/消息(非前台 run)。复用切换条同一份未读数,
+            // badgeCount 已排除选中的前台 run 且随 badgeTick 每 2s 重算。
+            hasNotification: badgeCount(for: run) > 0)
     }
 
     // MARK: - 成员列表模式数据订阅 + 答复

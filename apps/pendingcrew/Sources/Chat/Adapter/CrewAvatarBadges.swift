@@ -61,9 +61,18 @@ struct CrewAvatarBadges: View {
     }
 
     // MARK: - Session status dot (bottom-trailing)
+    //
+    // 三态(用户定调):有未读 → 红点(最显眼、可操作,盖过状态);否则按 run 状态 ——
+    // running=绿(在跑着)、其余=灰(空闲/已退出)。红点比状态点略大一圈以示突出。
 
     @ViewBuilder private var statusDot: some View {
-        if let status = sender.sessionStatus {
+        if sender.hasNotification {
+            Circle()
+                .fill(Color.red)
+                .frame(width: size * 0.30, height: size * 0.30)
+                .overlay(Circle().strokeBorder(Theme.Palette.canvas, lineWidth: 1.5))
+                .offset(x: size * 0.34, y: size * 0.34)
+        } else if let status = sender.sessionStatus {
             Circle()
                 .fill(statusColor(status))
                 .frame(width: size * 0.26, height: size * 0.26)
