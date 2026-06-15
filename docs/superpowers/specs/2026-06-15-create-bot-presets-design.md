@@ -46,15 +46,20 @@
 | 名字交互 | **随机默认 + "换一个"按钮**，仍可手改 |
 | 自定义语义 | 点自定义 = 拿所选预设并集作起点 → 进选模型页手改 → bot 改存**显式** `modelPool`（冻结快照 + 筛选），**不再跟预设联动**。一个 bot 要么"预设驱动（活）"、要么"自定义（冻结）"，二选一 |
 
-## OpenRouter API 可行性（已核实官方文档）
+## OpenRouter API 可行性（已实测，非凭文档）
 
-`GET https://openrouter.ai/api/v1/models` 接受 sort/filter 参数：
-- sort：`throughput-high-to-low`（→速度快）、`most-popular` / `top-weekly`（→最热门）、`newest`（→各家最新）、`pricing-*`、`context-high-to-low`、`latency-low-to-high`
-- filter：`model_authors`、`providers`、`min_price` / `max_price`、`category`、`input/output_modalities`、`context`
+**实测结论（2026-06-15，直接打真实 API）—— 推翻了文档说法：**
 
-Datasets/rankings API（`/docs/api/api-reference/datasets/get-rankings-daily`，用 OR key 鉴权）给"每日 top-50 按 token 用量"——最热门的更干净来源。
+- ❌ 稳定版 `GET /api/v1/models` 的 `order=` 参数**完全无效**（throughput/most-popular/newest/pricing 各排序返回一模一样）。文档里的 sort 是网站前端专用，不是 API 能力。
+- ❌ 前端/rankings/analytics 端点（`/api/frontend/*`、`/api/v1/analytics/*`）全 404。
+- ❌ OR 官方用量榜（`datasets/get-rankings-daily`）需要 `OPENROUTER_API_KEY`——**edge 里没有这个 key**（目录走公开端点免鉴权，推理走 CF AI Gateway 统一计费 `cf-aig-authorization`，全程无裸 OR key）。决定不为此加 secret。
+- ✅ 目录（337 模型）有 `created`(发布时间) + `pricing`(价格)；中国厂覆盖良好（qwen 49 / deepseek 12 / z-ai 10 / minimax 8 / moonshotai 6）。
+- ✅ per-model 端点 `GET /api/v1/models/:author/:slug/endpoints` 返回真实 `throughput_last_30m` / `latency_last_30m` / `uptime_*`。
+- ✅ 目录已挂 LMArena `rating` / `rank` / `vote_count`（`buildModelCatalog` 已拉，6h KV）。
 
-边端已有从 OpenRouter 派生 catalog 的逻辑（`apps/edge/src/routes/models.ts`，`/v1/models` 走 1h 边缘缓存 + LMArena 6h KV）。预设解析复用同一上游。
+**据此定的数据源**（见下方 resolver）：旗舰/最新走目录字段；速度快走 per-model endpoints 吞吐（候选集 bounded + KV 缓存）；最热门用 LMArena 评分代理（免费、已在拉，语义是"评测质量榜"而非"使用量榜"，接受）。
+
+边端已有 `buildModelCatalog()`（`apps/edge/src/routes/models.ts`，公开 `/api/v1/models` + 1h 边缘缓存 + LMArena 6h KV）。预设解析**复用它的产物**，不另开 OpenRouter 调用（除速度快的 endpoints）。
 
 ## 设计
 
@@ -74,13 +79,13 @@ Datasets/rankings API（`/docs/api/api-reference/datasets/get-rankings-daily`，
 | `sort_order` | int | 排序 |
 | `updated_at` / `updated_by` | | 审计 |
 
-`resolver_kind` → OpenRouter 查询映射（**全部规则驱动，无需手钉清单**）：
+`resolver_kind` → 数据源映射（**全部规则驱动，无需手钉清单**；都基于 `buildModelCatalog()` 产物在内存里算，除速度快额外拉 endpoints）：
 
-- `top_flagship` —— 厂商列表固定 `[openai, anthropic]`（`params.authors` 可改），各厂按"旗舰策略"取一个
-- `chinese_flagship` —— `params.authors` = 中国厂白名单（默认 `[deepseek, qwen, moonshotai, z-ai, minimax, ...]`），各厂按"旗舰策略"取一个
-- `latest_per_vendor` —— `order=newest`，按 author 分组各取最新一个，限 `params.count`（默认 8）
-- `fastest` —— `order=throughput-high-to-low`，取前 `params.count`（默认 5）
-- `most_popular` —— Datasets 用量榜 或 `order=most-popular`，取前 `params.count`（默认 5）
+- `top_flagship` —— 厂商列表固定 `[openai, anthropic]`（`params.authors` 可改），各厂按"旗舰策略"取一个；命中 OpenAI/Anthropic 取原生 twin 行
+- `chinese_flagship` —— `params.authors` = 中国厂白名单（默认 `[deepseek, qwen, moonshotai, z-ai, minimax]`），各厂按"旗舰策略"取一个
+- `latest_per_vendor` —— 按目录 `release_date` 排序，按 `provider` 分组各取最新一个，限 `params.count`（默认 8）
+- `fastest` —— 候选集（非 free、chat、LMArena 评分 ≥ `params.min_rating` 质量下限）→ 并发拉 `/api/v1/models/:slug/endpoints` 取 `throughput_last_30m` → 排序取前 `params.count`（默认 5）；候选+吞吐结果 KV 缓存 24h
+- `most_popular` —— 目录 LMArena `rating`（text 子集）排序取前 `params.count`（默认 5）。**语义=评测质量榜，非真实使用量榜**（OR 用量榜要 OR key，已决定不加）
 - `manual` —— 直接用 `params.manual_models`（纯应急口，正常不用）
 
 **旗舰策略**（`top_flagship` / `chinese_flagship` 的 `params.flagship`，每厂取一个）：
@@ -188,6 +193,8 @@ pool -= modelPool.exclude
 ## 已知尾巴 / tech-debt 候选
 
 - 旗舰策略默认"最贵"，但 `blended_usd_per_million` 是混合成本估算（缓存 0.7/输入 0.2/输出 0.1，`models.ts:122`），不完全等于"档位"，偶尔可能把 pro/ultra 排得不直观。遇到就把该预设切 `latest_in_series`。
-- OpenRouter 厂商 author slug（尤其中国厂 deepseek/qwen/moonshotai/z-ai/minimax）+ 各厂旗舰在不在 OpenRouter、能否走统一计费，需拉实时目录核对，别凭印象（按 `feedback_official_docs_for_integrations`）。上线前核掉。
+- **最热门用 LMArena 评分代理 = 评测质量榜，非真实使用量榜**。真用量榜需加 `OPENROUTER_API_KEY` + 走 OR `datasets/get-rankings-daily`（已决定 v1 不加）。记 tech-debt，将来要"真热门"再补 key。
+- 中国厂 author slug 已实测确认覆盖（qwen/deepseek/z-ai/minimax/moonshotai 都在目录里）。旗舰具体落到哪个 slug、原生路由是否生效，实现时对实时目录抽样核对。
+- `fastest` 候选集筛选阈值（`min_rating`、候选规模）需实现时按真实数据调，避免选出又快又弱的小模型或候选集过大拖慢解析。
 - 预设解析的 KV 刷新若用 cron，需单独排期；初期可被动 TTL。
 - 放宽删除的子查询性能在 bot 采用者很多时需关注（但能删的前提就是采用者≤1，集合天然小）。
