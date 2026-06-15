@@ -64,6 +64,61 @@ enum LocalSessionLaunch {
         runnerKind: LocalCodingAgentKind,
         appendPersona: String? = nil
     ) -> String? {
+        guard let md = renderWorldModelMarkdown(
+            detail: detail, members: members, taskBrief: taskBrief, workdir: workdir,
+            sessionId: sessionId, runnerKind: runnerKind, appendPersona: appendPersona)
+        else { return nil }
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pendingcrew-worldmodel-\(UUID().uuidString).md")
+        do {
+            try md.write(to: url, atomically: true, encoding: .utf8)
+            return url.path
+        } catch {
+            return nil
+        }
+    }
+
+    /// codex variant of world-model injection: render the SAME world-model markdown
+    /// as `renderWorldModelFile` (runnerKind: codex) but return it as a STRING —
+    /// codex feeds the world-model via `thread/start.developerInstructions`, not a
+    /// `--append-system-prompt-file`. best-effort：渲染失败返 nil（session 仍照常
+    /// 启动，只是没世界观）。`appendPersona` 非 nil（captain session）拼到世界观后面。
+    static func renderWorldModelString(
+        detail: CrewDetail,
+        members: [CrewMember],
+        taskBrief: String,
+        workdir: URL,
+        sessionId: String,
+        appendPersona: String? = nil
+    ) -> String? {
+        renderWorldModelMarkdown(
+            detail: detail, members: members, taskBrief: taskBrief, workdir: workdir,
+            sessionId: sessionId, runnerKind: .codex, appendPersona: appendPersona)
+    }
+
+    /// codex 的 crew MCP 配置 dict → `thread/start.mcpServers`。与 claude 走同一个
+    /// re-exec self helper（`--mcp-serve`）提供 post_to_crew/read_whiteboard；区别只是
+    /// codex 经协议传 dict，claude 经 `--mcp-config <file>` 传文件。`captain` → 多带
+    /// `--captain`，helper 端解锁机长专用 answer_decision（与 prepareLocalCommsConfig 一致）。
+    static func codexMcpServers(crewId: String, sessionId: String, captain: Bool = false) -> [String: Any]? {
+        guard let helper = Bundle.main.executablePath else { return nil }
+        let dir = LocalWhiteboardStore.defaultDirectory.path
+        var args = ["--mcp-serve", "--crew", crewId, "--dir", dir, "--session", sessionId]
+        if captain { args.append("--captain") }
+        return ["crew": ["command": helper, "args": args]]
+    }
+
+    /// 共享的世界观 markdown 渲染（claude 写临时文件、codex 取字符串都走这里，DRY）。
+    /// 任一步失败返 nil（best-effort）。
+    private static func renderWorldModelMarkdown(
+        detail: CrewDetail,
+        members: [CrewMember],
+        taskBrief: String,
+        workdir: URL,
+        sessionId: String,
+        runnerKind: LocalCodingAgentKind,
+        appendPersona: String?
+    ) -> String? {
         let humans = members
             .filter { $0.memberKind == "human" }
             .map { LocalSessionWorldModel.Human(
@@ -82,14 +137,7 @@ enum LocalSessionLaunch {
         if let persona = appendPersona {
             md += "\n\n---\n\n" + persona
         }
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pendingcrew-worldmodel-\(UUID().uuidString).md")
-        do {
-            try md.write(to: url, atomically: true, encoding: .utf8)
-            return url.path
-        } catch {
-            return nil
-        }
+        return md
     }
 
     private static func writeJSON(_ obj: [String: Any], to url: URL) -> String? {

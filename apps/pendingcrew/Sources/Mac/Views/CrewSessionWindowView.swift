@@ -635,25 +635,36 @@ struct CrewSessionWindowView: View {
             // isolation=on → 独立 worktree;off → crew 共享目录（spec §8/§11）。
             let workdir = SessionWorkspace.resolve(
                 crewDirectory: dir, isolation: cfg.isolation, hint: firstPrompt)
-            // 渲染本地世界观 → 临时 .md → claude --append-system-prompt-file
-            // (spec local-first chunk 4)。接合 v2：恒为本地渲染（不再有"logged
-            // 由 edge 注入"的分叉）；best-effort,失败 nil 不挡 session 启动。
             // 本地 session 的合成 id —— 世界观 / mcp-config / hook settings 三处一致。
             let localSessionId = serverLink?.sessionId ?? UUID().uuidString.lowercased()
-            cfg.appendSystemPromptFile = await renderWorldModelFile(
-                detail: detail, taskBrief: firstPrompt, workdir: workdir, sessionId: localSessionId)
-            // 本地 crew-comms 接线：MCP(post_to_crew/read_whiteboard) + hook(注入
-            // 未读白板)。接合 v2：comms 恒为本地，无论登没登录。
-            let comms = prepareLocalCommsConfig(crewId: detail.crew.id, sessionId: localSessionId)
-            cfg.settingsFile = comms.settings
-            cfg.mcpConfigFile = comms.mcp
+            // 世界观 + comms 接线按 kind 分叉：claude 走文件标志（--append-system-prompt-file
+            // / --settings / --mcp-config）；codex 没这些通道 —— 世界观经
+            // developerInstructions（字符串）、MCP 经 mcpServers dict 走协议传入。
+            // best-effort：渲染失败 nil 不挡 session 启动。
+            var codexDevInstructions: String? = nil
+            var codexMcp: [String: Any]? = nil
+            switch selectedKind {
+            case .claudeCode:
+                cfg.appendSystemPromptFile = await renderWorldModelFile(
+                    detail: detail, taskBrief: firstPrompt, workdir: workdir, sessionId: localSessionId)
+                let comms = prepareLocalCommsConfig(crewId: detail.crew.id, sessionId: localSessionId)
+                cfg.settingsFile = comms.settings
+                cfg.mcpConfigFile = comms.mcp
+            case .codex:
+                codexDevInstructions = await renderWorldModelString(
+                    detail: detail, taskBrief: firstPrompt, workdir: workdir, sessionId: localSessionId)
+                codexMcp = LocalSessionLaunch.codexMcpServers(
+                    crewId: detail.crew.id, sessionId: localSessionId)
+            }
             try await sessionRunner.start(
                 crewId: detail.crew.id,
                 sessionId: localSessionId,
                 config: cfg,
                 workingDirectory: workdir,
                 taskBrief: firstPrompt,
-                serverLink: serverLink
+                serverLink: serverLink,
+                developerInstructions: codexDevInstructions,
+                codexMcpServers: codexMcp
             )
             // 指令已在 argv 里(positional prompt)—— 不再等 REPL 就绪 sleep + 事后注入。
             draft = ""
@@ -692,6 +703,17 @@ struct CrewSessionWindowView: View {
         return LocalSessionLaunch.renderWorldModelFile(
             detail: detail, members: members, taskBrief: taskBrief, workdir: workdir,
             sessionId: sessionId, runnerKind: selectedKind, appendPersona: appendPersona)
+    }
+
+    /// codex 变体：渲染同一份世界观但返回字符串（→ thread/start.developerInstructions），
+    /// 不写临时文件。与上面的 file 版同样从 backend 拉 members。best-effort：失败 nil。
+    private func renderWorldModelString(detail: CrewDetail, taskBrief: String, workdir: URL, sessionId: String,
+                                        appendPersona: String? = nil) async -> String? {
+        guard let backend = appModel.backend else { return nil }
+        let members = (try? await backend.listCrewMembers(crewId: detail.crew.id))?.members ?? []
+        return LocalSessionLaunch.renderWorldModelString(
+            detail: detail, members: members, taskBrief: taskBrief, workdir: workdir,
+            sessionId: sessionId, appendPersona: appendPersona)
     }
 
     private func prepareLocalCommsConfig(crewId: String, sessionId: String,
@@ -745,13 +767,24 @@ struct CrewSessionWindowView: View {
             _ = try await api.claimSession(runnerHostId: hostId, sessionId: s.id)
             let link = CrewSessionServerLink(api: api, runnerHostId: hostId, sessionId: s.id)
             let kind: LocalCodingAgentKind = s.runnerKind.contains("codex") ? .codex : .claudeCode
+            // codex 走 app-server：世界观经 developerInstructions、MCP 经 mcpServers dict
+            // 传入（claude 的 hook/settings 文件通道在此 auto-claim 路径本就没接）。
+            var codexDevInstructions: String? = nil
+            var codexMcp: [String: Any]? = nil
+            if kind == .codex {
+                codexDevInstructions = await renderWorldModelString(
+                    detail: detail, taskBrief: s.taskBrief, workdir: dir, sessionId: s.id)
+                codexMcp = LocalSessionLaunch.codexMcpServers(crewId: detail.crew.id, sessionId: s.id)
+            }
             try await sessionRunner.start(
                 crewId: detail.crew.id,
                 sessionId: s.id,
                 config: SessionConfig(kind: kind, initialPrompt: s.taskBrief),
                 workingDirectory: dir,
                 taskBrief: s.taskBrief,
-                serverLink: link
+                serverLink: link,
+                developerInstructions: codexDevInstructions,
+                codexMcpServers: codexMcp
             )
             // taskBrief 已在 argv —— 不再 0.6s sleep + send(brief)。
         } catch {
@@ -838,8 +871,8 @@ private struct SessionBarItemView: View {
 }
 
 /// 单个 run 的内容视图。`@ObservedObject` 订阅 run 的 `@Published`（status /
-/// exitCode）驱动 header 刷新；内容区是内嵌的真终端（`AgentTerminalView`），
-/// agent 的输出原样渲染、键盘直接可输入。
+/// exitCode）驱动 header 刷新；内容区按 backend 类型分支：claude 显示
+/// `AgentTerminalView`（真终端），codex 显示 `CodexTranscriptView`（结构化 transcript）。
 private struct SessionRunContentView: View {
     @ObservedObject var run: CrewSessionRun
 
@@ -847,9 +880,14 @@ private struct SessionRunContentView: View {
         VStack(spacing: 0) {
             header
             Divider()
-            AgentTerminalView(session: run.terminalSession)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(nsColor: .textBackgroundColor))
+            if let term = run.agentTerminalSession {
+                AgentTerminalView(session: term)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(nsColor: .textBackgroundColor))
+            } else if let codex = run.backend as? CodexAppServerBackend {
+                CodexTranscriptView(transcript: codex.transcript)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
     }
 

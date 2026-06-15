@@ -44,6 +44,20 @@ final class LocalCodingAgentTests: XCTestCase {
         }
     }
 
+    // MARK: - billing guard (codex strips OPENAI_API_KEY)
+
+    func testCodexEnvOmitsOpenAIApiKeyForSubscriptionBilling() {
+        // An exported OPENAI_API_KEY would flip app-server to pay-as-you-go despite a
+        // chatgpt auth.json. Guard: codex env must never carry it.
+        let env = LocalCodingAgentEnv.build(additionalEnv: ["OPENAI_API_KEY": "sk-xxx"], kind: .codex)
+        XCTAssertNil(env["OPENAI_API_KEY"])
+    }
+
+    func testClaudeEnvStillAllowsCallerKeys() {
+        let env = LocalCodingAgentEnv.build(additionalEnv: ["ANTHROPIC_API_KEY": "x"], kind: .claudeCode)
+        XCTAssertEqual(env["ANTHROPIC_API_KEY"], "x")
+    }
+
     // MARK: - executable resolution
 
     func testResolveAgainstDiscoverAvailableIsConsistent() {

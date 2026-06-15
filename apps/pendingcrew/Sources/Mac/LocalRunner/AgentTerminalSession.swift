@@ -5,12 +5,11 @@ import SwiftTerm
 /// 一个内嵌真终端的 coding-agent 会话：在 PTY 里跑交互式 claude/codex(自动审批)。
 /// 读=终端原样显示，控=键盘(SwiftTerm 原生) + 程序化 send()/interrupt() 字节注入。
 @MainActor
-final class AgentTerminalSession: ObservableObject {
-    enum Status: Equatable { case running, exited(Int32?) }
-
+final class AgentTerminalSession: ObservableObject, SessionBackend {
     let kind: LocalCodingAgentKind
     let terminalView: LocalProcessTerminalView
-    @Published private(set) var status: Status = .running
+    @Published private(set) var status: SessionStatus = .running
+    var statusPublisher: Published<SessionStatus>.Publisher { $status }
 
     private final class Delegate: NSObject, LocalProcessTerminalViewDelegate {
         var onExit: ((Int32?) -> Void)?

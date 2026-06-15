@@ -19,7 +19,10 @@ public enum LocalCodingAgentEnv {
     ///
     /// **不透传**：PendingBot device grant token、Keychain 凭据、任何 `PENDING*` 前缀的
     /// PendingCrew 自己 env。所有非白名单 var 默认就不在返回 dict 里。
-    public static func build(additionalEnv: [String: String]) -> [String: String] {
+    public static func build(
+        additionalEnv: [String: String] = [:],
+        kind: LocalCodingAgentKind = .claudeCode
+    ) -> [String: String] {
         var result: [String: String] = [:]
 
         let parent = ProcessInfo.processInfo.environment
@@ -46,6 +49,15 @@ public enum LocalCodingAgentEnv {
             if isForbidden(key: key) { continue }
             result[key] = value
         }
+
+        // 计费守卫：codex app-server 靠 ~/.codex/auth.json 走 ChatGPT 订阅计费；
+        // 若父进程导出了 OPENAI_API_KEY，子进程会翻到按量 API 计费。
+        // 我们控制子进程 env，所以对 codex 一律剥掉这个 key。
+        // claude 路径不受影响（它用 ANTHROPIC_API_KEY）。
+        if kind == .codex {
+            result.removeValue(forKey: "OPENAI_API_KEY")
+        }
+
         return result
     }
 

@@ -122,6 +122,14 @@ final class CrewSessionRunner: ObservableObject {
         /// claim）并把 link 传进来，run 在结束时关掉 server row（让跨端列表能看到
         /// session 已结束）。`nil` = BYOK / local-only。
         serverLink: CrewSessionServerLink? = nil,
+        /// codex 世界观（字符串）→ `thread/start.developerInstructions`。caller 在
+        /// 拿得到 detail/members 处用 `LocalSessionLaunch.renderWorldModelString` 算好传入。
+        /// claude 不用这个 —— claude 走 `config.appendSystemPromptFile`（文件路径）。
+        developerInstructions: String? = nil,
+        /// codex crew MCP 配置 dict → `thread/start.mcpServers`。caller 用
+        /// `LocalSessionLaunch.codexMcpServers` 算好传入。claude 不用 —— 走
+        /// `config.mcpConfigFile`（文件路径）。
+        codexMcpServers: [String: Any]? = nil,
         /// captain / worker 角色标记（session 切换条展示 + captain 置顶）。
         role: CrewSessionRun.Role = .worker
     ) async throws {
@@ -134,14 +142,35 @@ final class CrewSessionRunner: ObservableObject {
             throw RunnerError.toolNotInstalled(kind: config.kind)
         }
         // 2. env 白名单（spec v2 §8.4.2）—— 复用 spec 的纯函数构造。
-        let env = LocalCodingAgentEnv.build(additionalEnv: additionalEnv)
-        // 3. 起内嵌终端 session
-        let terminalSession = AgentTerminalSession(
-            config: config,
-            executable: executable.path,
-            workdir: workingDirectory.path,
-            env: env
-        )
+        let env = LocalCodingAgentEnv.build(additionalEnv: additionalEnv, kind: config.kind)
+        // 3. 按 kind 选后端：claude = 内嵌真 PTY 终端；codex = app-server（stdio JSON-RPC）。
+        let backend: any SessionBackend
+        switch config.kind {
+        case .claudeCode:
+            backend = AgentTerminalSession(
+                config: config,
+                executable: executable.path,
+                workdir: workingDirectory.path,
+                env: env
+            )
+        case .codex:
+            // codex 没有 claude 的 hook/settings 通道：世界观经 developerInstructions、
+            // MCP 经 mcpServers dict、白板每轮经 additionalContext、审批经 server request。
+            // 后两者用 in-process provider 复用同一份本地 store（与 claude 的 helper 子进程
+            // 读写同一份白板/审批 JSON —— 右栏内联卡片 / 群聊白板对齐）。
+            let cb = CodexAppServerBackend(
+                executable: executable.path,
+                argv: config.argv(),
+                cwd: workingDirectory.path,
+                env: env,
+                model: config.model,
+                developerInstructions: developerInstructions,
+                mcpServers: codexMcpServers,
+                whiteboardProvider: Self.makeWhiteboardProvider(crewId: crewId, sessionId: sessionId),
+                approvalProvider: Self.makeApprovalProvider(crewId: crewId, sessionId: sessionId))
+            cb.boot(initialPrompt: config.initialPrompt)
+            backend = cb
+        }
         // 4. 包成 view model
         let run = CrewSessionRun(
             crewId: crewId,
@@ -151,7 +180,7 @@ final class CrewSessionRunner: ObservableObject {
             workingDirectory: workingDirectory,
             model: config.model,
             permissionModeOverride: config.permissionMode,
-            terminalSession: terminalSession,
+            backend: backend,
             serverLink: serverLink,
             role: role
         )
@@ -160,6 +189,77 @@ final class CrewSessionRunner: ObservableObject {
         runs.append(run)
         selectedRunId = run.runID
         isComposingNew = false
+    }
+
+    // MARK: - codex backend providers
+
+    /// codex 每轮 turn 前注入未读白板的 provider —— 复用 claude PostToolUse hook 的
+    /// 同一份 `HookEmitter`（per-session 游标读未读 + 渲染 + 推进游标），区别只是
+    /// 这里在 app 进程内直接调，不经 helper 子进程。返回的字符串塞进
+    /// `turn/start.additionalContext`。无未读 → nil（不注入）。best-effort：
+    /// 任何失败（store 读不出 / 渲染失败）→ nil，turn 照常跑（只是这轮没白板）。
+    nonisolated static func makeWhiteboardProvider(crewId: String, sessionId: String) -> () -> String? {
+        let dir = LocalWhiteboardStore.defaultDirectory
+        return {
+            let emitter = HookEmitter(
+                store: LocalWhiteboardStore(directory: dir),
+                crewId: crewId, sessionId: sessionId, cursorDir: dir)
+            // HookEmitter 吐的是 claude hook 信封 JSON；codex 这边只要里头的纯文本
+            // additionalContext，剥一层拿渲染好的未读串。
+            guard let json = emitter.emitAndAdvance(),
+                  let data = json.data(using: .utf8),
+                  let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                  let hook = obj["hookSpecificOutput"] as? [String: Any],
+                  let ctx = hook["additionalContext"] as? String, !ctx.isEmpty
+            else { return nil }
+            return ctx
+        }
+    }
+
+    /// codex 审批 provider —— 镜像 `McpPermissionHook` 的 raise→long-poll→answer，
+    /// 但在 app 进程内异步等（不阻塞线程）。codex 经 server request 发来审批，
+    /// 这里 raise 一条 `permission` 待审批（归档在本 sessionId 下，右栏内联卡片
+    /// 据此过滤）+ 通知半边贴本地白板，再 poll `LocalApprovalStore` 直到人类在待审批
+    /// 列表 allow/deny。映射：allow→"accept"，deny / 超时→"decline"（安全侧 fail-safe）。
+    /// 超时取 `McpPermissionHook` 一样保守的兜底（v1 不设硬等人上限，但 in-process
+    /// 异步等设一个长上限防 turn 永久挂死）。
+    nonisolated static func makeApprovalProvider(
+        crewId: String, sessionId: String
+    ) -> (_ summary: String, _ decisions: [String]) async -> String {
+        let dir = LocalWhiteboardStore.defaultDirectory
+        return { summary, decisions in
+            let approvals = LocalApprovalStore(directory: dir)
+            let board = LocalWhiteboardStore(directory: dir)
+            let reqId = approvals.raise(
+                crewId: crewId, kind: "permission", sessionId: sessionId, summary: summary)
+            // 通知半边（与 McpPermissionHook 一致）：贴本地群聊白板，人类在 crew chat
+            // 看得见有新审批请求。
+            board.appendSessionMessage(
+                crewId: crewId, sessionId: sessionId,
+                text: "🔔 待审批：\(summary)\n（请在 PendingCrew 待审批列表里 allow / deny）",
+                category: "question")
+            // long-poll：0.5s 一拍，最多等 ~30min 后保守判 deny（防 turn 永久挂）。
+            let pollInterval: UInt64 = 500_000_000 // 0.5s
+            let maxWaits = 3600
+            var waits = 0
+            let chosen: String = await {
+                while waits < maxWaits {
+                    if let it = approvals.item(crewId: crewId, id: reqId), it.status == "answered" {
+                        return it.decision == "allow" ? "allow" : "deny"
+                    }
+                    try? await Task.sleep(nanoseconds: pollInterval)
+                    waits += 1
+                }
+                return "deny" // 超时 → 安全侧拒绝
+            }()
+            // 映射到 codex decision —— allow→accept，其余→decline（若 codex 没声明
+            // accept/decline 而是别的可选项，退回它声明的第一个/末一个作 fail-safe）。
+            if chosen == "allow" {
+                return decisions.contains("accept") ? "accept" : (decisions.first ?? "accept")
+            } else {
+                return decisions.contains("decline") ? "decline" : (decisions.last ?? "decline")
+            }
+        }
     }
 
     enum RunnerError: LocalizedError {
@@ -205,19 +305,37 @@ final class CrewSessionRunner: ObservableObject {
         // 机长用建 crew 时选定的 coding agent（crew 没记 → 默认 Codex）。
         let captainKind = LocalCodingAgentKind.captainDefault(detail.crew.captainAgentKind)
         var cfg = SessionConfig(kind: captainKind, initialPrompt: initialPrompt)
-        cfg.appendSystemPromptFile = LocalSessionLaunch.renderWorldModelFile(
-            detail: detail, members: members, taskBrief: initialPrompt, workdir: workdir,
-            sessionId: localSessionId, runnerKind: captainKind, appendPersona: persona)
-        let comms = LocalSessionLaunch.prepareLocalCommsConfig(
-            crewId: crewId, sessionId: localSessionId, captain: true)
-        cfg.settingsFile = comms.settings
-        cfg.mcpConfigFile = comms.mcp
+        // 世界观 + crew 工具按 kind 分流：claude 走文件 flag（appendSystemPromptFile +
+        // settings/mcp-config），codex 走 app-server 通道（developerInstructions 字符串 +
+        // mcpServers dict）。captain 两边都带（persona 追加 + helper `--captain` 解锁
+        // answer_decision）。**默认 captain = codex**（captainDefault），所以 codex 这支必须接对，
+        // 否则机长无世界观、无 crew 工具。
+        var developerInstructions: String? = nil
+        var codexMcpServers: [String: Any]? = nil
+        switch captainKind {
+        case .claudeCode:
+            cfg.appendSystemPromptFile = LocalSessionLaunch.renderWorldModelFile(
+                detail: detail, members: members, taskBrief: initialPrompt, workdir: workdir,
+                sessionId: localSessionId, runnerKind: captainKind, appendPersona: persona)
+            let comms = LocalSessionLaunch.prepareLocalCommsConfig(
+                crewId: crewId, sessionId: localSessionId, captain: true)
+            cfg.settingsFile = comms.settings
+            cfg.mcpConfigFile = comms.mcp
+        case .codex:
+            developerInstructions = LocalSessionLaunch.renderWorldModelString(
+                detail: detail, members: members, taskBrief: initialPrompt, workdir: workdir,
+                sessionId: localSessionId, appendPersona: persona)
+            codexMcpServers = LocalSessionLaunch.codexMcpServers(
+                crewId: crewId, sessionId: localSessionId, captain: true)
+        }
         try await start(
             crewId: crewId,
             sessionId: localSessionId,
             config: cfg,
             workingDirectory: workdir,
             taskBrief: initialPrompt,
+            developerInstructions: developerInstructions,
+            codexMcpServers: codexMcpServers,
             role: .captain
         )
     }
@@ -225,9 +343,9 @@ final class CrewSessionRunner: ObservableObject {
 
 /// 单次 session 的 UI 视图模型。
 ///
-/// agent 跑在内嵌真终端里（`terminalSession.terminalView`），UI 直接把那个
-/// `LocalProcessTerminalView` 嵌进来（见 `AgentTerminalView`）。这里只追踪
-/// 终端进程的 running/exited 生命周期，并在结束时关掉 server row。
+/// agent 跑在后端里（claude = 内嵌真终端；codex = app-server），UI 通过
+/// `agentTerminalSession` 有条件地嵌入终端视图。这里只追踪后端进程的
+/// running/exited 生命周期，并在结束时关掉 server row。
 @MainActor
 final class CrewSessionRun: ObservableObject, Identifiable {
     enum Status: Equatable {
@@ -266,8 +384,11 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         role == .captain ? "Captain" : kind.displayName + " · " + String(sessionId.prefix(6))
     }
 
-    /// 内嵌真终端 session —— UI 把它的 `terminalView` 嵌进来，agent 在里面跑。
-    let terminalSession: AgentTerminalSession
+    /// 后端实现（claude = AgentTerminalSession；codex = app-server，待实现）。
+    let backend: any SessionBackend
+
+    /// 类型转换访问：仅当后端是终端（claude）时非 nil，供 `AgentTerminalView` 使用。
+    var agentTerminalSession: AgentTerminalSession? { backend as? AgentTerminalSession }
 
     @Published private(set) var status: Status = .running
     @Published private(set) var exitCode: Int32?
@@ -290,7 +411,7 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         workingDirectory: URL,
         model: String? = nil,
         permissionModeOverride: String? = nil,
-        terminalSession: AgentTerminalSession,
+        backend: any SessionBackend,
         serverLink: CrewSessionServerLink? = nil,
         role: Role = .worker
     ) {
@@ -301,21 +422,21 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         self.workingDirectory = workingDirectory
         self.model = model
         self.permissionModeOverride = permissionModeOverride
-        self.terminalSession = terminalSession
+        self.backend = backend
         self.serverLink = serverLink
         self.role = role
-        self.status = Self.map(terminalSession.status, cancelled: false)
-        observeTerminalStatus()
+        self.status = Self.map(backend.status, cancelled: false)
+        observeBackendStatus()
     }
 
-    /// 跟踪内嵌终端的 running/exited，映射到 run 的生命周期 status，并在退出时
-    /// finalize（关 server row）。用 `@Published status` 的 Combine stream 驱动。
-    private func observeTerminalStatus() {
+    /// 跟踪后端的 running/exited，映射到 run 的生命周期 status，并在退出时
+    /// finalize（关 server row）。用 `backend.statusPublisher` 的 Combine stream 驱动。
+    private func observeBackendStatus() {
         statusObservation = Task { [weak self] in
             guard let self else { return }
-            for await terminalStatus in self.terminalSession.$status.values {
+            for await backendStatus in self.backend.statusPublisher.values {
                 if Task.isCancelled { return }
-                switch terminalStatus {
+                switch backendStatus {
                 case .running:
                     self.status = .running
                 case let .exited(code):
@@ -327,16 +448,16 @@ final class CrewSessionRun: ObservableObject, Identifiable {
     }
 
     /// 发文本给 agent（首条指令 / 续聊 / steer）。终端原样接收。
-    func send(_ text: String) { terminalSession.send(text) }
+    func send(_ text: String) { backend.send(text) }
 
     /// 打断进行中的回合（Esc）。
-    func interrupt() { terminalSession.interrupt() }
+    func interrupt() { backend.interrupt() }
 
-    /// 主动停掉 session（终止子进程）。终端退出后落 `.cancelled`。
+    /// 主动停掉 session（终止子进程）。后端退出后落 `.cancelled`。
     func stop() {
         guard status == .running else { return }
         cancelled = true
-        terminalSession.stop()
+        backend.stop()
     }
 
     deinit {
@@ -356,7 +477,7 @@ final class CrewSessionRun: ObservableObject, Identifiable {
     }
 
     /// Map the terminal's running/exited state to the run lifecycle.
-    private static func map(_ status: AgentTerminalSession.Status, cancelled: Bool) -> Status {
+    private static func map(_ status: SessionStatus, cancelled: Bool) -> Status {
         switch status {
         case .running:
             return .running

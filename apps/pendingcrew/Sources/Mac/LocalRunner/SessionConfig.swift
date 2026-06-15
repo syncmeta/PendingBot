@@ -55,9 +55,18 @@ public struct SessionConfig: Sendable, Equatable {
         self.mcpConfigFile = mcpConfigFile
     }
 
-    /// Build the interactive-CLI argv. The session's instruction is the trailing
-    /// positional prompt — both CLIs start an interactive (subscription-billed)
-    /// session by default; only `-p`/`exec` go headless, which we never use.
+    /// Build the spawn argv for this session's agent CLI.
+    ///
+    /// **claude** (`claudeCode`): interactive TUI — positional prompt is the trailing
+    /// argv; only `-p`/`exec` go headless, which we never use.
+    ///
+    /// **codex**: runs as `codex app-server` (stdio JSON-RPC). The subcommand is the
+    /// only mandatory token. `effort` goes via `-c model_reasoning_effort=<e>` at spawn
+    /// time — config.toml would otherwise override turn-level effort, so `-c` is the
+    /// deterministic path (spec §5). `model`, `cwd`, `developerInstructions`, and
+    /// `initialPrompt` are NOT argv — they go over the protocol (thread/start,
+    /// turn/start) after the handshake. `resumeSessionId` for codex is a deferred
+    /// concern and is excluded from argv for now.
     public func argv() -> [String] {
         switch kind {
         case .claudeCode:
@@ -72,12 +81,14 @@ public struct SessionConfig: Sendable, Equatable {
             if let p = initialPrompt, !p.isEmpty { a.append(p) } // positional prompt LAST
             return a
         case .codex:
-            // Placeholder until codex moves to app-server (separate plan). Keep the FS sandbox.
+            // codex runs as an app-server (stdio JSON-RPC), NOT an interactive TUI.
+            // effort goes via `-c model_reasoning_effort=<e>` on spawn — config.toml would
+            // otherwise override turn-level effort, so -c is the deterministic path (spec §5).
+            // model / cwd / developerInstructions / initialPrompt are NOT argv — they go over
+            // the protocol (thread/start, turn/start) after the handshake.
             var a: [String] = []
-            if let id = resumeSessionId, !id.isEmpty { a += ["resume", id] }
-            a += ["--sandbox", "workspace-write"]
-            if let m = model, !m.isEmpty { a += ["--model", m] }
-            if let p = initialPrompt, !p.isEmpty { a.append(p) }
+            if let e = effort, !e.isEmpty { a += ["-c", "model_reasoning_effort=\(e)"] }
+            a.append("app-server")
             return a
         }
     }

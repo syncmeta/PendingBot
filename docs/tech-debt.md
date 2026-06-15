@@ -12,6 +12,17 @@
 
 ---
 
+### 🟡 PendingCrew codex app-server backend v1 — 核心闭环已落，真机链路 + 协议字段名未验
+- **发现**: 2026-06-14 · `feat/codex-app-server`（用户："让 codex 像在这个目录下直接跑一样，做成结构化 codex 客户端对标 codex desktop"）
+- **背景**: codex 从占位交互式终端搬到 `codex app-server`（本地子进程 + stdio 换行分隔 JSON-RPC 2.0）。spec `2026-06-14-codex-app-server-backend-design.md`、plan `2026-06-14-pendingcrew-codex-app-server-backend.md`、协议 bible `2026-06-05-codex-app-server-reference.md`。Phase 0–5 全落（SessionBackend 抽象 / RPC 帧+dispatcher / ThreadItem+transcript / 协议 builders / SessionConfig argv / env 守卫 / connection / backend / runner 接线 / 结构化视图）。**145 单测 0 失败 + macOS/iOS 双 build 绿**，但**所有验证都是单测 + 编译**——本环境没有真 codex 登录态，没 spawn 过真 app-server。
+- **真机尾巴（必须人工验，别在单测绿就判 done）**:
+  1. **认证模型未定**：内部 spec 实测(0.137.0)说 app-server 自动读 `~/.codex/auth.json`；当前 OpenAI 官方文档说凭据"客户端驱动"(`account/login/start`)。两者矛盾，**装的是哪个版本/哪种行为只能在用户机器上探**（`initialize`→`account/read` 看返不返 chatgpt 账号）。现 backend 没做登录流，假设自动继承；若是客户端驱动版会连不上。
+  2. **ThreadItem 字段名版本锁**：`CodexThreadItem` 解码按 reference spec 的文档形态写，**没和真 `codex app-server generate-json-schema` 抓包对齐**。字段名对不上时会大量落 `.unknown`（不崩，但渲染退化）。真机要跑 `generate-json-schema` 核字段名。
+  3. 一轮 turn 端到端渲染、审批 roundtrip、`developerInstructions` append-vs-replace 语义、计费 tick（`usedPercent`↑ + API dashboard 无账单）——全未真机验。
+- **行为分歧（有意 fail-safe）**: codex 审批 provider（`CrewSessionRunner.makeApprovalProvider`）long-poll 设了 ~30min 上限→超时判 `deny`，而 claude 的 `McpPermissionHook` 生产是**无限等人**。这是防 codex turn 永久挂死的安全侧选择，但和 claude 不一致；若要 codex 也无限等需改掉这个上限。
+- **未做（v1 明确 defer，按需再加）**: 逐字 delta/token 流式（已 opt-out，只渲染 `item/completed`）、`turn/steer` 回合中插入、`resume`/`fork`、额度展示 UI、peer rollout JSONL 跨读、codex hooks 系统。
+- **状态**: 待真机验证（代码可用、单测全绿、未合 main）。plan 末尾 Task 6.3 有真机验证清单。
+
 ### 🟡 crew machine 收口 — runtime_location 降为派生镜像列 + CrewGround corpus 与服务端分家 + captainAgentKind 本地-only
 - **发现**: 2026-06-14 · `feat/crew-machine`（machine 概念 + 新建流程精简）
 - **三条尾巴**:
