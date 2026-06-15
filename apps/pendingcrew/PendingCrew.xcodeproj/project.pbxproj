@@ -111,7 +111,6 @@
 		95CD81185B683FA0FD1E74C4 /* PendingComposerAttachment.swift in Sources */ = {isa = PBXBuildFile; fileRef = B85FDABD0C0A7910C75C39C8 /* PendingComposerAttachment.swift */; };
 		9784D71E9DBD98F8CEA30145 /* McpPermissionHookTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D36E53A3EEA55369A75ADB82 /* McpPermissionHookTests.swift */; };
 		99B5BB04A0E197AE03535A86 /* LocalCodingAgentKind.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECFF7155D04A3862EC79E34B /* LocalCodingAgentKind.swift */; };
-		9B81D3B2CDDF3ECF1488688D /* BYOKConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 197432C919C9626706255DDE /* BYOKConfig.swift */; };
 		9DC9AF0EDD6D37A556A534B6 /* LocalSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73BC806F682C0CE6E3EB26CA /* LocalSetupView.swift */; };
 		A47AB832FB4F2E968FDAE540 /* CodexRPCMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60A91B2E730386ADCD52A3B9 /* CodexRPCMessage.swift */; };
 		A4E099C910B5400D8A645F0C /* LocalCodingAgentExecutable.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DCD41EF4DF79F9A7C1794CD /* LocalCodingAgentExecutable.swift */; };
@@ -207,7 +206,6 @@
 		13BBB95F39A5DDA90728B897 /* PlatformImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformImage.swift; sourceTree = "<group>"; };
 		1507798CBA5E3C31D801C08A /* DeviceIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceIdentity.swift; sourceTree = "<group>"; };
 		161926CD9FC1B1BA4620272D /* PlaceNames.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceNames.swift; sourceTree = "<group>"; };
-		197432C919C9626706255DDE /* BYOKConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BYOKConfig.swift; sourceTree = "<group>"; };
 		19B1A2BBA684270B0A2BE996 /* PendingCrewDeepLinkRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingCrewDeepLinkRoute.swift; sourceTree = "<group>"; };
 		1A4D1C7DBA64FB676E8F61FF /* GitWorktreeServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitWorktreeServiceTests.swift; sourceTree = "<group>"; };
 		219AD4E22DF4542909B2067A /* PendingCrewEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingCrewEntry.swift; sourceTree = "<group>"; };
@@ -685,7 +683,6 @@
 			isa = PBXGroup;
 			children = (
 				B4AB47EFABEEEDC3D1AA7F4D /* AppModel.swift */,
-				197432C919C9626706255DDE /* BYOKConfig.swift */,
 				F7CC1FEBE8F4A567B53B0BCF /* CaptainTemplateStore.swift */,
 				486ABCF7EEB8DF24CA6EDF11 /* CrewStore.swift */,
 				1507798CBA5E3C31D801C08A /* DeviceIdentity.swift */,
@@ -827,7 +824,6 @@
 				47D83B78734AEC171EAC5853 /* AppModel.swift in Sources */,
 				599B6DD6B64F909124C2992A /* AppearanceMode.swift in Sources */,
 				2D5D0C99758956E078A87DBB /* AttachmentDownload.swift in Sources */,
-				9B81D3B2CDDF3ECF1488688D /* BYOKConfig.swift in Sources */,
 				14ADE62569F844E8CBD04954 /* BlinkingCursor.swift in Sources */,
 				BD0F787201964CD2E1F9A3ED /* BotAvatar.swift in Sources */,
 				6946E20F33073EB653928874 /* BubbleView.swift in Sources */,

@@ -1,7 +1,7 @@
 #if os(macOS)
 import SwiftUI
 
-/// 新建本机 captain 模板的 sheet(BYOK 模式专用)。
+/// 新建本机 captain 模板的 sheet。
 ///
 /// 字段:
 /// - 名称 — 必填,后续创建 crew 时显示用
@@ -11,9 +11,8 @@ import SwiftUI
 /// 保存后通过 `onCreated` 回调通知父 view(`CreateCrewSheet`)新模板已建,
 /// 由父 view 决定要不要立即选中它。
 ///
-/// **scope**:本 sheet 不做模型 ping/验证 —— BYOK 整体策略就是"凭据/模型
-/// 配错让 LLM provider 自己 401/422,UI 透传错误"(见 BYOKConfig.swift 顶部
-/// 注释)。模板正确性等到真正发起 LLM 调用时再暴露。
+/// **scope**:本 sheet 不做模型 ping/验证 —— 模板正确性等到真正发起 LLM
+/// 调用时再暴露,provider 自己 401/422,UI 透传错误。
 struct CaptainTemplateEditorSheet: View {
     @EnvironmentObject private var store: CaptainTemplateStore
     @Environment(\.dismiss) private var dismiss
