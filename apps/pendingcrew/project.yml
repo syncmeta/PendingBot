@@ -103,6 +103,9 @@ targets:
       - path: Sources/Chat/Adapter/CrewChatAdapter.swift
       - path: Sources/Chat/Adapter/CrewChatMessage.swift
       - path: Sources/Chat/Adapter/GroupBubbleSender.swift
+      # CrewComposerMentions.swift：composer @ 候选构建/过滤 + @token 解析 +
+      # staged 撤销对账 + reply 自动@推导(Phase 6)。纯 Foundation，自包含。
+      - path: Sources/Chat/Adapter/CrewComposerMentions.swift
       - path: Sources/Mac/Views/Chat/CrewSenderResolver.swift
       # CrewModels.swift：从 PendingCrewAPI.swift 提取的 whiteboard/crew 纯
       # Foundation 模型（CrewWhiteboardEntry / CrewMember / CrewAttachment 等），

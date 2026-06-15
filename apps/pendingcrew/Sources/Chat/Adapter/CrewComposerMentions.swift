@@ -1,0 +1,266 @@
+// Pure-logic core for the crew composer's @-mention support (Phase 6).
+//
+// Foundation-only so it compiles into the PendingCrewTests bundle (no
+// `@testable import`; the source is listed directly in the test target) and
+// stays cross-platform (macOS + iOS composer share it).
+//
+// Three concerns live here, all side-effect-free:
+//   1. `CrewMentionCandidate` + `crewMentionCandidates(...)` — roster → the
+//      pick list shown in the @ autocomplete popover, with prefix filtering.
+//   2. `CrewComposerMentionParser` — detect an in-progress `@<prefix>` token at
+//      the caret in the draft, and the token-insertion / staged-list bookkeeping
+//      (insert a readable `@name ` token + record one `CrewMention`; drop a
+//      token → drop its staged mention).
+//   3. `CrewReplyTarget` — derive the auto-@ mention for "reply to this message"
+//      from a whiteboard entry's sender.
+//
+// The UI layer (`CrewChatView`) drives this from the `$draft` binding via
+// `.onChange` + a popover overlay — it never forks the vendored `ComposerView`.
+import Foundation
+
+// MARK: - Candidate model
+
+/// One row in the @-mention autocomplete popover. `mention` is what gets staged
+/// when picked; `token` is the readable text inserted into the draft (e.g.
+/// `@小绿`). `id` is stable for SwiftUI `ForEach`.
+struct CrewMentionCandidate: Identifiable, Equatable {
+    enum Kind: Equatable { case session, captain, broadcast, human }
+
+    let id: String
+    let kind: Kind
+    /// Display label shown in the popover row (e.g. "小绿", "全体", "机长").
+    let label: String
+    /// The `CrewMention` staged when this candidate is picked.
+    let mention: CrewMention
+
+    /// Readable token inserted into the draft for this candidate. Always
+    /// `@<label>` — the trailing space is added by the parser at insert time.
+    var token: String { "@\(label)" }
+}
+
+/// Build the @-mention candidate list from a crew roster.
+///
+/// Order (stable, matches how people think about a crew): broadcast first
+/// (the common "tell everyone"), then captain, then each session member, then
+/// human members. `prefix` filters by case-insensitive substring of the label
+/// (empty prefix → all). `selfMemberId` drops the local human from the list
+/// (you don't @ yourself).
+///
+/// - `broadcastLabel` / `captainLabel` are injected so the caller controls copy
+///   (kept out of this Foundation core's hardcoded strings minimally).
+func crewMentionCandidates(
+    members: [CrewMember],
+    captainBotId: String?,
+    prefix: String,
+    selfMemberId: String?,
+    broadcastLabel: String = "全体",
+    captainLabel: String = "机长"
+) -> [CrewMentionCandidate] {
+    var out: [CrewMentionCandidate] = []
+
+    // Broadcast — fan out to everyone. Always offered.
+    out.append(CrewMentionCandidate(
+        id: "broadcast", kind: .broadcast, label: broadcastLabel, mention: .broadcast))
+
+    // Captain — only if the crew has one.
+    if captainBotId != nil {
+        out.append(CrewMentionCandidate(
+            id: "captain", kind: .captain, label: captainLabel, mention: .captain))
+    }
+
+    // Session members — each routes to that session's mailbox.
+    for m in members where m.memberKind == "code_session" {
+        guard let sid = m.codeSessionId else { continue }
+        let label = m.displayName ?? "session \(sid.prefix(6))"
+        out.append(CrewMentionCandidate(
+            id: "session:\(sid)", kind: .session, label: label,
+            mention: .session(sid)))
+    }
+
+    // Human members — `{kind:"human", target_id:userId}`. Skip self.
+    for m in members where m.memberKind == "human" {
+        if let sid = selfMemberId, m.id == sid { continue }
+        guard let uid = m.userId else { continue }
+        let label = m.displayName ?? "成员"
+        out.append(CrewMentionCandidate(
+            id: "human:\(uid)", kind: .human, label: label,
+            mention: CrewMention(kind: "human", targetId: uid)))
+    }
+
+    let needle = prefix.trimmingCharacters(in: .whitespaces)
+    guard !needle.isEmpty else { return out }
+    return out.filter { $0.label.range(of: needle, options: .caseInsensitive) != nil }
+}
+
+// MARK: - In-progress @-token detection + staged bookkeeping
+
+/// One staged mention paired with the readable token currently sitting in the
+/// draft. The pairing lets us reconcile: if the user deletes the token text,
+/// the staged mention is dropped (see `reconcile`).
+struct CrewStagedMention: Equatable {
+    let token: String        // e.g. "@小绿" (no trailing space)
+    let mention: CrewMention
+}
+
+/// Caret-anchored `@<prefix>` detection + token insertion + staged-list
+/// reconciliation. All pure string math — no SwiftUI, no caret object (we
+/// operate on "the trailing in-progress token", which is what an inline
+/// composer popover needs without a UITextView selection range).
+enum CrewComposerMentionParser {
+
+    /// The active `@<prefix>` the user is mid-typing at the *end* of the draft,
+    /// or nil if there's no open mention token to complete.
+    ///
+    /// We only treat a trailing run as an open token (the caret is at the end in
+    /// the common typing flow). An `@` opens a token; it closes on whitespace.
+    /// So `"hi @gr"` → prefix `"gr"`; `"hi @gr "` → nil (closed by the space);
+    /// `"hi@gr"` → nil (no boundary before `@`).
+    struct ActiveQuery: Equatable {
+        /// The prefix typed after `@` (may be empty right after typing `@`).
+        let prefix: String
+        /// Offset of the `@` in the draft (UTF-16-agnostic String.Index distance
+        /// from startIndex), so the caller can replace `@prefix` on pick.
+        let atOffset: Int
+    }
+
+    /// Detect an open `@`-token at the tail of `draft`. Returns nil when the
+    /// last token is already closed (trailing space) or there's no `@` to
+    /// complete.
+    static func activeQuery(in draft: String) -> ActiveQuery? {
+        guard let atRange = draft.range(of: "@", options: .backwards) else { return nil }
+        let afterAt = draft[atRange.upperBound...]
+        // A space (or newline) after the `@…` means the token is closed.
+        if afterAt.rangeOfCharacter(from: .whitespacesAndNewlines) != nil { return nil }
+        // The `@` must start the draft or follow whitespace — not be mid-word
+        // (an email "a@b" is not a mention).
+        if atRange.lowerBound > draft.startIndex {
+            let before = draft[draft.index(before: atRange.lowerBound)]
+            if !before.isWhitespace { return nil }
+        }
+        let offset = draft.distance(from: draft.startIndex, to: atRange.lowerBound)
+        return ActiveQuery(prefix: String(afterAt), atOffset: offset)
+    }
+
+    /// Result of picking a candidate: the new draft text (with the in-progress
+    /// `@prefix` replaced by `@label `) and the staged mention to record.
+    struct Insertion: Equatable {
+        let newDraft: String
+        let staged: CrewStagedMention
+    }
+
+    /// Replace the open `@<prefix>` token at the tail of `draft` with the
+    /// candidate's `@label ` (trailing space so the user keeps typing after it),
+    /// and produce the `CrewStagedMention` to add. Returns nil if there's no
+    /// open token to replace (defensive — caller only calls this while a query
+    /// is active).
+    static func insert(
+        candidate: CrewMentionCandidate, into draft: String
+    ) -> Insertion? {
+        guard let q = activeQuery(in: draft) else { return nil }
+        let atIndex = draft.index(draft.startIndex, offsetBy: q.atOffset)
+        let head = String(draft[draft.startIndex..<atIndex])
+        let newDraft = head + candidate.token + " "
+        return Insertion(
+            newDraft: newDraft,
+            staged: CrewStagedMention(token: candidate.token, mention: candidate.mention))
+    }
+
+    /// Drop staged mentions whose token text no longer appears in the draft.
+    ///
+    /// The composer has no rich text — a mention "chip" is just the literal
+    /// `@label` substring. If the user backspaces through it (or edits it away),
+    /// the staged mention must follow. We keep a staged mention iff its exact
+    /// token substring is still present. Duplicate tokens (two `@小绿`) are
+    /// matched by count so deleting one of two drops exactly one staged entry.
+    static func reconcile(staged: [CrewStagedMention], draft: String) -> [CrewStagedMention] {
+        var remainingDraft = draft
+        var kept: [CrewStagedMention] = []
+        for s in staged {
+            if let r = remainingDraft.range(of: s.token) {
+                kept.append(s)
+                // Consume this occurrence so a second identical token must find
+                // its own occurrence further along.
+                remainingDraft.removeSubrange(r)
+            }
+        }
+        return kept
+    }
+
+    /// Collapse a staged list into the de-duplicated `[CrewMention]` to send.
+    /// Same logical target staged twice (e.g. via reply auto-@ + manual @) is
+    /// sent once.
+    static func mentionsToSend(_ staged: [CrewStagedMention]) -> [CrewMention] {
+        var seen: [CrewMention] = []
+        for s in staged where !seen.contains(s.mention) {
+            seen.append(s.mention)
+        }
+        return seen
+    }
+}
+
+// MARK: - Reply-target derivation
+
+/// The mention + quoted-reference a "reply to this message" produces. `mention`
+/// auto-@s the original sender; `quoted*` drive the composer's reply banner.
+struct CrewReplyTarget: Equatable {
+    /// nil when the original sender can't be turned into a mention target
+    /// (e.g. an unknown / relay sender with no resolvable id) — the reply still
+    /// carries `replyToId`, it just doesn't auto-@.
+    let mention: CrewMention?
+    /// The id of the message being replied to (→ `reply_to` on the wire).
+    let replyToId: String
+    /// Display name of the original sender (banner).
+    let quotedSender: String
+    /// Short snippet of the replied-to message (banner).
+    let quotedSnippet: String
+
+    /// Build a staged mention for the auto-@, if any.
+    var staged: CrewStagedMention? {
+        guard let mention else { return nil }
+        return CrewStagedMention(token: "@\(quotedSender)", mention: mention)
+    }
+}
+
+enum CrewReplyTargetBuilder {
+
+    /// Max length of the quoted snippet shown in the reply banner.
+    static let snippetLimit = 80
+
+    /// Derive the reply target from a whiteboard entry + the resolved sender.
+    ///
+    /// - `entry`: the message being replied to.
+    /// - `senderName`: the display name (from `CrewSenderResolver`) — drives the
+    ///   banner and the staged token label.
+    ///
+    /// Mention routing by the entry's `senderKind`:
+    ///   * session → `.session(senderSessionId)` (route back to that run).
+    ///   * user/human → `{kind:"human", target_id: senderUserId}` (if known).
+    ///   * bot/captain/other → no auto-@ (bots aren't @-routable as a reply
+    ///     target in this path; reply still records `reply_to`).
+    static func make(entry: CrewWhiteboardEntry, senderName: String) -> CrewReplyTarget {
+        let mention: CrewMention?
+        switch entry.senderKind {
+        case "session":
+            mention = entry.senderSessionId.map { CrewMention.session($0) }
+        case "user", "human":
+            mention = entry.senderUserId.map { CrewMention(kind: "human", targetId: $0) }
+        default:
+            mention = nil
+        }
+        return CrewReplyTarget(
+            mention: mention,
+            replyToId: entry.id,
+            quotedSender: senderName,
+            quotedSnippet: snippet(entry.displayText)
+        )
+    }
+
+    /// Single-line, length-capped snippet for the reply banner.
+    static func snippet(_ text: String) -> String {
+        let oneLine = text
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if oneLine.count <= snippetLimit { return oneLine }
+        return String(oneLine.prefix(snippetLimit)) + "…"
+    }
+}
