@@ -535,24 +535,9 @@ private struct PendingBotMacQRLoginView: View {
             .accessibilityLabel("返回")
             .padding(.bottom, 20)
 
-            VStack(spacing: 18) {
-                VStack(spacing: 8) {
-                    Image(systemName: "qrcode.viewfinder")
-                        .font(.system(size: 34, weight: .medium))
-                        .foregroundStyle(Theme.Palette.accent)
-                    Text("扫码登录")
-                        .font(Theme.Fonts.system(size: 18, weight: .semibold))
-                        .foregroundStyle(Theme.Palette.ink)
-                    Text("用已登录的 PendingBot 手机端扫码授权这台 Mac")
-                        .font(Theme.Fonts.footnote)
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                content
-            }
-            .frame(maxWidth: .infinity)
+            // 只显示二维码本身——标题/图标/说明/「等待批准」一律不要。
+            content
+                .frame(maxWidth: .infinity)
         }
         .task { start() }
         .onDisappear { pollTask?.cancel() }
@@ -562,32 +547,22 @@ private struct PendingBotMacQRLoginView: View {
     private var content: some View {
         switch status {
         case .requesting:
-            ProgressView("正在生成登录二维码…")
+            // 生成二维码前的过渡:只一个 spinner,不带文字。
+            ProgressView()
                 .controlSize(.regular)
-                .padding(.top, 28)
+                .padding(.vertical, 60)
         case .waiting:
-            if let challenge {
-                VStack(spacing: 14) {
-                    if let bitmap = QRCode.image(challenge.qrPayload, quietModules: 2) {
-                        Image(platformImage: bitmap)
-                            .resizable()
-                            .interpolation(.none)
-                            .scaledToFit()
-                            .frame(width: 190, height: 190)
-                            .padding(10)
-                            .background(.white)
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                            .shadow(color: .black.opacity(0.06), radius: 8, y: 3)
-                    }
-
-                    HStack(spacing: 8) {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text("等待手机端批准")
-                            .font(Theme.Fonts.footnote)
-                            .foregroundStyle(Theme.Palette.inkMuted)
-                    }
-                }
+            if let challenge, let bitmap = QRCode.image(challenge.qrPayload, quietModules: 2) {
+                // 只有码。
+                Image(platformImage: bitmap)
+                    .resizable()
+                    .interpolation(.none)
+                    .scaledToFit()
+                    .frame(width: 220, height: 220)
+                    .padding(12)
+                    .background(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .shadow(color: .black.opacity(0.06), radius: 8, y: 3)
             }
         case .approved:
             VStack(spacing: 10) {
