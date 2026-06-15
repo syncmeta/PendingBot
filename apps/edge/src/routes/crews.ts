@@ -270,7 +270,7 @@ crewsRoutes.get('/', async (c) => {
 
   const { data: rows, error } = await supa
     .from('temporary_group_meta')
-    .select('conversation_id, responsible_subject_id, captain_bot_id, runtime_location, title, created_at, updated_at, status')
+    .select('conversation_id, responsible_subject_id, captain_bot_id, runtime_location, machine_id, title, created_at, updated_at, status')
     .eq('temporary_kind', 'crew')
     .in('responsible_subject_id', subjectIds.ids)
     .order('created_at', { ascending: false })
@@ -283,6 +283,7 @@ crewsRoutes.get('/', async (c) => {
     title: row.title ?? '机组',
     responsibleSubjectId: row.responsible_subject_id,
     runtimeLocation: row.runtime_location,
+    machineId: row.machine_id,
     captainBotId: row.captain_bot_id,
     status: row.status,
     createdAt: row.created_at,

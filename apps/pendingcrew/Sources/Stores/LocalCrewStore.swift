@@ -385,7 +385,8 @@ private struct LocalCrew: Codable, Equatable {
             createdAt: createdAt,
             updatedAt: updatedAt,
             parentCrewIds: parentCrewIds,
-            captainAgentKind: captainAgentKind
+            captainAgentKind: captainAgentKind,
+            machineId: machineId
         )
     }
 
