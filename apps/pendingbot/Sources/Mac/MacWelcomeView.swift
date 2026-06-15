@@ -69,23 +69,29 @@ struct MacWelcomeView: View {
                 .shadow(color: .black.opacity(0.06), radius: 18, y: 5)
 
             VStack(alignment: .leading, spacing: 0) {
-                if vm.stage == .humanCheck {
-                    backButton
-                        .padding(.bottom, 18)
+                if showingQRLogin {
+                    // 扫码登录:不弹窗,直接把右半列整列换成二维码(自带返回按钮)。
+                    PendingBotMacQRLoginView(onBack: { showingQRLogin = false })
                         .transition(.opacity)
-                }
+                } else {
+                    if vm.stage == .humanCheck {
+                        backButton
+                            .padding(.bottom, 18)
+                            .transition(.opacity)
+                    }
 
-                switch vm.stage {
-                case .enteringEmail:
-                    enteringEmailBody
-                case .humanCheck:
-                    humanCheckBody
-                        .transition(.opacity)
-                }
+                    switch vm.stage {
+                    case .enteringEmail:
+                        enteringEmailBody
+                    case .humanCheck:
+                        humanCheckBody
+                            .transition(.opacity)
+                    }
 
-                if let errorText = vm.errorText {
-                    errorBlock(text: errorText)
-                        .padding(.top, 12)
+                    if let errorText = vm.errorText {
+                        errorBlock(text: errorText)
+                            .padding(.top, 12)
+                    }
                 }
             }
             .frame(width: 310)
@@ -107,6 +113,7 @@ struct MacWelcomeView: View {
         .animation(.easeInOut(duration: 0.28), value: vm.otpSent)
         .animation(.easeInOut(duration: 0.28), value: vm.codeBlockShown)
         .animation(.easeInOut(duration: 0.28), value: vm.turnstileInteractive)
+        .animation(.easeInOut(duration: 0.28), value: showingQRLogin)
     }
 
     // MARK: - Stage: entering email
@@ -121,14 +128,15 @@ struct MacWelcomeView: View {
                 .padding(.bottom, 22)
 
             VStack(spacing: 14) {
-                // Apple / Google / 扫码 同排:Apple pill 比 Google 略窄(122 固定),
-                // Google 吃掉剩余宽度,末尾跟一个无框的 qrcode 图标。三者总宽 = 下方
-                // 邮箱行宽,所以输入框天然与这一排对齐。
+                // Apple / Google / 扫码 三个玻璃胶囊同排:Apple 固定 110(最窄),
+                // 扫码胶囊固定 56(只放一个 qrcode 图标),Google 吃掉剩余宽(≈124,
+                // 比之前略窄)。三者总宽 = 下方邮箱行宽,所以输入框天然与这排对齐。
                 HStack(spacing: 10) {
                     appleButton
-                        .frame(width: 118)
+                        .frame(width: 110)
                     googleButton
                     qrLoginButton
+                        .frame(width: 56)
                 }
                 emailRow
             }
@@ -358,26 +366,24 @@ struct MacWelcomeView: View {
         .accessibilityLabel("Sign in with Google")
     }
 
-    /// 扫码登录入口——无框的 qrcode 图标,与 Apple/Google pill 同排。点开后弹
-    /// `PendingBotMacQRLoginView` 走设备授权登录(已登录的手机端扫码批准这台 Mac)。
-    /// 36×48 的命中区让它与两侧 48 高的 pill 垂直居中对齐。
+    /// 扫码登录入口——qrcode 图标装在与 Apple/Google 同款玻璃胶囊里。点击不弹窗,
+    /// 而是把右半列整列换成二维码(见 body 的 `showingQRLogin` 分支)。
     private var qrLoginButton: some View {
         Button {
             showingQRLogin = true
+            focusedField = nil
         } label: {
             Image(systemName: "qrcode")
-                .font(Theme.Fonts.glyph(size: 27, weight: .regular))
+                .font(Theme.Fonts.glyph(size: 22, weight: .medium))
                 .foregroundStyle(Theme.Palette.ink)
-                .frame(width: 36, height: 48)
-                .contentShape(Rectangle())
+                .frame(maxWidth: .infinity)
+                .frame(height: 48)
+                .macGlassCapsule()
+                .shadow(color: .black.opacity(0.08), radius: 10, y: 4)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("扫码登录")
         .help("扫码登录")
-        .sheet(isPresented: $showingQRLogin) {
-            PendingBotMacQRLoginView()
-                .frame(minWidth: 420, minHeight: 520)
-        }
     }
 
     /// Prefer the Apple-supplied logo-only artwork when present (shared
@@ -498,7 +504,7 @@ struct MacWelcomeView: View {
 }
 
 private struct PendingBotMacQRLoginView: View {
-    @Environment(\.dismiss) private var dismiss
+    var onBack: () -> Void
     @State private var challenge: PendingBotDeviceLoginChallenge?
     @State private var status: Status = .requesting
     @State private var pollTask: Task<Void, Never>?
@@ -512,39 +518,42 @@ private struct PendingBotMacQRLoginView: View {
     }
 
     var body: some View {
-        VStack(spacing: 22) {
-            HStack {
-                Spacer()
-                Button {
-                    dismiss()
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.title3)
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                }
-                .buttonStyle(.plain)
-                .keyboardShortcut(.cancelAction)
-                .help("关闭")
-            }
-
-            VStack(spacing: 8) {
-                Image(systemName: "qrcode.viewfinder")
-                    .font(.system(size: 42, weight: .medium))
-                    .foregroundStyle(Theme.Palette.accent)
-                Text("扫码登录 PendingBot Mac")
-                    .font(Theme.Fonts.system(size: 20, weight: .semibold))
+        VStack(alignment: .leading, spacing: 0) {
+            // 返回钮:回到邮箱/三方登录(与 humanCheck 阶段返回钮同款玻璃圆钮)。
+            Button {
+                onBack()
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(Theme.Fonts.glyph(size: 16, weight: .semibold))
                     .foregroundStyle(Theme.Palette.ink)
-                Text("用已登录的 PendingBot 手机端扫码授权这台 Mac")
-                    .font(Theme.Fonts.footnote)
-                    .foregroundStyle(Theme.Palette.inkMuted)
-                    .multilineTextAlignment(.center)
+                    .frame(width: 32, height: 32)
+                    .macGlassCircle()
+                    .shadow(color: .black.opacity(0.06), radius: 6, y: 2)
             }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.cancelAction)
+            .accessibilityLabel("返回")
+            .padding(.bottom, 20)
 
-            content
-            Spacer(minLength: 0)
+            VStack(spacing: 18) {
+                VStack(spacing: 8) {
+                    Image(systemName: "qrcode.viewfinder")
+                        .font(.system(size: 34, weight: .medium))
+                        .foregroundStyle(Theme.Palette.accent)
+                    Text("扫码登录")
+                        .font(Theme.Fonts.system(size: 18, weight: .semibold))
+                        .foregroundStyle(Theme.Palette.ink)
+                    Text("用已登录的 PendingBot 手机端扫码授权这台 Mac")
+                        .font(Theme.Fonts.footnote)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                content
+            }
+            .frame(maxWidth: .infinity)
         }
-        .padding(28)
-        .background(Theme.Palette.canvas.ignoresSafeArea())
         .task { start() }
         .onDisappear { pollTask?.cancel() }
     }
@@ -558,32 +567,26 @@ private struct PendingBotMacQRLoginView: View {
                 .padding(.top, 28)
         case .waiting:
             if let challenge {
-                VStack(spacing: 16) {
+                VStack(spacing: 14) {
                     if let bitmap = QRCode.image(challenge.qrPayload, quietModules: 2) {
                         Image(platformImage: bitmap)
                             .resizable()
                             .interpolation(.none)
                             .scaledToFit()
-                            .frame(width: 220, height: 220)
+                            .frame(width: 190, height: 190)
+                            .padding(10)
                             .background(.white)
-                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .shadow(color: .black.opacity(0.06), radius: 8, y: 3)
                     }
 
-                    VStack(spacing: 4) {
-                        Text("或在手机端输入验证码")
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("等待手机端批准")
                             .font(Theme.Fonts.footnote)
                             .foregroundStyle(Theme.Palette.inkMuted)
-                        Text(challenge.code)
-                            .font(.system(.title2, design: .monospaced).weight(.semibold))
-                            .tracking(2)
-                            .foregroundStyle(Theme.Palette.ink)
                     }
-
-                    ProgressView()
-                        .controlSize(.small)
-                    Text("等待手机端批准")
-                        .font(Theme.Fonts.footnote)
-                        .foregroundStyle(Theme.Palette.inkMuted)
                 }
             }
         case .approved:
@@ -658,8 +661,8 @@ private struct PendingBotMacQRLoginView: View {
                         await MainActor.run {
                             status = .approved
                         }
-                        try? await Task.sleep(nanoseconds: 450_000_000)
-                        await MainActor.run { dismiss() }
+                        // 成功后无需手动关闭:AccountStore 拿到会话 → MacRootGate
+                        // 自动把整页换成主界面。
                         return
                     }
                     if response.status == "rejected" {
