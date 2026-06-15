@@ -654,18 +654,22 @@ struct CrewSessionWindowView: View {
             // best-effort：渲染失败 nil 不挡 session 启动。
             var codexDevInstructions: String? = nil
             var codexMcp: [String: Any]? = nil
+            // worker session 的白板发送者名：agent 名 + 本地 session id 前缀（与
+            // CrewSessionRun.displayName 同款），让 post_to_crew 写的白板不再裸 uuid。
+            let workerLabel = selectedKind.displayName + " · " + String(localSessionId.prefix(6))
             switch selectedKind {
             case .claudeCode:
                 cfg.appendSystemPromptFile = await renderWorldModelFile(
                     detail: detail, taskBrief: firstPrompt, workdir: workdir, sessionId: localSessionId)
-                let comms = prepareLocalCommsConfig(crewId: detail.crew.id, sessionId: localSessionId)
+                let comms = prepareLocalCommsConfig(
+                    crewId: detail.crew.id, sessionId: localSessionId, label: workerLabel)
                 cfg.settingsFile = comms.settings
                 cfg.mcpConfigFile = comms.mcp
             case .codex:
                 codexDevInstructions = await renderWorldModelString(
                     detail: detail, taskBrief: firstPrompt, workdir: workdir, sessionId: localSessionId)
                 codexMcp = LocalSessionLaunch.codexMcpServers(
-                    crewId: detail.crew.id, sessionId: localSessionId)
+                    crewId: detail.crew.id, sessionId: localSessionId, label: workerLabel)
             }
             try await sessionRunner.start(
                 crewId: detail.crew.id,
@@ -730,8 +734,10 @@ struct CrewSessionWindowView: View {
     }
 
     private func prepareLocalCommsConfig(crewId: String, sessionId: String,
-                                         captain: Bool = false) -> (settings: String?, mcp: String?) {
-        LocalSessionLaunch.prepareLocalCommsConfig(crewId: crewId, sessionId: sessionId, captain: captain)
+                                         captain: Bool = false,
+                                         label: String? = nil) -> (settings: String?, mcp: String?) {
+        LocalSessionLaunch.prepareLocalCommsConfig(
+            crewId: crewId, sessionId: sessionId, captain: captain, label: label)
     }
 
     // MARK: - auto-claim (K: captain-created queued sessions)
@@ -787,7 +793,9 @@ struct CrewSessionWindowView: View {
             if kind == .codex {
                 codexDevInstructions = await renderWorldModelString(
                     detail: detail, taskBrief: s.taskBrief, workdir: dir, sessionId: s.id)
-                codexMcp = LocalSessionLaunch.codexMcpServers(crewId: detail.crew.id, sessionId: s.id)
+                let workerLabel = kind.displayName + " · " + String(s.id.prefix(6))
+                codexMcp = LocalSessionLaunch.codexMcpServers(
+                    crewId: detail.crew.id, sessionId: s.id, label: workerLabel)
             }
             try await sessionRunner.start(
                 crewId: detail.crew.id,

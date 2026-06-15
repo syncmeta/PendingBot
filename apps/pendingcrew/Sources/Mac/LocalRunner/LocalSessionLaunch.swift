@@ -11,7 +11,7 @@ enum LocalSessionLaunch {
     /// 免 embed）；白板 dir = `LocalWhiteboardStore.defaultDirectory`（与 app/store 同一份）。
     /// 接合 v2：comms 恒为本地，不再按 mode 跳过。任一步失败 → 对应 nil（session 仍启动，少 comms）。
     static func prepareLocalCommsConfig(
-        crewId: String, sessionId: String, captain: Bool = false
+        crewId: String, sessionId: String, captain: Bool = false, label: String? = nil
     ) -> (settings: String?, mcp: String?) {
         guard let helper = Bundle.main.executablePath
         else { return (nil, nil) }
@@ -20,8 +20,10 @@ enum LocalSessionLaunch {
 
         // mcp-config：command + args 是 exec 形式（claude 直接 spawn，不过 shell）→ 不引号。
         // captain → 多带 --captain，helper 端解锁机长专用 answer_decision（chunk2 T4）。
+        // label → 多带 --label，post_to_crew 写白板时带发送者显示名（白板不再裸 uuid）。
         var serveArgs = ["--mcp-serve", "--crew", crewId, "--dir", dir, "--session", sessionId]
         if captain { serveArgs.append("--captain") }
+        if let label, !label.isEmpty { serveArgs.append(contentsOf: ["--label", label]) }
         let mcp: [String: Any] = ["mcpServers": ["crew": [
             "command": helper,
             "args": serveArgs,
@@ -100,11 +102,13 @@ enum LocalSessionLaunch {
     /// re-exec self helper（`--mcp-serve`）提供 post_to_crew/read_whiteboard；区别只是
     /// codex 经协议传 dict，claude 经 `--mcp-config <file>` 传文件。`captain` → 多带
     /// `--captain`，helper 端解锁机长专用 answer_decision（与 prepareLocalCommsConfig 一致）。
-    static func codexMcpServers(crewId: String, sessionId: String, captain: Bool = false) -> [String: Any]? {
+    static func codexMcpServers(crewId: String, sessionId: String, captain: Bool = false,
+                                label: String? = nil) -> [String: Any]? {
         guard let helper = Bundle.main.executablePath else { return nil }
         let dir = LocalWhiteboardStore.defaultDirectory.path
         var args = ["--mcp-serve", "--crew", crewId, "--dir", dir, "--session", sessionId]
         if captain { args.append("--captain") }
+        if let label, !label.isEmpty { args.append(contentsOf: ["--label", label]) }
         return ["crew": ["command": helper, "args": args]]
     }
 

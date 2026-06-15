@@ -291,7 +291,8 @@ final class LocalBackend: PendingCrewBackend {
         }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        whiteboard.appendUserMessage(crewId: crewId, text: trimmed)
+        // 本机人类显示名「我」—— agent 看的白板渲染成「- 我: …」而非裸「人类」。
+        whiteboard.appendUserMessage(crewId: crewId, text: trimmed, senderName: "我")
     }
 }
 

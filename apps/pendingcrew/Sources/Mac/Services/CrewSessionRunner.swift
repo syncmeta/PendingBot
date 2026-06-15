@@ -326,7 +326,7 @@ final class CrewSessionRunner: ObservableObject {
                 detail: detail, members: members, taskBrief: initialPrompt, workdir: workdir,
                 sessionId: localSessionId, runnerKind: captainKind, appendPersona: persona)
             let comms = LocalSessionLaunch.prepareLocalCommsConfig(
-                crewId: crewId, sessionId: localSessionId, captain: true)
+                crewId: crewId, sessionId: localSessionId, captain: true, label: "机长")
             cfg.settingsFile = comms.settings
             cfg.mcpConfigFile = comms.mcp
         case .codex:
@@ -334,7 +334,7 @@ final class CrewSessionRunner: ObservableObject {
                 detail: detail, members: members, taskBrief: initialPrompt, workdir: workdir,
                 sessionId: localSessionId, appendPersona: persona)
             codexMcpServers = LocalSessionLaunch.codexMcpServers(
-                crewId: crewId, sessionId: localSessionId, captain: true)
+                crewId: crewId, sessionId: localSessionId, captain: true, label: "机长")
         }
         try await start(
             crewId: crewId,

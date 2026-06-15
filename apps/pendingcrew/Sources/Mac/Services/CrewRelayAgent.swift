@@ -175,6 +175,9 @@ final class CrewRelayAgent: ObservableObject {
             members = []
         }
         let detail = crewStore.getCrew(b.crewId)
+        // relay 自动起的 worker session 的白板发送者名：agent 名 + session id 前缀
+        // （与手动起 / CrewSessionRun.displayName 同款），post_to_crew 不再裸 uuid。
+        let workerLabel = kind.displayName + " · " + String(localSessionId.prefix(6))
         switch kind {
         case .claudeCode:
             // claude 行为不变：detail+backend 都在才渲染世界观文件；comms 恒接。
@@ -184,7 +187,7 @@ final class CrewRelayAgent: ObservableObject {
                     workdir: workdir, sessionId: localSessionId, runnerKind: kind)
             }
             let comms = LocalSessionLaunch.prepareLocalCommsConfig(
-                crewId: b.crewId, sessionId: localSessionId)
+                crewId: b.crewId, sessionId: localSessionId, label: workerLabel)
             cfg.settingsFile = comms.settings
             cfg.mcpConfigFile = comms.mcp
         case .codex:
@@ -194,7 +197,7 @@ final class CrewRelayAgent: ObservableObject {
                     workdir: workdir, sessionId: localSessionId)
             }
             codexMcp = LocalSessionLaunch.codexMcpServers(
-                crewId: b.crewId, sessionId: localSessionId)
+                crewId: b.crewId, sessionId: localSessionId, label: workerLabel)
         }
         do {
             try await runner.start(

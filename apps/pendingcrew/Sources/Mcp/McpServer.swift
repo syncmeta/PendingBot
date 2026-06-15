@@ -16,14 +16,19 @@ final class McpServer {
     /// 机长 session 标记（helper `--captain` flag 传入）—— 解锁机长专用工具
     /// `answer_decision`（chunk2 T4）。worker session 看不到也调不动。
     let isCaptain: Bool
+    /// 本 session 的显示 label（helper `--label` flag 传入；如「机长」/「Claude Code
+    /// · abc123」）。`post_to_crew` 写白板时带上 → agent 看的白板不再裸 uuid。
+    /// nil（未传 label / 旧调用）→ 渲染退回 `session:<id>`，保持兼容。
+    let sessionLabel: String?
 
     init(store: LocalWhiteboardStore, approvals: LocalApprovalStore, crewId: String, sessionId: String,
-         isCaptain: Bool = false) {
+         isCaptain: Bool = false, sessionLabel: String? = nil) {
         self.store = store
         self.approvals = approvals
         self.crewId = crewId
         self.sessionId = sessionId
         self.isCaptain = isCaptain
+        self.sessionLabel = sessionLabel
     }
 
     /// 处理一行 JSON-RPC。返回应答 JSON 字符串；通知（无 id / `notifications/*`）→ nil。
@@ -109,7 +114,8 @@ final class McpServer {
                 return toolResult(id: id, text: "ERROR: message 不能为空")
             }
             store.appendSessionMessage(crewId: crewId, sessionId: sessionId,
-                                       text: message, category: args["category"] as? String)
+                                       text: message, category: args["category"] as? String,
+                                       senderName: sessionLabel)
             return toolResult(id: id, text: "已发到 crew 群聊白板。")
         case "read_whiteboard":
             let rows = store.list(crewId: crewId).map(renderRow)
@@ -127,7 +133,7 @@ final class McpServer {
             // reporter session 思考后 @人类」属 chunk 2）。答复仍走待办列表（approvals）。
             store.appendSessionMessage(crewId: crewId, sessionId: sessionId,
                                        text: "🔔 待决策：\(question)\n（请在 PendingCrew 待办列表里答复）",
-                                       category: "question")
+                                       category: "question", senderName: sessionLabel)
             return toolResult(id: id, text: awaitReply(reqId: reqId))
         case "answer_decision":
             // 机长专用（chunk2 T4）：答复一条 decision，解开发起 session 的 long-poll。
@@ -170,11 +176,16 @@ final class McpServer {
     }
 
     private func renderRow(_ m: LocalWhiteboardMessage) -> String {
+        // 与 HookEmitter.render 同款：有显示名优先用名，无名退回旧格式。
         let who: String
-        switch m.senderKind {
-        case "session": who = "session:\(m.senderSessionId ?? "?")"
-        case "user": who = "人类"
-        default: who = m.senderKind
+        if let name = m.senderName ?? m.senderDisplayName, !name.isEmpty {
+            who = name
+        } else {
+            switch m.senderKind {
+            case "session": who = "session:\(m.senderSessionId ?? "?")"
+            case "user": who = "人类"
+            default: who = m.senderKind
+            }
         }
         return "[\(m.createdAt)] \(who): \(m.text)"
     }

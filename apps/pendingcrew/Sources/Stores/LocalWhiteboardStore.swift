@@ -58,8 +58,8 @@ final class LocalWhiteboardStore: @unchecked Sendable {
         return Array(all.suffix(from: all.index(after: idx)))
     }
 
-    /// 追加一条本机人类消息。
-    func appendUserMessage(crewId: String, text: String) {
+    /// 追加一条本机人类消息。`senderName` = 人类显示名（如已知；nil → 渲染退回「我/人类」）。
+    func appendUserMessage(crewId: String, text: String, senderName: String? = nil) {
         append(crewId: crewId, LocalWhiteboardMessage(
             id: UUID().uuidString.lowercased(),
             senderKind: "user",
@@ -67,11 +67,15 @@ final class LocalWhiteboardStore: @unchecked Sendable {
             senderSessionId: nil,
             category: nil,
             text: text,
-            createdAt: ISO8601DateFormatter().string(from: Date())))
+            createdAt: ISO8601DateFormatter().string(from: Date()),
+            senderName: senderName))
     }
 
-    /// 追加一条 session（编码 agent）消息（chunk 4：`post_to_crew`）。
-    func appendSessionMessage(crewId: String, sessionId: String, text: String, category: String? = nil) {
+    /// 追加一条 session（编码 agent）消息（chunk 4：`post_to_crew`）。`senderName` =
+    /// 该 session 的显示 label（如「机长」/「Claude Code · abc123」；nil → 渲染退回
+    /// `session:<id>`，给 agent 看的白板就不再只剩裸 uuid）。
+    func appendSessionMessage(crewId: String, sessionId: String, text: String,
+                              category: String? = nil, senderName: String? = nil) {
         append(crewId: crewId, LocalWhiteboardMessage(
             id: UUID().uuidString.lowercased(),
             senderKind: "session",
@@ -79,7 +83,8 @@ final class LocalWhiteboardStore: @unchecked Sendable {
             senderSessionId: sessionId,
             category: category,
             text: text,
-            createdAt: ISO8601DateFormatter().string(from: Date())))
+            createdAt: ISO8601DateFormatter().string(from: Date()),
+            senderName: senderName))
     }
 
     /// 追加一条 **relay 拉下来的** 消息（接合 v2 block 3：CrewRelayAgent 把
@@ -153,4 +158,9 @@ struct LocalWhiteboardMessage: Codable, Equatable {
     var relayRemoteId: String? = nil
     /// relay 消息在 edge 侧的发送者显示名（iOS 用户名 / bot 名）。本地消息 nil。
     var senderDisplayName: String? = nil
+    /// 本地产生消息（session post_to_crew / 人类输入）的发送者显示名 ——
+    /// 给 agent 看的白板（`HookEmitter.render`）用它替掉裸 `session:<uuid>` / 「人类」。
+    /// 与 `senderDisplayName`（relay 远端名）区分来源；渲染时两者皆可作回退。
+    /// 新增可选字段向后兼容（旧 JSON 缺键 → nil）。
+    var senderName: String? = nil
 }
