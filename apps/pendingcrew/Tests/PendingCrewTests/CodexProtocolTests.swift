@@ -11,7 +11,9 @@ final class CodexProtocolTests: XCTestCase {
         XCTAssertEqual(caps?["experimentalApi"] as? Bool, true)
         XCTAssertNotNil(caps?["optOutNotificationMethods"], "v1 should opt out of streaming deltas")
     }
-    func testThreadStartCarriesCwdDevInstructionsApprovalPolicyMcp() {
+    func testThreadStartRegistersMcpUnderConfigNotTopLevel() {
+        // codex `thread/start` has NO top-level `mcpServers` field — MCP registers via
+        // `config.mcp_servers` (real-schema verified). Guards against the silent-drop regression.
         let p = CodexProtocol.threadStartParams(cwd: "/repo", model: "gpt-5.5",
             developerInstructions: "world-model",
             mcpServers: ["crew": ["command": "/bin/helper", "args": ["--mcp-serve"]]])
@@ -21,26 +23,37 @@ final class CodexProtocolTests: XCTestCase {
         XCTAssertEqual(p["approvalPolicy"] as? String, "on-request")
         XCTAssertEqual(p["sandbox"] as? String, "workspace-write")
         XCTAssertEqual(p["approvalsReviewer"] as? String, "user")
-        XCTAssertNotNil(p["mcpServers"])
+        XCTAssertNil(p["mcpServers"], "must NOT use the bogus top-level field codex drops")
+        let mcp = (p["config"] as? [String: Any])?["mcp_servers"] as? [String: Any]
+        let crew = mcp?["crew"] as? [String: Any]
+        XCTAssertEqual(crew?["command"] as? String, "/bin/helper")
+        XCTAssertEqual(crew?["args"] as? [String], ["--mcp-serve"])
     }
     func testThreadStartOmitsEmptyOptionals() {
         let p = CodexProtocol.threadStartParams(cwd: "/repo", model: nil, developerInstructions: "", mcpServers: nil)
-        XCTAssertNil(p["model"]); XCTAssertNil(p["developerInstructions"]); XCTAssertNil(p["mcpServers"])
+        XCTAssertNil(p["model"]); XCTAssertNil(p["developerInstructions"]); XCTAssertNil(p["config"])
         XCTAssertEqual(p["approvalPolicy"] as? String, "on-request")   // policy always present
     }
-    func testTurnStartWrapsTextAndUntrustedWhiteboard() {
+    func testTurnStartPrependsWhiteboardAsLeadingTextInput() {
+        // codex has no `additionalContext` field — the whiteboard rides as a leading
+        // text input item, ahead of the user's text (real-schema verified).
         let p = CodexProtocol.turnStartParams(threadId: "thr_1", text: "go", whiteboard: "unread:1")
         XCTAssertEqual(p["threadId"] as? String, "thr_1")
+        XCTAssertNil(p["additionalContext"], "codex turn/start has no additionalContext field")
         let input = p["input"] as? [[String: Any]]
+        XCTAssertEqual(input?.count, 2)
         XCTAssertEqual(input?.first?["type"] as? String, "text")
-        XCTAssertEqual(input?.first?["text"] as? String, "go")
-        let wb = (p["additionalContext"] as? [String: Any])?["whiteboard"] as? [String: Any]
-        XCTAssertEqual(wb?["kind"] as? String, "untrusted")
-        XCTAssertEqual(wb?["value"] as? String, "unread:1")
+        XCTAssertEqual(input?.first?["text"] as? String, "unread:1")   // whiteboard first
+        XCTAssertEqual(input?.last?["text"] as? String, "go")          // user text last
     }
-    func testTurnStartOmitsWhiteboardWhenNilOrEmpty() {
-        XCTAssertNil(CodexProtocol.turnStartParams(threadId: "t", text: "go", whiteboard: nil)["additionalContext"])
-        XCTAssertNil(CodexProtocol.turnStartParams(threadId: "t", text: "go", whiteboard: "")["additionalContext"])
+    func testTurnStartIsSingleTextInputWhenNoWhiteboard() {
+        for wb in [nil, ""] as [String?] {
+            let p = CodexProtocol.turnStartParams(threadId: "t", text: "go", whiteboard: wb)
+            XCTAssertNil(p["additionalContext"])
+            let input = p["input"] as? [[String: Any]]
+            XCTAssertEqual(input?.count, 1)
+            XCTAssertEqual(input?.first?["text"] as? String, "go")
+        }
     }
     func testTurnInterruptParams() {
         let p = CodexProtocol.turnInterruptParams(threadId: "thr_1", turnId: "turn_9")

@@ -19,7 +19,7 @@ final class CodexAppServerBackend: ObservableObject, SessionBackend {
     private let model: String?
     private let developerInstructions: String?
     private let mcpServers: [String: Any]?
-    /// Pulls the unread-whiteboard string to inject as additionalContext each turn.
+    /// Pulls the unread-whiteboard string to inject as a leading text input each turn.
     private let whiteboardProvider: () -> String?
     /// Routes a codex approval request into the existing approval UI; returns the
     /// decision string ("accept"/"decline"/…) once the human answers.

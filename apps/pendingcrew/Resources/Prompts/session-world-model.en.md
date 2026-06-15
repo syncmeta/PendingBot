@@ -70,7 +70,7 @@ Analogy: detailed work lives in your IDE; you sync only key milestones to the gr
 
 ## 9. How you read the whiteboard
 
-**You don't pull it.** On every session boot / fresh prompt round, the system automatically injects the full whiteboard (ordered by time) into your system prompt under "recent crew whiteboard".
+**You normally don't pull it.** On every session boot / fresh prompt round, the system automatically injects the full whiteboard (ordered by time) into your system prompt under "recent crew whiteboard". A `read_whiteboard` tool is also available to re-pull the whole board on demand, but the auto-injection already covers day-to-day, so you usually won't need it.
 
 - `@self` parts mean **you are specifically being addressed** (the user @'d you)
 - Un-@'d parts are **broadcasts / leave-on-board notes** — you also see those

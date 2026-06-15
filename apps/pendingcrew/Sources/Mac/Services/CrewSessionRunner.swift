@@ -162,7 +162,8 @@ final class CrewSessionRunner: ObservableObject {
             )
         case .codex:
             // codex 没有 claude 的 hook/settings 通道：世界观经 developerInstructions、
-            // MCP 经 mcpServers dict、白板每轮经 additionalContext、审批经 server request。
+            // MCP 经 thread/start 的 config.mcp_servers、白板每轮作为 turn/start 的首条
+            // text input 注入、审批经 server request。
             // 后两者用 in-process provider 复用同一份本地 store（与 claude 的 helper 子进程
             // 读写同一份白板/审批 JSON —— 右栏内联卡片 / 群聊白板对齐）。
             let cb = CodexAppServerBackend(
@@ -202,8 +203,8 @@ final class CrewSessionRunner: ObservableObject {
 
     /// codex 每轮 turn 前注入未读白板的 provider —— 复用 claude PostToolUse hook 的
     /// 同一份 `HookEmitter`（per-session 游标读未读 + 渲染 + 推进游标），区别只是
-    /// 这里在 app 进程内直接调，不经 helper 子进程。返回的字符串塞进
-    /// `turn/start.additionalContext`。无未读 → nil（不注入）。best-effort：
+    /// 这里在 app 进程内直接调，不经 helper 子进程。返回的字符串作为 `turn/start`
+    /// 的首条 text input 前置注入。无未读 → nil（不注入）。best-effort：
     /// 任何失败（store 读不出 / 渲染失败）→ nil，turn 照常跑（只是这轮没白板）。
     nonisolated static func makeWhiteboardProvider(crewId: String, sessionId: String) -> () -> String? {
         let dir = LocalWhiteboardStore.defaultDirectory
@@ -305,7 +306,7 @@ final class CrewSessionRunner: ObservableObject {
         }
         let workdir = URL(fileURLWithPath: (wd as NSString).expandingTildeInPath)
         let localSessionId = "captain-" + String(UUID().uuidString.lowercased().prefix(8))
-        let initialPrompt = "你是本 crew 的机长。先用 read_whiteboard 了解群聊现状，然后简短报到（post_to_crew 一句）并待命。后续有待决策会通知你。"
+        let initialPrompt = "你是本 crew 的机长。先了解群聊白板的现状（系统会自动注入；需要时也可用 read_whiteboard 主动读一次），然后用 post_to_crew 简短报到一句并待命。后续有待决策会通知你。"
         // persona / members best-effort：加载失败不挡启动（只是少人设/世界观，与 worker 同策略）。
         let persona = try? LocalPromptLoader().rawTemplate(name: "crew-captain", locale: "zh")
         let members = (try? await backend?.listCrewMembers(crewId: crewId))?.members ?? []
