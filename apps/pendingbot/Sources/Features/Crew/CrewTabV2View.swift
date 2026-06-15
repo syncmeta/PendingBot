@@ -345,7 +345,7 @@ extension CrewTabV2View: FeatureSurface {
                     // chat store / realtime subscription state.
                     .id(crewId)
             } else {
-                EmptyDetailHint(text: "选择一个机组查看", systemImage: "command")
+                EmptyDetailHint(systemImage: "command")
             }
         }
     }
@@ -363,11 +363,11 @@ private extension CrewTabV2View {
     /// create / device-login / `loadAll()` work from this column. A "+/…" menu
     /// rides the toolbar since there's no NavigationStack to host one.
     var macListColumn: some View {
+        // 无标题、按钮入 toolbar(贴侧栏折叠按钮),与其余 tab 统一。
         chrome(
             content
-                .navigationTitle("机组")
                 .toolbar {
-                    ToolbarItem(placement: .platformTrailing) {
+                    ToolbarItemGroup {
                         crewMenu
                     }
                 }

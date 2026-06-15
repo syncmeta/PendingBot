@@ -165,17 +165,20 @@ struct EnvelopeTabView: View {
         VStack(spacing: 0) {
             // No "+" trigger — new envelopes are kicked off from each
             // conversation's settings sheet. This tab is read-only.
-            TabHeaderBar(title: "来信") {
-                if !runs.isEmpty {
-                    Text("\(runs.count) 封")
-                        .font(Theme.Fonts.rounded(size: 12, weight: .medium))
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(
-                            Capsule(style: .continuous)
-                                .fill(Theme.Palette.surfaceMuted)
-                        )
+            // Mac 壳:无表头(标题去掉);iOS/iPad-regular 保留带计数徽标的表头。
+            if !renderAsMacListColumn {
+                TabHeaderBar(title: "来信") {
+                    if !runs.isEmpty {
+                        Text("\(runs.count) 封")
+                            .font(Theme.Fonts.rounded(size: 12, weight: .medium))
+                            .foregroundStyle(Theme.Palette.inkMuted)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(Theme.Palette.surfaceMuted)
+                            )
+                    }
                 }
             }
             ZStack {
@@ -408,8 +411,7 @@ extension EnvelopeTabView: FeatureSurface {
                 EnvelopeArticleView(envelopeRunId: id)
                     .id(id)
             } else {
-                EmptyDetailHint(text: "选择一封来信查看正文",
-                                systemImage: "envelope.open")
+                EmptyDetailHint(systemImage: "envelope.open")
             }
         }
     }

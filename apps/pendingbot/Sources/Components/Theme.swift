@@ -2,6 +2,9 @@ import SwiftUI
 #if canImport(UIKit)
 import UIKit
 #endif
+#if canImport(AppKit)
+import AppKit
+#endif
 
 /// One place to change the look. Mirrors the design language used across
 /// the PendingBot reference + the web `tokens.css`: deep-jade accent on
@@ -151,6 +154,37 @@ enum Theme {
         /// avatar initials. Feels editorial vs the regular SF Pro UI.
         static func serif(size: CGFloat, weight: Font.Weight = .semibold) -> Font {
             system(size: size, weight: weight, design: .serif)
+        }
+
+        /// 列表标题字体:**英文走衬线(New York)、中文走无衬线(系统中文字体)**。
+        /// 不锁定具体中文字体 —— 按串内是否含 CJK 选 `design`:含中文用 `.default`
+        /// (系统中文 = PingFang,无衬线),纯西文用 `.serif`(New York)。这样
+        /// iOS / macOS 两端表现一致,且 Mac 中文不再走宋体衬线(发"黑")。
+        /// 字重 Mac 比 iOS 低一档 —— 同号 Mac 渲染偏重,降一档观感才与 iPhone 齐。
+        static func scriptTitle(_ text: String, size: CGFloat) -> Font {
+            let cjk = text.unicodeScalars.contains(where: Fonts.isCJK)
+            #if os(macOS)
+            // 英文(衬线)字重不降,与 iOS 一致;中文(无衬线)比 iOS 略降一档到
+            // medium —— 同号 Mac 渲染偏重,但 regular 又太轻,medium 居中。
+            let weight: Font.Weight = cjk ? .medium : .semibold
+            #else
+            let weight: Font.Weight = .semibold
+            #endif
+            return system(size: size, weight: weight, design: cjk ? .default : .serif)
+        }
+
+        private static func isCJK(_ u: Unicode.Scalar) -> Bool {
+            switch u.value {
+            case 0x3000...0x30FF,    // CJK 符号 + 假名
+                 0x3400...0x4DBF,    // 扩展 A
+                 0x4E00...0x9FFF,    // 基本汉字
+                 0xF900...0xFAFF,    // 兼容汉字
+                 0xFF00...0xFFEF,    // 全角
+                 0x20000...0x2A6DF:  // 扩展 B
+                return true
+            default:
+                return false
+            }
         }
 
         /// Rounded sans — softer than SF Pro, used for buttons, chip labels,

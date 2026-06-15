@@ -415,35 +415,77 @@ struct MessageTabView: View {
         return items
     }
 
-    private var sidebarBody: some View {
-        VStack(spacing: 0) {
-            TabHeaderBar(
-                title: "消息",
-                trailing: {
-                    GroupedHeaderControls {
-                        Menu {
-                            if !recentBots.isEmpty {
-                                Section("最近聊过") {
-                                    ForEach(recentBots) { bot in
-                                        Button {
-                                            Haptics.tap()
-                                            Task { await createAndNavigate(with: bot) }
-                                        } label: {
-                                            Label(bot.display_name, systemImage: "bubble.left")
-                                        }
-                                    }
-                                }
+    /// 表头操作 = 新建会话菜单 + "+" 弹层。抽出来既给 iOS 的 `TabHeaderBar`
+    /// trailing 用,又给 Mac 壳的 toolbar 用(贴侧栏折叠按钮)。
+    @ViewBuilder private var messageHeaderActions: some View {
+        GroupedHeaderControls {
+            Menu {
+                if !recentBots.isEmpty {
+                    Section("最近聊过") {
+                        ForEach(recentBots) { bot in
+                            Button {
+                                Haptics.tap()
+                                Task { await createAndNavigate(with: bot) }
+                            } label: {
+                                Label(bot.display_name, systemImage: "bubble.left")
                             }
-                            Section("右滑新建会话\n左滑标未读/删除") {
-                            }
-                        } label: {
-                            CircleComposeButton()
                         }
-                    } trailing: {
-                        PlusActionPopover(items: plusActionItems)
                     }
                 }
-            )
+                Section("右滑新建会话\n左滑标未读/删除") {
+                }
+            } label: {
+                CircleComposeButton()
+            }
+        } trailing: {
+            PlusActionPopover(items: plusActionItems)
+        }
+    }
+
+    /// Mac 壳 toolbar 版表头操作 —— 必须用**原生 `Menu` 直接作为
+    /// `ToolbarItemGroup` 子项**:iOS 那套 `GroupedHeaderControls`(HStack)+
+    /// `PlusActionPopover`(自定义 `.popover`)塞进 macOS toolbar 收不到点击,
+    /// 「+」点不动。这里换成原生 menu,行为同 iOS 但在 toolbar 里可用。
+    @ViewBuilder private var macToolbarActions: some View {
+        Menu {
+            if recentBots.isEmpty {
+                Text("还没有最近会话")
+            } else {
+                ForEach(recentBots) { bot in
+                    Button {
+                        Haptics.tap()
+                        Task { await createAndNavigate(with: bot) }
+                    } label: {
+                        Label(bot.display_name, systemImage: "bubble.left")
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "square.and.pencil")
+        }
+        .help("新建会话")
+
+        Menu {
+            ForEach(plusActionItems) { item in
+                Button {
+                    Haptics.tap()
+                    item.action()
+                } label: {
+                    Label(item.title, systemImage: item.systemImage)
+                }
+            }
+        } label: {
+            Image(systemName: "plus")
+        }
+        .help("加好友 / 拉群 / 加群")
+    }
+
+    private var sidebarBody: some View {
+        VStack(spacing: 0) {
+            // Mac 壳:无表头(标题去掉,按钮移到 toolbar);iOS/iPad-regular 保留。
+            if !renderAsMacListColumn {
+                TabHeaderBar(title: "消息", trailing: { messageHeaderActions })
+            }
             Group {
                 if loading && conversations.isEmpty {
                     ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -993,8 +1035,7 @@ extension MessageTabView: FeatureSurface {
                 destinationView(for: dest)
                     .id(destinationKey(dest))
             } else {
-                EmptyDetailHint(text: "选择一个会话开始",
-                                systemImage: "bubble.left.and.bubble.right")
+                EmptyDetailHint(systemImage: "bubble.left.and.bubble.right")
             }
         }
     }
@@ -1013,7 +1054,15 @@ private extension MessageTabView {
     var macListColumn: some View {
         // 不铺 canvas —— 让 `WideRootView` 合并侧栏垫的原生玻璃透上来,
         // 整条侧栏一块玻璃。会话卡片(surface 填充)照旧浮在玻璃上。
-        chrome(sidebarBody)
+        // 表头按钮搬到 toolbar 的 navigation 段(贴侧栏折叠按钮),无标题。
+        chrome(
+            sidebarBody
+                .toolbar {
+                    ToolbarItemGroup {
+                        macToolbarActions
+                    }
+                }
+        )
     }
 }
 
@@ -1170,11 +1219,9 @@ private struct ConversationListRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(rowTitle)
-                        // Sans, not serif: the serif design (New York) has no CJK
-                        // glyphs, so Chinese titles fall back to PingFang (sans) on
-                        // iOS but Songti (serif) on macOS — same code, different look.
-                        // System design renders sans for CJK on both.
-                        .font(Theme.Fonts.system(size: 16, weight: .semibold))
+                        // 英文衬线 / 中文无衬线(按串内 CJK 选 design);Mac 字重比
+                        // iOS 低一档。与好友列表标题同款、iOS/Mac 一致。
+                        .font(Theme.Fonts.scriptTitle(rowTitle, size: 16))
                         .foregroundStyle(
                             rowTitleIsPlaceholder ? Theme.Palette.inkMuted : Theme.Palette.ink
                         )
@@ -1232,11 +1279,9 @@ private struct ConversationListRow: View {
                 .fill(isSelected ? Theme.Palette.accentBg : Theme.Palette.surface)
         )
         .overlay(
+            // 选中只靠底色(accentBg)区分,不加绿色描边 —— 描边线圈在 Mac 上太抢眼。
             RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
-                .strokeBorder(
-                    isSelected ? Theme.Palette.accent.opacity(0.5) : Theme.Palette.hairline,
-                    lineWidth: isSelected ? 1 : 0.5
-                )
+                .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
         )
         .contentShape(RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous))
     }

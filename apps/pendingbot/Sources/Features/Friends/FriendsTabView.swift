@@ -233,35 +233,230 @@ struct FriendsTabView: View {
 
     // ── Sidebar (shared) ────────────────────────────────────────────────────
 
-    /// Shell 契约下的行内边距:前导贴 rail 右沿(leading=0)、右侧留 gutter。
-    /// 非 shell(iOS)返回 nil → 用原生 List 默认插入,行为不变。
-    private var shellRowInsets: EdgeInsets? {
+    /// 行内边距。Mac:纯净一列 —— 头像贴 rail(leading 16)、右留 gutter。
+    /// iOS 返回 nil(默认插入,行为不变)。
+    private var cardRowInsets: EdgeInsets? {
         renderAsMacListColumn
-            ? EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: Theme.Metrics.gutter)
+            ? EdgeInsets(top: 7, leading: 16, bottom: 7, trailing: Theme.Metrics.gutter)
             : nil
     }
 
+    /// 行背景。Mac:**不铺卡片** —— 行透明、融进侧栏玻璃,只有选中行铺一小块
+    /// 圆角染色(macOS 源列表式选中)。行与行之间用 List 自带的 hairline 分隔线。
+    /// iOS 维持满宽 surface 行为不变。
     @ViewBuilder
+    private func rowBackground(selected: Bool) -> some View {
+        if renderAsMacListColumn {
+            if selected {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Theme.Palette.accentBg)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+            } else {
+                Color.clear
+            }
+        } else {
+            (selected ? Theme.Palette.accentBg : Theme.Palette.surface)
+        }
+    }
+
+    // MARK: - Mac 壳:自绘好友列表(ScrollView,不用 List)
+
+    /// macOS List 自带较大的水平/分组留白,行内边距覆盖不掉 → 左侧总空一条。
+    /// 消息列表是 ScrollView 所以贴左;好友这里照搬:自绘纯净一列 —— 行贴左
+    /// (leading 16,和消息对齐)、行间 hairline 细线、选中行铺一小块圆角染色。
+    /// iOS / iPad-regular 仍走原 `List`(insetGrouped)。
+    private var macFriendsScroll: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                let selfSelected = sidebarLayout && effectiveSelection?.kind == "self"
+                macRow(selected: selfSelected) {
+                    SelfRow(
+                        avatarSeed: AccountStore.shared.avatarSeed
+                            ?? AccountStore.shared.current?.id ?? "?",
+                        attachmentId: AccountStore.shared.avatarAttachmentId,
+                        name: AccountStore.shared.profileDisplayName
+                            ?? AccountStore.shared.current?.displayName ?? "你",
+                        onTap: { Task { await tapSelf() } },
+                        onQR: { showingQR = true; Haptics.tap() }
+                    )
+                }
+
+                FilterPillBar(filter: $filter)
+                    .padding(.vertical, 6)
+
+                if !pendingFriendRequests.isEmpty {
+                    macSectionHeader("好友申请")
+                    ForEach(Array(pendingFriendRequests.enumerated()), id: \.element.id) { idx, req in
+                        if idx > 0 { macRowDivider() }
+                        macRow(selected: false) {
+                            FriendRequestRow(
+                                request: req,
+                                onAccept: { Task { await respondToRequest(req, accept: true) } },
+                                onDecline: { Task { await respondToRequest(req, accept: false) } }
+                            )
+                        }
+                    }
+                }
+
+                if !pendingGroupInvitations.isEmpty {
+                    macSectionHeader("群邀请")
+                    ForEach(Array(pendingGroupInvitations.enumerated()), id: \.element.id) { idx, invite in
+                        if idx > 0 { macRowDivider() }
+                        macRow(selected: false) {
+                            GroupInvitationRow(
+                                invitation: invite,
+                                onAccept: { Task { await respondToGroupInvitation(invite, accept: true) } },
+                                onDecline: { Task { await respondToGroupInvitation(invite, accept: false) } }
+                            )
+                        }
+                    }
+                }
+
+                if !friendsForFilter.isEmpty {
+                    ForEach(Array(friendsForFilter.enumerated()), id: \.element.id) { idx, item in
+                        // 分隔线**始终占位**(高度不变,避免选中时布局跳动);相邻有
+                        // 行被选中时只把线变透明,这样选中框边缘不被线压、间距也不变。
+                        if idx > 0 {
+                            macRowDivider(visible:
+                                !isFriendSelected(item) &&
+                                !isFriendSelected(friendsForFilter[idx - 1]))
+                        }
+                        switch item {
+                        case .bot(let bot):
+                            let selected = sidebarLayout && isSelected(kind: "bot", id: bot.id)
+                            macRow(selected: selected) {
+                                FriendRow(kind: .bot, avatarSeed: bot.id, name: bot.display_name,
+                                          modelSlug: bot.model_id, botVisibility: bot.visibility)
+                            }
+                            .onTapGesture { Task { await tapBot(bot) } }
+                            .modifier(BotRowOwnerActions(
+                                bot: bot, isMine: ownsBot(bot),
+                                onManage: { managingBot = bot }
+                            ))
+                        case .human(let c):
+                            let selected = sidebarLayout && isSelected(kind: "user", id: c.id)
+                            macRow(selected: selected) {
+                                FriendRow(kind: .human, avatarSeed: c.avatarSeed,
+                                          avatarAttachmentId: c.avatarPath, name: c.rowName,
+                                          modelSlug: nil, botVisibility: nil)
+                            }
+                            .onTapGesture { Task { await tapHuman(c) } }
+                            .contextMenu {
+                                Button { aliasEditTarget = c } label: {
+                                    Label(c.alias?.isEmpty == false ? "修改备注" : "设置备注",
+                                          systemImage: "person.text.rectangle")
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if let emptyText = emptyTextForFilter {
+                    Text(emptyText)
+                        .font(Theme.Fonts.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.leading, 14)
+                        .padding(.vertical, 24)
+                }
+            }
+            .padding(.vertical, 8)
+        }
+        // ScrollView 在 macOS 也带默认水平 contentMargins(就是左边那截空)——归零,
+        // 让行真正贴 rail、与消息列表对齐;水平内缩交给下面 macRow 自己控制。
+        .contentMargins(.horizontal, 0, for: .scrollContent)
+        .refreshable { await load() }
+    }
+
+    /// 单行容器。content 左 14(对齐消息卡片内边距)、右留 gutter;选中染色块
+    /// 与分隔线**同一水平内缩(8)**,这样选中框、分隔线、行三者左右对齐。
+    @ViewBuilder
+    private func macRow<V: View>(selected: Bool, @ViewBuilder _ content: () -> V) -> some View {
+        content()
+            .padding(.leading, 14)
+            .padding(.trailing, Theme.Metrics.gutter)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+                if selected {
+                    // 染色块填满整行高(无竖向内缩)→ 与"分隔线之间"的行高一致,
+                    // 选中时不会显得比别的行矮。
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Theme.Palette.accentBg)
+                        .padding(.horizontal, 8)
+                }
+            }
+            .contentShape(Rectangle())
+    }
+
+    /// 分隔线:水平内缩 16 = 选中框内缩 8 + 圆角半径 8 —— 落在选中框直边段。
+    /// `visible=false` 时只变透明、**仍占位**(高度不变),避免选中切换时布局跳。
+    private func macRowDivider(visible: Bool = true) -> some View {
+        Divider()
+            .overlay(Theme.Palette.hairline)
+            .opacity(visible ? 1 : 0)
+            .padding(.horizontal, 16)
+    }
+
+    private func macSectionHeader(_ text: String) -> some View {
+        Text(text)
+            .font(Theme.Fonts.caption)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.leading, 14)
+            .padding(.top, 14)
+            .padding(.bottom, 4)
+    }
+
+    /// 表头操作 = 排序菜单 + "+" 弹层(加好友 / 加机器人 / 新建机器人)。抽出来
+    /// 既给 iOS 的 `TabHeaderBar` trailing 用,又给 Mac 壳的 toolbar 用。
+    @ViewBuilder private var friendsHeaderActions: some View {
+        HStack(spacing: 6) {
+            friendSortMenu
+            PlusActionPopover(items: [
+                PlusActionItem(title: "加好友", systemImage: "person.badge.plus") {
+                    addingFriend = true
+                },
+                PlusActionItem(title: "加机器人", systemImage: "rectangle.badge.plus") {
+                    addingBot = true
+                },
+                PlusActionItem(title: "新建机器人", systemImage: "sparkles") {
+                    creatingBot = true
+                },
+            ])
+        }
+    }
+
+    /// Mac 壳 toolbar 版表头操作 —— 原生 `Menu` 直接作 `ToolbarItemGroup`
+    /// 子项(理由同 MessageTabView.macToolbarActions:iOS 的 PlusActionPopover
+    /// 在 macOS toolbar 里点不动)。排序复用 friendSortMenu(本就是 Menu)。
+    @ViewBuilder private var macToolbarActions: some View {
+        friendSortMenu
+        Menu {
+            Button { addingFriend = true } label: {
+                Label("加好友", systemImage: "person.badge.plus")
+            }
+            Button { addingBot = true } label: {
+                Label("加机器人", systemImage: "rectangle.badge.plus")
+            }
+            Button { creatingBot = true } label: {
+                Label("新建机器人", systemImage: "sparkles")
+            }
+        } label: {
+            Image(systemName: "plus")
+        }
+        .help("加好友 / 加机器人 / 新建机器人")
+    }
+
     private var sidebarBody: some View {
         VStack(spacing: 0) {
             // Background applied at the VStack level (not just inside
             // the lower ZStack) so the TabHeaderBar at the top sits
             // on canvas instead of the default white safe-area fill.
-            TabHeaderBar(title: "好友") {
-                HStack(spacing: 6) {
-                    friendSortMenu
-                    PlusActionPopover(items: [
-                        PlusActionItem(title: "加好友", systemImage: "person.badge.plus") {
-                            addingFriend = true
-                        },
-                        PlusActionItem(title: "加机器人", systemImage: "rectangle.badge.plus") {
-                            addingBot = true
-                        },
-                        PlusActionItem(title: "新建机器人", systemImage: "sparkles") {
-                            creatingBot = true
-                        },
-                    ])
-                }
+            // Mac 壳:无表头(标题去掉,按钮移到 toolbar);iOS/iPad-regular 保留。
+            if !renderAsMacListColumn {
+                TabHeaderBar(title: "好友") { friendsHeaderActions }
             }
             ZStack {
                 // Shell 模式下不铺 canvas —— 露出合并侧栏原生玻璃(List 已
@@ -269,6 +464,10 @@ struct FriendsTabView: View {
                 if !renderAsMacListColumn {
                     Theme.Palette.canvas.ignoresSafeArea()
                 }
+                if renderAsMacListColumn {
+                    // Mac:自绘 ScrollView 列表(贴左、纯净一列),不用 List。
+                    macFriendsScroll
+                } else {
                 List {
                     // Self row — pinned at the top, always visible
                     // regardless of filter. QR button on the right opens
@@ -285,8 +484,10 @@ struct FriendsTabView: View {
                             onTap: { Task { await tapSelf() } },
                             onQR: { showingQR = true; Haptics.tap() }
                         )
-                        .listRowBackground(selfSelected ? Theme.Palette.accentBg : Theme.Palette.surface)
-                        .listRowInsets(shellRowInsets)
+                        // 「我」行:透明融进侧栏,选中才染色。
+                        .listRowBackground(rowBackground(selected: selfSelected))
+                        .listRowInsets(cardRowInsets)
+                        .listRowSeparatorTint(Theme.Palette.hairline)
                     }
 
                     Section {
@@ -308,8 +509,9 @@ struct FriendsTabView: View {
                                     onAccept: { Task { await respondToRequest(req, accept: true) } },
                                     onDecline: { Task { await respondToRequest(req, accept: false) } }
                                 )
-                                .listRowBackground(Theme.Palette.surface)
-                                .listRowInsets(shellRowInsets)
+                                .listRowBackground(rowBackground(selected: false))
+                                .listRowInsets(cardRowInsets)
+                                .listRowSeparatorTint(Theme.Palette.hairline)
                             }
                         }
                     }
@@ -322,8 +524,9 @@ struct FriendsTabView: View {
                                     onAccept: { Task { await respondToGroupInvitation(invite, accept: true) } },
                                     onDecline: { Task { await respondToGroupInvitation(invite, accept: false) } }
                                 )
-                                .listRowBackground(Theme.Palette.surface)
-                                .listRowInsets(shellRowInsets)
+                                .listRowBackground(rowBackground(selected: false))
+                                .listRowInsets(cardRowInsets)
+                                .listRowSeparatorTint(Theme.Palette.hairline)
                             }
                         }
                     }
@@ -341,8 +544,9 @@ struct FriendsTabView: View {
                                               name: bot.display_name,
                                               modelSlug: bot.model_id,
                                               botVisibility: bot.visibility)
-                                        .listRowBackground(selected ? Theme.Palette.accentBg : Theme.Palette.surface)
-                                        .listRowInsets(shellRowInsets)
+                                        .listRowBackground(rowBackground(selected: selected))
+                                        .listRowInsets(cardRowInsets)
+                                        .listRowSeparatorTint(Theme.Palette.hairline)
                                         .contentShape(Rectangle())
                                         .onTapGesture { Task { await tapBot(bot) } }
                                         .modifier(BotRowOwnerActions(
@@ -358,8 +562,9 @@ struct FriendsTabView: View {
                                               name: c.rowName,
                                               modelSlug: nil,
                                               botVisibility: nil)
-                                        .listRowBackground(selected ? Theme.Palette.accentBg : Theme.Palette.surface)
-                                        .listRowInsets(shellRowInsets)
+                                        .listRowBackground(rowBackground(selected: selected))
+                                        .listRowInsets(cardRowInsets)
+                                        .listRowSeparatorTint(Theme.Palette.hairline)
                                         .contentShape(Rectangle())
                                         .onTapGesture { Task { await tapHuman(c) } }
                                         .contextMenu {
@@ -378,8 +583,9 @@ struct FriendsTabView: View {
                         Section {
                             Text(emptyText)
                                 .foregroundStyle(.secondary)
-                                .listRowBackground(Theme.Palette.surface)
-                                .listRowInsets(shellRowInsets)
+                                .listRowBackground(rowBackground(selected: false))
+                                .listRowInsets(cardRowInsets)
+                                .listRowSeparatorTint(Theme.Palette.hairline)
                         }
                     }
                 }
@@ -387,6 +593,7 @@ struct FriendsTabView: View {
                 .scrollContentBackground(.hidden)
                 .contentMargins(.top, 0, for: .scrollContent)
                 .refreshable { await load() }
+                }
             }
         }
     }
@@ -397,6 +604,16 @@ struct FriendsTabView: View {
     private func isSelected(kind: String, id: String) -> Bool {
         guard let peer = effectiveSelection else { return false }
         return peer.kind == kind && peer.peerId == id
+    }
+
+    /// 该好友行(bot/human)是否为当前右栏选中项 —— Mac 自绘列表里用它决定
+    /// 相邻分隔线是否隐藏。
+    private func isFriendSelected(_ item: FriendRowItem) -> Bool {
+        guard sidebarLayout else { return false }
+        switch item {
+        case .bot(let b):   return isSelected(kind: "bot", id: b.id)
+        case .human(let h): return isSelected(kind: "user", id: h.id)
+        }
     }
 
     // ── Sort menu ───────────────────────────────────────────────────────────
@@ -1159,8 +1376,7 @@ extension FriendsTabView: FeatureSurface {
                 )
                 .id(peer)
             } else {
-                EmptyDetailHint(text: "选择一位好友或机器人开始聊天",
-                                systemImage: "person.2")
+                EmptyDetailHint(systemImage: "person.2")
             }
         }
     }
@@ -1177,7 +1393,15 @@ private extension FriendsTabView {
     /// `sidebarBody` (no SidebarTabBar) on canvas, carrying the full chrome.
     var macListColumn: some View {
         // 不铺 canvas —— 合并侧栏的原生玻璃透上来,整条侧栏一块玻璃。
-        chrome(sidebarBody)
+        // 表头按钮搬到 toolbar 的 navigation 段(贴侧栏折叠按钮),无标题。
+        chrome(
+            sidebarBody
+                .toolbar {
+                    ToolbarItemGroup {
+                        macToolbarActions
+                    }
+                }
+        )
     }
 }
 
@@ -1197,7 +1421,7 @@ private struct SelfRow: View {
         HStack(spacing: 10) {
             UserAvatar(seed: avatarSeed, attachmentId: attachmentId, size: 36)
             Text(name)
-                .font(Theme.Fonts.serif(size: 16, weight: .semibold))
+                .font(Theme.Fonts.scriptTitle(name, size: 16))
                 .foregroundStyle(Theme.Palette.ink)
                 .lineLimit(1)
             Spacer(minLength: 8)
@@ -1248,9 +1472,10 @@ private struct FriendRow: View {
             // message list's model badge.
             HStack(spacing: 6) {
                 Text(name)
-                    .font(Theme.Fonts.serif(size: 16, weight: .semibold))
+                    .font(Theme.Fonts.scriptTitle(name, size: 16))
                     .foregroundStyle(Theme.Palette.ink)
                     .lineLimit(1)
+                    .layoutPriority(1)   // 名字优先,窄列时先压缩 model 标签而非名字
                 if kind == .bot, let slug = modelSlug, !slug.isEmpty {
                     // Friendly model name + blended price multiplier.
                     // Muted ink fg + surface-muted bg, matching the
@@ -1301,7 +1526,7 @@ private struct FriendRequestRow: View {
             UserAvatar(seed: request.peerAvatarSeed, attachmentId: nil, size: 36)
             VStack(alignment: .leading, spacing: 4) {
                 Text(request.peerDisplayName)
-                    .font(Theme.Fonts.serif(size: 16, weight: .semibold))
+                    .font(Theme.Fonts.scriptTitle(request.peerDisplayName, size: 16))
                     .foregroundStyle(Theme.Palette.ink)
                     .lineLimit(1)
                 if let msg = request.message, !msg.isEmpty {
@@ -1353,7 +1578,7 @@ private struct GroupInvitationRow: View {
                        size: 36)
             VStack(alignment: .leading, spacing: 4) {
                 Text(invitation.groupTitle)
-                    .font(Theme.Fonts.serif(size: 16, weight: .semibold))
+                    .font(Theme.Fonts.scriptTitle(invitation.groupTitle, size: 16))
                     .foregroundStyle(Theme.Palette.ink)
                     .lineLimit(1)
                 Text("\(invitation.inviterName) 邀请你入群")
@@ -1396,6 +1621,8 @@ private struct HumanKindTag: View {
         Text("人类")
             .font(Theme.Fonts.system(size: 10, weight: .semibold))
             .foregroundStyle(Theme.Palette.accent)
+            .lineLimit(1)
+            .fixedSize()
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(Capsule().fill(Theme.Palette.accentBg))

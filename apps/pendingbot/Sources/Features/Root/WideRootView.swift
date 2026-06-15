@@ -83,48 +83,82 @@ struct WideRootView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxHeight: .infinity)
+        // 空标题:不显示任何文字,但**确立侧栏列自己的 toolbar 区**。否则各
+        // tab 在 middleColumn 里声明的 toolbar 项无处可落,会漂到 detail 列的
+        // 工具栏(折叠按钮右侧),与 PendingCrew「按钮在折叠按钮左侧」不符。
+        .navigationTitle("")
         // 不自铺任何背景 —— rail 与 list 都透明,直接露出 NavigationSplitView
         // 侧栏列**自带的原生材质**(原来 List 侧栏那块)。list 列已去掉 canvas,
         // 所以整条侧栏是同一块原生底、中间无分隔。自糊 NSVisualEffectView 在
         // 这个被 MacMainWindowStyler 强制不透明的窗口里 behind-window 透不出来,
         // 反而发灰带渐变,故不用。
-        .navigationSplitViewColumnWidth(min: 300, ideal: 356, max: 520)
+        // 列宽加大(默认 420);「我」现在也有列表列,不再 56px 特例。
+        .navigationSplitViewColumnWidth(min: 320, ideal: 420, max: 560)
     }
 
     private var tabRail: some View {
-        // 窄图标栏 —— **不用 `List`**:`List` 强制行顶对齐 + 撑满全高 + 自带
-        // inset 选中样式,硬压窄会挤掉 NavigationSplitView 的折叠按钮。改成自绘
-        // 的竖向 rail(上下 `Spacer` 居中),折叠按钮回来,图标/字号/列宽全可控。
-        // 写回经 `tabSelection` —— iPad 改 `TabRoot.selected`、macOS 改内部 `@State`。
+        // 窄图标栏 —— **不用 `List`**:`List` 强制撑满全高 + 自带 inset 选中样式,
+        // 硬压窄会挤掉 NavigationSplitView 的折叠按钮。改成自绘的竖向 rail,
+        // 图标顶对齐(去掉顶部 `Spacer`),「我」用 `Spacer` 顶到最底、以本人头像
+        // 作图标。纯图标无文字。写回经 `tabSelection` —— iPad 改 `TabRoot.selected`、
+        // macOS 改内部 `@State`。
         let tabBinding = tabSelection
-        return VStack(spacing: 4) {
-            Spacer(minLength: 0)
-            ForEach(TopTab.allCases) { tab in
-                let selected = tabBinding.wrappedValue == tab
-                Button {
-                    if tabBinding.wrappedValue != tab { tabBinding.wrappedValue = tab }
-                } label: {
-                    VStack(spacing: 4) {
-                        Image(systemName: tab.systemImage)
-                            .font(Theme.Fonts.glyph(size: 16, weight: .regular))
-                            // 选中态 = 图标实心填充(SF Symbol `.fill` 变体),
-                            // 不再用背景块。没有 fill 变体的字形(如 command)
-                            // 会优雅回退到原线条形。
-                            .symbolVariant(selected ? .fill : .none)
-                        Text(tab.label)
-                            .font(Theme.Fonts.system(size: 10, weight: selected ? .semibold : .medium))
-                    }
-                    .foregroundStyle(selected ? Theme.Palette.accent : Theme.Palette.inkMuted)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 7)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
+        return VStack(spacing: 2) {
+            ForEach(TopTab.allCases.filter { $0 != .me }) { tab in
+                railButton(tab, binding: tabBinding)
             }
             Spacer(minLength: 0)
+            // 「我」固定在 rail 最底,图标 = 本人头像(上传图优先,否则确定性 emoji)。
+            meRailButton(binding: tabBinding)
         }
         .padding(.horizontal, 8)
+        .padding(.top, 10)
+        .padding(.bottom, 12)
         .frame(maxHeight: .infinity)
+    }
+
+    /// 普通 tab 的 rail 按钮 —— 纯 SF Symbol,无文字。选中态 = 实心填充 + accent。
+    private func railButton(_ tab: TopTab, binding: Binding<TopTab>) -> some View {
+        let selected = binding.wrappedValue == tab
+        return Button {
+            if binding.wrappedValue != tab { binding.wrappedValue = tab }
+        } label: {
+            Image(systemName: tab.systemImage)
+                .font(Theme.Fonts.glyph(size: 16, weight: .regular))
+                // 没有 fill 变体的字形(如 command)会优雅回退到原线条形。
+                .symbolVariant(selected ? .fill : .none)
+                .foregroundStyle(selected ? Theme.Palette.accent : Theme.Palette.inkMuted)
+                .frame(maxWidth: .infinity)
+                .frame(height: 38)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// 「我」rail 按钮 —— 头像作图标,选中态用 accent 描边圈出。
+    private func meRailButton(binding: Binding<TopTab>) -> some View {
+        let selected = binding.wrappedValue == .me
+        return Button {
+            if binding.wrappedValue != .me { binding.wrappedValue = .me }
+        } label: {
+            UserAvatar(
+                seed: AccountStore.shared.avatarSeed
+                    ?? AccountStore.shared.current?.id ?? "?",
+                attachmentId: AccountStore.shared.avatarAttachmentId,
+                size: 26
+            )
+            .overlay(
+                Circle().strokeBorder(
+                    selected ? Theme.Palette.accent : Color.clear,
+                    lineWidth: 2
+                )
+                .padding(-2)
+            )
+            .frame(maxWidth: .infinity)
+            .frame(height: 38)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     // 中/右栏取共享 `FeatureSurface` 的 list/detail 列。这些方法是跨平台的
