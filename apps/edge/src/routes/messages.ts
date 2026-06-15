@@ -1397,7 +1397,6 @@ messageRoutes.post('/:id/crew-proposal/decide', async (c) => {
   // approve
   const proposedByBotId = typeof payload.proposed_by_bot_id === 'string' ? payload.proposed_by_bot_id : null;
   const proposedName = typeof payload.proposed_name === 'string' ? payload.proposed_name : '';
-  const proposedTag = typeof payload.proposed_tag === 'string' ? payload.proposed_tag : null;
   const proposedWorkingDir = typeof payload.proposed_working_directory === 'string' ? payload.proposed_working_directory : null;
   const proposedParentCrewId = typeof payload.proposed_parent_crew_id === 'string' ? payload.proposed_parent_crew_id : null;
 
@@ -1439,11 +1438,12 @@ messageRoutes.post('/:id/crew-proposal/decide', async (c) => {
   const { data: newCrewIdRaw, error: rpcErr } = await supaUser.rpc('create_crew_with_captain', {
     p_responsible_subject_id: responsibleSubjectId,
     p_title: proposedName,
-    p_runtime_location: 'local_host',
     p_working_directory: proposedWorkingDir ?? undefined,
-    p_tag: proposedTag ?? undefined,
     p_captain_source: 'reuse_bot',
     p_captain_bot_id: proposedByBotId,
+    // null machine → RPC derives runtime_location='local_host' (was the
+    // hard-coded value here before the machine concept landed).
+    p_machine_id: undefined,
   });
   if (rpcErr) {
     const code = (rpcErr as { code?: string }).code;

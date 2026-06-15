@@ -21,6 +21,16 @@ protocol PendingCrewBackend: AnyObject {
     // MARK: - Subject
     func listMySubjects() async throws -> [UserSubject]
 
+    // MARK: - Machines
+    /// 本账号可用的机器列表（本机 / peer 电脑 / Fly machine）。
+    /// - EdgeBackend：`GET /v1/machines`。
+    /// - LocalBackend：返回单元素 `[本机]`（未登录也有一台「本机」）。
+    func listMachines() async throws -> [Machine]
+    /// 把当前设备 upsert 成本账号的一台 computer 机器，返回 machineId。
+    /// - EdgeBackend：`POST /v1/machines/register-self`。
+    /// - LocalBackend：no-op，返回合成的本机 id。幂等。
+    func registerSelfMachine() async throws -> String
+
     // MARK: - Crew
     func listCrews() async throws -> [CrewSummary]
     func getCrew(_ crewId: String) async throws -> CrewDetail
@@ -73,6 +83,14 @@ final class EdgeBackend: PendingCrewBackend {
 
     func listMySubjects() async throws -> [UserSubject] {
         try await client().listMySubjects()
+    }
+
+    func listMachines() async throws -> [Machine] {
+        try await client().listMachines()
+    }
+
+    func registerSelfMachine() async throws -> String {
+        try await client().registerSelfMachine()
     }
 
     func listCrews() async throws -> [CrewSummary] {
@@ -164,6 +182,26 @@ final class LocalBackend: PendingCrewBackend {
         )]
     }
 
+    func listMachines() async throws -> [Machine] {
+        // 本地态恒只有一台「本机」 —— 合成一个 computer Machine（id = 安装级
+        // device id，与 registerSelfMachine 返回值一致）。CreateCrewSheet 据
+        // `count > 1` 判定是否显示 machine 选择，本地态恒不显示。
+        [Machine(
+            id: DeviceIdentity.current,
+            kind: Machine.Kind.computer.rawValue,
+            deviceId: DeviceIdentity.current,
+            displayName: DeviceIdentity.displayName,
+            flyMachineId: nil,
+            status: "online",
+            lastSeenAt: nil
+        )]
+    }
+
+    func registerSelfMachine() async throws -> String {
+        // 本地无服务端可注册 —— no-op，返回本机合成 id（= device id）。
+        DeviceIdentity.current
+    }
+
     func listCrews() async throws -> [CrewSummary] {
         store.listCrews()
     }
@@ -176,11 +214,11 @@ final class LocalBackend: PendingCrewBackend {
     }
 
     func createCrew(_ request: CreateCrewRequest) async throws -> CreateCrewResponse {
-        // BYOK 模式 runtimeLocation 必须是 local_host(spec §5.3:本地态
-        // 不许 fly_machine)。peer_device 留 v1.1。
-        guard request.runtimeLocation == "local_host" else {
+        // BYOK 本地态恒「本机」 —— 选了其它 machine（machineId 非 nil 且不是
+        // 本机 device id）说明 UI 状态串了，拒绝。本地路径正常恒 nil。
+        if let machineId = request.machineId, machineId != DeviceIdentity.current {
             throw PendingCrewBackendError.notSupportedInByok(
-                "BYOK 模式仅支持本机 runtime;Fly / peer 设备需要登录 PendingBot 账号"
+                "BYOK 模式仅支持本机;其它设备需要登录 PendingBot 账号"
             )
         }
         return store.createCrew(request)

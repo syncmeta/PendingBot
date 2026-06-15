@@ -264,18 +264,24 @@ struct CrewMailboxItem: Decodable, Identifiable, Equatable {
 
 // MARK: - Create crew request/response
 
-/// 对应 edge `POST /v1/crews` 的 body。`runtimeLocation` MVP 只支持
-/// `local_host`，peer/fly 两档留下次（需要先选 peer device / fly
-/// machine —— Phase 4+）。
+/// 对应 edge `POST /v1/crews` 的 body。
+///
+/// 服务端契约（已部署）：`{ responsibleSubjectId, title?, machineId?,
+/// workingDirectory?, captain }`。
+/// - `title` 缺省/null = 自动（留给 captain 之后总结命名）。
+/// - `machineId` 缺省/null = 本机（edge 派生 runtime_location = local_host）。
+/// 老的 `runtimeLocation` / `tag` / `peerDeviceId` / `flyMachineId` 已去掉。
 struct CreateCrewRequest: Encodable {
     let responsibleSubjectId: String
-    let title: String
-    let runtimeLocation: String
-    let workingDirectory: String?
-    let tag: String?
+    let title: String?            // nil/空 = 自动(留给 captain)
+    let machineId: String?        // nil = 本机
+    let workingDirectory: String? // 表单解析出的目录路径(CrewGround/手动/上次)
+    /// 机长以哪个本机 coding agent 跑（`LocalCodingAgentKind.rawValue` ——
+    /// "claude_code" / "codex"）。nil = 旧请求 / 未指定 → 下游回落 `.codex`。
+    /// edge 暂不消费这个键（zod 会 strip 掉未知字段），但本地 store 会持久化它，
+    /// 让机长 session 真的按这个 kind 起。
+    let captainAgentKind: String?
     let captain: Captain
-    let peerDeviceId: String?
-    let flyMachineId: String?
 
     enum Captain: Encodable, Equatable {
         case systemGenerated(templateName: String?)
@@ -300,22 +306,21 @@ struct CreateCrewRequest: Encodable {
         }
     }
 
-    static func localHost(
+    static func make(
         responsibleSubjectId: String,
-        title: String,
+        title: String?,
+        machineId: String?,
         workingDirectory: String?,
-        tag: String?,
+        captainAgentKind: String?,
         captain: Captain
     ) -> CreateCrewRequest {
         CreateCrewRequest(
             responsibleSubjectId: responsibleSubjectId,
             title: title,
-            runtimeLocation: "local_host",
+            machineId: machineId,
             workingDirectory: workingDirectory,
-            tag: tag,
-            captain: captain,
-            peerDeviceId: nil,
-            flyMachineId: nil
+            captainAgentKind: captainAgentKind,
+            captain: captain
         )
     }
 }

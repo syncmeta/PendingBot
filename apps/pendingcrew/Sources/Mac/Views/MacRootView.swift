@@ -1,5 +1,6 @@
 #if os(macOS)
 import SwiftUI
+import AppKit
 
 /// Mac 主视图：两栏 + 按需 inspector。
 ///
@@ -61,6 +62,21 @@ struct MacThreePaneView: View {
                 withAnimation { inspectorPresented = false }
             }
         }
+        // 建 crew 后自动起机长（用户要的零摩擦：新建即启动 + 群里报到，无需手动点
+        // 「启动 Captain」）。store 在 createCrew 完成后 set crewId；这里持有
+        // sessionRunner，best-effort 拉起后置 nil。
+        .onChange(of: crewStore.captainAutostartRequest) { _, req in
+            guard let crewId = req else { return }
+            Task {
+                if let detail = crewStore.details[crewId], detail.captain != nil {
+                    try? await sessionRunner.startCaptain(detail: detail, backend: model.backend)
+                }
+                crewStore.captainAutostartRequest = nil
+            }
+        }
+        // 去掉 toolbar 底部那条灰色分隔线（详见 WindowSeparatorRemover）。tick 传
+        // selectedCrewId —— 切 crew 时借 updateNSView 重设，抢在 SwiftUI 把它重置回去之后。
+        .background(WindowSeparatorRemover(tick: crewStore.selectedCrewId ?? ""))
         .task {
             // 首次进入时把列表 + subjects 都拉一遍 —— subjects 用于创建
             // crew sheet 的 picker，提前 prefetch 避免 sheet 打开时空。
@@ -70,6 +86,51 @@ struct MacThreePaneView: View {
             // sessionRunner 一并注入 —— relay 拉到 task_request 时在本机自动
             // 起 session（#242 遥控 v1），与 inspector 手动起的 run 同一个切换条。
             relayAgent.start(appModel: model, sessionRunner: sessionRunner)
+        }
+    }
+}
+
+/// 让标题栏与内容无缝、且**不盖住 sidebar**。做三件事：
+/// 1. `titlebarSeparatorStyle = .none` —— 去掉 hairline。
+/// 2. `titlebarAppearsTransparent = true` —— 标题栏背景透明，不再画自己那层比内容浅
+///    的材质（那层材质的下边沿就是用户看到的"灰线"）。
+/// 3. `fullSizeContentView` —— 内容铺满到窗口顶。这样**每一栏各自的背景透上来**：
+///    sidebar 透出它的侧栏材质（不被一条白 toolbar 盖住）、detail 透出白 canvas
+///    （和下面群聊无缝、无灰线）。比窗口级 `.toolbarBackground` 刷单一颜色更对——
+///    后者会把 sidebar 那半截也刷白。
+///
+/// **不设** `backgroundColor`（上一版设动态底色，被材质用暗外观取值成近黑，把 composer
+/// 材质带黑了）。标题(navigationTitle)照常显示，不碰 titleVisibility。
+///
+/// 必须在 view 真正挂上 window 后设（`viewDidMoveToWindow`）；SwiftUI 装配 toolbar 后会把
+/// separatorStyle 重置回 .automatic，故延迟 0.3s + `tick`(crew 选择)变化时各补设一次。
+private struct WindowSeparatorRemover: NSViewRepresentable {
+    /// 任意会变的值（这里传 selectedCrewId）—— 变化时 SwiftUI 调 updateNSView，借机重设。
+    var tick: String
+
+    func makeNSView(context: Context) -> NSView { SeparatorKillerView() }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        SeparatorKillerView.applyChrome(nsView.window)
+    }
+}
+
+private final class SeparatorKillerView: NSView {
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        Self.applyChrome(window)
+        // SwiftUI 在 toolbar 装配完后会把 separatorStyle 重置回 .automatic，延迟再设一次。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            Self.applyChrome(self?.window)
+        }
+    }
+
+    static func applyChrome(_ window: NSWindow?) {
+        guard let window else { return }
+        window.titlebarSeparatorStyle = .none
+        window.titlebarAppearsTransparent = true
+        if !window.styleMask.contains(.fullSizeContentView) {
+            window.styleMask.insert(.fullSizeContentView)
         }
     }
 }

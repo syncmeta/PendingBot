@@ -18,7 +18,7 @@
   - crew-comms MCP 照常(post_to_crew / read_whiteboard);
   - **多一个 captain 专属 MCP 工具 `answer_decision`**(见 §3),由 `--mcp-serve --captain` 标志开启;
   - 不 gate 权限 hook 的 computer-use 之外的差异(captain 也跑 auto mode)。
-- **生命周期(MVP)**:右栏 session 条上有固定的 captain 位,**手动启动**("启动 captain")。启动后常驻(PTY 活着)。自动启动/常驻策略留 crew 设置(后排,token 成本考量)。
+- **生命周期**:~~MVP 手动启动~~ → **2026-06-14 改为建 crew 时自动启动**(`feat/crew-captain-autostart`,用户定调):`CrewStore.createCrew` 完成后置 `captainAutostartRequest` → `MacThreePaneView` 观察到调 `CrewSessionRunner.startCaptain`,机长自动起 + 走 initialPrompt 在群里报到一句。启动后常驻(PTY 活着)。手动「⚓ 启动 Captain」按钮保留作"机长退出后重启"兜底。**无 per-crew 开关 / 无空闲回收**(spec 当初担心的 token 成本现已成现实)—— 取舍记 `docs/tech-debt.md`。
 - **唤醒 = app 注入**:PendingCrew app(已有 1.5s 轮询基建)观察 `LocalApprovalStore`:出现新的 **pending decision** 且 captain run 在跑 → 往 captain 的 PTY `run.send()` 注入一条用户回合:
   > 「有新的待决策 #\<id\>(来自 session \<sid\>):\<question\>。能拍板就用 `answer_decision` 答它;拍不了就在群聊白板发消息 @human 说明需要人类决策的理由与你的建议。」
   - captain 没在跑 → 不自动启动(MVP),未读角标 + 白板 🔔(v1 路径)兜底,人类自己处理或先启动 captain。
@@ -44,7 +44,7 @@
 
 ## 不做(本 chunk 边界)
 
-- captain 自动启动 / 空闲超时回收(留 crew 设置)。
+- ~~captain 自动启动~~ —— **2026-06-14 已做**(建 crew 时自动起,见 §模型·生命周期)。**空闲超时回收 / per-crew 开关仍未做**(记 tech-debt)。
 - 推送到手机(那是接合 v2 的信箱/遥控块)。
 - edge 信箱 / 远端成员(接合 v2 block 3)。
 - codex captain(claude 先行,codex 跟 backend 一起)。
