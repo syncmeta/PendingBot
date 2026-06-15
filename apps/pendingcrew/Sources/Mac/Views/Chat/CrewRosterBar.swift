@@ -40,7 +40,7 @@ struct CrewRosterBar: View {
         let seed = m.botId ?? m.userId ?? m.codeSessionId ?? m.id
         let name: String = {
             if let n = m.displayName, !n.isEmpty { return n }
-            if isCaptain  { return "机长" }
+            if isCaptain  { return "Captain" }
             if isHuman    { return "我" }
             if isSession  { return "session" }
             return "bot"
