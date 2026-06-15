@@ -14,13 +14,17 @@ import SwiftUI
 /// 点击节点设 `crewStore.selectedCrewId`(沿用现有选中逻辑)。展开态每个节点
 /// 自持(`@State isExpanded`),互不影响。
 struct CrewDAGTreeView: View {
-    @EnvironmentObject private var crewStore: CrewStore
+    /// 本组要渲染的 crew 子集（某台机器的 crew）。
+    let crews: [CrewSummary]
 
     var body: some View {
-        let crews = crewStore.crews
-        // childMap: parentId → 该父下直接子 crew(按 createdAt DESC,跟列表一致)。
+        // childMap: parentId → 该父下直接子 crew。限定在子集内算。
         let childMap = Self.buildChildMap(crews)
-        let roots = crews.filter { $0.parentCrewIds.isEmpty }
+        let ids = Set(crews.map(\.id))
+        // 组内根 = 无父，或父不在本组（跨机器父边 → 在本组当根）。
+        let roots = crews.filter { crew in
+            crew.parentCrewIds.isEmpty || !crew.parentCrewIds.contains(where: ids.contains)
+        }
 
         ForEach(roots) { crew in
             CrewDAGNode(

@@ -13,30 +13,18 @@ struct CrewSidebarView: View {
     @State private var confirmingSignOut = false
     /// 本机模式下侧栏的可选登录入口（登录 SSO C2）—— 弹 LoginView sheet 扫码。
     @State private var showingLogin = false
+    /// 折叠起来的机器分组 id 集合（默认全展开）。
+    @State private var collapsedMachineIds: Set<String> = []
 
     var body: some View {
         VStack(spacing: 0) {
             List {
-                Section {
-                    if crewStore.crews.isEmpty {
-                        emptyRow
-                    } else {
-                        // 本地 DAG 折叠树 —— 根 = 无父 crew,子按 parentCrewIds 反推
-                        // 嵌套。选中态 / 展开态都在 CrewDAGTreeView 内部处理(不走
-                        // List(selection:),因为嵌套自定义行用 List 选择会错位)。
-                        CrewDAGTreeView()
-                            .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+                ForEach(machineGroups) { group in
+                    Section {
+                        sectionBody(group)
+                    } header: {
+                        machineHeader(group)
                     }
-                } header: {
-                    Text("Crew")
-                }
-                // Machines section — 占位提示(v1.1 才接真 Fly machine 列表)。
-                // BYOK 模式显示 "登录解锁" prompt;登录模式显示 v1.1 placeholder。
-                // 这条目前不可选(没 tag),只展示状态。
-                Section {
-                    machinesRow
-                } header: {
-                    Text("Machines")
                 }
             }
             .listStyle(.sidebar)
@@ -59,7 +47,10 @@ struct CrewSidebarView: View {
                 }
                 .help("新建 crew")
                 Button {
-                    Task { await crewStore.refreshList() }
+                    Task {
+                        await crewStore.refreshList()
+                        await crewStore.refreshMachines()
+                    }
                 } label: {
                     Label("刷新", systemImage: "arrow.clockwise")
                 }
@@ -111,43 +102,105 @@ struct CrewSidebarView: View {
         }
     }
 
-    /// 接合 v2：按 `isAuthenticated`(能力叠加)切两种 placeholder ——
-    /// (backend 恒本地,旧 supportsCloudRuntime 已删)。
-    /// - 已登录 → "Fly machine — v1.1 上线"(灰显)
-    /// - 未登录 → "登录 PendingBot 解锁云端 Fly machine"(灰显 + 锁图标)
+    // MARK: - 机器分组
+
+    private var machineGroups: [MachineGrouping.Group] {
+        MachineGrouping.group(
+            crews: crewStore.crews,
+            machines: crewStore.machines,
+            localDeviceId: DeviceIdentity.current
+        )
+    }
+
     @ViewBuilder
-    private var machinesRow: some View {
-        if model.isAuthenticated {
-            HStack(spacing: 8) {
-                Image(systemName: "cloud")
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 18)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Fly machine")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                    Text("v1.1 上线")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-            }
-            .padding(.vertical, 2)
+    private func sectionBody(_ group: MachineGrouping.Group) -> some View {
+        if collapsedMachineIds.contains(group.id) {
+            EmptyView()
+        } else if group.crews.isEmpty {
+            machineEmptyRow(group)
+                .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
         } else {
-            HStack(spacing: 8) {
-                Image(systemName: "lock.fill")
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 18)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("云端 Fly machine")
-                        .font(.callout)
+            CrewDAGTreeView(crews: group.crews)
+                .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+        }
+    }
+
+    @ViewBuilder
+    private func machineHeader(_ group: MachineGrouping.Group) -> some View {
+        let machine = group.machine
+        let isLocal = machine?.deviceId == DeviceIdentity.current
+        let collapsed = collapsedMachineIds.contains(group.id)
+        HStack(spacing: 6) {
+            Button {
+                if collapsed { collapsedMachineIds.remove(group.id) }
+                else { collapsedMachineIds.insert(group.id) }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .rotationEffect(.degrees(collapsed ? 0 : 90))
                         .foregroundStyle(.secondary)
-                    Text("登录 PendingBot 解锁")
-                        .font(.caption2)
+                    Image(systemName: machine?.displayIcon(isLocal: isLocal) ?? "questionmark.folder")
+                        .foregroundStyle(.secondary)
+                    Text(machine?.displayName ?? "其它")
+                        .lineLimit(1)
+                    if isLocal {
+                        Text("本机")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(Theme.Palette.surfaceMuted))
+                    }
+                    if let m = machine {
+                        Circle()
+                            .fill(machineOnline(m) ? Color.green : Color.secondary.opacity(0.4))
+                            .frame(width: 6, height: 6)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            Spacer(minLength: 4)
+            if isLocal {
+                Button { showingCreateSheet = true } label: {
+                    Image(systemName: "plus")
+                }
+                .buttonStyle(.plain)
+                .help("在本机新建 crew")
+            }
+        }
+    }
+
+    private func machineOnline(_ m: Machine) -> Bool {
+        m.deviceId == DeviceIdentity.current || m.status == "online"
+    }
+
+    @ViewBuilder
+    private func machineEmptyRow(_ group: MachineGrouping.Group) -> some View {
+        let isLocal = group.machine?.deviceId == DeviceIdentity.current
+        VStack(alignment: .leading, spacing: 4) {
+            if isLocal {
+                if crewStore.loadingList {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("加载中…").foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text("还没有 crew").font(.callout).foregroundStyle(.secondary)
+                    Text("点 + 新建第一个").font(.caption).foregroundStyle(.tertiary)
+                }
+            } else {
+                // 其它机器：local-first,本机看不到其 crew 内容 → 遥控投影是后续(#242)。
+                HStack(spacing: 6) {
+                    Image(systemName: "antenna.radiowaves.left.and.right")
                         .foregroundStyle(.tertiary)
+                    Text("遥控查看（稍后）").font(.caption).foregroundStyle(.tertiary)
                 }
             }
-            .padding(.vertical, 2)
         }
+        .padding(.vertical, 6)
+        .padding(.horizontal, 10)
     }
 
     /// Sidebar 底部固定条。
@@ -238,25 +291,6 @@ struct CrewSidebarView: View {
         model.clearAuth()
         // crewStore.reset() 由 RootView 监听登录态变化自动调,
         // 不在这里重复 wire 以避免双触发顺序歧义。
-    }
-
-    private var emptyRow: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if crewStore.loadingList {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("加载中…").foregroundStyle(.secondary)
-                }
-            } else {
-                Text("还没有 crew")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                Text("点上面 + 创建第一个")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .padding(.vertical, 6)
     }
 }
 
