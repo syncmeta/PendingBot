@@ -178,6 +178,18 @@ export function mapMessageToEntry(
       };
     }
   }
+  // #377 — 统一透出 in_reply_to(被回复消息的 id)。两个载体:
+  //   * 人类消息 → attachments jsonb 的 `in_reply_to`(POST /messages 落)。
+  //   * session 帖 → log_payload.in_reply_to(post-to-crew 镜像消息落)。
+  // 读不出 → null。客户端据此本地在已加载 entries 里按 id 查被引用消息渲染。
+  let inReplyTo: string | null = null;
+  if (m.attachments && typeof m.attachments === 'object' && !Array.isArray(m.attachments)) {
+    const a = m.attachments as { in_reply_to?: unknown };
+    if (typeof a.in_reply_to === 'string') inReplyTo = a.in_reply_to;
+  }
+  if (inReplyTo == null && typeof lp.in_reply_to === 'string') {
+    inReplyTo = lp.in_reply_to;
+  }
   const senderKind =
     m.role === 'user' || m.role === 'human' ? 'user'
     : m.role === 'bot' || m.role === 'assistant' ? 'bot'
@@ -209,6 +221,9 @@ export function mapMessageToEntry(
     // 自带 senderLabel(远端真名)时优先用它,免再查 roster。
     sender_display_name: sender?.senderName ?? (relay?.senderLabel as string | null | undefined) ?? null,
     sender_member_id: sender?.senderMemberId ?? null,
+    // #377 — 被回复消息的 id(无 → null)。客户端在已加载 entries 里本地查它的
+    // 发送者 + 内容摘要,渲染成引用条。
+    in_reply_to: inReplyTo,
     created_at: m.created_at,
   };
 }
@@ -331,6 +346,13 @@ const CrewMessageBody = z.object({
   // origin:'mac_relay',Mac 拉取侧靠它过滤自己的上行(回环防护在客户端)。
   senderLabel: z.string().trim().min(1).max(64).optional(),
   localSessionId: z.string().trim().min(1).max(64).optional(),
+  // #377 — "回复某条消息"的可见引用。被回复消息的白板 id。沿用 jsonb 方案
+  // (不加列):落进该人类消息的 attachments jsonb 的 `in_reply_to`(与 Phase 2
+  // session 帖 log_payload.in_reply_to 同语义,统一经 mapMessageToEntry 透出
+  // entry.in_reply_to)。自动 @ 原发送者由客户端 staged mention 走通,服务端
+  // 不在这重复解析。非法 uuid → zod 挡;指向同 crew 不存在的消息 → 400(与
+  // Phase 2 resolveOutboundRecipients 对 reply_to 的严格度一致)。
+  reply_to: z.string().uuid().optional(),
 });
 
 /// Translate the spec-v2 mention shape into recipient_session_ids the
@@ -443,6 +465,25 @@ crewMessagesRoutes.post('/:crewId/messages', requireSubjectAuth(['crew:write']),
     if (canView !== true) return jsonError(c, 403, 'forbidden');
   }
 
+  // #377 — reply_to 存在性校验(uuid 形已由 zod 挡)。给了就查同 crew 有没有
+  // 这条;没有 → 400(与 Phase 2 resolveOutboundRecipients 对 reply_to 的严格度
+  // 一致 —— 指向不存在的消息是 malformed 请求)。校验放 insert 前,坏 reply_to
+  // 不落消息。
+  if (parsed.reply_to) {
+    const { data: replied, error: repliedErr } = await svc
+      .from('messages')
+      .select('id')
+      .eq('id', parsed.reply_to)
+      .eq('conversation_id', crewId)
+      .maybeSingle();
+    if (repliedErr) return jsonError(c, 500, 'database_error', { detail: repliedErr.message });
+    if (!replied) {
+      return jsonError(c, 400, 'invalid_body', {
+        message: 'reply_to points at a message that does not exist in this crew',
+      });
+    }
+  }
+
   // spec §9: the crew chat IS the conversation's `messages`. Insert the human's
   // message synchronously (so the captain wake below sees it), then wake the
   // captain to reply via the standard bot-reply pipeline.
@@ -462,6 +503,11 @@ crewMessagesRoutes.post('/:crewId/messages', requireSubjectAuth(['crew:write']),
       ...(parsed.senderLabel ? { senderLabel: parsed.senderLabel } : {}),
       ...(parsed.localSessionId ? { localSessionId: parsed.localSessionId } : {}),
     };
+  }
+  // #377 — 把 reply_to 的可见引用落进同一个 attachments jsonb 载体(与附件
+  // ids / relay 标注共存,不加列)。读取侧 mapMessageToEntry 透出 entry.in_reply_to。
+  if (parsed.reply_to) {
+    attachmentsCell = { ...(attachmentsCell ?? {}), in_reply_to: parsed.reply_to };
   }
   // task_request:kind 落 log_kind、结构化指令落 log_payload(role 仍 'user',
   // 在群聊时间线上以发送者本人的气泡呈现)。读取侧 mapMessageToEntry 把

@@ -528,6 +528,141 @@ describe('POST /v1/crews/:crewId/messages — message_kind=task_request (#242)',
   });
 });
 
+// #377 — 人发消息的 reply_to 可见引用。沿用 jsonb 方案(不加列):reply_to
+// 落进人类消息的 attachments jsonb(`in_reply_to`),GET 白板经 mapMessageToEntry
+// 统一透出 entry.in_reply_to。session 帖的 in_reply_to(log_payload.in_reply_to)
+// 也走同一字段透出。
+describe('POST /v1/crews/:crewId/messages — reply_to 可见引用 (#377)', () => {
+  beforeEach(() => dispatchGroupTurnMock.mockClear());
+
+  const REPLIED = '11111111-2222-4333-8444-555555555555';
+
+  function seed(db: FakeDb) {
+    db.rows.temporary_group_meta = [
+      { conversation_id: CREW_ID, responsible_subject_id: SUBJECT, captain_bot_id: CAPTAIN_BOT_ID },
+    ];
+    db.rpcs = { can_view_temporary_group: () => ({ data: true, error: null }) };
+  }
+
+  function seedRepliedMessage(db: FakeDb) {
+    db.rows.messages = [
+      { id: REPLIED, conversation_id: CREW_ID, role: 'user', content: '原始消息', user_id: USER,
+        sender_bot_id: null, log_kind: null, log_payload: null, attachments: null, status: 'done',
+        created_at: '2026-06-11T00:00:01Z' },
+    ];
+  }
+
+  it('persists in_reply_to into the human message attachments jsonb', async () => {
+    const db = makeFakeDb();
+    seed(db);
+    seedRepliedMessage(db);
+    const res = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-user-id': USER },
+      body: JSON.stringify({ content: '回复一下', reply_to: REPLIED }),
+    });
+    expect(res.status).toBe(200);
+    const msgInsert = db.inserts.find((i) => i.table === 'messages');
+    expect(msgInsert?.row).toMatchObject({
+      conversation_id: CREW_ID,
+      role: 'user',
+      content: '回复一下',
+      attachments: { in_reply_to: REPLIED },
+    });
+  });
+
+  it('co-exists with attachment ids in the same jsonb cell', async () => {
+    const db = makeFakeDb();
+    seed(db);
+    seedRepliedMessage(db);
+    const ATT = '99999999-9999-4999-8999-000000000077';
+    const res = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-user-id': USER },
+      body: JSON.stringify({ content: '看图回复', reply_to: REPLIED, attachmentIds: [ATT] }),
+    });
+    expect(res.status).toBe(200);
+    const msgInsert = db.inserts.find((i) => i.table === 'messages');
+    expect(msgInsert?.row.attachments).toMatchObject({ ids: [ATT], in_reply_to: REPLIED });
+  });
+
+  it('GET whiteboard exposes in_reply_to for the human message', async () => {
+    const db = makeFakeDb();
+    seed(db);
+    db.rows.messages = [
+      { id: REPLIED, conversation_id: CREW_ID, role: 'user', content: '原始消息', user_id: USER,
+        sender_bot_id: null, log_kind: null, log_payload: null, attachments: null, status: 'done',
+        created_at: '2026-06-11T00:00:01Z' },
+      { id: 'reply-1', conversation_id: CREW_ID, role: 'user', content: '回复一下', user_id: USER,
+        sender_bot_id: null, log_kind: null, log_payload: null, attachments: { in_reply_to: REPLIED },
+        status: 'done', created_at: '2026-06-11T00:00:02Z' },
+    ];
+    const res = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
+      headers: { 'x-test-user-id': USER },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { whiteboard: Array<{ id: string; in_reply_to: string | null }> };
+    const replyEntry = body.whiteboard.find((e) => e.id === 'reply-1')!;
+    expect(replyEntry.in_reply_to).toBe(REPLIED);
+    const origEntry = body.whiteboard.find((e) => e.id === REPLIED)!;
+    expect(origEntry.in_reply_to).toBeNull();
+  });
+
+  it('GET whiteboard exposes in_reply_to for a session post (log_payload.in_reply_to)', async () => {
+    const db = makeFakeDb();
+    seed(db);
+    db.rows.messages = [
+      { id: 'sess-post', conversation_id: CREW_ID, role: 'log', content: '我接着干', user_id: null,
+        sender_bot_id: null, log_kind: 'session_post',
+        log_payload: { session_id: SESSION_A, text: '我接着干', in_reply_to: REPLIED },
+        attachments: null, status: 'done', created_at: '2026-06-11T00:00:03Z' },
+    ];
+    const res = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
+      headers: { 'x-test-user-id': USER },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { whiteboard: Array<{ id: string; in_reply_to: string | null }> };
+    expect(body.whiteboard.find((e) => e.id === 'sess-post')!.in_reply_to).toBe(REPLIED);
+  });
+
+  it('reply_to that is not a valid uuid → 400 invalid_body', async () => {
+    const db = makeFakeDb();
+    seed(db);
+    const res = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-user-id': USER },
+      body: JSON.stringify({ content: 'x', reply_to: 'not-a-uuid' }),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('invalid_body');
+  });
+
+  it('reply_to pointing at a message not in this crew → 400 invalid_body', async () => {
+    const db = makeFakeDb();
+    seed(db); // no messages seeded → REPLIED does not exist
+    const res = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-user-id': USER },
+      body: JSON.stringify({ content: 'x', reply_to: REPLIED }),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('invalid_body');
+  });
+
+  it('no reply_to → attachments stays null and in_reply_to is null on read', async () => {
+    const db = makeFakeDb();
+    seed(db);
+    const post = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-user-id': USER },
+      body: JSON.stringify({ content: 'plain' }),
+    });
+    expect(post.status).toBe(200);
+    const msgInsert = db.inserts.find((i) => i.table === 'messages');
+    expect(msgInsert?.row.attachments ?? null).toBeNull();
+  });
+});
+
 describe('POST /v1/crews/:crewId/members (接合 v2 block 3)', () => {
   const BOT_ID = '99999999-9999-4999-8999-000000000003';
 
@@ -652,6 +787,33 @@ describe('mapMessageToEntry relay marker (接合 v2 block 3)', () => {
   it('relay is null for ordinary messages (including plain attachment ids)', () => {
     const plain = mapMessageToEntry({ ...base, role: 'user', content: 'hi', user_id: 'u1', sender_bot_id: null, attachments: { ids: ['a-1'] } } as any);
     expect(plain.relay).toBeNull();
+  });
+});
+
+// #377 — mapMessageToEntry 统一透出 in_reply_to:人类消息从 attachments jsonb,
+// session 帖从 log_payload.in_reply_to,解析不出为 null。
+describe('mapMessageToEntry in_reply_to (#377)', () => {
+  const base = { id: 'm1', conversation_id: 'c1', created_at: '2026-06-11T00:00:00Z', log_kind: null, log_payload: null };
+  const REPLIED = '11111111-2222-4333-8444-555555555555';
+
+  it('reads in_reply_to from a human message attachments jsonb', () => {
+    const e = mapMessageToEntry({ ...base, role: 'user', content: 'reply', user_id: 'u1', sender_bot_id: null,
+      attachments: { in_reply_to: REPLIED } } as any);
+    expect(e.in_reply_to).toBe(REPLIED);
+  });
+
+  it('reads in_reply_to from a session post log_payload', () => {
+    const e = mapMessageToEntry({ ...base, role: 'log', content: '接着干', user_id: null, sender_bot_id: null,
+      log_kind: 'session_post', log_payload: { session_id: 's1', text: '接着干', in_reply_to: REPLIED } } as any);
+    expect(e.in_reply_to).toBe(REPLIED);
+  });
+
+  it('in_reply_to is null when neither carrier has it', () => {
+    const plainUser = mapMessageToEntry({ ...base, role: 'user', content: 'hi', user_id: 'u1', sender_bot_id: null } as any);
+    expect(plainUser.in_reply_to).toBeNull();
+    const plainAttIds = mapMessageToEntry({ ...base, role: 'user', content: 'hi', user_id: 'u1', sender_bot_id: null,
+      attachments: { ids: ['a-1'] } } as any);
+    expect(plainAttIds.in_reply_to).toBeNull();
   });
 });
 
