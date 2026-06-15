@@ -1,0 +1,103 @@
+#if os(macOS)
+import Foundation
+
+/// 一个 crew 的事件驱动唤醒编排器（Phase 4b）。app 级**一个 crew 一个 waker**，
+/// 该 crew 上的多个登录态 run 共用同一条 hub 连接。
+///
+/// 工序：
+///   1. 订阅 `CrewRealtimeClient.events`（连 `/v1/realtime-hub/conv/:crewId`）。
+///   2. 收到 `.changed`（「该 crew 有动静」信号，**不含** @列表）→ 对本 crew 上
+///      每个登录态 run，拉一次 `GET /v1/sessions/:sessionId/inbox` 看自己的
+///      mailbox（@我的权威源）。
+///   3. 把 mailbox + 该 run 是否 `isBusy` 喂给纯函数 `CrewMailboxWakeLogic.decide`：
+///      - 空闲 + 有@我的待处理项 → 经 `run.send()` 注入唤醒（claude=PTY 写文本；
+///        codex=起 turn），注入后 `POST .../inbox/mark-delivered` 消费这些项。
+///      - busy → noop，不打断、不消费（留给下一轮 / 下个事件）。
+///
+/// 持有：由 `CrewSessionRunner` 在每个登录态 run 启动时 `ensure(...)` 懒建并按
+/// crewId 缓存；最后一个该 crew 的 run 移除时由 runner `teardownIfIdle` 收掉。
+/// 所有 IO 在 MainActor 上编排（runner / run 都是 MainActor），决策核心是纯函数。
+///
+/// best-effort：网络/拉取失败 console log 后忽略，下个 hub 事件自然重试 ——
+/// 与 `CrewRelayAgent` 同策略。**活体 hub 帧 → 唤醒**这条路径留手动 E2E 验证。
+@MainActor
+final class CrewMailboxWaker {
+    let crewId: String
+    private let api: PendingCrewAPI
+    private let client: CrewRealtimeClient
+    private weak var runner: CrewSessionRunner?
+    private var pump: Task<Void, Never>?
+    /// tick 重入保护 —— 上一批 inbox 拉取还在飞时，跳过新到的事件（拉取本身
+    /// 是 idempotent 的，下个事件会再触发）。
+    private var draining = false
+
+    init(crewId: String, api: PendingCrewAPI, client: CrewRealtimeClient, runner: CrewSessionRunner) {
+        self.crewId = crewId
+        self.api = api
+        self.client = client
+        self.runner = runner
+    }
+
+    /// 连上 hub + 起事件泵。幂等。
+    func start() {
+        guard pump == nil else { return }
+        Task { await client.connect() }
+        pump = Task { [weak self] in
+            guard let self else { return }
+            for await event in await self.client.events {
+                if Task.isCancelled { return }
+                if case .changed = event {
+                    await self.drain()
+                }
+            }
+        }
+    }
+
+    /// 关停：断 hub + 停事件泵。
+    func stop() {
+        pump?.cancel(); pump = nil
+        Task { await client.close() }
+    }
+
+    /// 对本 crew 上每个登录态 run 拉一次 inbox，按决策注入 + mark-delivered。
+    /// 收到 hub 事件即调；也可由外部「刚起 run，先补一次」主动调一次。
+    func drain() async {
+        guard !draining else { return }
+        draining = true
+        defer { draining = false }
+        guard let runner else { return }
+        // 本 crew、登录态（serverLink 存在 == 服务端 session，inbox 才有意义）、
+        // 仍在跑的 run。BYOK/local-only run 没有服务端 mailbox，跳过。
+        let targets = runner.runs.filter {
+            $0.crewId == crewId && $0.status == .running && $0.hasServerSession
+        }
+        for run in targets {
+            await wake(run)
+        }
+    }
+
+    /// 拉一个 run 的 inbox → 决策 → 注入 + mark-delivered。失败静默吞（best-effort）。
+    private func wake(_ run: CrewSessionRun) async {
+        let inbox: CrewSessionInbox
+        do {
+            inbox = try await api.getSessionInbox(sessionId: run.sessionId)
+        } catch {
+            NSLog("[CrewMailboxWaker] inbox \(run.sessionId) failed: \(error.localizedDescription)")
+            return
+        }
+        switch CrewMailboxWakeLogic.decide(mailbox: inbox.mailbox, isBusy: run.backend.isBusy) {
+        case .noop:
+            return
+        case let .inject(text, deliveredIds):
+            run.send(text)
+            do {
+                _ = try await api.markInboxDelivered(sessionId: run.sessionId, itemIds: deliveredIds)
+            } catch {
+                // mark 失败 → 这些项下个事件会被重新拉到 + 重复注入。可接受
+                // （定向消息重复一次好过漏掉）；console log 便于诊断。
+                NSLog("[CrewMailboxWaker] mark-delivered \(run.sessionId) failed: \(error.localizedDescription)")
+            }
+        }
+    }
+}
+#endif

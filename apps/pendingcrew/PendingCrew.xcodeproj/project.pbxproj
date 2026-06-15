@@ -12,6 +12,7 @@
 		039D307EC6F70B40EB36599B /* ModelCatalogEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C78204BFE04404235068547 /* ModelCatalogEntry.swift */; };
 		055DFE844FB3BA1547AEC159 /* PromptTemplate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D74B1C537C235EFB0E69DCB /* PromptTemplate.swift */; };
 		092A82A123D30DFE80145B50 /* PromptTemplate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D74B1C537C235EFB0E69DCB /* PromptTemplate.swift */; };
+		09B59D5C37D3953440612A34 /* CrewMailboxWakeLogic.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F40D59113575AA4C63F7C17 /* CrewMailboxWakeLogic.swift */; };
 		09D0F549C22FD3AD4E58C632 /* SessionProxyClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB1B368878F5794ADB109327 /* SessionProxyClient.swift */; };
 		0AAF49CB9DD82576D2EA5482 /* CrewSenderResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF430C4F70179E977D3A76E5 /* CrewSenderResolver.swift */; };
 		0C31AC70A7AF296381A05716 /* LocalApprovalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 266E200D180EDF283E63D525 /* LocalApprovalStore.swift */; };
@@ -78,6 +79,7 @@
 		6AD5BB1B6ADE7861673B3436 /* CrewRelaySyncLogic.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68229C444C6E759D51FB09BB /* CrewRelaySyncLogic.swift */; };
 		6B976C105E5A83BAD1ACCD3A /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = BE5215583878F2D9251B8F7D /* MarkdownUI */; };
 		6CDB2550BA9460DF4787F708 /* CodexProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78F37C7707F86C6D63EB487B /* CodexProtocol.swift */; };
+		6E48F0426269423D6F2208D2 /* CrewMailboxWaker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D28D0DC0130419B8FD88E95 /* CrewMailboxWaker.swift */; };
 		6FC755AFB9D2D4ADD5EA6744 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5857EBAF956D4104D4FBCBB2 /* KeychainStore.swift */; };
 		753A896490E889FD365136E1 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 904E7226BC285C21F3C1652F /* Theme.swift */; };
 		75875DF801A22B75650A1F9F /* SessionBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = 937DEE031D3D9DA550B8AFCA /* SessionBackend.swift */; };
@@ -116,6 +118,7 @@
 		9784D71E9DBD98F8CEA30145 /* McpPermissionHookTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D36E53A3EEA55369A75ADB82 /* McpPermissionHookTests.swift */; };
 		99B5BB04A0E197AE03535A86 /* LocalCodingAgentKind.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECFF7155D04A3862EC79E34B /* LocalCodingAgentKind.swift */; };
 		9DC9AF0EDD6D37A556A534B6 /* LocalSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73BC806F682C0CE6E3EB26CA /* LocalSetupView.swift */; };
+		A2EF3DA159444D2FA80648BE /* CrewMailboxWakeLogic.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F40D59113575AA4C63F7C17 /* CrewMailboxWakeLogic.swift */; };
 		A47AB832FB4F2E968FDAE540 /* CodexRPCMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60A91B2E730386ADCD52A3B9 /* CodexRPCMessage.swift */; };
 		A4E099C910B5400D8A645F0C /* LocalCodingAgentExecutable.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DCD41EF4DF79F9A7C1794CD /* LocalCodingAgentExecutable.swift */; };
 		A4E148969B130D4DA1A5646E /* ColorHex.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85701E0A44CE34A85B831771 /* ColorHex.swift */; };
@@ -172,6 +175,7 @@
 		E1FEE4113B4234EA1E96F238 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = F64F6B1C6E9879C1F323E372 /* SwiftTerm */; };
 		E30F72A5A481F3B7D6D0C3C2 /* FamilyCredentialStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9ABA828277E44B7E7CABDDB /* FamilyCredentialStoreTests.swift */; };
 		E3B57B0AF2B50AB0FC654335 /* CrewSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0BCE95B8A380020947CB207 /* CrewSidebarView.swift */; };
+		E4A7619D671924635AA43F92 /* CrewMailboxWakeLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA3FBED08E2034A2109B0D37 /* CrewMailboxWakeLogicTests.swift */; };
 		E516AADDB9ED8727F67B7D3E /* CrewRelayAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64939E9C459FD69C7E2993FA /* CrewRelayAgent.swift */; };
 		E532EC788C623C8B7A3448ED /* SessionConfigTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF848E30878BD9A462B2ABD4 /* SessionConfigTests.swift */; };
 		E78F604D88C1BEAB7FB96C0C /* LocalPromptLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF6AF2AE2C93EB875D8DBFF8 /* LocalPromptLoader.swift */; };
@@ -226,6 +230,7 @@
 		2C78204BFE04404235068547 /* ModelCatalogEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelCatalogEntry.swift; sourceTree = "<group>"; };
 		2CC4D38A8ADADF050411F604 /* LocalRunnerPlaceholder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalRunnerPlaceholder.swift; sourceTree = "<group>"; };
 		2CD2E19FFE0BDAC1918FA06E /* IPadShell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPadShell.swift; sourceTree = "<group>"; };
+		2D28D0DC0130419B8FD88E95 /* CrewMailboxWaker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewMailboxWaker.swift; sourceTree = "<group>"; };
 		2DFC0F15C2EF325530543B30 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
 		34017164BC4AFAA13A7AC997 /* CrewRealtimeClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewRealtimeClientTests.swift; sourceTree = "<group>"; };
 		3431B4DF325BB67DBBFAFA45 /* PendingCrewBackend.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingCrewBackend.swift; sourceTree = "<group>"; };
@@ -233,6 +238,7 @@
 		38F5E570088DE41977747A62 /* session-world-model.en.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "session-world-model.en.md"; sourceTree = "<group>"; };
 		3B4E7D20BBF4EE8A2C7AE4C9 /* BotAvatar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotAvatar.swift; sourceTree = "<group>"; };
 		3BAF2A68B9A8EB6894BB8AB8 /* PendingCrewTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = PendingCrewTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		3F40D59113575AA4C63F7C17 /* CrewMailboxWakeLogic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewMailboxWakeLogic.swift; sourceTree = "<group>"; };
 		3F8AC2EF59379DA98FD38630 /* CrewChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewChatView.swift; sourceTree = "<group>"; };
 		4452E801174262B66265E9B7 /* PendingCrewAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingCrewAPI.swift; sourceTree = "<group>"; };
 		45ABD06213BDA13CBF1C79EC /* BlinkingCursor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlinkingCursor.swift; sourceTree = "<group>"; };
@@ -288,6 +294,7 @@
 		A5ED121602F6C57458CB290B /* MarkdownText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownText.swift; sourceTree = "<group>"; };
 		A6A56B215C1A906E69116190 /* LocalPromptLoaderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalPromptLoaderTests.swift; sourceTree = "<group>"; };
 		A991AA4CE1E1DB8EF6FE4808 /* UserAvatar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserAvatar.swift; sourceTree = "<group>"; };
+		AA3FBED08E2034A2109B0D37 /* CrewMailboxWakeLogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewMailboxWakeLogicTests.swift; sourceTree = "<group>"; };
 		AE34BA1080CD0D29F160C9A6 /* CodexThreadItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexThreadItem.swift; sourceTree = "<group>"; };
 		AF1050766B25F50A640A709F /* PendingCrew.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = PendingCrew.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AF6AF2AE2C93EB875D8DBFF8 /* LocalPromptLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalPromptLoader.swift; sourceTree = "<group>"; };
@@ -372,6 +379,7 @@
 			isa = PBXGroup;
 			children = (
 				CD0F5E7501DDF890EA04C5EA /* AgentTerminalSession.swift */,
+				3F40D59113575AA4C63F7C17 /* CrewMailboxWakeLogic.swift */,
 				231EEC0AF17256B2EB3CF76E /* CrewRealtimeClient.swift */,
 				60202465DF374BE31614C151 /* GitInspector.swift */,
 				DF8FE15162B5E527F4765346 /* GitWorktreeService.swift */,
@@ -417,6 +425,7 @@
 		1257D295E906E25E1E39DA26 /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				2D28D0DC0130419B8FD88E95 /* CrewMailboxWaker.swift */,
 				64939E9C459FD69C7E2993FA /* CrewRelayAgent.swift */,
 				C19AB68BF7E4D689CEAF0A0F /* CrewSessionRunner.swift */,
 			);
@@ -604,6 +613,7 @@
 				7CCD472BA2B27A5116C0E0AD /* CodexThreadItemTests.swift */,
 				CCBA9432E0886603D03BFD9B /* CodexTranscriptTests.swift */,
 				C8A233B79D2CE87B8C6D3BF1 /* CrewChatAdapterTests.swift */,
+				AA3FBED08E2034A2109B0D37 /* CrewMailboxWakeLogicTests.swift */,
 				34017164BC4AFAA13A7AC997 /* CrewRealtimeClientTests.swift */,
 				E9ABA828277E44B7E7CABDDB /* FamilyCredentialStoreTests.swift */,
 				1A4D1C7DBA64FB676E8F61FF /* GitWorktreeServiceTests.swift */,
@@ -876,6 +886,8 @@
 				4A6CD3FE34267E982D109A47 /* CrewImageLoader.swift in Sources */,
 				C96A57C6587DC58D7BFE6BBF /* CrewInteractionCard.swift in Sources */,
 				E83ED263489E417F3CD48192 /* CrewListView.swift in Sources */,
+				09B59D5C37D3953440612A34 /* CrewMailboxWakeLogic.swift in Sources */,
+				6E48F0426269423D6F2208D2 /* CrewMailboxWaker.swift in Sources */,
 				BFBAAF89FE49D7DC1F5E1146 /* CrewModels.swift in Sources */,
 				3024F2F586B5D4F11E3E7B4A /* CrewRealtimeClient.swift in Sources */,
 				E516AADDB9ED8727F67B7D3E /* CrewRelayAgent.swift in Sources */,
@@ -976,6 +988,8 @@
 				00384409C41B8F5886C8313E /* CrewChatAdapterTests.swift in Sources */,
 				B094D64B0509EF9E543C90F7 /* CrewChatMessage.swift in Sources */,
 				0399C53449CECC7156ABF1B9 /* CrewDetail.swift in Sources */,
+				A2EF3DA159444D2FA80648BE /* CrewMailboxWakeLogic.swift in Sources */,
+				E4A7619D671924635AA43F92 /* CrewMailboxWakeLogicTests.swift in Sources */,
 				89E78145E07ABCF97B70E5C9 /* CrewModels.swift in Sources */,
 				32D7D0165166B47F2B612BEF /* CrewRealtimeClient.swift in Sources */,
 				75F5A83D0A884760B68D20D8 /* CrewRealtimeClientTests.swift in Sources */,

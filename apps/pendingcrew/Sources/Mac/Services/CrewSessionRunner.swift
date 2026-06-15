@@ -83,6 +83,11 @@ final class CrewSessionRunner: ObservableObject {
     /// 同时 running 的 session 上限（资源护栏）。
     static let maxConcurrentRuns = 6
 
+    /// 事件驱动唤醒（Phase 4b）：**一个 crew 一个 waker**，该 crew 上的多个登录态
+    /// run 共用一条 hub 连接。登录态 run 启动时 `ensureMailboxWaker` 懒建，最后一个
+    /// 该 crew 的登录态 run 移除时收掉。BYOK/local-only 不建（无服务端 hub）。
+    private var mailboxWakers: [String: CrewMailboxWaker] = [:]
+
     init() {}
 
     /// 切换前台 run（退出「新建」态）。
@@ -98,18 +103,50 @@ final class CrewSessionRunner: ObservableObject {
 
     /// 停掉指定 run（保留在列表里，状态落 cancelled）。
     func stop(_ runId: UUID) {
-        runs.first { $0.runID == runId }?.stop()
+        guard let run = runs.first(where: { $0.runID == runId }) else { return }
+        let crewId = run.crewId
+        run.stop()
+        teardownMailboxWakerIfIdle(crewId: crewId)
     }
 
     /// 移除指定 run（仍在跑则先停）。被移除的是选中项时，回退选最后一个。
     func remove(_ runId: UUID) {
         guard let idx = runs.firstIndex(where: { $0.runID == runId }) else { return }
         let run = runs[idx]
+        let crewId = run.crewId
         if run.status == .running { run.stop() }
         runs.remove(at: idx)
         if selectedRunId == runId {
             selectedRunId = runs.last?.runID
         }
+        teardownMailboxWakerIfIdle(crewId: crewId)
+    }
+
+    // MARK: - 事件驱动唤醒（Phase 4b）
+
+    /// 为一个 crew 确保有一条 hub waker 在跑（一个 crew 一个，多 run 共用）。
+    /// 登录态 run 启动后由 call site 调（传入已鉴权的 `api` + device-grant `token`
+    /// + `baseURL`）。已存在则只补拉一次 inbox（刚起的 run 可能已有@我的待处理项，
+    /// 不等下一个 hub 事件）。
+    func ensureMailboxWaker(crewId: String, api: PendingCrewAPI, baseURL: URL, token: String) {
+        if let existing = mailboxWakers[crewId] {
+            Task { await existing.drain() }   // 新 run 加入，补一次
+            return
+        }
+        let client = CrewRealtimeClient(baseURL: baseURL, crewId: crewId, token: token)
+        let waker = CrewMailboxWaker(crewId: crewId, api: api, client: client, runner: self)
+        mailboxWakers[crewId] = waker
+        waker.start()
+        Task { await waker.drain() }          // 起手补一次，不等首个 hub 事件
+    }
+
+    /// 该 crew 已无登录态 running run → 收掉 waker（断 hub）。
+    func teardownMailboxWakerIfIdle(crewId: String) {
+        let stillActive = runs.contains {
+            $0.crewId == crewId && $0.status == .running && $0.hasServerSession
+        }
+        guard !stillActive, let waker = mailboxWakers.removeValue(forKey: crewId) else { return }
+        waker.stop()
     }
 
     /// 起一个新 session。pre-flight 失败抛错（工具未装 / 超并发上限）。成功后
@@ -397,6 +434,10 @@ final class CrewSessionRun: ObservableObject, Identifiable {
 
     /// 类型转换访问：仅当后端是终端（claude）时非 nil，供 `AgentTerminalView` 使用。
     var agentTerminalSession: AgentTerminalSession? { backend as? AgentTerminalSession }
+
+    /// 是否有服务端 session 行（登录态）。事件驱动唤醒（Phase 4b）只对这类 run
+    /// 拉 inbox —— BYOK/local-only run（serverLink == nil）没有服务端 mailbox。
+    var hasServerSession: Bool { serverLink != nil }
 
     @Published private(set) var status: Status = .running
     @Published private(set) var exitCode: Int32?

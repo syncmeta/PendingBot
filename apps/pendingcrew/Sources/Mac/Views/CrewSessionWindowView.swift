@@ -807,11 +807,23 @@ struct CrewSessionWindowView: View {
                 developerInstructions: codexDevInstructions,
                 codexMcpServers: codexMcp
             )
+            // 登录态 run → 接上事件驱动唤醒（Phase 4b）：一个 crew 一条 hub 连接，
+            // 收到「该 crew 有动静」→ 拉本 session inbox → 空闲且有@我的项 → 注入唤醒。
+            attachMailboxWaker(crewId: detail.crew.id, api: api)
             // taskBrief 已在 argv —— 不再 0.6s sleep + send(brief)。
         } catch {
             localError = "自动认领 session 失败: \(error.localizedDescription)"
             handledSessionIds.remove(s.id) // allow a retry next poll
         }
+    }
+
+    /// 登录态 run 起好后接上 crew 的事件驱动唤醒 waker（Phase 4b）。需要
+    /// device-grant token + baseURL —— 用 `appModel.imageAuth`（同一对 (baseURL,
+    /// token)）取，非登录态返回 nil 时静默跳过（理论上走到这里必登录，防御性）。
+    private func attachMailboxWaker(crewId: String, api: PendingCrewAPI) {
+        guard let auth = appModel.imageAuth else { return }
+        sessionRunner.ensureMailboxWaker(
+            crewId: crewId, api: api, baseURL: auth.baseURL, token: auth.token)
     }
 
     /// `taskBrief` is the session's first instruction — the edge requires a
