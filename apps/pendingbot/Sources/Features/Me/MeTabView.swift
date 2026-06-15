@@ -165,7 +165,11 @@ struct MeTabView: View {
     @ViewBuilder
     private var menu: some View {
         ZStack {
-            Theme.Palette.canvas.ignoresSafeArea()
+            // 壳列表列模式(Mac/iPad-regular)不铺 canvas —— 露出合并侧栏的
+            // 原生材质,与好友/消息等 tab 一致(见 FriendsTabView 同款 gate)。
+            if !renderAsMacListColumn {
+                Theme.Palette.canvas.ignoresSafeArea()
+            }
             ScrollView {
                 VStack(spacing: 28) {
                     profileHeader
@@ -230,7 +234,11 @@ struct MeTabView: View {
                 .padding(.bottom, 32)
             }
         }
-        .background(Theme.Palette.canvas.ignoresSafeArea())
+        .background {
+            if !renderAsMacListColumn {
+                Theme.Palette.canvas.ignoresSafeArea()
+            }
+        }
         #if os(iOS)
         .toolbar(.hidden, for: .navigationBar)
         #endif
