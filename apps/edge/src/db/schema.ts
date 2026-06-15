@@ -2381,6 +2381,45 @@ export type Database = {
           },
         ]
       }
+      model_presets: {
+        Row: {
+          default_selected: boolean
+          description: string
+          enabled: boolean
+          params: Json
+          resolver_kind: string
+          slug: string
+          sort_order: number
+          title: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          default_selected?: boolean
+          description?: string
+          enabled?: boolean
+          params?: Json
+          resolver_kind: string
+          slug: string
+          sort_order?: number
+          title: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          default_selected?: boolean
+          description?: string
+          enabled?: boolean
+          params?: Json
+          resolver_kind?: string
+          slug?: string
+          sort_order?: number
+          title?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       permission_requests: {
         Row: {
           crew_session_id: string
