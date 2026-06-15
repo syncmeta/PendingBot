@@ -37,6 +37,8 @@
 | 决策点 | 结论 |
 |---|---|
 | 预设内容怎么定义 | 用 **OpenRouter API** 动态解析；board 管"定义/规则"。去掉"性价比"，加"最热门"。预设集 = 头两家旗舰 / 中国旗舰 / 各家最新 / 速度快 / 最热门 |
+| "头两家"是哪两家 | 固定 **OpenAI + Anthropic**（board 可改） |
+| 旗舰怎么自动选 | 每厂一个，策略默认"最贵"（`blended_usd_per_million` 最高），可切"最新"/"某系列最新"。**5 个预设全规则驱动，无手钉** |
 | 默认公开程度 | 改回 **默认私有**（规避公有永久不可逆的坑） |
 | 公有 bot 删除 | 放宽：公有 bot 若**只有创建者一人是好友**（无其他采用者）仍可删 |
 | 预设如何落到 bot | **存预设引用，对话时解析** |
@@ -71,16 +73,21 @@ Datasets/rankings API（`/docs/api/api-reference/datasets/get-rankings-daily`，
 | `sort_order` | int | 排序 |
 | `updated_at` / `updated_by` | | 审计 |
 
-`resolver_kind` → OpenRouter 查询映射：
+`resolver_kind` → OpenRouter 查询映射（**全部规则驱动，无需手钉清单**）：
 
-- `top_flagship` —— `model_authors=params.authors`（默认 `[openai, anthropic]`），各厂取旗舰
-- `chinese_flagship` —— `model_authors=` 中国厂白名单（默认 `[deepseek, qwen, moonshotai, z-ai, minimax, ...]`），各厂取旗舰
+- `top_flagship` —— 厂商列表固定 `[openai, anthropic]`（`params.authors` 可改），各厂按"旗舰策略"取一个
+- `chinese_flagship` —— `params.authors` = 中国厂白名单（默认 `[deepseek, qwen, moonshotai, z-ai, minimax, ...]`），各厂按"旗舰策略"取一个
 - `latest_per_vendor` —— `order=newest`，按 author 分组各取最新一个，限 `params.count`（默认 8）
 - `fastest` —— `order=throughput-high-to-low`，取前 `params.count`（默认 5）
 - `most_popular` —— Datasets 用量榜 或 `order=most-popular`，取前 `params.count`（默认 5）
-- `manual` —— 直接用 `params.manual_models`
+- `manual` —— 直接用 `params.manual_models`（纯应急口，正常不用）
 
-**逃生口**：任意预设填 `params.manual_models` 即覆盖动态解析（board 可在自动结果不理想时钉死清单）。
+**旗舰策略**（`top_flagship` / `chinese_flagship` 的 `params.flagship`，每厂取一个）：
+- `most_expensive`（默认）—— 厂内 `blended_usd_per_million` 最高的
+- `latest` —— 厂内 `release_date` 最新的
+- `latest_in_series` —— 按 slug 模式（如 `claude-opus-*`、`gpt-5*`）取最新——支持"某系列的 latest"
+
+**原生优先**：`top_flagship` 解析到 OpenAI/Anthropic 时取**原生 twin 行**（`deriveNative` 已给原生行带上同样的 `blended_usd_per_million` + `release_date` + `model_provider`，见 `models.ts:255`），走统一计费原生路由。中国厂无原生 twin，走 OpenRouter 透传。
 
 **边端解析器** `resolveModelPreset(slug) -> ModelRef[]`：
 - 调 OpenRouter（按 `resolver_kind`/`params`）→ 与边端 catalog 对齐成 `{ slug, display_name, provider }`。
@@ -177,7 +184,7 @@ pool -= modelPool.exclude
 
 ## 已知尾巴 / tech-debt 候选
 
-- "旗舰"启发式是近似；初期靠 board `manual_models` 兜底，记 tech-debt 待精化。
-- OpenRouter 厂商 author slug（尤其中国厂）需实测核对，别凭印象（按 `feedback_official_docs_for_integrations`）。上线前核掉。
+- 旗舰策略默认"最贵"，但 `blended_usd_per_million` 是混合成本估算（缓存 0.7/输入 0.2/输出 0.1，`models.ts:122`），不完全等于"档位"，偶尔可能把 pro/ultra 排得不直观。遇到就把该预设切 `latest_in_series`。
+- OpenRouter 厂商 author slug（尤其中国厂 deepseek/qwen/moonshotai/z-ai/minimax）+ 各厂旗舰在不在 OpenRouter、能否走统一计费，需拉实时目录核对，别凭印象（按 `feedback_official_docs_for_integrations`）。上线前核掉。
 - 预设解析的 KV 刷新若用 cron，需单独排期；初期可被动 TTL。
 - 放宽删除的子查询性能在 bot 采用者很多时需关注（但能删的前提就是采用者≤1，集合天然小）。
