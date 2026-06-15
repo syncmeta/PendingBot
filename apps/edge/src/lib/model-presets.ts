@@ -39,6 +39,7 @@ export interface ResolvedPreset {
 
 const PRESET_CACHE_PREFIX = 'model_preset:v1:';
 const PRESET_TTL_SEC = 6 * 60 * 60;
+const FASTEST_CANDIDATE_CAP = 40;
 
 // chat-only catalog 行（排除 native-backed OpenRouter 双胞胎 + 非 chat）
 function chatRows(catalog: OpenRouterModelOut[]): OpenRouterModelOut[] {
@@ -122,13 +123,51 @@ function enrich(slugs: string[], catalog: OpenRouterModelOut[]): ResolvedPreset[
   });
 }
 
-// 读 DB 定义 + 算 + KV 缓存。Task 1.2 会在这里接入 fastest 的 endpoints 分支。
+export type ThroughputFetcher = (slug: string) => Promise<number | null>;
+
+export async function fetchThroughput(slug: string): Promise<number | null> {
+  try {
+    const res = await fetch(`https://openrouter.ai/api/v1/models/${slug}/endpoints`, {
+      cf: { cacheTtlByStatus: { '200-299': 3600, '400-599': 0 }, cacheEverything: true },
+    });
+    if (!res.ok) return null;
+    const json = (await res.json()) as { data?: { endpoints?: { throughput_last_30m?: number | null }[] } };
+    const eps = json.data?.endpoints ?? [];
+    const vals = eps.map((e) => e.throughput_last_30m).filter((v): v is number => typeof v === 'number');
+    return vals.length ? Math.max(...vals) : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function resolveFastest(
+  catalog: OpenRouterModelOut[],
+  params: PresetParams,
+  fetcher: ThroughputFetcher = fetchThroughput,
+): Promise<string[]> {
+  const minRating = params.min_rating ?? 1200;
+  const candidates = chatRows(catalog)
+    .filter((m) => (m.blended_usd_per_million ?? 0) > 0 && (ratingOf(m) ?? 0) >= minRating)
+    .slice(0, FASTEST_CANDIDATE_CAP);
+  const scored = await Promise.all(
+    candidates.map(async (m) => ({ slug: m.slug, tput: await fetcher(m.slug) })),
+  );
+  return scored
+    .filter((s) => s.tput != null)
+    .sort((a, b) => (b.tput ?? 0) - (a.tput ?? 0))
+    .slice(0, params.count ?? 5)
+    .map((s) => s.slug);
+}
+
+// 读 DB 定义 + 算 + KV 缓存。fastest 走 per-model endpoints 吞吐分支。
 export async function resolveModelPreset(env: Env, def: PresetDef): Promise<ResolvedPreset> {
   const cacheKey = PRESET_CACHE_PREFIX + def.slug;
   const cached = await env.MEMORY.get<ResolvedPreset>(cacheKey, 'json').catch(() => null);
   if (cached) return cached;
   const catalog = await buildModelCatalog(await fetchLMArenaRows(env));
-  const slugs = resolvePresetModelsFromCatalog(def, catalog);
+  const slugs = def.resolver_kind === 'fastest'
+    ? await resolveFastest(catalog, def.params ?? {})
+    : resolvePresetModelsFromCatalog(def, catalog);
   const resolved: ResolvedPreset = {
     slug: def.slug, title: def.title, description: def.description,
     default_selected: def.default_selected ?? false,

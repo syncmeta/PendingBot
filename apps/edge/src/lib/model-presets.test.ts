@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolvePresetModelsFromCatalog, type PresetDef } from './model-presets';
+import { resolveFastest, resolvePresetModelsFromCatalog, type PresetDef } from './model-presets';
 import type { OpenRouterModelOut } from '../routes/models';
 
 const M = (over: Partial<OpenRouterModelOut>): OpenRouterModelOut => ({
@@ -32,4 +32,15 @@ it('latest_per_vendor picks newest per provider', () => {
 it('most_popular ranks by lmarena text rating', () => {
   const def: PresetDef = { slug: 'pop', resolver_kind: 'most_popular', params: { count: 1 }, title: '', description: '' };
   expect(resolvePresetModelsFromCatalog(def, catalog)).toEqual(['meta-llama/llama-4']);
+});
+
+it('fastest ranks candidates by injected throughput, respects min_rating', async () => {
+  const cat = [
+    M({ slug: 'a/fast-strong', provider: 'a', blended_usd_per_million: 1, lmarena_scores: { text: { rating: 1300, rank: 1, vote_count: 1, category: 'overall', leaderboard_publish_date: null } } }),
+    M({ slug: 'a/slow-strong', provider: 'a', blended_usd_per_million: 1, lmarena_scores: { text: { rating: 1300, rank: 2, vote_count: 1, category: 'overall', leaderboard_publish_date: null } } }),
+    M({ slug: 'a/fast-weak', provider: 'a', blended_usd_per_million: 1, lmarena_scores: { text: { rating: 900, rank: 9, vote_count: 1, category: 'overall', leaderboard_publish_date: null } } }),
+  ];
+  const tput: Record<string, number> = { 'a/fast-strong': 200, 'a/slow-strong': 10, 'a/fast-weak': 999 };
+  const out = await resolveFastest(cat, { count: 2, min_rating: 1200 }, async (slug) => tput[slug] ?? null);
+  expect(out).toEqual(['a/fast-strong', 'a/slow-strong']); // weak 被 min_rating 滤掉
 });
