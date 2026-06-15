@@ -414,6 +414,37 @@ crewMessagesRoutes.post('/:crewId/messages', requireSubjectAuth(['crew:write']),
   } as never);
   if (insErr) return jsonError(c, 500, 'database_error', { detail: insErr.message });
 
+  // Directed mailbox fan-out (spec v2 §9.2 @ experience). @session / @captain
+  // resolve to explicit recipient session ids; each gets ONE directed mailbox
+  // row in addition to the broadcast above (the message already lives in
+  // `messages` for everyone). @broadcast / no @ → sessionIds === null → skip.
+  const recip = await resolveRecipientSessions(c.env, crewId, parsed.mentions);
+  if (recip.error) {
+    // A validation error (e.g. a session mention without target_id) is a
+    // malformed request — surface it. The message row already landed, but the
+    // caller should learn their @ was rejected. DB-level errors are NOT fatal
+    // (the broadcast succeeded); only 4xx validation errors bubble up.
+    if (recip.error.status >= 400 && recip.error.status < 500) {
+      return jsonError(c, 400, 'invalid_body', { message: recip.error.message });
+    }
+    console.warn('[crew] resolveRecipientSessions error', recip.error.message);
+  } else if (recip.sessionIds && recip.sessionIds.length > 0) {
+    // Best-effort: a mailbox enqueue failure must NOT fail the request — the
+    // message insert is the source of truth and the broadcast already happened.
+    for (const targetSessionId of recip.sessionIds) {
+      const { error: enqErr } = await untypedRpc(svc).rpc('enqueue_session_mailbox', {
+        p_session_id: targetSessionId,
+        p_message_kind: 'instruction',
+        p_summary: parsed.content,
+        p_payload: { source: 'crew_mention' },
+        p_source_message_id: messageId,
+      });
+      if (enqErr) {
+        console.warn('[crew] enqueue_session_mailbox failed', targetSessionId, enqErr.message);
+      }
+    }
+  }
+
   const captainId = meta.captain_bot_id as string | null;
   if (captainId) {
     c.executionCtx.waitUntil(

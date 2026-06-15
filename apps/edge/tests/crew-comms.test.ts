@@ -172,6 +172,135 @@ describe('POST /v1/crews/:crewId/messages', () => {
   });
 });
 
+// 定向信箱投递:@ 某个 session / captain 时,除广播外额外往目标 session 的
+// 定向信箱投一条(enqueue_session_mailbox RPC)。@broadcast / 无 mention 维持
+// 现状(只进 messages 广播,不写信箱)。
+describe('POST /v1/crews/:crewId/messages — mention → session mailbox', () => {
+  beforeEach(() => dispatchGroupTurnMock.mockClear());
+
+  // Capture every enqueue_session_mailbox RPC call so we can assert which
+  // sessions got a directed mailbox row (the fake stubs the RPC; the real
+  // insert is covered by the migration's inline SQL tests).
+  function seedWithMailboxCapture(db: FakeDb): { enqueues: Record<string, unknown>[] } {
+    db.rows.temporary_group_meta = [
+      { conversation_id: CREW_ID, responsible_subject_id: SUBJECT, captain_bot_id: CAPTAIN_BOT_ID, temporary_kind: 'crew' },
+    ];
+    const enqueues: Record<string, unknown>[] = [];
+    db.rpcs = {
+      can_view_temporary_group: () => ({ data: true, error: null }),
+      enqueue_session_mailbox: (args) => {
+        enqueues.push(args);
+        return { data: crypto.randomUUID(), error: null };
+      },
+    };
+    return { enqueues };
+  }
+
+  it('@session enqueues a directed mailbox row for that session only + still inserts the message', async () => {
+    const db = makeFakeDb();
+    const { enqueues } = seedWithMailboxCapture(db);
+    const res = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-user-id': USER },
+      body: JSON.stringify({ content: '@A 看下这个', mentions: [{ kind: 'session', target_id: SESSION_A }] }),
+    });
+    expect(res.status).toBe(200);
+    const { messageId } = (await res.json()) as { messageId: string };
+
+    // The human message still lands in the crew conversation's messages.
+    const msgInsert = db.inserts.find((i) => i.table === 'messages');
+    expect(msgInsert?.row).toMatchObject({ conversation_id: CREW_ID, role: 'user', content: '@A 看下这个' });
+
+    // Exactly one directed mailbox enqueue, for SESSION_A, linked back to the
+    // inserted message id.
+    expect(enqueues.length).toBe(1);
+    expect(enqueues[0]).toMatchObject({
+      p_session_id: SESSION_A,
+      p_source_message_id: messageId,
+    });
+    // No other session received a directed row.
+    expect(enqueues.some((e) => e.p_session_id === SESSION_B)).toBe(false);
+  });
+
+  it('deduplicates: a session mentioned twice only gets one mailbox row', async () => {
+    const db = makeFakeDb();
+    const { enqueues } = seedWithMailboxCapture(db);
+    const res = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-user-id': USER },
+      body: JSON.stringify({
+        content: 'double mention',
+        mentions: [
+          { kind: 'session', target_id: SESSION_A },
+          { kind: 'session', target_id: SESSION_A },
+        ],
+      }),
+    });
+    expect(res.status).toBe(200);
+    expect(enqueues.length).toBe(1);
+    expect(enqueues[0]).toMatchObject({ p_session_id: SESSION_A });
+  });
+
+  it('empty mentions → broadcast only, no mailbox enqueue, message still inserted', async () => {
+    const db = makeFakeDb();
+    const { enqueues } = seedWithMailboxCapture(db);
+    const res = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-user-id': USER },
+      body: JSON.stringify({ content: 'hello everyone' }),
+    });
+    expect(res.status).toBe(200);
+    expect(db.inserts.find((i) => i.table === 'messages')).toBeTruthy();
+    expect(enqueues.length).toBe(0);
+  });
+
+  it('@broadcast → no mailbox enqueue (fan-out to everyone via the whiteboard)', async () => {
+    const db = makeFakeDb();
+    const { enqueues } = seedWithMailboxCapture(db);
+    const res = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-user-id': USER },
+      body: JSON.stringify({ content: 'attention all', mentions: [{ kind: 'broadcast' }] }),
+    });
+    expect(res.status).toBe(200);
+    expect(enqueues.length).toBe(0);
+  });
+
+  it('@captain resolves to the captain bot\'s active session and enqueues a mailbox row', async () => {
+    const db = makeFakeDb();
+    const { enqueues } = seedWithMailboxCapture(db);
+    // captain bot → active member → its assigned, non-terminal session.
+    db.rows.temporary_group_members = [
+      { id: CAPTAIN_MEMBER_ID, conversation_id: CREW_ID, bot_id: CAPTAIN_BOT_ID, status: 'active', created_at: '2026-06-01T00:00:00Z' },
+    ];
+    db.rows.crew_sessions = [
+      { id: SESSION_A, crew_conversation_id: CREW_ID, assigned_to_member_id: CAPTAIN_MEMBER_ID, status: 'running' },
+    ];
+    const res = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-user-id': USER },
+      body: JSON.stringify({ content: '@captain status?', mentions: [{ kind: 'captain' }] }),
+    });
+    expect(res.status).toBe(200);
+    expect(enqueues.length).toBe(1);
+    expect(enqueues[0]).toMatchObject({ p_session_id: SESSION_A });
+  });
+
+  it('session mention missing target_id → 400 invalid_body', async () => {
+    const db = makeFakeDb();
+    seedWithMailboxCapture(db);
+    const res = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-user-id': USER },
+      // a session mention with no target_id is a malformed @ — the resolver
+      // returns a validation error which the handler surfaces as invalid_body.
+      body: JSON.stringify({ content: 'oops', mentions: [{ kind: 'session' }] }),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('invalid_body');
+  });
+});
+
 // 接合 v2 block 3 — relay 信箱:lastCursor / mac_relay 上行标注 / 成员邀请。
 
 // device-grant 路径:seed 一行 subject_device_grants,token_hash 用与
