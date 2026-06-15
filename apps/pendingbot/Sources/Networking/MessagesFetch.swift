@@ -32,8 +32,8 @@ struct MessageRow: Decodable {
     let role: String
     let log_kind: String?
     /// Raw jsonb — different log_kinds use different shapes (recall →
-    /// RecallPayload; crew_proposal → CrewProposalPayload). Re-decoded lazily
-    /// per row instead of forcing one column-level schema.
+    /// RecallPayload; permission_request → PermissionRequestPayload).
+    /// Re-decoded lazily per row instead of forcing one column-level schema.
     let log_payload: AnyJSON?
     /// `{ ids: [uuid, ...] }` — see apps/edge/src/routes/messages.ts upsert.
     let attachments: AttachmentRef?

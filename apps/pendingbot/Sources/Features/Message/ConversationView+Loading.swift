@@ -393,7 +393,6 @@ extension ConversationView {
             var tracesLoaded: [String: [ToolTraceEvent]] = [:]
             var traceCitationsLoaded: [String: [MessageCitation]] = [:]
             var attachmentIdsLoaded: [String: [String]] = [:]
-            var crewProposalsLoaded: [String: CrewProposalPayload] = [:]
             var permissionRequestsLoaded: [String: PermissionRequestPayload] = [:]
             var guessPromptsLoaded: Set<String> = []
             for r in rows {
@@ -431,31 +430,12 @@ extension ConversationView {
                             message_seq: r.message_seq,
                             attachments: nil
                         ))
-                    } else if r.log_kind == "crew_proposal", let any = r.log_payload,
-                              let payload = decodeLogPayload(any, as: CrewProposalPayload.self) {
-                        // crew_proposal — bot's start_crew tool dropped
-                        // a proposal here. We synthesise a placeholder
-                        // ChatMessage so the timeline can host the card,
-                        // and stash the typed payload in a sibling dict
-                        // for the renderer to pick up by message id.
-                        crewProposalsLoaded[r.id] = payload
-                        viewMessages.append(ChatMessage(
-                            id: r.id,
-                            conversation_id: r.conversation_id,
-                            sender_type: "crew_proposal_log",
-                            sender_id: r.sender_bot_id ?? "",
-                            content: "",
-                            created_at: secs,
-                            message_seq: r.message_seq,
-                            attachments: nil
-                        ))
                     } else if r.log_kind == "permission_request", let any = r.log_payload,
                               let payload = decodeLogPayload(any, as: PermissionRequestPayload.self) {
                         // permission_request — agent's request_permission
-                        // tool dropped a card here (spec v2 §10). Same
-                        // pattern as crew_proposal: synthesise a host
-                        // ChatMessage + stash typed payload in the
-                        // sibling dict for the renderer.
+                        // tool dropped a card here (spec v2 §10).
+                        // Synthesise a host ChatMessage + stash the typed
+                        // payload in the sibling dict for the renderer.
                         permissionRequestsLoaded[r.id] = payload
                         viewMessages.append(ChatMessage(
                             id: r.id,
@@ -547,15 +527,9 @@ extension ConversationView {
             self.tracesByUserMsgId.merge(tracesLoaded) { _, new in new }
             self.traceCitationsByUserMsgId.merge(traceCitationsLoaded) { _, new in new }
             self.attachmentIdsByMsgId.merge(attachmentIdsLoaded) { _, new in new }
-            // crew_proposal payloads — server is the source of truth on
-            // status, so a fresh load overwrites any stale local copy
-            // (e.g. a card that was 'pending' last time but has since
-            // been decided in another session).
-            self.crewProposalsByMsgId.merge(crewProposalsLoaded) { _, new in new }
-            // permission_request payloads — same shape as crew_proposal:
-            // server is the only source of truth on status, so a fresh
-            // load overwrites any locally cached `pending` card that has
-            // been decided elsewhere.
+            // permission_request payloads — server is the only source of
+            // truth on status, so a fresh load overwrites any locally
+            // cached `pending` card that has been decided elsewhere.
             self.permissionRequestsByMsgId.merge(permissionRequestsLoaded) { _, new in new }
             // guess_prompt ids — history is the source of truth for which
             // log rows are 「猜一猜」cards, so union in the freshly-loaded

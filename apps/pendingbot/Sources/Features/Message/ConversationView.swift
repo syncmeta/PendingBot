@@ -122,16 +122,6 @@ struct ConversationView: View {
     /// `tool_call` / `tool_result` SSE events during a turn — we accumulate
     /// them into the bucket for the in-flight `liveTraceUserMsgId`.
     @State var tracesByUserMsgId: [String: [ToolTraceEvent]] = [:]
-    /// crew_proposal payload per log message id. Populated in loadHistory
-    /// from `role='log'` rows whose `log_kind='crew_proposal'`. The
-    /// timeline renderer swaps in a `CrewProposalCardView` (instead of
-    /// a bubble) for each entry, and `decideCrewProposal` mutates the
-    /// status when the user taps 确认创建 / 拒绝.
-    @State var crewProposalsByMsgId: [String: CrewProposalPayload] = [:]
-    /// Message ids whose decide HTTP call is currently in flight. The
-    /// card uses this to disable its buttons during the network round-
-    /// trip; an empty set when nothing is pending.
-    @State var crewProposalBusy: Set<String> = []
     /// permission_request payload per log message id (spec v2 §10).
     /// Populated by loadHistory from `role='log'` rows with
     /// `log_kind='permission_request'`. The timeline renderer swaps in
@@ -492,38 +482,15 @@ struct ConversationView: View {
                                     originalAt: Date(timeIntervalSince1970: TimeInterval(originalSecs))
                                 )
                                 .id(msg.id)
-                            } else if msg.sender_type == "crew_proposal_log",
-                                      let payload = crewProposalsByMsgId[msg.id] {
-                                // Bot-initiated crew creation proposal
-                                // (spec v2 §6.4). The card shows the
-                                // bot's pitch + 确认创建 / 拒绝 buttons
-                                // while payload.status == 'pending';
-                                // once decided it just shows a status
-                                // badge.
-                                CrewProposalCardView(
-                                    proposingBotName: botName,
-                                    payload: payload,
-                                    busy: crewProposalBusy.contains(msg.id),
-                                    onApprove: {
-                                        Task { await decideCrewProposal(msg.id, decision: .approve) }
-                                    },
-                                    onReject: {
-                                        Task { await decideCrewProposal(msg.id, decision: .reject) }
-                                    }
-                                )
-                                .id(msg.id)
-                                .transition(.opacity)
                             } else if msg.sender_type == "permission_request_log",
                                       let payload = permissionRequestsByMsgId[msg.id] {
                                 // Agent's request_permission card
                                 // (spec v2 §10). 批准 / 拒绝 while
                                 // payload.status == 'pending'; once
                                 // decided it just shows a status badge.
-                                // sessionLabel uses "Session" since
-                                // P2 doesn't yet thread session names
-                                // through to ConversationView — T4.6
-                                // will surface them when crew
-                                // conversations get full timeline UI.
+                                // sessionLabel uses a generic "Session"
+                                // since session names aren't threaded
+                                // through to ConversationView yet.
                                 PermissionRequestCardView(
                                     sessionLabel: "Session",
                                     payload: payload,

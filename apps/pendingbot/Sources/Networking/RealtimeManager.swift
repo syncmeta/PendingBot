@@ -62,6 +62,10 @@ final class RealtimeManager {
     /// `conversation_participants` (row-change frames) plus group voice
     /// call lifecycle (voice_call frames); callers register one closure
     /// per category.
+    ///
+    /// Note: the conv topic also carries `crew_announcements` /
+    /// `crew_sessions` row changes from the edge fan-out, but the iOS
+    /// crew surface was removed — those frames are now ignored here.
     func startConvChannel(
         conversationId: String,
         onMessage: @escaping @Sendable (MessageEvent) -> Void,
@@ -69,16 +73,14 @@ final class RealtimeManager {
         onContinueRequest: @escaping @Sendable (ContinueRequestEvent) -> Void = { _ in },
         onParticipants: @escaping @Sendable (ParticipantsEvent) -> Void = { _ in },
         onVoiceCall: @escaping @Sendable (VoiceCallFrame) -> Void = { _ in },
-        onVoiceCost: @escaping @Sendable (VoiceCostFrame) -> Void = { _ in },
-        onCrewAnnouncement: @escaping @Sendable (CrewAnnouncementEvent) -> Void = { _ in },
-        onCrewSession: @escaping @Sendable (CrewSessionEvent) -> Void = { _ in }
+        onVoiceCost: @escaping @Sendable (VoiceCostFrame) -> Void = { _ in }
     ) async -> ConvSubscriptionToken {
         let token = ConvSubscriptionToken(id: UUID(), conversationId: conversationId)
 
         if let handle = convChannels[conversationId] {
             handle.observers[token.id] = (
                 onMessage, onLookback, onContinueRequest, onParticipants,
-                onVoiceCall, onVoiceCost, onCrewAnnouncement, onCrewSession,
+                onVoiceCall, onVoiceCost,
             )
             return token
         }
@@ -86,7 +88,7 @@ final class RealtimeManager {
         let handle = ConvChannelHandle()
         handle.observers[token.id] = (
             onMessage, onLookback, onContinueRequest, onParticipants,
-            onVoiceCall, onVoiceCost, onCrewAnnouncement, onCrewSession,
+            onVoiceCall, onVoiceCost,
         )
 
         let socket = RealtimeSocket(
@@ -135,20 +137,6 @@ final class RealtimeManager {
             case .delete: .delete
             }
             for (_, obs) in handle.observers { obs.participants(ParticipantsEvent(kind: kind)) }
-        case "crew_announcements":
-            // A crew IS a conversation; its whiteboard feed
-            // (crew_announcements) fans out over this conv topic. Rows are
-            // never hard-deleted — INSERT for new posts, UPDATE for
-            // permission-status flips. Ignore any stray delete.
-            guard change.op != .delete else { return }
-            let evt = CrewAnnouncementEvent(kind: change.op == .insert ? .insert : .update,
-                                            record: change.record)
-            for (_, obs) in handle.observers { obs.crewAnnouncement(evt) }
-        case "crew_sessions":
-            guard change.op != .delete else { return }
-            let evt = CrewSessionEvent(kind: change.op == .insert ? .insert : .update,
-                                       record: change.record)
-            for (_, obs) in handle.observers { obs.crewSession(evt) }
         default:
             break
         }
@@ -210,24 +198,6 @@ struct ParticipantsEvent: Sendable {
     let kind: Kind
 }
 
-/// Crew-only — fires on crew_announcements INSERT/UPDATE for the
-/// subscribed crew conv. INSERT = new whiteboard post / permission card;
-/// UPDATE = permission status flip (approved/denied stamped onto the row).
-/// Consumer decodes the columns it cares about.
-struct CrewAnnouncementEvent: Sendable {
-    enum Kind: Sendable { case insert, update }
-    let kind: Kind
-    let record: [String: AnyJSON]
-}
-
-/// Crew-only — fires on crew_sessions INSERT/UPDATE for the subscribed
-/// crew conv. Used to keep the session index / status live without a poll.
-struct CrewSessionEvent: Sendable {
-    enum Kind: Sendable { case insert, update }
-    let kind: Kind
-    let record: [String: AnyJSON]
-}
-
 struct ConvSubscriptionToken: Hashable, Sendable {
     let id: UUID
     let conversationId: String
@@ -243,17 +213,13 @@ private final class ConvChannelHandle {
     typealias ParticipantsHandler = @Sendable (ParticipantsEvent) -> Void
     typealias VoiceCallHandler = @Sendable (VoiceCallFrame) -> Void
     typealias VoiceCostHandler = @Sendable (VoiceCostFrame) -> Void
-    typealias CrewAnnouncementHandler = @Sendable (CrewAnnouncementEvent) -> Void
-    typealias CrewSessionHandler = @Sendable (CrewSessionEvent) -> Void
     typealias Observers = (
         message: MessageHandler,
         lookback: LookbackHandler,
         continueReq: ContinueHandler,
         participants: ParticipantsHandler,
         voiceCall: VoiceCallHandler,
-        voiceCost: VoiceCostHandler,
-        crewAnnouncement: CrewAnnouncementHandler,
-        crewSession: CrewSessionHandler
+        voiceCost: VoiceCostHandler
     )
     var socket: RealtimeSocket?
     var observers: [UUID: Observers] = [:]

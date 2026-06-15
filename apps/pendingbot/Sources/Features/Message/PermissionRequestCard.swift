@@ -1,8 +1,7 @@
 import SwiftUI
 
 // PendingBot rendering for a session's `request_permission` card
-// (spec v2 §10). Sister card to CrewProposalCard — mostly the same
-// shape, just a different vocabulary.
+// (spec v2 §10).
 //
 // Backend story:
 //   • A session (agent in Claude Code / Codex) calls the
@@ -88,10 +87,9 @@ enum JSONScalar: Decodable, Hashable {
     }
 }
 
-/// Centered card rendered inline in the timeline (or the crew
-/// announcement stream once T4.6 lands the unified renderer). Same
-/// surface area as `CrewProposalCardView` — same status badge, same
-/// pending/decided footer split.
+/// Centered card rendered inline in the timeline for a
+/// `log_kind='permission_request'` row. Shows a status badge plus a
+/// pending/decided footer split (批准 / 拒绝 while pending).
 struct PermissionRequestCardView: View {
     let sessionLabel: String
     let payload: PermissionRequestPayload
