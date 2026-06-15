@@ -61,6 +61,7 @@
 ### R1 · 责任主体快照 —— ✅ 已确认实装,未丢失
 - **核实日期**: 2026-06-01
 - **担心**: 用户记得"计费按责任主体记快照"反复确认过,怀疑设计丢失。
-- **核实结论**: **在的。** `usage_events`([20260529124601:104](supabase/migrations/20260529124601_billing_v2_schema.sql:104))和 `ledger_entries` 都有 `owner_user_id` / `owner_subject_id` 列 + `usage_events_owner_exactly_one` CHECK 约束,落账即钉死 owner;`settleUsage(owner: OwnerRef)`([billing-v2.ts:51](apps/edge/src/lib/billing-v2.ts:51))显式传 user/subject 并写入。群语音 RealtimeKit 媒体路径正确解析 `responsible_subject_id` 传入。
-- **真实剩余小项(非丢失)**: 语音 turn 的模型 token 一笔仍走 v1 audit→router 钩子、settle 时才解析 subject(而非 turn 当时盖章),最终 usage_event 仍被钉 owner,只是解析时机与其他路径不一致 —— 小一致性清理,记 tech-debt 即可,不是快照缺口。
+- ⚠️ **2026-06-15 更新(承载物件已迁移)**: 本条引用的 `billing-v2.ts`/`settleUsage`/`ledger_entries` **均已退役** —— billing-v2 死代码已 #209 删、`ledger_entries`/`packs`/`refund_events` 已 `20260603112148` drop(只剩 `usage_events` 漏 drop 成孤儿,见 tech-debt Y7)。责任主体快照模型**本身仍在**,但承载物件已换成 `pnc_ledger` + WalletDO + Polar 的 owner 维度。下面是历史核实记录,按失效路径找证据会扑空。
+- **核实结论(历史,2026-06-01)**: **在的。** `usage_events`([20260529124601:104](supabase/migrations/20260529124601_billing_v2_schema.sql:104))和 `ledger_entries` 都有 `owner_user_id` / `owner_subject_id` 列 + `usage_events_owner_exactly_one` CHECK 约束,落账即钉死 owner;`settleUsage(owner: OwnerRef)`(billing-v2.ts:51,已删)显式传 user/subject 并写入。群语音 RealtimeKit 媒体路径正确解析 `responsible_subject_id` 传入。
+- **~~真实剩余小项(非丢失)~~ → 已不成立(2026-06-15 审计核实)**: 原记「语音 turn 模型 token 走 v1 audit、settle 时才解析 subject,与其他路径不一致」。经审计核对 `router.ts:348-540`:**文本 turn 与语音 turn 现在走完全相同的 `enqueueAudit → persistAuditMessage → resolveBillingSubjectId` 路径**,都在 settle 时解析 subject 并走 `wallet.debit`/`settleGroupSpend`(PNC micros,voice 用 `voice_tokens` category)。「settle 时解析 subject」是**全路径统一行为**,不再是语音独有的不一致。此小项闭合。
 - **教训**: 这条最初是 agent 读 voice v1 audit 老路径的误报被直接上报导致的虚惊。**agent 发现必须先验证再当结论用。**

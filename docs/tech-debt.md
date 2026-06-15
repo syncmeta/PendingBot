@@ -931,3 +931,29 @@
 - 🟡 **事件驱动唤醒(Phase 4b)已落代码但当前 app 状态下不实际跑** — `feat/crew-comms-rework`(2026-06-15)。新加 `CrewRealtimeClient`(连 hub `/v1/realtime-hub/conv/:crewId`)+ `CrewMailboxWaker`(收 `.changed`→拉 `getSessionInbox`→空闲则注入唤醒→mark-delivered)+ 纯决策 `CrewMailboxWakeLogic`。唯一接线点是 `CrewSessionWindowView.runQueuedSession`(真 server link 的登录态路径),而它整条 `autoClaimLoop` 被 `edgeQueueBindingReady = false` 门住(本地 crew id 在 edge 没对应行,等接合 v2 block-3 信箱重建本地↔edge 绑定才翻开)。**后果**:手动起的 session 现状恒 `serverLink = nil`(`startSession` L642 写死),不走 waker;唯一会 attach waker 的 `runQueuedSession` 又不被调。所以**唤醒链路目前全程 dormant**,只有 block-3 绑定 + `edgeQueueBindingReady` 翻 true 后才活。这是预期中间态(与既有 crew-org local-first 收口/edge 绑定那条 🔴 同源),记此以免后人以为「Phase 4b 接好就能用」。**E2E 尾巴**:两个 live session 的 @→唤醒(hub 帧真到、idle 真判、注入真进 claude PTY / codex turn、mark-delivered 真消费)**未验证** —— 只到「编译 + 纯逻辑单测 + 双 build/test 绿」。block-3 绑定落地后需补一次真账号双 session E2E。另:claude 的 `isBusy` 恒 false(PTY 无 turn-state),依赖 claude 自身输入排队把 mid-turn 注入当下一条 prompt —— 这个假设也待真机确认。
 
 - ✅ ~~**群聊「回复某条消息」的 `reply_to` 字段 edge 端尚未接收 —— Swift 已发但被 zod silently strip**~~ **（已闭合 #377,commit `b0128b5d`/`8d8aaa12`）**：edge `CrewMessageBody` 现已收 `reply_to` 并落 `attachments` jsonb 的 `in_reply_to`,`mapMessageToEntry` 统一透出;中栏气泡经 `CrewReplyReferenceResolver` 从已加载 entries 本地解析渲染被回复引用条。以下为历史背景。 — `feat/crew-comms-rework`(2026-06-15,Phase 6 实现期发现)。任务前提说"edge `/v1/crews/:id/messages` 已支持 `reply_to`",但实查 `apps/edge/src/routes/crew-comms.ts` 的 `CrewMessageBody`(L244)**没有** `reply_to`/`replyTo` 键,zod 会把它 strip 掉(对齐 codex 协议那条"凭印象写的字段"的坑)。本次按"不动 edge"约束处理:① Swift 链路(`PendingCrewBackend.postCrewMessage` + `EdgeBackend`/`LocalBackend` + `PendingCrewAPI`)已全部加 `replyToId` 参数,API body 前向兼容地带上 `reply_to`(edge 现在 strip,补 schema 后自动生效);② **回复真正生效的部分**是「自动 @ 原发送者」,走 `mentions`(edge 已支持)所以两端都管用 —— 人回复某条 session/人类消息时,原发送者会被定向 @ 到;③ LocalBackend 把 `reply_to` 记进本地白板 `LocalWhiteboardMessage.inReplyTo`(已落库,但中栏气泡**暂未渲染**被回复引用)。**尾巴**:(a) edge `CrewMessageBody` 需补 `reply_to` zod 字段 + 落库(`messages` 行或 `crew_announcements.payload`),否则登录态 crew 的 reply 引用不持久化;(b) 中栏气泡渲染"回复了 X 的某条"引用(本地 `inReplyTo` / edge 字段都需要 UI),本次只做了 composer 顶部的回复横幅,未做时间线里被回复条的视觉关联。属跨 edge+客户端的活,本 task(只动 pendingcrew)范围外。
+
+## 2026-06-15 旧心智模型审计 — 新增条目
+
+> 全量发现见 `docs/stale-model-audit-2026-06-15.md`(9 路并行 subagent 考古,52 条)。此处只登记**此前未记债**的活跃项;已记项(多账号隔离「客户端多账号本地隔离只靠登出擦库」、voice PND 单位「通话内 voice_cost 实时预览还在用 v1 PND markup」、v1 billing 冷备「v1 billing 表 + 死函数在 cutover 后留作冷备」、BYOK 命名漂移、edge crew-org 收口 🔴「PendingCrew 的 crew 组织/DAG 还建在 edge 上」、`recruit_temp_bot` 无消费方)在审计报告里引用对应条目。
+
+- 🔴 **相机扫码加群结构性失效(D2 后旧群号码与邀请链接并存)** — 新 `/g/<token>` 群二维码 scanner(`MessageTabView.swift:1466-1529` `handle(value:)`)不识别(只认 `/b/`+`/c/`)→ 扫码加群走不通,落旧 `POST /v1/groups/join`(`groups.ts:680`,`group_join_request_create(p_handle_value)`,不记 invited_by)或被当加好友。`decisions.md` D2 现状核实只标了 universal-link presenter 未接,**漏了相机扫码不识别**。必须先补 scanner 的 `GroupShareLink` 分支再退旧 join 路径,否则退了扫码加群完全失效。详见审计 R2。
+
+- 🔴 **`/v1/me/balance` + `getBalance()` 读 billing-v1 僵尸列** — `me.ts:168-182` + `billing.ts:95-110` 读 `users.balance_credits`(WalletDO/Polar 切后无写入方,冻结在 `20260529141318_billing_v2_cutover` 时刻);iOS 已不调(`BillingService.swift:3-7` 注释 WalletView 已删)。#209「me.ts 改读 WalletDO」漏了 /balance 这条。删端点 + `getBalance` + `balance_credits`/`lifetime_*_credits` 列(随 Y7 cleanup 迁移)。详见审计 R3。
+
+- 🔴 **4 处内联 const prompt 漏迁 Langfuse(违反 no_hardcoded_prompts)** — `lookback-runner.ts:36` `LOOKBACK_INSTRUCTION`(**就在 #247 那次提交里被落下**)、`vision.ts:184` `SUMMARY_PROMPT`、`group-bot-intro.ts:80` `systemPrompt`、`builder.ts:177/180` `BUBBLE/SINGLE_INSTRUCTIONS`(borderline)。#247 真源切 Langfuse(`prompt-loader.ts` 已 fail-loud 无 fallback)但漏迁这几处,仍是内联 const 发给 LLM。抽进 Langfuse + `PROMPT_NAMES`。详见审计 R4。
+
+- 🟡 **WelcomeView 两模式选择 + LocalSetupView 死壳(双端不可达 + 反事实文案)** — 2026-06-10 拆双轨后 macOS `AppModel.isConfigured` 恒 true → 直进 authenticatedRoot,`WelcomeView` 两模式分支永不渲染,`enterLocalMode`/`localModeSelected`/`LocalSetupView` 全死;文案「一次选定后本版不可切换」是 06-10 前旧心智。删 macOS 分支 + LocalSetupView,或留作未来「显式选模式」入口(需确认)。详见审计 Y1。
+
+- 🟡 **`runtime_location` 派生列被当事实源在侧栏每行渲染 location tag(与 #369 冲突)** — `CrewDAGTreeView.swift:137,151-160` `locationTag` 仍每行贴「本机」标,但 #369 已定「侧栏按 machine 组织、去掉每行 location tag」(crew 已视觉嵌在所属 machine 组下)。既有「crew machine 收口 — runtime_location 降为派生镜像列」条记了派生列但没点出此渲染残留。详见审计 Y2。
+
+- 🟡 **审批 store 仍裸轮询(白板已事件化,审批没跟上)** — `CrewCenterView.swift:23`(`captainTick` 2s)+ `SessionApprovalCardsView.swift:24`(`tick` 1.5s)轮询 `LocalApprovalStore`;crew-comms-rework P5 白板已改 `whiteboardChanges` 跨进程目录监听 publisher,同套监听本可覆盖 `LocalApprovalStore`(`<dir>/<crewId>.approvals.json` 同目录)。非紧急(廉价文件读)。详见审计 Y3。
+
+- 🟢 **DB 3 个 dead-but-not-dropped 对象** — ① `usage_events` 表(billing-v2 孤儿,同批 `packs`/`ledger_entries`/`refund_events` 已 `20260603112148` drop 唯它漏,无 INSERT/SELECT);② `ai_picks` 表(`0001_init.sql:502`,自 init 从未接代码,**疑似胎死需确认有无未来计划**);③ `temporary_group_meta.cloud_machine_id` 列(二次被取代→fly→machine_id,0614 drop peer/fly 时漏带)。合一条 cleanup 迁移。**注**:`progress.md:406`「packs/ledger 留冷备」措辞与现状不符(packs/ledger 已删,真正留下的是 usage_events)。详见审计 Y7。
+
+- 🟢 **两条 user-facing 文案承诺已删功能** — `BotManagement.swift:151,1454` footer 仍写「…盲评后能在『我 → 模型竞技场榜单』看到偏好」,A/B 盲评 UI + MeTab 榜单已随盲盒转型连根删。改盲盒话术。详见审计 G1。
+
+- 🟢 **`seed-public-skills.mjs:77,79` 用 legacy env `SUPABASE_SERVICE_ROLE_KEY`** — 补进「Supabase legacy anon/service_role key 仍在项目里启用」那条的遗留消费者清单(原条目漏列此脚本,停用 legacy key 时会被漏)。改 `SUPABASE_SECRET_KEY`(同权)。
+
+- 🟢 **`GroupCallTransport.swift` 6 行空占位死文件 + 失实「必须保留」注释** — 注释称 pbxproj 仍引用故不能删,实为 `project.yml` 目录 glob 自动收录,删文件 + `xcodegen` 即可。详见审计 G2。
+
+- (注释/命名/spec 引用漂移 G3–G16 共十余处不单列,随对应代码改动捎带清,清单见审计报告;含 captain 编排 spec 注释、BYOK 命名、codex「待实现」、freeze 横幅注释、slug 旧注释、board 门禁注释、WorldRouter 命名、`decisions.md` R1、`users.is_admin` 疑似 dead 列)

@@ -2,6 +2,12 @@
 
 **最近对账：2026-06-15**（对照实际代码 / 迁移 / git，不是看 task 标记）
 
+> **2026-06-15 旧心智模型全项目审计（`chore/stale-model-audit`，9 路并行 subagent，纯审计未改代码）**：报告 `docs/stale-model-audit-2026-06-15.md`。起因——`feat/captain-orchestration` 被判定为按已废 edge-bot captain 心智做的（captain 技术接口不特殊、审批归 session）。顺势全量审计「哪些设计/逻辑还按已废弃决策实现」，**52 条发现（🔴9 / 🟡13 / 🟢18 + 12 反向核实=干净）**。
+> - **最干净的两维度**：群语音 v2→v3（DO 纯控制面、混音全在 container，零残留）、DB 迁移账本（已 drop 对象 0 处活跃引用）。
+> - **残留高度集中在 edge crew captain 编排子系统**：`crew-comms.ts:564` 仍唤醒 edge-bot captain 跑 bot-reply 群回合（#241 活代码）、`bot-reply` 的 captain persona 注入 + 编排工具挂载、`post_to_crew`/`request_permission` 的 bot-reply def/handler（纯 dead，正是 `feat/captain-orchestration` 想错误补上的）——即既有 🔴「edge crew-org 收口」债的精确代码清单。动整块前需先定 `start_crew` 的 `captain_bot_id` 字段在新模型下的归属（产品决策）。
+> - **3 条新 user-facing/正确性问题**：相机扫码加新 `/g/` 群码走不通（scanner 只认旧 `/c/`）、`/v1/me/balance` 返回 billing-v1 僵尸余额、4 处内联 prompt 漏迁 Langfuse（含 #247 自己落下的 `LOOKBACK_INSTRUCTION`）。新增 tech-debt 条目见账本尾部「2026-06-15 旧心智模型审计」section。
+> - **顺手账本对账**：本文件下方 `feat/codex-app-server`/`feat/crew-machine`/`feat/model-blindbox` 等 entry 仍标「未合 main」，实际**已合**（本审计 checkout = main tip 已含，session 起点 git 核实这些分支 0-ahead）。那些「未合」字样以此为准失效。
+
 > **2026-06-15 新建机器人一页式 + 模型预设（`feat/create-bot-presets`，✅ 已合 main `02c122cf`，subagent-driven）**：spec `docs/superpowers/specs/2026-06-15-create-bot-presets-design.md`、plan `docs/superpowers/plans/2026-06-15-create-bot-presets.md`、ledger task #378–394。用户定调 —— 新建机器人收敛单页（名字+模型预设多选+自定义+公开程度，无下一步），预设由 board 管规则、OpenRouter 目录动态解析，bot 存预设引用对话时解析；名字走 GeoNames 世界地名；vanity slug 彻底退役（bot=显示名+自动id,对齐人类账号）。
 > - **心智模型**：预设 = 活的查询（5 个全规则驱动：头两家旗舰=固定 openai+anthropic 各取旗舰；中国旗舰=中国厂白名单；各家最新=按发布；速度快=per-model endpoints 吞吐+质量下限；最热门=LMArena 评分代理）；bot 存 `config.modelPool.presets`，`pickRandomModel` 对话时展开成模型并集→复用现有池逻辑。自定义=一次性冻结成显式清单。
 > - **实测纠偏（关键）**：直接打 OpenRouter 真 API 证伪了文档 —— 稳定版 `/api/v1/models` 的 `order=` 参数**完全无效**（前端专用）、前端/rankings 端点全 404、edge 无 OR key（目录走公开端点、推理走 AI Gateway 统一计费）。故速度快改走 per-model `/endpoints` 吞吐、最热门改 LMArena 评分代理（用户拍板不加 OR key）。又实测发现 `latest_per_vendor` 会捞到 `openrouter/fusion`/`nvidia content-safety:free` 等噪声 → 收紧 chatRows（排 `:free`/openrouter meta/`-fast`）+ 各家最新要付费档。
