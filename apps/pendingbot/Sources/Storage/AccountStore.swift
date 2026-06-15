@@ -235,11 +235,15 @@ final class AccountStore: ObservableObject {
     ///
     /// - Parameter clearSharedLogin: When `true` (the default), the macOS
     ///   shared-keychain credential used by PendingCrew's family-SSO is also
-    ///   removed. Pass `false` from `LocalDataReset.performReset` when the user
-    ///   explicitly chooses to keep that credential intact.
-    func signOut(clearSharedLogin: Bool = true) async {
+    ///   removed. `LocalDataReset.performReset` passes `false` when the user
+    ///   chooses to keep that credential intact.
+    /// - Parameter scope: Supabase revoke scope. Defaults to `.global` (the
+    ///   normal "sign out" semantics — revoke the user's sessions). The local
+    ///   data reset passes `.local` so clearing data on THIS machine does not
+    ///   sign the user out on their other devices.
+    func signOut(clearSharedLogin: Bool = true, scope: SignOutScope = .global) async {
         do {
-            try await SupabaseStack.shared.auth.signOut()
+            try await SupabaseStack.shared.auth.signOut(scope: scope)
         } catch {
             // signOut hits a best-effort token revoke + local clear; even if
             // the network half fails the local session is gone.

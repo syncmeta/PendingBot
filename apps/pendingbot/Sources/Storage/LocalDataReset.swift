@@ -32,8 +32,10 @@ enum LocalDataReset {
     static func performReset(accountStore: AccountStore, clearSharedLogin: Bool) async {
         // 1. 遥测身份(PostHog/Sentry/RevenueCat)
         Telemetry.shared.reset()
-        // 2. 会话 + 本地 SQLCipher 库 + (条件)共享登录 + iOS 头像缓存 —— 复用 signOut
-        await accountStore.signOut(clearSharedLogin: clearSharedLogin)
+        // 2. 会话 + 本地 SQLCipher 库 + (条件)共享登录 + iOS 头像缓存 —— 复用 signOut。
+        //    用 .local scope:清本机数据不应撤销用户其他设备的会话。
+        //    (App Support 目录目前只有 pendingbot.sqlite,已被 wipeForSignOut 删,无额外目录要清。)
+        await accountStore.signOut(clearSharedLogin: clearSharedLogin, scope: .local)
         // 3. HTTP/图片缓存
         URLCache.shared.removeAllCachedResponses()
         // 4. UserDefaults 整域(外观/语音传输/通知偏好/排序/arena 偏好/未读等)
