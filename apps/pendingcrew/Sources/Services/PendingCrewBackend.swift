@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
 /// PendingCrew 数据后端的统一抽象。
 ///
@@ -59,6 +60,20 @@ protocol PendingCrewBackend: AnyObject {
     /// 发一条群聊消息(默认广播)。`attachmentIds` 只 edge 支持;BYOK 非空即抛
     /// `notSupportedInByok`。
     func postCrewMessage(crewId: String, text: String, mentions: [CrewMention], attachmentIds: [String]) async throws
+
+    /// crew 白板/花名册的**事件驱动变更流**（Phase 5：去 3s 轮询）。
+    ///
+    /// 每个 tick = 「这个 crew 的白板/成员可能有动静，去 refresh 一次」的信号
+    /// （**不**携带 diff —— 订阅方收到即重拉 `listCrewWhiteboard` / `listCrewMembers`）。
+    /// - `LocalBackend`：基于 `LocalWhiteboardStore.changes`（本地 append 即 tick）。
+    /// - `EdgeBackend`：基于 `CrewRealtimeClient` 的 hub 事件（收到白板相关表的
+    ///   `.changed` 即 tick；连接/重连/鉴权在实现内管理）。
+    ///
+    /// 调用方：`for await _ in backend.whiteboardChanges(crewId:) { await refresh() }`。
+    /// **不**自带首刷 —— 订阅建立后调用方主动 refresh 一次兜住订阅前的状态。
+    /// 流在 `Task` 取消（`.task(id:)` 生命周期结束）时由 `onTermination` 收尾
+    /// （Local：取消 Combine 订阅；Edge：关 hub 连接）。
+    func whiteboardChanges(crewId: String) -> AsyncStream<Void>
 
     // MARK: - Models
 
@@ -136,6 +151,56 @@ final class EdgeBackend: PendingCrewBackend {
         try await client().postCrewMessage(
             crewId: crewId, text: text, mentions: mentions, attachmentIds: attachmentIds)
     }
+
+    /// 登录态白板变更流 = crew 级 hub WS（`CrewRealtimeClient`）的白板相关 `.changed`。
+    ///
+    /// hub 帧是 content-agnostic 的「该 crew 有动静」信号 —— 这里把它过滤到群聊
+    /// 数据相关的表（`crew_announcements` = 白板时间线，`crew_sessions` /
+    /// `messages` 也会改 roster / 内容），每条相关帧 → 一个 `Void` tick。连接、
+    /// 20s ping、指数退避重连都在 client 里；流随订阅 `Task` 取消而 `close()`。
+    ///
+    /// **iOS**：`CrewRealtimeClient` 是 macOS-only（`#if os(macOS)`），iOS 暂无
+    /// 实时通道 —— 返回一个**立即 finish 的空流**。调用方建立订阅时会主动 refresh
+    /// 一次（拿到当前快照），只是此后不再有事件推送（iOS 端 crew 实时刷新待本地
+    /// 后端 / realtime 客户端跨平台后补，已记 tech-debt）。
+    func whiteboardChanges(crewId: String) -> AsyncStream<Void> {
+        #if os(macOS)
+        guard let auth = appModel.imageAuth else {
+            // 理论上登录态才走 EdgeBackend；防御性：无 device-grant → 空流。
+            return AsyncStream { $0.finish() }
+        }
+        let client = CrewRealtimeClient(
+            baseURL: auth.baseURL, crewId: crewId, token: auth.token)
+        return AsyncStream { continuation in
+            let pump = Task {
+                await client.connect()
+                for await event in await client.events {
+                    if Task.isCancelled { break }
+                    if case let .changed(table, _, _) = event,
+                       Self.whiteboardRelevantTables.contains(table) {
+                        continuation.yield(())
+                    }
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in
+                pump.cancel()
+                Task { await client.close() }
+            }
+        }
+        #else
+        return AsyncStream { $0.finish() }
+        #endif
+    }
+
+    #if os(macOS)
+    /// hub `.changed` 帧里与群聊白板/roster 相关的表 —— 命中即 tick。其余（voice_*
+    /// 已在 codec 滤掉）忽略。`crew_announcements` 是白板时间线主表；`crew_sessions`
+    /// 改成员/状态、`messages` 是会话消息，都会影响中栏/右栏渲染。
+    private static let whiteboardRelevantTables: Set<String> = [
+        "crew_announcements", "crew_sessions", "messages",
+    ]
+    #endif
 
     private func client() throws -> PendingCrewAPI {
         guard let credential = appModel.credential else {
@@ -296,6 +361,29 @@ final class LocalBackend: PendingCrewBackend {
         guard !trimmed.isEmpty else { return }
         // 本机人类显示名「我」—— agent 看的白板渲染成「- 我: …」而非裸「人类」。
         whiteboard.appendUserMessage(crewId: crewId, text: trimmed, senderName: "我")
+    }
+
+    /// 本地白板变更流（去 3s 轮询）。两个上游合流成 `Void` tick：
+    /// 1. `whiteboard.changes` 按 crewId 过滤 —— **本进程** append（人类发送 /
+    ///    CrewRelayAgent 搬入）即推。
+    /// 2. `whiteboard.directoryChanged` —— **跨进程**目录监听（helper 子进程经
+    ///    `post_to_crew` 写 agent 进展也覆盖）。目录事件不带 crewId，收到即让调用方
+    ///    重拉本 crew（廉价）。
+    ///
+    /// 首次订阅时 `startWatching()` 起目录监听（幂等）。订阅 `Task` 取消时
+    /// `onTermination` 退订两条 Combine（目录监听是 app 级共享，留着不停）。
+    func whiteboardChanges(crewId: String) -> AsyncStream<Void> {
+        whiteboard.startWatching()
+        let inProcess = whiteboard.changes
+        let crossProcess = whiteboard.directoryChanged
+        return AsyncStream { continuation in
+            let c1 = inProcess
+                .filter { $0 == crewId }
+                .sink { _ in continuation.yield(()) }
+            let c2 = crossProcess
+                .sink { _ in continuation.yield(()) }
+            continuation.onTermination = { _ in c1.cancel(); c2.cancel() }
+        }
     }
 }
 
