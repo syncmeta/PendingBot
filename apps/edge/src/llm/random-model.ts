@@ -38,6 +38,9 @@ export interface RandomModelConfig {
   vendors: string[] | null;
   // Relative release window in days. null = all release dates.
   release_window_days: number | null;
+  // 选中的模型预设 slug（model_presets.slug）。对话时展开成模型并集并入 models。
+  // null/empty = 无预设（纯显式/自定义）。
+  presets: string[] | null;
 }
 
 export interface PickedModel {
@@ -84,6 +87,7 @@ export function parseRandomModelConfig(raw: unknown): RandomModelConfig | null {
     exclude: strs(o.exclude),
     vendors: vendorStrs(o.vendors),
     release_window_days: num(o.release_window_days),
+    presets: strs(o.presets),
   };
 }
 

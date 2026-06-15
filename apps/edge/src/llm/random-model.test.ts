@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { filterPool, poolFromCatalog } from './random-model';
+import { filterPool, parseRandomModelConfig, poolFromCatalog } from './random-model';
 import type { OpenRouterModelOut } from '../routes/models';
 
 function model(
@@ -58,6 +58,7 @@ describe('filterPool', () => {
       exclude: null,
       vendors: ['openai', 'deepseek'],
       release_window_days: 183,
+      presets: null,
     });
 
     expect(filtered.map((m) => m.slug)).toEqual(['gpt-5.1', 'deepseek/deepseek-chat']);
@@ -72,6 +73,18 @@ describe('filterPool', () => {
       exclude: null,
       vendors: [],
       release_window_days: null,
+      presets: null,
     })).toEqual([]);
+  });
+});
+
+describe('parseRandomModelConfig presets', () => {
+  it('parses presets array', () => {
+    const cfg = parseRandomModelConfig({ presets: ['top-flagship', 'cn-flagship'] });
+    expect(cfg?.presets).toEqual(['top-flagship', 'cn-flagship']);
+  });
+  it('null presets when absent', () => {
+    const cfg = parseRandomModelConfig({ models: ['openai/gpt-5.1'] });
+    expect(cfg?.presets).toBeNull();
   });
 });

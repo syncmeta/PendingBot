@@ -44,6 +44,7 @@ const ConfigPatch = z
         exclude: z.array(z.string().min(1).max(200)).max(200).nullable().optional(),
         vendors: z.array(z.string().min(1).max(100)).max(200).nullable().optional(),
         release_window_days: z.number().int().nonnegative().nullable().optional(),
+        presets: z.array(z.string().min(1).max(100)).max(20).nullable().optional(),
       })
       .nullable()
       .optional(),
