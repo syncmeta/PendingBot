@@ -415,8 +415,9 @@ export const SUBMIT_INQUIRY_ANSWER_TOOL: ChatCompletionTool = {
 // whiteboard. Only meaningful inside a crew conversation; outside
 // crews the handler returns an error envelope.
 //
-// Category guidance (see prompts/zh/session-world-model.md §8 for the
-// LLM-facing version):
+// Category guidance (the LLM-facing world-model lives in
+// apps/pendingcrew/Resources/Prompts/session-world-model.{zh,en}.md §8,
+// canonical body in Langfuse — there is no apps/edge/prompts copy):
 //   - 'progress'   — ongoing-status update
 //   - 'question'   — blocking question for the crew
 //   - 'milestone'  — completed-step / hand-off

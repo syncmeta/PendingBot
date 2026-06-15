@@ -141,7 +141,7 @@
 **Goal:** session 世界观 prompt 说明:白板每条带发送者名;`post_to_crew` 可 `mentions` 定向 @、`reply_to` 回复某条(自动 @ 原发送者);何时该 @ 谁。
 
 **Files:**
-- Modify: `apps/edge/prompts/<locale>/session-world-model.md`(§8 post_to_crew 段补 @ / reply 用法 + 发送者身份说明)
+- Modify: `apps/pendingcrew/Resources/Prompts/session-world-model.{zh,en}.md`（§8 post_to_crew 段补 @ / reply 用法 + 发送者身份说明；canonical body 在 Langfuse，edge 无 prompts 副本）
 - Modify: `apps/pendingcrew/Sources/Mcp/McpServer.swift`(`post_to_crew` inputSchema 加 `mentions?`/`reply_to?`;`read_whiteboard` 渲染带发送者名)
 - Modify: 本地 prompts bundle(`LocalPromptLoader` 对应 md)
 - Seed: 推更新后的 prompt 进 Langfuse production(按 `feedback_no_hardcoded_prompts` 走 prompt 通道,不内联)
