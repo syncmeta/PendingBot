@@ -363,6 +363,7 @@ struct MacWelcomeView: View {
             )
             .frame(maxWidth: .infinity)
             .frame(height: 48)
+            .contentShape(Capsule())   // 玻璃胶囊整片可点(同 qrLoginButton)
             .macGlassCapsule()
             .shadow(color: .black.opacity(0.08), radius: 10, y: 4)
         }
@@ -379,6 +380,8 @@ struct MacWelcomeView: View {
             .font(Theme.Fonts.glyph(size: 22, weight: .medium))
             .frame(maxWidth: .infinity)
             .frame(height: 48)
+            // 整个胶囊都可点——否则只有 qrcode 字形本身命中,周围留白点不动。
+            .contentShape(Capsule())
         Button {
             showingQRLogin.toggle()
             focusedField = nil
