@@ -159,12 +159,10 @@ final class EdgeBackend: PendingCrewBackend {
     /// `messages` 也会改 roster / 内容），每条相关帧 → 一个 `Void` tick。连接、
     /// 20s ping、指数退避重连都在 client 里；流随订阅 `Task` 取消而 `close()`。
     ///
-    /// **iOS**：`CrewRealtimeClient` 是 macOS-only（`#if os(macOS)`），iOS 暂无
-    /// 实时通道 —— 返回一个**立即 finish 的空流**。调用方建立订阅时会主动 refresh
-    /// 一次（拿到当前快照），只是此后不再有事件推送（iOS 端 crew 实时刷新待本地
-    /// 后端 / realtime 客户端跨平台后补，已记 tech-debt）。
+    /// **跨平台**：`CrewRealtimeClient` 现在 macOS + iOS 都编（只依赖 Foundation），
+    /// 所以 iPad 登录态群聊也接 hub 推送 —— 不再返回立即 finish 的空流降级。
+    /// 调用方建立订阅时仍主动 refresh 一次兜住订阅前的状态。
     func whiteboardChanges(crewId: String) -> AsyncStream<Void> {
-        #if os(macOS)
         guard let auth = appModel.imageAuth else {
             // 理论上登录态才走 EdgeBackend；防御性：无 device-grant → 空流。
             return AsyncStream { $0.finish() }
@@ -188,19 +186,14 @@ final class EdgeBackend: PendingCrewBackend {
                 Task { await client.close() }
             }
         }
-        #else
-        return AsyncStream { $0.finish() }
-        #endif
     }
 
-    #if os(macOS)
     /// hub `.changed` 帧里与群聊白板/roster 相关的表 —— 命中即 tick。其余（voice_*
     /// 已在 codec 滤掉）忽略。`crew_announcements` 是白板时间线主表；`crew_sessions`
     /// 改成员/状态、`messages` 是会话消息，都会影响中栏/右栏渲染。
     private static let whiteboardRelevantTables: Set<String> = [
         "crew_announcements", "crew_sessions", "messages",
     ]
-    #endif
 
     private func client() throws -> PendingCrewAPI {
         guard let credential = appModel.credential else {
