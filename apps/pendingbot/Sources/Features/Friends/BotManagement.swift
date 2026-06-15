@@ -1287,6 +1287,11 @@ struct BotConfigView: View {
     /// Arena (竞技场) config. nil = single model (use `model`). Non-nil =
     /// each turn randomises from price range ∪ explicit models - excludes.
     @State private var arenaConfig: RandomModelConfig?
+    /// Selected model-preset slugs (config.modelPool.presets). Non-empty =
+    /// preset-driven (server expands per turn); editing the model picker
+    /// converts to an explicit arenaConfig and clears this. Carried so editing
+    /// unrelated settings doesn't wipe a preset bot's pool on save.
+    @State private var presetSlugs: [String]?
     @State private var envelope: EnvelopeSettings = .defaults
     /// Per-bot OpenRouter web-search knobs. Lives under
     /// `bots.config.webSearch`; only takes effect on the default
@@ -1314,6 +1319,7 @@ struct BotConfigView: View {
         let model: String
         let modelProvider: String?
         let arenaConfig: RandomModelConfig?
+        let presetSlugs: [String]?
         let voiceEnabled: Bool
         let voiceModel: String
         let voiceSettings: BotVoiceSettings
@@ -1346,6 +1352,7 @@ struct BotConfigView: View {
     private var snapshot: Snapshot {
         Snapshot(
             model: model, modelProvider: modelProvider, arenaConfig: arenaConfig,
+            presetSlugs: presetSlugs,
             voiceEnabled: voiceEnabled, voiceModel: voiceModel,
             voiceSettings: voiceSettings,
             visionModel: visionModel, envelope: envelope,
@@ -1427,7 +1434,7 @@ struct BotConfigView: View {
     @ViewBuilder
     private var modelSection: some View {
         Section {
-            pickerRow(icon: arenaConfig == nil ? "cube.transparent" : "die.face.5",
+            pickerRow(icon: (arenaConfig == nil && presetSlugs?.isEmpty != false) ? "cube.transparent" : "die.face.5",
                       title: "主模型",
                       value: mainModelLabel,
                       enabled: canEdit) {
@@ -1448,6 +1455,9 @@ struct BotConfigView: View {
     private var mainModelLabel: String {
         if let arenaConfig {
             return ArenaModelSelection.arena(arenaConfig, fallbackModel: model).summary
+        }
+        if let presetSlugs, !presetSlugs.isEmpty {
+            return "预设驱动 · \(presetSlugs.count) 个预设"
         }
         return model.isEmpty ? "—" : catalog.displayName(for: model)
     }
@@ -1613,6 +1623,9 @@ struct BotConfigView: View {
         case .main:
             let seed = ArenaModelSelection.arena(arenaConfig, fallbackModel: model.isEmpty ? nil : model)
             ArenaModelPickerSheet(initial: seed) { picked in
+                // Hand-editing the pool converts a preset-driven bot to an
+                // explicit (frozen) selection — drop the preset refs.
+                presetSlugs = nil
                 if let cfg = picked.persistedConfig {
                     arenaConfig = cfg
                     model = picked.fallbackModel ?? model   // keep a single fallback
@@ -1682,6 +1695,7 @@ struct BotConfigView: View {
         envelope = EnvelopeSettings.from(dict["envelope"])
         webSearch = BotWebSearchSettings.from(dict["webSearch"])
         if case let .object(arena)? = dict["modelPool"] ?? dict["arena"] {
+            presetSlugs = Self.jsonStringArray(arena["presets"])
             let cfg = RandomModelConfig(
                 price_min: Self.jsonDouble(arena["price_min"]),
                 price_max: Self.jsonDouble(arena["price_max"]),
@@ -1770,8 +1784,17 @@ struct BotConfigView: View {
                 "roundInterval": lookbackInterval,
             ]
             // Model-pool config replaces the whole key; null clears it so the
-            // bot goes back to its single model_id.
-            let arenaVal: Any = arenaConfig.map(Self.arenaConfigDict) ?? NSNull()
+            // bot goes back to its single model_id. Preset-driven bots (no
+            // explicit arenaConfig) round-trip their preset refs so editing
+            // unrelated settings doesn't silently wipe the pool.
+            let arenaVal: Any
+            if let arenaConfig {
+                arenaVal = Self.arenaConfigDict(arenaConfig)
+            } else if let presetSlugs, !presetSlugs.isEmpty {
+                arenaVal = ["presets": presetSlugs]
+            } else {
+                arenaVal = NSNull()
+            }
             let cfg: [String: Any] = [
                 "lookback": lookbackCfg,
                 "envelope": envelopeCfg,
