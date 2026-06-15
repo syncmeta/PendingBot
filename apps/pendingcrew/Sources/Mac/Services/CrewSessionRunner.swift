@@ -330,8 +330,10 @@ final class CrewSessionRunner: ObservableObject {
     /// captain 与 worker 的差异只有两点：世界观后追加 captain persona
     /// （`crew-captain.zh.md`），MCP helper 带 `--captain` 解锁 answer_decision
     /// （chunk2 §2）。机长是调度者不改代码 —— 直接用 crew 目录，不开 isolation worktree。
-    /// `initialPrompt` 让它读白板 + `post_to_crew` 报到一句 ——「建 crew 即在群里发消息」
-    /// 走这条（不另写代码发系统消息，保持白板由 agent 自己写的一致语义）。
+    /// `initialPrompt` 只让它用 `post_to_crew` 报到一句 ——「建 crew 即在群里发消息」
+    /// 走这条（不另写代码发系统消息，保持白板由 agent 自己写的一致语义）。报到之外
+    /// 不预先指派任何动作：世界观/白板已随 system prompt 注入，待决策会另行通知，无需
+    /// 在开场 prompt 里堆"先读白板再待命"那套（用户定调：报到就行，别搞乱七八糟的）。
     /// 渲染世界观要 roster → 用传入的 `backend` 拉（best-effort，失败照样启动）。
     func startCaptain(detail: CrewDetail, backend: PendingCrewBackend?) async throws {
         let crewId = detail.crew.id
@@ -343,7 +345,7 @@ final class CrewSessionRunner: ObservableObject {
         }
         let workdir = URL(fileURLWithPath: (wd as NSString).expandingTildeInPath)
         let localSessionId = "captain-" + String(UUID().uuidString.lowercased().prefix(8))
-        let initialPrompt = "你是本 crew 的机长。先了解群聊白板的现状（系统会自动注入；需要时也可用 read_whiteboard 主动读一次），然后用 post_to_crew 简短报到一句并待命。后续有待决策会通知你。"
+        let initialPrompt = "你是本 crew 的机长，用 post_to_crew 报到一句即可。"
         // persona / members best-effort：加载失败不挡启动（只是少人设/世界观，与 worker 同策略）。
         let persona = try? LocalPromptLoader().rawTemplate(name: "crew-captain", locale: "zh")
         let members = (try? await backend?.listCrewMembers(crewId: crewId))?.members ?? []
