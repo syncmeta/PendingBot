@@ -39,6 +39,7 @@
 | 预设内容怎么定义 | 用 **OpenRouter API** 动态解析；board 管"定义/规则"。去掉"性价比"，加"最热门"。预设集 = 头两家旗舰 / 中国旗舰 / 各家最新 / 速度快 / 最热门 |
 | "头两家"是哪两家 | 固定 **OpenAI + Anthropic**（board 可改） |
 | 旗舰怎么自动选 | 每厂一个，策略默认"最贵"（`blended_usd_per_million` 最高），可切"最新"/"某系列最新"。**5 个预设全规则驱动，无手钉** |
+| bot 标识 | **vanity slug 彻底退役**。bot = 显示名（可改、不唯一）+ 自动 id（唯一、不可改、链接用），与人类账号一致。创建/管理都不让用户碰 slug |
 | 默认公开程度 | 改回 **默认私有**（规避公有永久不可逆的坑） |
 | 公有 bot 删除 | 放宽：公有 bot 若**只有创建者一人是好友**（无其他采用者）仍可删 |
 | 预设如何落到 bot | **存预设引用，对话时解析** |
@@ -123,7 +124,8 @@ pool -= modelPool.exclude
 
 ### 3. 公开程度 + 删除放宽
 
-- 第一页内联公开程度，**默认私有**（`Visibility = .privateBot`）。公有时内联 `@slug` 字段，默认从名字推导（`Casablanca` → `casablanca`，过 `BotSlugRule.normalize`），可编辑。
+- 第一页内联公开程度，**默认私有**（`Visibility = .privateBot`）。**不再有 slug 字段**——公私有都自动生成 `bots.slug`（私有沿用 `u_<随机>`；公有用同类自动随机串，格式细节留 plan），用户全程不碰。
+- **vanity slug 退役**：删 `CreateBotSheet` 自选 slug（#123）、`ManageBotSheet` slug 编辑（#124）；分享区只展示不可改。`BotSlugRule` 校验从 create/manage 路径移除（如别处无引用则删）。显示名不要求唯一。分享/深链（`/b/<slug>`、QR、universal link #121-128）照常用自动 slug，不受影响。
 - **迁移**放宽公有删除：改 `bots_creator_delete` 策略 + `bots_guard_public_update` 触发器，判据从 `visibility = 'private'` 改为 `visibility = 'private' OR 无外部采用者`。"无外部采用者" = 除创建者外，无其他 `user_bot_contacts` 行、无 `bot_invites`/`bot_invite_links` 兑换。
   - 注意：RLS DELETE 策略 + 触发器双闸都要放。删除判据用子查询，留意性能（这些表有 bot_id 索引即可）。
 
@@ -148,10 +150,10 @@ pool -= modelPool.exclude
 1. **名字** —— TextField + "换一个"(dice) 按钮。
 2. **模型预设 · 可多选** —— `GET /v1/model-presets` 渲染行：勾选框 + 标题 + 副标题（前几个模型名）+ chevron。点行展开/进二级看完整模型清单。默认勾 `default_selected` 的（前三）。
 3. **自定义模型池** —— 一行入口，点开 `ArenaModelPoolEditor`，**用当前所选预设并集 seed**。确认后 bot 转**显式** `modelPool`，主页面摘要显示"自定义 · N 个模型"，预设勾选转为"起点"不再联动。
-4. **公开程度** —— 私有(默认)/公有·邀请制 radio；公有时内联 slug。
-5. **创建** —— 顶部右上角；校验：名字非空 + (有选中预设 或 有自定义池) + 公有时 slug 合法。
+4. **公开程度** —— 私有(默认)/公有·邀请制 radio。**无 slug 字段。**
+5. **创建** —— 顶部右上角；校验：名字非空 + (有选中预设 或 有自定义池)。slug 自动，不进校验。
 
-创建写库：`bots` insert（`model_id` fallback、`config.modelPool.presets` 或显式池、`visibility`、`slug`、`tz`）+ `user_bot_contacts`（沿用现逻辑）。
+创建写库：`bots` insert（`model_id` fallback、`config.modelPool.presets` 或显式池、`visibility`、自动 `slug`、`tz`）+ `user_bot_contacts`（沿用现逻辑）。
 
 ## 受影响文件（首盘点，plan 细化）
 
@@ -168,7 +170,8 @@ pool -= modelPool.exclude
 - `providers/resource-map.ts`、`App.tsx`、`pages/model-presets.tsx`
 
 **iOS (`apps/pendingbot/`)**
-- `Features/Friends/BotManagement.swift` —— `CreateBotSheet` 单页重构
+- `Features/Friends/BotManagement.swift` —— `CreateBotSheet` 单页重构 + 删自选 slug（含 `BotSlugRule` 引用）
+- `ManageBotSheet`（slug 编辑退役，分享区只读，#124 反向）
 - `Features/Friends/ModelPicker.swift` —— `ArenaModelPoolEditor` 接受 preset seed；catalog 缓存收口
 - 新 `Storage/ModelCatalog.swift` 磁盘缓存（ETag）
 - 新 `Stores/PlaceNames.swift` + bundle `Resources/place_names.txt`
