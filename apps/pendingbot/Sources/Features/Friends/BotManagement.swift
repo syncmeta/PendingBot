@@ -9,41 +9,15 @@ import CoreImage
 // public-bot delete block are enforced by the bots_guard_public_update
 // trigger + the bots_creator_delete RLS policy.
 
-// MARK: - Slug rule
-
-/// Validation for a public bot's user-chosen slug — the stable, public
-/// handle others type in 加机器人 and that powers the share link / QR
-/// (see BotShareLink). Private bots never use this; they keep the
-/// synthetic `u_<random>` slug minted at creation.
-///
-/// Reserved namespaces are refused so a user can't squat on the
-/// machine-minted forms: `u_` (user-created private bots) and `self-`
-/// (per-user self-bot, filtered out of the friends list).
-enum BotSlugRule {
-    static let minLen = 3
-    static let maxLen = 20
-    private static let allowed = CharacterSet(
-        charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789_-")
-
-    /// Lowercase + drop surrounding whitespace and a leading/trailing @.
-    static func normalize(_ raw: String) -> String {
-        raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "@"))
-            .lowercased()
-    }
-
-    static func isValid(_ slug: String) -> Bool {
-        guard slug.count >= minLen, slug.count <= maxLen else { return false }
-        guard slug.unicodeScalars.allSatisfy({ allowed.contains($0) }) else { return false }
-        if slug.hasPrefix("u_") || slug.hasPrefix("self-") { return false }
-        return true
-    }
-
-    static let helpText = "3–20 位，小写字母、数字、下划线或连字符"
-}
-
 // MARK: - Create
 
+/// 新建机器人 — single-page form. No more two-step model/settings flow and
+/// no user-entered slug (every bot, private or public, gets an auto
+/// `u_<random>` slug). The model is chosen via board-managed presets
+/// (multi-select), or a custom pool editor seeded from the union of the
+/// selected presets' models. A preset-driven bot stores only the preset
+/// slugs (`config.modelPool.presets`); a custom bot freezes the explicit
+/// pool. The name seeds from a random world place name (PlaceNames).
 struct CreateBotSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var catalog: ModelCatalog
@@ -51,21 +25,27 @@ struct CreateBotSheet: View {
     /// to its own list without a re-fetch.
     var onCreated: (BotPick) -> Void
 
-    @State private var step: CreateStep = .models
     @State private var displayName: String = ""
-    // Empty = "fresh" → the pool editor seeds the sliders + sort from the
-    // user's remembered prefs (rememberDefaults below) instead of this row.
-    @State private var arenaSelection = ArenaModelSelection()
+    /// Names already taken by the user's other bots — fed to
+    /// PlaceNames.random so 换一个 walks fresh names.
+    @State private var usedNames: Set<String> = []
+
+    // Presets loaded from GET /v1/model-presets. selectedPresetSlugs is
+    // seeded from each preset's default_selected after the first load.
+    @State private var presets: [ModelPreset] = []
+    @State private var selectedPresetSlugs: Set<String> = []
+    @State private var presetsLoaded = false
+    @State private var presetsError: String?
+
+    // Custom path. When the user confirms a hand-picked pool, usingCustom
+    // flips on: the bot stores the explicit (frozen) modelPool instead of
+    // preset refs. Reset by re-touching a preset toggle.
+    @State private var usingCustom = false
+    @State private var customSelection = ArenaModelSelection()
+
     @State private var visibility: Visibility = .privateBot
-    /// User-chosen public handle. Only required (and only sent) when the
-    /// bot is public — private bots keep the synthetic `u_<random>` slug.
-    @State private var slug: String = ""
     @State private var creating = false
     @State private var error: String?
-
-    private enum CreateStep {
-        case models, settings
-    }
 
     enum Visibility: String, CaseIterable, Identifiable {
         case privateBot     = "private"
@@ -82,80 +62,167 @@ struct CreateBotSheet: View {
             case .privateBot:
                 return "只有你自己能聊。可以随时改设置、改名、删除。"
             case .publicInvite:
-                return "你邀请的人才能聊。建好后你还能改设置和改名,但不能删、不能转回私有。"
+                return "你邀请的人才能聊;无人加入前仍可删除。"
             }
         }
     }
 
     var body: some View {
         NavigationStack {
-            Group {
-                if step == .models {
-                    ArenaModelPoolEditor(selection: $arenaSelection, rememberDefaults: true)
-                } else {
-                    Form {
-                        settingsSections
+            Form {
+                nameSection
+                presetSection
+                customSection
+                visibilitySection
 
-                        if let error {
-                            Section {
-                                Text(error).foregroundStyle(.red)
-                            }
-                        }
-                    }
+                if let error {
+                    Section { Text(error).foregroundStyle(.red) }
                 }
             }
             .navigationTitle("新建机器人")
             .inlineNavTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    if step == .models {
-                        Button("取消") { dismiss() }
-                    } else {
-                        Button("上一步") { step = .models }
-                    }
+                    Button("取消") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    if step == .models {
-                        Button("下一步") {
-                            step = .settings
-                            Haptics.tap()
-                        }
-                        .disabled(!canAdvanceFromModels)
-                    } else {
-                        Button(creating ? "创建中…" : "创建") {
-                            Task { await create() }
-                        }
-                        .disabled(creating || !canCreate)
+                    Button(creating ? "创建中…" : "创建") {
+                        Task { await create() }
                     }
+                    .disabled(creating || !canCreate)
                 }
             }
             .task {
                 catalog.loadIfNeeded()
                 await seedDefaultName()
+                await loadPresets()
             }
         }
-        // macOS: the model step is a greedy List; without a min sheet size
-        // it collapses to zero height (no rows). No-op on iOS.
         .macSheetMinSize()
     }
 
+    // ── Sections ─────────────────────────────────────────────────────────
+
     @ViewBuilder
-    private var settingsSections: some View {
+    private var nameSection: some View {
         Section {
-            TextField("机器人名字", text: $displayName)
-                .platformAutocapitalization()
-                .autocorrectionDisabled(true)
-            HStack {
-                Text("模型").foregroundStyle(Theme.Palette.inkMuted)
-                Spacer()
-                Text(modelSummary)
-                    .font(Theme.Fonts.rounded(size: 13, weight: .medium))
-                    .foregroundStyle(Theme.Palette.inkMuted)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+            HStack(spacing: 8) {
+                TextField("机器人名字", text: $displayName)
+                    .platformAutocapitalization()
+                    .autocorrectionDisabled(true)
+                Button {
+                    displayName = PlaceNames.random(excluding: usedNames)
+                    Haptics.tap()
+                } label: {
+                    Label("换一个", systemImage: "shuffle")
+                        .labelStyle(.titleAndIcon)
+                        .font(Theme.Fonts.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.Palette.accent)
+            }
+        } header: {
+            Text("名字")
+        }
+    }
+
+    @ViewBuilder
+    private var presetSection: some View {
+        Section {
+            if !presetsLoaded && presets.isEmpty {
+                HStack { Spacer(); ProgressView(); Spacer() }
+            } else if let presetsError, presets.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("加载模型预设失败").foregroundStyle(Theme.Palette.ink)
+                    Text(presetsError)
+                        .font(Theme.Fonts.caption)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                    Button("重试") { Task { await loadPresets() } }
+                        .foregroundStyle(Theme.Palette.accent)
+                }
+            } else {
+                ForEach(presets) { preset in
+                    presetRow(preset)
+                }
+            }
+        } header: {
+            Text("模型预设")
+        } footer: {
+            Text("选一组或多组模型;对话时每轮从中随机挑一个,盲评后能在「我 → 模型竞技场榜单」看到你的偏好。")
+        }
+    }
+
+    @ViewBuilder
+    private func presetRow(_ preset: ModelPreset) -> some View {
+        let selected = selectedPresetSlugs.contains(preset.slug)
+        HStack(spacing: 10) {
+            Button {
+                togglePreset(preset)
+                Haptics.tap()
+            } label: {
+                Image(systemName: selected ? "checkmark.square.fill" : "square")
+                    .font(Theme.Fonts.glyph(size: 18, weight: .semibold))
+                    .foregroundStyle(selected ? Theme.Palette.accent : Theme.Palette.inkMuted.opacity(0.6))
+            }
+            .buttonStyle(.plain)
+
+            NavigationLink {
+                PresetModelsDetail(preset: preset)
+            } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(preset.title)
+                        .font(Theme.Fonts.rounded(size: 14, weight: .semibold))
+                        .foregroundStyle(Theme.Palette.ink)
+                    Text(presetSubtitle(preset))
+                        .font(Theme.Fonts.caption)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
             }
         }
+    }
 
+    /// First few model display names, joined — the at-a-glance "what's in
+    /// this preset" line. Falls back to the description when empty.
+    private func presetSubtitle(_ preset: ModelPreset) -> String {
+        let names = preset.models.prefix(3).map(\.display_name)
+        if names.isEmpty { return preset.description }
+        let more = preset.models.count > names.count ? " 等\(preset.models.count)个" : ""
+        return names.joined(separator: " · ") + more
+    }
+
+    @ViewBuilder
+    private var customSection: some View {
+        Section {
+            NavigationLink {
+                CustomPoolEditor(seed: customSeedSelection) { picked in
+                    customSelection = picked
+                    usingCustom = true
+                }
+            } label: {
+                HStack {
+                    Image(systemName: "slider.horizontal.3")
+                        .foregroundStyle(Theme.Palette.accent)
+                    Text("自定义模型池")
+                        .foregroundStyle(Theme.Palette.ink)
+                    Spacer()
+                    if usingCustom {
+                        Text("自定义 · \(customSelection.resolvedCount) 个模型")
+                            .font(Theme.Fonts.caption)
+                            .foregroundStyle(Theme.Palette.inkMuted)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+            }
+        } footer: {
+            Text("想精确挑模型?进来按价格区间、发行时间、厂商和单个模型自定义。选定后将以这组固定模型为准,不再跟随预设。")
+        }
+    }
+
+    @ViewBuilder
+    private var visibilitySection: some View {
         Section {
             ForEach(Visibility.allCases) { v in
                 Button { visibility = v; Haptics.tap() } label: {
@@ -184,43 +251,56 @@ struct CreateBotSheet: View {
         } header: {
             Text("公开程度")
         }
+    }
 
-        if visibility != .privateBot {
-            Section {
-                HStack(spacing: 4) {
-                    Text("@").foregroundStyle(Theme.Palette.inkMuted)
-                    TextField("机器人标识(slug)", text: $slug)
-                        .platformAutocapitalization()
-                        .autocorrectionDisabled(true)
-                        .onChange(of: slug) { _, v in
-                            let n = BotSlugRule.normalize(v)
-                            if n != v { slug = n }
-                        }
-                }
-            } header: {
-                Text("机器人标识")
-            } footer: {
-                Text("机器人的公开展示标识(@名)。\(BotSlugRule.helpText)。别人加这个机器人走邀请链接或二维码,不是靠输入标识。建好后可在管理里修改。")
-            }
+    // ── Preset / custom state ────────────────────────────────────────────
+
+    /// Toggling a preset re-enters preset mode (drops a prior custom pick) —
+    /// the two are mutually exclusive choices.
+    private func togglePreset(_ preset: ModelPreset) {
+        usingCustom = false
+        if selectedPresetSlugs.contains(preset.slug) {
+            selectedPresetSlugs.remove(preset.slug)
+        } else {
+            selectedPresetSlugs.insert(preset.slug)
         }
     }
 
-    /// "Lorem ipsum" tokens used to seed the default display name when
-    /// 新建机器人 opens — the user can still edit. We pick the first token
-    /// they haven't already used, so spamming + walks down the sequence
-    /// Lorem → Ipsum → Dolor → …
-    private static let loremTokens: [String] = [
-        "Lorem", "Ipsum", "Dolor", "Sit", "Amet",
-        "Consectetur", "Adipiscing", "Elit", "Sed", "Do",
-        "Eiusmod", "Tempor", "Incididunt", "Ut", "Labore",
-        "Et", "Dolore", "Magna", "Aliqua", "Enim",
-        "Ad", "Minim", "Veniam", "Quis", "Nostrud",
-        "Exercitation", "Ullamco", "Laboris", "Nisi", "Aliquip",
-    ]
+    /// The seed handed to the custom editor: the union of the currently
+    /// selected presets' model slugs (or the existing custom pick when the
+    /// user re-enters to tweak it).
+    private var customSeedSelection: ArenaModelSelection {
+        if usingCustom { return customSelection }
+        let union = selectedPresetModelSlugs
+        return ArenaModelSelection(
+            models: union,
+            fallbackModel: union.first,
+            resolvedCount: union.count)
+    }
+
+    /// Deduped union of model slugs across the selected presets, in a stable
+    /// (sorted) order so the fallback pick is deterministic.
+    private var selectedPresetModelSlugs: [String] {
+        var seen = Set<String>()
+        var out: [String] = []
+        for preset in presets where selectedPresetSlugs.contains(preset.slug) {
+            for m in preset.models where !seen.contains(m.slug) {
+                seen.insert(m.slug)
+                out.append(m.slug)
+            }
+        }
+        return out
+    }
+
+    // ── Seed name / load presets ─────────────────────────────────────────
 
     private func seedDefaultName() async {
         guard displayName.isEmpty else { return }
-        guard let userId = AccountStore.shared.current?.id else { return }
+        guard let userId = AccountStore.shared.current?.id else {
+            // No account yet — still hand the user a name to start from.
+            if displayName.isEmpty { displayName = PlaceNames.random() }
+            return
+        }
         struct Row: Decodable { let display_name: String }
         let rows: [Row] = (try? await SupabaseStack.shared
             .from("bots")
@@ -228,49 +308,62 @@ struct CreateBotSheet: View {
             .eq("creator_id", value: userId)
             .execute()
             .value) ?? []
-        let used = Set(rows.map { $0.display_name.lowercased() })
-        let pick = Self.loremTokens.first { !used.contains($0.lowercased()) }
-            ?? Self.loremTokens[0]
+        usedNames = Set(rows.map { $0.display_name.lowercased() })
         guard displayName.isEmpty else { return }
-        displayName = pick
+        displayName = PlaceNames.random(excluding: usedNames)
     }
+
+    private func loadPresets() async {
+        presetsError = nil
+        do {
+            let loaded = try await APIClient().modelPresets()
+            presets = loaded
+            // Seed the multi-select from the board-marked defaults — only on
+            // the first successful load, so a manual toggle isn't clobbered
+            // by a retry.
+            if !presetsLoaded {
+                selectedPresetSlugs = Set(loaded.filter(\.default_selected).map(\.slug))
+            }
+            presetsLoaded = true
+        } catch {
+            presetsError = (error as? APIError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    // ── Create ───────────────────────────────────────────────────────────
 
     private var canCreate: Bool {
         let nameOK = !displayName.trimmingCharacters(in: .whitespaces).isEmpty
-        let modelOK = selectedModelSlug != nil
-        // Public bots additionally require a valid slug.
-        if visibility == .privateBot { return nameOK && modelOK }
-        return nameOK && modelOK && BotSlugRule.isValid(slug)
+        let modelOK = usingCustom ? customSelection.fallbackModel != nil
+                                  : !selectedPresetSlugs.isEmpty
+        return nameOK && modelOK
     }
 
-    private var canAdvanceFromModels: Bool {
-        arenaSelection.resolvedCount >= 2 && arenaSelection.fallbackModel != nil
+    /// Fallback `model_id` stored on the bot row. Custom → the editor's
+    /// fallback; preset-driven → the first model of the selected union.
+    private var fallbackModelSlug: String? {
+        if usingCustom { return customSelection.fallbackModel }
+        return selectedPresetModelSlugs.first
     }
 
-    private var selectedModelSlug: String? {
-        arenaSelection.fallbackModel
-    }
-
-    private var selectedModelProvider: String? {
-        arenaSelection.fallbackModelProvider
-            ?? selectedModelSlug.flatMap { catalog.bySlug[$0]?.model_provider }
-    }
-
-    private var modelSummary: String {
-        arenaSelection.summary
+    private var fallbackModelProvider: String? {
+        if usingCustom {
+            return customSelection.fallbackModelProvider
+                ?? customSelection.fallbackModel.flatMap { catalog.bySlug[$0]?.model_provider }
+        }
+        return fallbackModelSlug.flatMap { catalog.bySlug[$0]?.model_provider }
     }
 
     private func create() async {
         guard let userId = AccountStore.shared.current?.id else { return }
         let trimmedName = displayName.trimmingCharacters(in: .whitespaces)
-        guard !trimmedName.isEmpty, let createModelSlug = selectedModelSlug else { return }
+        guard !trimmedName.isEmpty, let createModelSlug = fallbackModelSlug else { return }
         creating = true; defer { creating = false }
         do {
-            // bots.slug is NOT NULL UNIQUE. Public bots use the creator's
-            // chosen handle (the thing others type / scan to add); private
-            // bots mint a synthetic slug from a fresh UUID so the unique
-            // constraint stays satisfied without leaking creator info and
-            // without burning a nice handle no one can reach anyway.
+            // bots.slug is NOT NULL UNIQUE but no longer user-facing — every
+            // bot (private or public) mints a synthetic slug from a fresh
+            // UUID. Adding a public bot is done via invite link / QR, not by
+            // typing a handle.
             struct BotCreateConfig: Encodable {
                 let modelPool: RandomModelConfig?
                 enum CodingKeys: String, CodingKey { case modelPool }
@@ -289,9 +382,7 @@ struct CreateBotSheet: View {
                 let config: BotCreateConfig
                 let slug: String
                 /// IANA tz on the bot row. Public bots default to the
-                /// creator's device tz at creation; private bots stay
-                /// null (they always 1:1 with the creator and the
-                /// per-turn clientTz already carries the tz).
+                /// creator's device tz at creation; private bots stay null.
                 let tz: String?
             }
             struct BotOut: Decodable {
@@ -301,9 +392,20 @@ struct CreateBotSheet: View {
                 let visibility: String?
                 let creator_id: String?
             }
-            let finalSlug: String = visibility == .privateBot
-                ? "u_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(16).description
-                : BotSlugRule.normalize(slug)
+            // Custom → freeze the explicit pool (presets nil). Preset-driven
+            // → store only the selected preset slugs; the edge expands them
+            // to a model union per turn.
+            let modelPool: RandomModelConfig?
+            if usingCustom {
+                modelPool = customSelection.persistedConfig
+            } else {
+                modelPool = RandomModelConfig(
+                    price_min: nil, price_max: nil, models: nil, exclude: nil,
+                    vendors: nil, release_window_days: nil,
+                    presets: Array(selectedPresetSlugs))
+            }
+            let finalSlug = "u_" + UUID().uuidString
+                .replacingOccurrences(of: "-", with: "").prefix(16).description
             let row: BotOut = try await SupabaseStack.shared
                 .from("bots")
                 .insert(BotInsert(
@@ -311,9 +413,8 @@ struct CreateBotSheet: View {
                     visibility: visibility.rawValue,
                     display_name: trimmedName,
                     model_id: createModelSlug,
-                    model_provider: selectedModelProvider,
-                    config: BotCreateConfig(
-                        modelPool: arenaSelection.persistedConfig),
+                    model_provider: fallbackModelProvider,
+                    config: BotCreateConfig(modelPool: modelPool),
                     slug: finalSlug,
                     tz: visibility == .privateBot ? nil : TimeZone.current.identifier
                 ))
@@ -324,10 +425,8 @@ struct CreateBotSheet: View {
 
             // The friends-tab bot list reads from user_bot_contacts, not the
             // bots table — so without a contact row the freshly-created bot
-            // vanishes on the next load(). The conversations→contact trigger
-            // only fires once a conversation exists, which doesn't happen at
-            // creation time, so register the creator here explicitly. RLS
-            // allows it via the creator_id = auth.uid() branch.
+            // vanishes on the next load(). RLS allows it via the
+            // creator_id = auth.uid() branch.
             struct ContactInsert: Encodable {
                 let user_id: String
                 let bot_id: String
@@ -350,17 +449,84 @@ struct CreateBotSheet: View {
             Haptics.success()
             dismiss()
         } catch {
-            // 23505 == unique_violation on bots.slug — the chosen handle
-            // is taken (by another public bot or a preset). Surface a
-            // targeted message so the user knows to pick a different slug.
-            let msg = error.localizedDescription
-            if msg.contains("23505") || msg.lowercased().contains("duplicate") {
-                self.error = "「\(BotSlugRule.normalize(slug))」这个标识已被占用，换一个试试。"
-            } else {
-                self.error = msg
-            }
+            self.error = error.localizedDescription
             Haptics.error()
         }
+    }
+}
+
+// MARK: - Preset models detail
+
+/// Pushed from a preset row in 新建机器人 — lists every model the preset
+/// currently resolves to (already resolved server-side). Read-only.
+private struct PresetModelsDetail: View {
+    let preset: ModelPreset
+
+    var body: some View {
+        List {
+            if !preset.description.isEmpty {
+                Section {
+                    Text(preset.description)
+                        .font(Theme.Fonts.caption)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                }
+            }
+            Section {
+                ForEach(preset.models, id: \.slug) { m in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(m.display_name)
+                            .font(Theme.Fonts.rounded(size: 14, weight: .medium))
+                            .foregroundStyle(Theme.Palette.ink)
+                        Text(m.slug)
+                            .font(Theme.Fonts.monoSmall)
+                            .foregroundStyle(Theme.Palette.inkMuted)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+            } header: {
+                Text("包含模型 · \(preset.models.count)")
+            }
+        }
+        .navigationTitle(preset.title)
+        .inlineNavTitle()
+    }
+}
+
+// MARK: - Custom pool editor (push)
+
+/// Push-based wrapper around ArenaModelPoolEditor for the 新建机器人 custom
+/// path. Seeded with the union of the selected presets' models; the toolbar
+/// 「用这组」 confirms the pick back to the create sheet and pops.
+private struct CustomPoolEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    let seed: ArenaModelSelection
+    var onConfirm: (ArenaModelSelection) -> Void
+
+    @State private var selection: ArenaModelSelection
+
+    init(seed: ArenaModelSelection, onConfirm: @escaping (ArenaModelSelection) -> Void) {
+        self.seed = seed
+        self.onConfirm = onConfirm
+        _selection = State(initialValue: seed)
+    }
+
+    var body: some View {
+        ArenaModelPoolEditor(selection: $selection)
+            .navigationTitle(selection.resolvedCount >= 2
+                             ? "自定义 · \(selection.resolvedCount) 个"
+                             : "自定义模型池")
+            .inlineNavTitle()
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("用这组") {
+                        onConfirm(selection)
+                        Haptics.success()
+                        dismiss()
+                    }
+                    .disabled(selection.fallbackModel == nil)
+                }
+            }
     }
 }
 
@@ -405,12 +571,6 @@ struct ManageBotSheet: View {
     /// promotion-in-progress that hasn't yet persisted).
     @State private var tz: String = TimeZone.current.identifier
     @State private var initialTz: String = ""
-    /// Public handle. Loaded from the bots row; editable for public bots
-    /// (the others-add-me identity), frozen-irrelevant for private ones.
-    /// `initialSlug` is the persisted value — also what the share page
-    /// uses, so an unsaved edit doesn't hand out a dead link.
-    @State private var slug: String = ""
-    @State private var initialSlug: String = ""
     @State private var saving = false
     @State private var deleting = false
     @State private var confirmingDelete = false
@@ -464,28 +624,6 @@ struct ManageBotSheet: View {
                     if isPrivate {
                         Text("升级为公有后不能再转回私有,也不能删除,但仍能改设置和改名。请确认。")
                             .font(Theme.Fonts.caption)
-                    }
-                }
-
-                // Public bots carry a user-facing slug — the handle others
-                // type / scan / tap to add. Editable here (rename anytime);
-                // old links break on rename, same as changing a username.
-                if visibility != "private" {
-                    Section {
-                        HStack(spacing: 4) {
-                            Text("@").foregroundStyle(Theme.Palette.inkMuted)
-                            TextField("机器人标识(slug)", text: $slug)
-                                .platformAutocapitalization()
-                                .autocorrectionDisabled(true)
-                                .onChange(of: slug) { _, v in
-                                    let n = BotSlugRule.normalize(v)
-                                    if n != v { slug = n }
-                                }
-                        }
-                    } header: {
-                        Text("机器人标识")
-                    } footer: {
-                        Text("别人按这个标识、链接或二维码加你的机器人。\(BotSlugRule.helpText)。")
                     }
                 }
 
@@ -567,10 +705,7 @@ struct ManageBotSheet: View {
                     Button(saving ? "保存中…" : "保存") {
                         Task { await save() }
                     }
-                    // Block save on an invalid public slug — otherwise the
-                    // INSERT/UPDATE just bounces off the format/unique guard.
-                    .disabled(saving || !dirty
-                              || (visibility != "private" && !BotSlugRule.isValid(slug)))
+                    .disabled(saving || !dirty)
                 }
             }
             .confirmationDialog(
@@ -618,20 +753,17 @@ struct ManageBotSheet: View {
         struct Row: Decodable {
             let model_provider: String?
             let tz: String?
-            let slug: String?
             let output_mode: String?
         }
         if let row: Row = try? await SupabaseStack.shared
             .from("bots")
-            .select("model_provider, tz, slug, output_mode")
+            .select("model_provider, tz, output_mode")
             .eq("id", value: initial.id)
             .single()
             .execute()
             .value {
             modelProvider = row.model_provider
             initialModelProvider = row.model_provider
-            slug = row.slug ?? ""
-            initialSlug = row.slug ?? ""
             let bubble = row.output_mode == "bubble"
             outputBubble = bubble
             initialOutputBubble = bubble
@@ -655,9 +787,6 @@ struct ManageBotSheet: View {
         if voiceCallEnabled != (initial.voice_call_enabled ?? false) { return true }
         if outputBubble != initialOutputBubble { return true }
         if visibility != (initial.visibility ?? "public_invite") { return true }
-        // slug renames only matter on public bots (private bots keep their
-        // synthetic slug and never send it).
-        if visibility != "private" && BotSlugRule.normalize(slug) != initialSlug { return true }
         // tz changes only matter on public bots. Private edits don't
         // touch the column, so don't flag the form dirty just because
         // the placeholder device-tz differs from the row's null.
@@ -694,13 +823,9 @@ struct ManageBotSheet: View {
                 /// JSON null so a private→public promotion correctly
                 /// SET tz = ... too.
                 let tz: String?
-                /// nil = leave the slug untouched (private bots keep their
-                /// synthetic slug). Unlike tz, slug is NOT NULL, so the
-                /// encode() OMITS the key when nil rather than sending null.
-                let slug: String?
                 enum CodingKeys: String, CodingKey {
                     case display_name, model_id, model_provider
-                    case visibility, voice_call_enabled, tz, slug
+                    case visibility, voice_call_enabled, tz
                 }
                 func encode(to encoder: Encoder) throws {
                     var c = encoder.container(keyedBy: CodingKeys.self)
@@ -710,7 +835,6 @@ struct ManageBotSheet: View {
                     try c.encode(visibility, forKey: .visibility)
                     try c.encode(voice_call_enabled, forKey: .voice_call_enabled)
                     try c.encode(tz, forKey: .tz)
-                    if let slug { try c.encode(slug, forKey: .slug) }
                 }
             }
             // The creator may edit every column regardless of visibility, so
@@ -725,8 +849,7 @@ struct ManageBotSheet: View {
                 model_provider: modelProvider,
                 visibility: visibility,
                 voice_call_enabled: voiceCallEnabled,
-                tz: visibility == "private" ? nil : tz,
-                slug: visibility == "private" ? nil : BotSlugRule.normalize(slug)
+                tz: visibility == "private" ? nil : tz
             )
             try await SupabaseStack.shared
                 .from("bots")
@@ -747,14 +870,7 @@ struct ManageBotSheet: View {
             Haptics.success()
             dismiss()
         } catch {
-            // 23505 == unique_violation on bots.slug — the renamed handle
-            // is taken. Surface a targeted message so the user retries.
-            let msg = error.localizedDescription
-            if msg.contains("23505") || msg.lowercased().contains("duplicate") {
-                self.error = "「\(BotSlugRule.normalize(slug))」这个标识已被占用,换一个。"
-            } else {
-                self.error = msg
-            }
+            self.error = error.localizedDescription
             Haptics.error()
         }
     }

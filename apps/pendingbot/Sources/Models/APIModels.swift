@@ -305,7 +305,9 @@ struct RandomModelConfig: Codable, Equatable, Hashable {
     /// Selected model-preset slugs (`model_presets.slug`). The edge expands
     /// these into a model union at chat time (see edge `pickRandomModel`).
     /// nil/empty = no preset refs (an explicit / custom pool, or single model).
-    var presets: [String]?
+    /// Defaulted so the memberwise init stays source-compatible with the
+    /// explicit-pool call sites that don't carry presets.
+    var presets: [String]? = nil
 }
 
 /// One model preset returned by `GET /v1/model-presets`. The edge resolves
