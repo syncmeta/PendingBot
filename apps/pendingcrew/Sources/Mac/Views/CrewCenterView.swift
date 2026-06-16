@@ -15,12 +15,9 @@ struct CrewCenterView: View {
     @State private var showingDetail = false
     @State private var showingRemoteSessions = false
     /// chunk2 T5（captain 唤醒=app 注入）：已通知过 captain 的 decision id ——
-    /// 防止每个 tick 重复注入同一条。**放在常驻中栏**（而非按需 inspector），
-    /// captain 编排不能依赖 session 终端面板是否打开。
+    /// 防止重复注入同一条。**放在常驻中栏**（而非按需 inspector），captain 编排
+    /// 不能依赖 session 终端面板是否打开。
     @State private var notifiedDecisionIds: Set<String> = []
-    /// 2s 轮询 LocalApprovalStore（helper 跨进程写文件、本进程读），有新待决策
-    /// 就注入 captain PTY。
-    private let captainTick = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
     var body: some View {
         Group {
@@ -100,9 +97,18 @@ struct CrewCenterView: View {
                 RemoteSessionsView(crewId: detail.crew.id, crewTitle: detail.crew.title)
             }
         }
-        // chunk2 T5：captain 唤醒 = app 注入。常驻中栏轮询待决策，有新的（非 captain
-        // 自己 raise 的）就把提示注入在跑的 captain PTY。不依赖 inspector 是否打开。
-        .onReceive(captainTick) { _ in notifyCaptainOfNewDecisions() }
+        // chunk2 T5：captain 唤醒 = app 注入。常驻中栏**事件驱动**订阅待决策（去 2s
+        // 轮询）：app 侧答复 + helper 跨进程 raise(目录监听)都推一个 tick,有新的(非
+        // captain 自己 raise 的)就把提示注入在跑的 captain PTY。不依赖 inspector 是否打开。
+        // `.task(id:)` 随选中 crew 切换重建订阅;无选中 crew 时 crewId=nil,不订阅。
+        .task(id: crewStore.selectedCrewId) {
+            guard let crewId = crewStore.selectedCrewId else { return }
+            notifyCaptainOfNewDecisions()
+            for await _ in LocalApprovalStore.shared.approvalChanges(crewId: crewId) {
+                if Task.isCancelled { return }
+                notifyCaptainOfNewDecisions()
+            }
+        }
     }
 
     /// 发现新待决策 → 注入运行中的 captain session（spec §2 唤醒=app 注入）。

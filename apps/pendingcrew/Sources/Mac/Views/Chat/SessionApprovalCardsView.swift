@@ -5,8 +5,9 @@ import SwiftUI
 /// （spec 2026-06-08-pendingcrew-ask-approval-design §6 答复半边）。
 ///
 /// 用户定调：**不另开面板** —— session 页本来就是「和这个 session 单聊」，待办就地答。
-/// 这一层轮询本地 `LocalApprovalStore`（MCP helper 子进程写、本 app 进程读，跨进程；
-/// 每 ~1.5s）过滤出**本 session**（sessionId）的 pending：
+/// 这一层**事件驱动**订阅本地 `LocalApprovalStore`（去 1.5s 轮询）：app 侧 answer/decide
+/// 即推、helper 子进程跨进程 raise pending 经目录监听补齐，过滤出**本 session**
+/// （sessionId）的 pending：
 /// - decision（`ask` 工具）→ 回复输入框 → `answer` → 解 helper 的 long-poll，agent 续跑。
 /// - permission（权限 PreToolUse hook）→ `允许` / `拒绝` → `decide`。
 ///
@@ -20,9 +21,6 @@ struct SessionApprovalCardsView: View {
     @State private var pending: [ApprovalItem] = []
     @State private var drafts: [String: String] = [:]   // reqId → 回复草稿
 
-    // 跨进程：helper 写文件、本进程轮询读。1.5s 够灵敏又不烧 IO。
-    private let tick = Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()
-
     var body: some View {
         Group {
             if !pending.isEmpty {
@@ -34,8 +32,16 @@ struct SessionApprovalCardsView: View {
                 .background(Theme.Palette.amberBg.opacity(0.12))
             }
         }
-        .onAppear(perform: refresh)
-        .onReceive(tick) { _ in refresh() }
+        // 事件驱动（去 1.5s 轮询）：先 refresh 一次兜住订阅前状态,再 for await store
+        // 变更流 —— 本进程 answer/decide + helper 跨进程 raise(目录监听)都推一个 tick。
+        // `.task(id:)` 切 session / 视图消失时取消,AsyncStream onTermination 退订上游。
+        .task(id: sessionId) {
+            refresh()
+            for await _ in store.approvalChanges(crewId: crewId) {
+                if Task.isCancelled { return }
+                refresh()
+            }
+        }
     }
 
     @ViewBuilder
