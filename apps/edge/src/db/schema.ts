@@ -3572,7 +3572,6 @@ export type Database = {
         Row: {
           captain_bot_id: string | null
           closed_at: string | null
-          cloud_machine_id: string | null
           conversation_id: string
           created_at: string
           initiator_bot_id: string | null
@@ -3599,7 +3598,6 @@ export type Database = {
         Insert: {
           captain_bot_id?: string | null
           closed_at?: string | null
-          cloud_machine_id?: string | null
           conversation_id: string
           created_at?: string
           initiator_bot_id?: string | null
@@ -3626,7 +3624,6 @@ export type Database = {
         Update: {
           captain_bot_id?: string | null
           closed_at?: string | null
-          cloud_machine_id?: string | null
           conversation_id?: string
           created_at?: string
           initiator_bot_id?: string | null
@@ -3776,95 +3773,6 @@ export type Database = {
             columns: ["mcp_server_id"]
             isOneToOne: false
             referencedRelation: "mcp_servers"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      usage_events: {
-        Row: {
-          audit_log_id: string | null
-          conversation_id: string | null
-          cost_source: string
-          created_at: string
-          event_category: string
-          id: string
-          model_id: string | null
-          owner_kind: string | null
-          owner_subject_id: string | null
-          owner_user_id: string | null
-          pnc_micros: number
-          provider: string
-          quantity: number
-          quantity_unit: string
-          raw_usage: Json
-          vendor_cost_usd: number
-          vendor_sku: string | null
-        }
-        Insert: {
-          audit_log_id?: string | null
-          conversation_id?: string | null
-          cost_source: string
-          created_at?: string
-          event_category: string
-          id?: string
-          model_id?: string | null
-          owner_kind?: string | null
-          owner_subject_id?: string | null
-          owner_user_id?: string | null
-          pnc_micros: number
-          provider: string
-          quantity: number
-          quantity_unit: string
-          raw_usage?: Json
-          vendor_cost_usd: number
-          vendor_sku?: string | null
-        }
-        Update: {
-          audit_log_id?: string | null
-          conversation_id?: string | null
-          cost_source?: string
-          created_at?: string
-          event_category?: string
-          id?: string
-          model_id?: string | null
-          owner_kind?: string | null
-          owner_subject_id?: string | null
-          owner_user_id?: string | null
-          pnc_micros?: number
-          provider?: string
-          quantity?: number
-          quantity_unit?: string
-          raw_usage?: Json
-          vendor_cost_usd?: number
-          vendor_sku?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "usage_events_audit_log_id_fkey"
-            columns: ["audit_log_id"]
-            isOneToOne: false
-            referencedRelation: "audit_log"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "usage_events_conversation_id_fkey"
-            columns: ["conversation_id"]
-            isOneToOne: false
-            referencedRelation: "conversations"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "usage_events_owner_subject_id_fkey"
-            columns: ["owner_subject_id"]
-            isOneToOne: false
-            referencedRelation: "bi_subjects"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "usage_events_owner_subject_id_fkey"
-            columns: ["owner_subject_id"]
-            isOneToOne: false
-            referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
         ]
@@ -4070,7 +3978,6 @@ export type Database = {
       users: {
         Row: {
           avatar_path: string | null
-          balance_credits: number
           balance_updated_at: string | null
           bio: string | null
           created_at: string
@@ -4078,16 +3985,12 @@ export type Database = {
           display_name: string
           email: string | null
           id: string
-          is_admin: boolean
-          lifetime_spent_credits: number
-          lifetime_topup_credits: number
           pending_deletion_at: string | null
           pending_deletion_sentiment: string | null
           updated_at: string
         }
         Insert: {
           avatar_path?: string | null
-          balance_credits?: number
           balance_updated_at?: string | null
           bio?: string | null
           created_at?: string
@@ -4095,16 +3998,12 @@ export type Database = {
           display_name?: string
           email?: string | null
           id: string
-          is_admin?: boolean
-          lifetime_spent_credits?: number
-          lifetime_topup_credits?: number
           pending_deletion_at?: string | null
           pending_deletion_sentiment?: string | null
           updated_at?: string
         }
         Update: {
           avatar_path?: string | null
-          balance_credits?: number
           balance_updated_at?: string | null
           bio?: string | null
           created_at?: string
@@ -4112,9 +4011,6 @@ export type Database = {
           display_name?: string
           email?: string | null
           id?: string
-          is_admin?: boolean
-          lifetime_spent_credits?: number
-          lifetime_topup_credits?: number
           pending_deletion_at?: string | null
           pending_deletion_sentiment?: string | null
           updated_at?: string
