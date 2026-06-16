@@ -18,6 +18,20 @@
 
 ---
 
+## 处置进度(2026-06-16,`chore/stale-model-audit`,6 commit 验证全绿)
+
+- ✅ **R1.1/R1.2/R1.3/R5 — edge bot-当-captain 编排面全退役**(`7852a687`,净 -1341 行,typecheck 0 + 623 vitest)。用户拍板「全退役 edge captain + start_crew」。删 start_crew/start_session/create_child_crew/recruit_temp_bot 工具 + captain persona 注入(bot-reply+builder) + crew-comms 唤醒 + crew-proposal/decide 端点 + 相关 prompt-name/错误码。
+  - **边界澄清(更正原审计)**:`captain_bot_id` 字段 + `create_crew_with_captain` RPC + `POST /v1/crews` **保留** —— 调研发现它们是**客户端主动建 crew 的活路径**(`system_generated` 分支建一个 captain bot 作 crew 的 captain 身份,iPad 客户端拿 `captainBotId` 显示 captain card / 接 composer),**非 bot-reply 残留**。原文「captain_bot_id 字段停用待 drop」更正为:**不能裸 drop**(破坏 iPad 建 crew)。若要让 crew 彻底不带 captain bot 身份,是更大的客户端联动改造 → 记 tech-debt 待定。
+- ✅ **R1.4** post_to_crew/request_permission bot-reply 死工具(`39a3948b`)。
+- ✅ **R2** 相机扫 /g/ 群码走 per-inviter(`cd31e9f6`,iOS build 绿)。
+- ✅ **R3** /v1/me/balance 僵尸端点(`9be5497d`)。
+- ✅ **G1** 盲评/竞技场榜单失效文案(`6c21722a`)· ✅ **G2** GroupCallTransport.swift 死文件(`15a1950b`)。
+- ✅ **R6**(session-world-model captain 渲染):随 `captain_bot_id` 保留而**保留**(它渲染 crew 的 captain 身份,不再是残留)。
+
+**剩余**:🔴 **R4**(4 处内联 prompt 迁 Langfuse —— 卡 seed,prompt-loader fail-loud 无 fallback,改了必须同步 seed 到 Langfuse,需部署/凭据)· 🟡 **Y7**(DB cleanup drop usage_events/cloud_machine_id/balance_credits —— 需确认时机 + ai_picks 去留)· 🟡 **Y1/Y2/Y3/Y4** · 🟢 **G4–G16** 注释/命名。
+
+---
+
 ## 🔴 活跃冲突 / 用户可见失效 / 会出错
 
 ### R1 · edge crew captain 编排子系统(整体按已作废的 edge-bot captain 心智实现)
