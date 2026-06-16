@@ -33,20 +33,6 @@ import { uuidv7 } from './ids';
 const SILENT_TOKEN = '[SILENT]';
 const HISTORY_LIMIT = 30;
 
-const LOOKBACK_INSTRUCTION = `以上是你和对方刚刚的聊天记录。
-
-现在系统让你回头看看：你或对方有没有传达过未经查证的信息？
-
-注意：
-- 你和对方都不一定是对的。不仅要查证自己说的话，也要看看对方说的是否正确。你们都有可能凭借不实印象信口开河。
-- 这是系统自动让你做的回顾，对方不会看到你这次的输出原文。
-- 你的输出只会被注入到「下一次回复对方时的你自己」的上下文里，让那时候的你知道这次查证的成果。
-- 如果有可以查证的工具/能力，可以使用。
-- 如果查证后发现没什么需要说明、更正的，或是没有查证必要的，直接输出 [SILENT] 一个 token 即可。
-- 否则，写一段短笔记（控制在 200 字以内）—— 给"下次的你"看，提醒「上一轮里这点其实不太对/需要补正」。
-
-直接开始你的笔记或者 [SILENT]，不要任何前言。`;
-
 export interface RunLookbackInput {
   env: Env;
   conversationId: string;
@@ -102,7 +88,7 @@ export async function runLookback(input: RunLookbackInput): Promise<void> {
       transcript,
       prior ? '\n## 我之前已经记下的查证笔记（避免重复）\n' + prior : '',
       '\n## 任务',
-      LOOKBACK_INSTRUCTION,
+      getPrompt('lookback-instruction'),
     ].filter(Boolean).join('\n');
 
     const { result: completion, route, routeTrace } = await withFallback(

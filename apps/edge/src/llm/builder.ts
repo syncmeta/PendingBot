@@ -165,12 +165,6 @@ export function computeCacheBreakpoint(historyMessageCount: number): number {
   return Math.max(0, anchor + stepSize - 1);
 }
 
-const BUBBLE_INSTRUCTIONS =
-  '## 输出模式：bubble\n你的回复以微信气泡风格切分。每段独立成义，使用 `\\n---\\n` 分隔每个气泡。短而自然，避免段落式长句。';
-
-const SINGLE_INSTRUCTIONS =
-  '## 输出模式：single\n你的回复是一段连续的文本。不要使用气泡分隔符。可以用换行做正常排版。';
-
 // LLM-side roles only ever see user/assistant/system. We map our wider DB
 // `role` enum down: bot → assistant, user/human → user, log filtered out.
 function toLlmRole(role: 'user' | 'bot' | 'human' | 'log'): 'user' | 'assistant' | null {
@@ -583,14 +577,18 @@ async function buildStablePersona(
   const botNoteSection = buildBotNoteSection(input.botNote);
   const chatMemoSection = buildChatMemoSection(input.chatMemo);
   // Bubble/single segmentation is a text-chat concept; voice (1:1 or group)
-  // has no message splitting, so the mode instruction drops out (filtered as
-  // '' below) for any non-text surface.
+  // has no message splitting, so the mode instruction drops out for any
+  // non-text surface. The instruction bodies live in Langfuse
+  // (output-mode-bubble / output-mode-single), loaded through the same
+  // prompt-loader cache as the platform prompt above.
   const modeInstr =
     surface !== 'text'
       ? ''
-      : input.bot.output_mode === 'bubble'
-        ? BUBBLE_INSTRUCTIONS
-        : SINGLE_INSTRUCTIONS;
+      : await loadPrompt(
+          env,
+          input.bot.output_mode === 'bubble' ? 'output-mode-bubble' : 'output-mode-single',
+          locale,
+        );
   return [
     platform, identitySection, botTzSection, modeInstr,
     selfSection, userModelSection, perceivedSelfSection,
