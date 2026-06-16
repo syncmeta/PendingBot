@@ -57,3 +57,39 @@ it('fastest ranks candidates by injected throughput, respects min_rating', async
   const out = await resolveFastest(cat, { count: 2, min_rating: 1200 }, async (slug) => tput[slug] ?? null);
   expect(out).toEqual(['a/fast-strong', 'a/slow-strong']); // weak 被 min_rating 滤掉
 });
+
+it('latest_in_series picks newest non-variant per line; segment-precise exclusion (no mini→minimax false positive)', () => {
+  const cat: OpenRouterModelOut[] = [
+    // anthropic 系列：4.8 > 4.7；-fast 变体走 chatRows 已剔
+    M({ slug: 'claude-opus-4-8', provider: 'anthropic', source: 'anthropic', model_provider: 'anthropic', release_date: '2026-05-27' }),
+    M({ slug: 'claude-opus-4-7', provider: 'anthropic', source: 'anthropic', model_provider: 'anthropic', release_date: '2026-04-16' }),
+    // openai：基础版与 -pro 同日 → tiebreak 取 slug 字典序小的基础版；-mini 段排除
+    M({ slug: 'gpt-5.5', provider: 'openai', source: 'openai', model_provider: 'openai', release_date: '2026-04-24' }),
+    M({ slug: 'gpt-5.5-pro', provider: 'openai', source: 'openai', model_provider: 'openai', release_date: '2026-04-24' }),
+    M({ slug: 'gpt-5.5-mini', provider: 'openai', source: 'openai', model_provider: 'openai', release_date: '2026-05-09' }),
+    // minimax：'minimax-m3' 分段 [minimax,m3] 不含 'mini' 段 → 不能被误杀
+    M({ slug: 'minimax/minimax-m3', provider: 'minimax', source: 'openrouter', release_date: '2026-05-31' }),
+    M({ slug: 'minimax/minimax-m2', provider: 'minimax', source: 'openrouter', release_date: '2026-02-12' }),
+    // deepseek：同日 pro vs flash → flash 段排除，选 pro
+    M({ slug: 'deepseek/deepseek-v4-pro', provider: 'deepseek', source: 'openrouter', release_date: '2026-04-24' }),
+    M({ slug: 'deepseek/deepseek-v4-flash', provider: 'deepseek', source: 'openrouter', release_date: '2026-04-24' }),
+    // 滚动别名：~ 前缀 / -latest 后缀都应排除
+    M({ slug: '~openai/gpt-latest', provider: 'openai', source: 'openai', model_provider: 'openai', release_date: '2026-06-01' }),
+  ];
+  const def: PresetDef = {
+    slug: 'top', resolver_kind: 'latest_in_series',
+    params: { lines: [
+      { author: 'anthropic', series: 'claude-opus' },
+      { author: 'openai', series: 'gpt-5' },
+      { author: 'minimax', series: 'minimax-m' },
+      { author: 'deepseek', series: 'deepseek-v' },
+    ] },
+    title: '', description: '',
+  };
+  expect(resolvePresetModelsFromCatalog(def, cat)).toEqual([
+    'claude-opus-4-8',
+    'gpt-5.5',
+    'minimax/minimax-m3',
+    'deepseek/deepseek-v4-pro',
+  ]);
+});

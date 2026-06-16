@@ -9,7 +9,7 @@ import {
 
 export type ResolverKind =
   | 'top_flagship' | 'chinese_flagship' | 'latest_per_vendor'
-  | 'fastest' | 'most_popular' | 'manual';
+  | 'fastest' | 'most_popular' | 'manual' | 'latest_in_series';
 
 export interface PresetParams {
   authors?: string[];
@@ -18,6 +18,9 @@ export interface PresetParams {
   count?: number;
   min_rating?: number;
   manual_models?: string[];
+  // latest_in_series 用：每条产品线一个 {author, series}，各取系列内最新的
+  // 非小号/非别名行。是"opus latest / gpt latest / kimi latest"的事实承载。
+  lines?: { author: string; series: string }[];
 }
 
 export interface PresetDef {
@@ -39,7 +42,9 @@ export interface ResolvedPreset {
 
 const PRESET_CACHE_PREFIX = 'model_preset:v1:';
 const PRESET_TTL_SEC = 6 * 60 * 60;
-const FASTEST_CANDIDATE_CAP = 40;
+// 候选上限。每个候选要单发一次 OpenRouter endpoints 请求拿吞吐，而 Workers 同时
+// 只允许 ~6 个 outbound 连接 —— cap 太大会把冷解析排成长队。15 足够覆盖第一梯队。
+const FASTEST_CANDIDATE_CAP = 15;
 
 // Aggregate cache for the GET /v1/model-presets list response (route owns the TTL).
 export const MODEL_PRESETS_LIST_CACHE_KEY = 'model_presets:list:v1';
@@ -90,6 +95,23 @@ function flagshipForAuthor(rows: OpenRouterModelOut[], strategy: PresetParams['f
   return [...pool].sort((a, b) => (b.blended_usd_per_million ?? -1) - (a.blended_usd_per_million ?? -1))[0];
 }
 
+// "系列内最新旗舰"排除规则：滚动别名 + 小号/特化变体。关键——按 - . / 分段做
+// 精确匹配,绝不裸子串(否则 'mini' 会误杀 'minimax')。新厂商若用别的小号命名,
+// 在此补段;这是已知的命名-漂移尾巴(见 docs/tech-debt.md)。pro/max/ultra 不在此
+// 列(它们多是旗舰档),plus 在(实测中端,如 qwen3.7-plus 对 qwen3.7-max)。
+const NON_FLAGSHIP_SEGMENTS = new Set([
+  'fast', 'flash', 'mini', 'nano', 'lite', 'air', 'turbo', 'distill',
+  'code', 'preview', 'exp', 'plus',
+  // 非 chat（与 chatRows 重叠，叠加无害）
+  'image', 'audio', 'tts', 'whisper', 'embedding', 'realtime', 'moderation',
+]);
+
+export function isNonFlagshipVariant(slug: string): boolean {
+  if (slug.startsWith('~')) return true; // OpenRouter 滚动别名 ~vendor/...
+  if (slug.endsWith('-latest')) return true; // 滚动别名 ...-latest
+  return slug.toLowerCase().split(/[-./]/).some((seg) => NON_FLAGSHIP_SEGMENTS.has(seg));
+}
+
 // 纯函数：从给定 catalog 算出 slug 列表（fastest 由 Task 1.2 覆盖）。
 export function resolvePresetModelsFromCatalog(def: PresetDef, catalog: OpenRouterModelOut[]): string[] {
   const rows = chatRows(catalog);
@@ -97,6 +119,27 @@ export function resolvePresetModelsFromCatalog(def: PresetDef, catalog: OpenRout
   switch (def.resolver_kind) {
     case 'manual':
       return p.manual_models ?? [];
+    case 'latest_in_series': {
+      // 每条产品线：限定 author + series 前缀，剔小号/特化/别名，取发布日最新。
+      // 同日 tiebreak 取 slug 字典序小者（基础版，如 gpt-5.5 胜过 gpt-5.5-pro）。
+      const out: string[] = [];
+      for (const ln of p.lines ?? []) {
+        const cands = rows.filter(
+          (m) =>
+            (m.provider === ln.author || providerMatchesAuthor(m, ln.author)) &&
+            m.slug.includes(ln.series) &&
+            !isNonFlagshipVariant(m.slug),
+        );
+        if (cands.length === 0) continue;
+        const newest = [...cands].sort(
+          (a, b) =>
+            (b.release_date ?? '').localeCompare(a.release_date ?? '') ||
+            a.slug.localeCompare(b.slug),
+        )[0];
+        out.push(newest.slug);
+      }
+      return out;
+    }
     case 'top_flagship':
     case 'chinese_flagship': {
       const authors = p.authors ?? [];
@@ -182,12 +225,27 @@ export async function resolveFastest(
     .map((s) => s.slug);
 }
 
+// Memoized catalog provider：首次 await 才 build（OpenRouter 目录 + LMArena），之后
+// 复用同一 promise。多个预设共享一份目录，把冷启动的 N× build 收敛成 1×；全 KV 命中
+// 时 provider 从不被调用，零额外开销。list 路由、turn 路径、cron 预热都传它。
+export type CatalogProvider = () => Promise<OpenRouterModelOut[]>;
+
+export function makeCatalogProvider(env: Env): CatalogProvider {
+  let p: Promise<OpenRouterModelOut[]> | null = null;
+  return () => (p ??= (async () => buildModelCatalog(await fetchLMArenaRows(env)))());
+}
+
 // 读 DB 定义 + 算 + KV 缓存。fastest 走 per-model endpoints 吞吐分支。
-export async function resolveModelPreset(env: Env, def: PresetDef): Promise<ResolvedPreset> {
+// catalogProvider 没传则自建（单预设解析路径）；批量解析（list/turn/cron）传共享 provider。
+export async function resolveModelPreset(
+  env: Env,
+  def: PresetDef,
+  catalogProvider?: CatalogProvider,
+): Promise<ResolvedPreset> {
   const cacheKey = PRESET_CACHE_PREFIX + def.slug;
   const cached = await env.MEMORY.get<ResolvedPreset>(cacheKey, 'json').catch(() => null);
   if (cached) return cached;
-  const catalog = await buildModelCatalog(await fetchLMArenaRows(env));
+  const catalog = await (catalogProvider ?? makeCatalogProvider(env))();
   const slugs = def.resolver_kind === 'fastest'
     ? await resolveFastest(catalog, def.params ?? {})
     : resolvePresetModelsFromCatalog(def, catalog);
