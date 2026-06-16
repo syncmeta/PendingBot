@@ -68,15 +68,16 @@ private struct FirstLaunchDisclosureGate: ViewModifier {
 }
 #endif
 
-/// 启动路由(T5.1 + T5.2)。三种顶层态:
-/// 1. **WelcomeView** — 没凭据 + 没 BYOK key → 用户先选路径(扫码登录 / BYOK)
-/// 2. **LoginView / LocalSetupView** — 用户已选路径,正在完成对应配置;
-///    完成的那一刻 `AppModel.mode` 变化让 RootView 自动切到 #3
-/// 3. **主界面** — Mac 走 `MacThreePaneView`,iPad/iOS 走 `IPadPlaceholderView`
+/// 启动路由(T5.1 + T5.2)。两种顶层态:
+/// 1. **WelcomeView → LoginView** — 没凭据时的 iOS 登录入口(扫码授权这台机)。
+///    完成的那一刻 `AppModel.credential` 变化让 `isConfigured` 翻 true,
+///    RootView 自动切到 #2。**macOS 上 `isConfigured` 恒 true → 这条永不渲染**
+///    (本地为家,本地 backend 常驻;登录是侧栏可选能力叠加)。
+/// 2. **主界面** — Mac 走 `MacThreePaneView`,iPad/iOS 走 `IPadShell`
 ///
-/// `flow` 由 RootView 本地持有,仅用于"我点了 WelcomeView 的哪个按钮"
+/// `flow` 由 RootView 本地持有,仅用于"我点没点 WelcomeView 的登录按钮"
 /// 这种 UI 瞬态;凭据本身的有无是真实数据源(AppModel)。一旦凭据写下来,
-/// flow 跳回 .welcome 不影响主界面 —— `model.isConfigured` 优先取胜。
+/// `model.isConfigured` 优先取胜,flow 无所谓。
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var crewStore: CrewStore
@@ -84,7 +85,6 @@ struct RootView: View {
     enum Flow {
         case welcome
         case login
-        case localSetup
     }
 
     /// 本地 UI 选择 — 仅在 `!model.isConfigured` 时生效。
@@ -98,22 +98,9 @@ struct RootView: View {
             } else {
                 switch flow {
                 case .welcome:
-                    WelcomeView { choice in
-                        switch choice {
-                        case .login: flow = .login
-                        case .localSetup: flow = .localSetup
-                        }
-                    }
+                    WelcomeView { flow = .login }
                 case .login:
                     LoginView()
-                case .localSetup:
-                    #if os(macOS)
-                    LocalSetupView(onCancel: { flow = .welcome })
-                    #else
-                    // iOS 不该走到这里(WelcomeView 上根本不显示 BYOK 按钮),
-                    // 兜底回 welcome。
-                    WelcomeView { _ in flow = .welcome }
-                    #endif
                 }
             }
         }

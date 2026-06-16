@@ -5,8 +5,6 @@ import { requireSubjectAuth } from '../lib/device-grants';
 import { getUserMemory } from '../lib/memory';
 import { serviceClient, userClient } from '../lib/supabase';
 import {
-  getBalance,
-  getConfigInt,
   redeemCode,
   RedemptionError,
 } from '../lib/billing';
@@ -162,31 +160,9 @@ meRoutes.get('/memory', async (c) => {
   return c.json(memory);
 });
 
-// GET /v1/me/balance — current credit balance + lifetime totals + the
-// configured min-threshold so the client can show the "needs topup" hint
-// without a second round-trip.
-meRoutes.get('/balance', async (c) => {
-  const userId = c.var.userId!;
-  const userJwt = c.var.userJwt!;
-  const supa = userClient(c.env, userJwt);
-  const [balance, threshold] = await Promise.all([
-    getBalance(supa, userId),
-    getConfigInt(supa, 'min_balance_threshold'),
-  ]);
-  return c.json({
-    balance_credits: balance?.balance_credits ?? 0,
-    lifetime_topup_credits: balance?.lifetime_topup_credits ?? 0,
-    lifetime_spent_credits: balance?.lifetime_spent_credits ?? 0,
-    min_threshold: threshold ?? 0,
-  });
-});
-
 // GET /v1/me/wallet/v2 — billing v2 wallet read.
 // Returns total balance + active packs + recent ledger entries. RLS is
 // the user's anon-key client, so they only see their own packs.
-//
-// Pre-cutover (#190) this endpoint runs alongside /v1/me/balance (v1).
-// Once v2 is the source of truth, /balance gets redirected here.
 meRoutes.get('/wallet/v2', async (c) => {
   const userId = c.var.userId!;
   const userJwt = c.var.userJwt!;

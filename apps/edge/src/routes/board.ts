@@ -1,7 +1,7 @@
 // apps/edge/src/routes/board.ts
 //
-// Board 管理台根路由。挂 requireSession → requireAdmin(isBoardAdmin),
-// 之下挂载各内容域资源子路由。P1 只有 preset-bots;P2–P4 在此 .route(...) 续挂。
+// Board 管理台根路由。挂 requireCfAccess → requireBoardAdmin(Cloudflare Access
+// 唯一身份源),之下挂载各内容域资源子路由。P1 只有 preset-bots;P2–P4 在此 .route(...) 续挂。
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { requireCfAccess, requireBoardAdmin } from '../lib/cf-access';

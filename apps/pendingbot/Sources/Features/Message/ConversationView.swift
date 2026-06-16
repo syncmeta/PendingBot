@@ -976,7 +976,7 @@ struct ConversationView: View {
     }
 
     #if os(iOS)
-    /// The composer + its banners (freeze / continue / @-mention picker),
+    /// The composer + its banners (continue-request / @-mention picker),
     /// mounted as a UIKit inputAccessoryView so it tracks the keyboard
     /// frame-by-frame. Extracted from `body` so the large initializer doesn't
     /// blow the type-checker's budget inside body's expression tree. See
@@ -1029,7 +1029,7 @@ struct ConversationView: View {
     /// inputAccessoryView (ChatComposerAccessory, iOS-only) so it rides the
     /// keyboard; macOS has no such surface, so the cross-platform
     /// `ComposerView` is rendered directly in a bottom safe-area inset
-    /// (see `body`). The iOS accessory also stacks the freeze / continue /
+    /// (see `body`). The iOS accessory also stacks the continue-request /
     /// @-mention banners above the input row — those are NOT yet ported to
     /// the macOS host (tracked as tech-debt), so the bare input row is shown.
     private var macComposer: some View {
@@ -2307,9 +2307,9 @@ struct ConversationView: View {
 
     // Group-only surfaces — groupSenderFor + mentionPrefix /
     // mentionCandidates / insertMention + decideContinue — live in
-    // ConversationView+Group.swift. The composer + its banners (freeze /
-    // continue / @-mention picker) render inside the inputAccessoryView; see
-    // ChatComposerAccessory.swift.
+    // ConversationView+Group.swift. The composer + its banners
+    // (continue-request / @-mention picker) render inside the
+    // inputAccessoryView; see ChatComposerAccessory.swift.
 
     // Recall + delete + URLCache scrubbing live in ConversationView+Recall.swift.
 

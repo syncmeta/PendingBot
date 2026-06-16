@@ -14,11 +14,10 @@ import SwiftUI
 //     ChatComposerAccessory.swift since it renders inside the composer's
 //     inputAccessoryView.)
 //
-//   • Group billing freeze + continue-request vote — decideContinue posts
-//     the worker's "bot wants to keep going" allow/deny in user_bot/group
-//     flows. (The freeze + continue banner views live in
-//     ChatComposerAccessory.swift; they read values threaded in from
-//     ConversationView.body.)
+//   • Continue-request vote — decideContinue posts the worker's "bot
+//     wants to keep going" allow/deny in user_bot/group flows. (The
+//     continue-request banner view lives in ChatComposerAccessory.swift;
+//     it reads values threaded in from ConversationView.body.)
 //
 // Everything stays inside ConversationView via extension; body in the
 // main file calls these as plain methods/computed vars.

@@ -83,6 +83,10 @@ struct MessageTabView: View {
     @State private var addBotPrefill: String = ""
     @State private var pendingScannedFriendHandle: String?
     @State private var pendingScannedBotToken: String?
+    /// Group invite token from a scanned /g/<token> QR. Stashed here and
+    /// consumed on scanner dismiss → routed into the same groupJoinPrefill /
+    /// joiningGroup → GroupJoinView flow the universal-link side uses.
+    @State private var pendingScannedGroupToken: String?
     // Path-based nav for compact: keyed to .toolbar(.hidden, for: .tabBar)
     // so the bottom tab bar slides out alongside the push transition (rather
     // than snapping back in *after* the back transition finishes, which is
@@ -218,6 +222,13 @@ struct MessageTabView: View {
                 pendingScannedBotToken = nil
                 addBotPrefill = token
                 addingBot = true
+            } else if let token = pendingScannedGroupToken {
+                // Scanned a /g/<token> group invite — route into the same
+                // resolve-preview → redeem (records invited_by) flow the
+                // universal-link side uses, not the legacy shared-code join.
+                pendingScannedGroupToken = nil
+                groupJoinPrefill = token
+                joiningGroup = true
             }
         }) {
             ScanQRSheet(
@@ -233,6 +244,12 @@ struct MessageTabView: View {
                     // Scanned a bot invite QR — open the add-bot preview
                     // with the invite token pre-loaded.
                     pendingScannedBotToken = token
+                    scanning = false
+                },
+                onScannedGroupToken: { token in
+                    // Scanned a group invite QR (/g/<token>) — open the
+                    // join-group preview with the invite token pre-loaded.
+                    pendingScannedGroupToken = token
                     scanning = false
                 }
             )
@@ -1345,6 +1362,12 @@ private struct ScanQRSheet: View {
     /// (`/b/<token>`). Caller dismisses the scanner and presents
     /// AddBotSheet with the token pre-loaded, landing on the bot preview.
     var onScannedBotToken: (String) -> Void = { _ in }
+    /// Called with the invite token when the scanned QR is a group invite link
+    /// (`/g/<token>`, decisions.md D2). Caller dismisses the scanner and
+    /// presents GroupJoinView with the token pre-loaded, so scanning lands on
+    /// the same resolve-preview → redeem (records invited_by) flow as a
+    /// universal-link click — *not* the legacy shared-code join.
+    var onScannedGroupToken: (String) -> Void = { _ in }
 
     @State private var scannedValue: String?
     @State private var submitting = false
@@ -1469,6 +1492,14 @@ private struct ScanQRSheet: View {
         // so check it first and hand the token up for the add-bot preview.
         if BotShareLink.isBotShareLink(trimmed) {
             onScannedBotToken(BotShareLink.token(fromScanned: trimmed))
+            return
+        }
+        // Group invite link (/g/<token>, decisions.md D2). Path-disjoint from
+        // /b/ and /c/, so check it before the PendingBotQR contact path —
+        // otherwise the bare-token group fallback (tryJoinGroup, legacy
+        // shared-code join that doesn't record invited_by) would swallow it.
+        if GroupShareLink.isGroupShareLink(trimmed) {
+            onScannedGroupToken(GroupShareLink.token(fromScanned: trimmed))
             return
         }
         #if os(iOS)

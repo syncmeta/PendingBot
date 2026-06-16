@@ -35,7 +35,7 @@ describe('usageFromCompletion', () => {
     expect(usage.outputTokens).toBe(108);
   });
 
-  it('reads WorldRouter cost from usage.cost', () => {
+  it('reads provider-reported cost from usage.cost', () => {
     const usage = usageFromCompletion(
       {
         completion_tokens: 77,

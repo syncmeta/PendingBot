@@ -2,21 +2,18 @@ import Foundation
 import Supabase
 
 // ─────────────────────────────────────────────────────────────────────
-// MARK: - Cross-platform chat data source (T0.1 macOS 消息 tab)
+// MARK: - Cross-platform chat data source
 //
 // A minimal, gate-free read/send surface for the conversation list + 1:1 text
-// chat, used by the macOS PendingBot 消息 tab (`Sources/Mac/Views/MacMessagesView.swift`).
+// chat. The same `MessageTabView` / `ConversationView` are shared across all
+// three platforms (iOS / iPad / macOS), and this data source is the cache +
+// query layer those shared views call into.
 //
-// iOS's equivalent logic is inlined inside `MessageTabView` / `ConversationView`
-// (a verified but UIKit-coupled View), so it can't be reused as-is; rather than
-// refactor the iOS 范本 (regression risk while it's the proven baseline), this
-// is a fresh minimal service that mirrors the same Supabase queries, reuses the
-// verified `ChatStream` SSE for sending, and now mirrors iOS's cache-first
-// `LocalDatabase` editing too: `cachedConversations` / `cachedMessages` paint
-// last-known state instantly, and `listConversations` / `loadMessages` write the
-// authoritative set back into the SAME shared GRDB cache iOS uses (no second
-// cache, no Mac-only table). Unifying the *editing* itself into one shared store
-// both platforms drive is a later refactor (needs an iOS device regression).
+// It mirrors the Supabase queries, reuses the verified `ChatStream` SSE for
+// sending, and is cache-first on top of `LocalDatabase`: `cachedConversations`
+// / `cachedMessages` paint last-known state instantly, and `listConversations`
+// / `loadMessages` write the authoritative set back into the shared GRDB cache
+// (single cache, no per-platform table).
 //
 // 时间戳规避: the queries intentionally DON'T `select` any timestamptz column
 // (updated_at / created_at). `order(...)` still sorts on them server-side; the

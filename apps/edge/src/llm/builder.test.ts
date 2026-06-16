@@ -108,39 +108,6 @@ describe('buildMessages bot self-tz', () => {
   });
 });
 
-describe('buildMessages crew-captain persona', () => {
-  it('injects the persona into the stable system prefix when crewCaptainPersona is set', async () => {
-    const messages = await buildMessages(env, {
-      bot: { id: 'bot-1', output_mode: 'single' },
-      botMemory,
-      skills: [],
-      botNote: null,
-      chatMemo: null,
-      recentContext: [],
-      newMessage: '开始干活',
-      crewCaptainPersona: '## 你是这个 crew 的机长（captain）\n负责编排。',
-    });
-
-    const sys = systemText(messages[0]?.content);
-    expect(sys).toContain('你是这个 crew 的机长');
-  });
-
-  it('omits the persona section when crewCaptainPersona is null/undefined', async () => {
-    const messages = await buildMessages(env, {
-      bot: { id: 'bot-1', output_mode: 'single' },
-      botMemory,
-      skills: [],
-      botNote: null,
-      chatMemo: null,
-      recentContext: [],
-      newMessage: 'hi',
-      crewCaptainPersona: null,
-    });
-
-    expect(systemText(messages[0]?.content)).not.toContain('crew 的机长');
-  });
-});
-
 describe('buildMessages cache prefix', () => {
   // The whole point of the cache restructure: the system message holds only
   // the stable persona (cacheable) and carries the cache_control breakpoint;

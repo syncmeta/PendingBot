@@ -15,10 +15,10 @@ import { wallet } from '../billing/wallet-client';
 // models so ceil() rounding bites less.
 const USD_TO_PND = 2700;
 
-// Default markup if billing_config.markup is missing. WorldRouter is ~70%
-// of OpenRouter list; Apple IAP takes 30%; we want margin for ops + free
-// tier signup grant. 2.5× was the seed value and stays as the fallback
-// so a wiped billing_config never silently zeroes out billing.
+// Default markup if billing_config.markup is missing. Provider list cost is
+// the base; Apple IAP takes 30%; we want margin for ops + free tier signup
+// grant. 2.5× was the seed value and stays as the fallback so a wiped
+// billing_config never silently zeroes out billing.
 const DEFAULT_MARKUP = 2.5;
 
 // Worker-isolate cache for the markup value. The billing_config table is
@@ -80,34 +80,10 @@ export function usdToPnd(
 // Balance lookup
 // ---------------------------------------------------------------------------
 
-export interface BalanceInfo {
-  balance_credits: number;
-  lifetime_topup_credits: number;
-  lifetime_spent_credits: number;
-}
-
-/**
- * Read the user's current balance + lifetime totals. Uses whichever
- * client is passed (user-scoped JWT for RLS-checked reads from /me, or
- * service-role for internal pre-call gating). Returns null if the user
- * row isn't visible / doesn't exist.
- */
-export async function getBalance(
-  supa: SupabaseClient,
-  userId: string,
-): Promise<BalanceInfo | null> {
-  const { data, error } = await supa
-    .from('users')
-    .select('balance_credits, lifetime_topup_credits, lifetime_spent_credits')
-    .eq('id', userId)
-    .maybeSingle();
-  if (error || !data) return null;
-  return {
-    balance_credits: Number(data.balance_credits) || 0,
-    lifetime_topup_credits: Number(data.lifetime_topup_credits) || 0,
-    lifetime_spent_credits: Number(data.lifetime_spent_credits) || 0,
-  };
-}
+// getBalance(读 users.balance_credits / lifetime_* + /v1/me/balance 端点)已删:
+// billing-v1 僵尸路径 —— users.balance_credits 在 WalletDO/Polar 切换后已无写入方,
+// iOS 也不再调 /v1/me/balance。主体余额统一走 WalletDO(见 getBalanceGateState 下方
+// + billing/wallet-client.ts:wallet.gate)。列本身的 DROP 留给后续迁移。
 
 // getSubjectBalance(读 subject_wallets)已删(#226):subject_wallets 表退役,
 // 主体余额统一走 WalletDO(Polar 缓存,见 billing/wallet-client.ts:wallet.gate)。

@@ -1,23 +1,21 @@
 import SwiftUI
 import CoreImage
 
-/// Group-side counterpart to `MyQRBusinessCard`. Renders the group's
-/// active QR-handle as a deep-green QR with the brand mark in the
-/// centre, plus the group title below.
+/// Group-side counterpart to `MyQRBusinessCard`. Renders an inviter-scoped
+/// group invite token as a deep-green QR with the brand mark in the centre,
+/// plus the group title below.
 ///
-/// Owns its own load + refresh lifecycle, mirroring the personal QR
-/// card: on first appear it reads the active `qr` handle from
-/// `group_join_handles` (auto-minted at group creation by migration
-/// 0066, so non-admin members always have something to show); admin
-/// gets a refresh pill that mints a new value via /v1/groups/:id/handle
-/// (the previous QR stops scanning the moment the row is replaced).
+/// Owns its own load + refresh lifecycle, mirroring the personal QR card:
+/// on first appear it mints (or reuses) the caller's per-inviter invite link
+/// via POST /v1/groups/:id/invite-links (decisions.md D2 — any member can
+/// mint, so this no longer gates on admin). The "重新生成" pill mints a fresh
+/// token (the previous link stops working once revoked/replaced).
 ///
-/// Scanned payload format matches the user QRs:
-///   https://bot.pendingname.com/c/<handle>
-/// `PendingBotQR.token(fromScanned:)` strips the prefix; the in-app
-/// scanner then tries /v1/groups/join first, falling back to
-/// /v1/friend-requests — so both kinds of handles work through the
-/// same scan path.
+/// Scanned payload is the per-inviter group link:
+///   https://bot.pendingname.com/g/<token>
+/// produced by `GroupShareLink.url(forToken:)`. The scanner resolves it via
+/// `GroupShareLink.isGroupShareLink` → the group-join flow, recording the
+/// inviter as invited_by on redeem.
 struct GroupQRCard: View {
     let conversationId: String
     let groupTitle: String

@@ -137,15 +137,6 @@ export interface BuildMessagesInput {
   // format those from the offset embedded in each ISO string and ignore
   // clientTz for them — keeps display correct even if the user travelled.
   clientTz?: string;
-  // Crew-captain persona body — set ONLY when this conversation is an active
-  // crew (temporary_group_meta.temporary_kind='crew', status active) AND the
-  // replying bot is that crew's captain_bot_id. The caller (bot-reply) does
-  // the cheap best-effort lookup; on a miss it leaves this undefined and no
-  // persona is injected (so non-captain bots / non-crew convs are unaffected).
-  // When set it rides in the stable persona prefix (it's a per-turn-stable
-  // fact, like the bot's name), telling the captain it's THIS crew's 机长 and
-  // should orchestrate via start_session.
-  crewCaptainPersona?: string | null;
   nowIso?: string; // override for tests
   // Anthropic prompt caching: where to drop the cache_control breakpoint.
   // The plan/02 strategy is "every N=4 rounds move the breakpoint to the
@@ -324,17 +315,6 @@ function buildOpenRelayInquiriesSection(
     '',
     ...items,
   ].join('\n');
-}
-
-// Crew-captain persona — only present when the caller resolved this bot as the
-// captain of the active crew this conversation belongs to. The body is the
-// `crew-captain` prompt loaded by the caller; we just gate on presence. Empty
-// / unset → section dropped (the common case: 1v1, non-crew group, or a
-// non-captain bot in a crew).
-function buildCrewCaptainSection(persona: string | null | undefined): string {
-  const body = persona?.trim();
-  if (!body) return '';
-  return body;
 }
 
 function buildSkillsSection(skills: BuildMessagesInput['skills']): string {
@@ -561,7 +541,6 @@ export type BuildSystemPromptInput = Pick<
   | 'socialGraph'
   | 'pendingInquiryAnswers'
   | 'openRelayInquiries'
-  | 'crewCaptainPersona'
 >;
 
 // Which surface the prompt is for. Each maps to its own platform prompt:
@@ -597,10 +576,6 @@ async function buildStablePersona(
   ]);
   const identitySection = buildIdentitySection(input.bot.display_name);
   const botTzSection = buildBotTzSection(input.bot.tz);
-  // Crew-captain persona (only set by the caller when this bot IS the captain
-  // of the active crew this conv belongs to). Placed high, right after the
-  // platform/identity sections, so the orchestrator framing is prominent.
-  const crewCaptainSection = buildCrewCaptainSection(input.crewCaptainPersona);
   // Theory-of-mind context (1v1 only; null/omitted elsewhere → '').
   const userModelSection = buildUserModelSection(input.botViewOfUser);       // ②
   const perceivedSelfSection = buildPerceivedSelfSection(input.userViewOfBot); // ④
@@ -617,7 +592,7 @@ async function buildStablePersona(
         ? BUBBLE_INSTRUCTIONS
         : SINGLE_INSTRUCTIONS;
   return [
-    platform, identitySection, botTzSection, crewCaptainSection, modeInstr,
+    platform, identitySection, botTzSection, modeInstr,
     selfSection, userModelSection, perceivedSelfSection,
     socialGraphSkillSection,
     skillsSection, botNoteSection, chatMemoSection,

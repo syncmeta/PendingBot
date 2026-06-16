@@ -1,9 +1,9 @@
 // Heuristic token counter — char-based, no tokenizer dependency. We're
 // not trying to match any single provider's BPE exactly; we want a
 // *sanity-check* number so the audit panel can show a provider-vs-local
-// ratio per turn. A budget router that pads billed tokens (e.g.
-// WorldRouter reporting 1.4× the realistic count) shows up as a row
-// where reported / est_input lands well above 1.0.
+// ratio per turn. A provider that pads billed tokens (e.g. reporting 1.4×
+// the realistic count) shows up as a row where reported / est_input lands
+// well above 1.0.
 //
 // Calibration: cl100k_base packs English at ~3.5–4 chars/token and CJK
 // at ~1.4–1.6 chars/token (often 1 token per Han char with some pair

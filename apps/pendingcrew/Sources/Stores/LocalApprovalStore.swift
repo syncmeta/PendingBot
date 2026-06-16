@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
 /// 本地待审批 / 待决策 store（spec 2026-06-08-pendingcrew-ask-approval-design §4）。
 ///
@@ -16,9 +17,50 @@ final class LocalApprovalStore: @unchecked Sendable {
 
     private let directory: URL
 
+    /// 进程内变更信号（去轮询）。本进程每次 `save` 后发一个 `crewId` —— UI
+    /// (`SessionApprovalCardsView` / `CrewCenterView`) 订阅 `approvalChanges(crewId:)`
+    /// 把 1.5s/2s 轮询换成「写即刷新」，对齐 `LocalWhiteboardStore.changes`。
+    /// app 侧人类 answer/decide 走 `.shared` 实例,立即推。
+    ///
+    /// **跨进程写**（helper `--mcp-serve`/`--mcp-hook` 子进程 raise pending）走另一个
+    /// 进程的实例、不经此 subject —— 由 `approvalChanges` 合流的目录监听补齐：
+    /// approvals JSON 与白板 JSON **同目录**(`LocalWhiteboardStore.defaultDirectory`),
+    /// 已被 `LocalWhiteboardStore.startWatching()` 的 `DispatchSource` 一并监听,
+    /// 所以 helper 跨进程 raise 也即时推到 UI,无需轮询。
+    ///
+    /// `PassthroughSubject` 引用类型作 `let` 持有,不破坏 `@unchecked Sendable`
+    /// （实例其余皆 `let`）；低频单写,`.send` 在 app MainActor + helper 各自调,
+    /// 无跨线程竞态热点（与 `LocalWhiteboardStore.changes` 同模式）。
+    let changes = PassthroughSubject<String, Never>()
+
     init(directory: URL? = nil) {
         self.directory = directory ?? LocalWhiteboardStore.defaultDirectory
         try? FileManager.default.createDirectory(at: self.directory, withIntermediateDirectories: true)
+    }
+
+    // MARK: - 变更流（去轮询）
+
+    /// 本 crew 的待审批/待决策变更流（去 1.5s/2s 轮询）。两个上游合流成 `Void` tick:
+    /// 1. 本进程 `changes` 按 crewId 过滤 —— app 侧 answer/decide 即推。
+    /// 2. **跨进程**目录监听 `LocalWhiteboardStore.shared.directoryChanged` —— helper
+    ///    子进程 raise pending(写 `<dir>/<crewId>.approvals.json`)落在同一被监听目录,
+    ///    收到即让调用方重拉本 crew(廉价 JSON 读)。目录事件不带 crewId,故不过滤。
+    ///
+    /// 首次订阅 `startWatching()` 起目录监听(幂等;白板订阅可能已起过)。订阅 `Task`
+    /// 取消时 `onTermination` 退订两条 Combine(目录监听是 app 级共享,留着不停)。
+    /// 与 `LocalBackend.whiteboardChanges` 同结构(nonisolated;由 MainActor `.task` 调)。
+    func approvalChanges(crewId: String) -> AsyncStream<Void> {
+        LocalWhiteboardStore.shared.startWatching()
+        let inProcess = changes
+        let crossProcess = LocalWhiteboardStore.shared.directoryChanged
+        return AsyncStream { continuation in
+            let c1 = inProcess
+                .filter { $0 == crewId }
+                .sink { _ in continuation.yield(()) }
+            let c2 = crossProcess
+                .sink { _ in continuation.yield(()) }
+            continuation.onTermination = { _ in c1.cancel(); c2.cancel() }
+        }
     }
 
     // MARK: - Read
@@ -64,6 +106,9 @@ final class LocalApprovalStore: @unchecked Sendable {
     private func save(crewId: String, rows: [ApprovalItem]) {
         guard let data = try? JSONEncoder().encode(rows) else { return }
         try? data.write(to: fileURL(crewId), options: .atomic)
+        // 单一写入漏斗 —— raise / answer / decide 都经此,发一个变更信号(去轮询)。
+        // 订阅方(`approvalChanges`)按 crewId 过滤。
+        changes.send(crewId)
     }
     private func update(crewId: String, id: String, _ mut: (inout ApprovalItem) -> Void) {
         var rows = load(crewId)

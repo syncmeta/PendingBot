@@ -15,7 +15,7 @@ enum LocalDataReset {
         KeychainStore.delete(account: KeychainAccount.deviceGrant)
         // 2. 与 PendingBot 共享的登录状态(按用户选择)
         if clearSharedLogin { FamilyCredentialStore.clear() }
-        // 3. UserDefaults 整域(apiBaseURL / localModeSelected / 首启免责声明标志 / deviceId / appearance 等)
+        // 3. UserDefaults 整域(apiBaseURL / 首启免责声明标志 / deviceId / appearance 等)
         if let bundleId = Bundle.main.bundleIdentifier {
             UserDefaults.standard.removePersistentDomain(forName: bundleId)
         }

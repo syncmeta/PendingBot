@@ -2,9 +2,10 @@
 //
 // All LLM traffic flows through the Cloudflare AI Gateway, which logs
 // every request with a computed `cost`. Some providers (OpenRouter)
-// report their own exact cost in the response; others (WorldRouter,
-// OpenAI Realtime) don't. For the latter, billing reads the gateway's
-// figure here instead of computing anything locally.
+// report their own exact cost in the response; others (providers that
+// don't self-report cost, e.g. OpenAI Realtime) don't. For the latter,
+// billing reads the gateway's figure here instead of computing anything
+// locally.
 //
 // Each LLM request of a chat turn is stamped with the same `turn_id` in
 // the cf-aig-metadata header (see router.ts aigMetadataFrom). This

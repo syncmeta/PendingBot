@@ -50,7 +50,6 @@
 		366C2519D09D1C6CDFEA2562 /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13BCD0D49AA6CCB35BBB0C31 /* QRScannerView.swift */; };
 		38F776ACCEA9D9B3EC7FF2D4 /* ChatStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0DF072DCFB0786FA83D70F3 /* ChatStream.swift */; };
 		3CC92F5C7673D6F8336720CA /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 82DB1C86825A36B3C6B2555B /* Assets.xcassets */; };
-		3E88530EBC57B170C2AD9812 /* GroupCallTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F57C354DC67393099BE1D8E /* GroupCallTransport.swift */; };
 		3ED70C506F80A7FA5031A5D9 /* CallSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0952FBAFFA7B0819B8B70672 /* CallSession.swift */; };
 		3F6C2CE574F1B2E1D65677E9 /* AppleSignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FEFDBE4DFE6AB93D06D2015 /* AppleSignIn.swift */; };
 		409E4DFA9A2FE40E7CFBE1CB /* FeatureSurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1A7B2A2C127FA6D633617EC /* FeatureSurface.swift */; };
@@ -254,7 +253,6 @@
 		6A5442547F63F7CF41B54C46 /* BotInviteAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotInviteAPI.swift; sourceTree = "<group>"; };
 		6D2B2B8D8BD1DE4D364525C4 /* GroupWalletView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWalletView.swift; sourceTree = "<group>"; };
 		6EFB784DC12029E53EB12A5C /* RealtimeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeManager.swift; sourceTree = "<group>"; };
-		6F57C354DC67393099BE1D8E /* GroupCallTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupCallTransport.swift; sourceTree = "<group>"; };
 		70EAEDCC6E5ABCC5261A43E3 /* MyQRBusinessCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyQRBusinessCard.swift; sourceTree = "<group>"; };
 		7114A9AF0BBDF033ADE65E67 /* ConversationView+Realtime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConversationView+Realtime.swift"; sourceTree = "<group>"; };
 		72CE91B5FAEED2B40DF223A1 /* EnvelopeAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvelopeAPI.swift; sourceTree = "<group>"; };
@@ -552,7 +550,6 @@
 				E5C1F147E16D388E3F2607D8 /* CallTones.swift */,
 				213E09F2D1646151DC7BE1C6 /* CallView.swift */,
 				8C54E13C9AEE93EC21726216 /* GroupCallSession.swift */,
-				6F57C354DC67393099BE1D8E /* GroupCallTransport.swift */,
 				C49D5C2273CF903796CDB250 /* GroupCallView.swift */,
 				E01A9B714DA8D239306A6740 /* OpenAICallTransport.swift */,
 			);
@@ -850,7 +847,6 @@
 				7FEECCD4D899454D43447F5C /* GoogleSignIn.swift in Sources */,
 				1431C4C1F06DB04B39E9C1FF /* GroupAvatar.swift in Sources */,
 				096B537A54400F2BC07A0775 /* GroupCallSession.swift in Sources */,
-				3E88530EBC57B170C2AD9812 /* GroupCallTransport.swift in Sources */,
 				BF1A43D6762B6F732360A79D /* GroupCallView.swift in Sources */,
 				FC8F6706A2705C7F8913F790 /* GroupInviteAPI.swift in Sources */,
 				B652E5852C42C437A6849CA3 /* GroupJoinView.swift in Sources */,

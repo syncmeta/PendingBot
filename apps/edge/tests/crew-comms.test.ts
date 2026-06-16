@@ -37,14 +37,6 @@ vi.mock('@pendingbot/identity', () => ({
   },
 }));
 
-// crew-comms now imports dispatchGroupTurn (to wake the captain on a crew
-// message). Mock it so the test doesn't transitively pull the bot-reply +
-// prompt-loader chain, and so we can assert the captain wake without an LLM turn.
-const dispatchGroupTurnMock = vi.fn().mockResolvedValue({ status: 'dispatched', bubblesPerBot: [] });
-vi.mock('../src/lib/group-dispatch', () => ({
-  dispatchGroupTurn: dispatchGroupTurnMock,
-}));
-
 installFakeSupabaseMock();
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -61,9 +53,8 @@ function appFor(db: FakeDb) {
   const app = new Hono<AppBindings>();
   app.route('/v1/crews', crewMessagesRoutes);
   app.route('/v1/sessions', sessionInboxRoutes);
-  // crew message POST uses c.executionCtx.waitUntil (captain wake). Provide a
-  // fake executionCtx so it's present in tests; the dispatch promise's creation
-  // (and thus the mock call) is synchronous regardless of whether waitUntil runs.
+  // Provide a fake executionCtx so app.request has the 4th arg some Hono
+  // helpers expect; crew-comms no longer schedules background work here.
   const executionCtx = {
     waitUntil: () => {},
     passThroughOnException: () => {},
@@ -86,10 +77,9 @@ const CAPTAIN_MEMBER_ID = '77777777-7777-4777-8777-000000000001';
 const ANNOUNCEMENT_ID = '88888888-8888-4888-8888-000000000002';
 
 // J (spec §9): the crew chat IS the conversation's `messages`. POST inserts a
-// user message + wakes the captain via dispatchGroupTurn (mocked).
+// user message; the local runner picks it up via its session mailbox (edge is
+// the postman — no edge-bot captain wake, retired with the bot-captain model).
 describe('POST /v1/crews/:crewId/messages', () => {
-  beforeEach(() => dispatchGroupTurnMock.mockClear());
-
   function seedCrew(db: FakeDb) {
     db.rows.temporary_group_meta = [
       { conversation_id: CREW_ID, responsible_subject_id: SUBJECT, captain_bot_id: CAPTAIN_BOT_ID },
@@ -97,7 +87,7 @@ describe('POST /v1/crews/:crewId/messages', () => {
     db.rpcs = { can_view_temporary_group: () => ({ data: true, error: null }) };
   }
 
-  it('inserts a user message into the crew conversation and wakes the captain', async () => {
+  it('inserts a user message into the crew conversation', async () => {
     const db = makeFakeDb();
     seedCrew(db);
     const res = await appFor(db).request(`/v1/crews/${CREW_ID}/messages`, {
@@ -114,12 +104,6 @@ describe('POST /v1/crews/:crewId/messages', () => {
       role: 'user',
       content: 'hello crew',
       user_id: USER,
-    });
-    expect(dispatchGroupTurnMock).toHaveBeenCalledTimes(1);
-    expect(dispatchGroupTurnMock.mock.calls[0][0]).toMatchObject({
-      conversationId: CREW_ID,
-      wakeBotIds: [CAPTAIN_BOT_ID],
-      reason: 'mention',
     });
   });
 
@@ -176,7 +160,6 @@ describe('POST /v1/crews/:crewId/messages', () => {
 // 定向信箱投一条(enqueue_session_mailbox RPC)。@broadcast / 无 mention 维持
 // 现状(只进 messages 广播,不写信箱)。
 describe('POST /v1/crews/:crewId/messages — mention → session mailbox', () => {
-  beforeEach(() => dispatchGroupTurnMock.mockClear());
 
   // Capture every enqueue_session_mailbox RPC call so we can assert which
   // sessions got a directed mailbox row (the fake stubs the RPC; the real
@@ -420,8 +403,6 @@ describe('GET /v1/crews/:crewId/messages — lastCursor (接合 v2 block 3)', ()
 });
 
 describe('POST /v1/crews/:crewId/messages — mac_relay 上行标注 (接合 v2 block 3)', () => {
-  beforeEach(() => dispatchGroupTurnMock.mockClear());
-
   function seed(db: FakeDb) {
     db.rows.temporary_group_meta = [
       { conversation_id: CREW_ID, responsible_subject_id: SUBJECT, captain_bot_id: CAPTAIN_BOT_ID },
@@ -429,7 +410,7 @@ describe('POST /v1/crews/:crewId/messages — mac_relay 上行标注 (接合 v2 
     db.rpcs = { can_view_temporary_group: () => ({ data: true, error: null }) };
   }
 
-  it('device-grant uplink with senderLabel/localSessionId carries origin mac_relay and still wakes captain', async () => {
+  it('device-grant uplink with senderLabel/localSessionId carries origin mac_relay', async () => {
     const db = makeFakeDb();
     seed(db);
     await seedDeviceGrant(db, SUBJECT);
@@ -446,8 +427,6 @@ describe('POST /v1/crews/:crewId/messages — mac_relay 上行标注 (接合 v2 
       content: 'relayed from mac',
       attachments: { origin: 'mac_relay', senderLabel: '机长', localSessionId: 'local-sess-1' },
     });
-    // relay 上行也必须能唤醒 captain(bot 要能回 relay 来的消息)。
-    expect(dispatchGroupTurnMock).toHaveBeenCalledTimes(1);
   });
 
   it('JWT callers cannot set the mac_relay marker (senderLabel ignored)', async () => {
@@ -466,7 +445,6 @@ describe('POST /v1/crews/:crewId/messages — mac_relay 上行标注 (接合 v2 
 
 // #242 遥控 v1:iOS 发结构化 task_request,Mac relay 拉取后本地起 session。
 describe('POST /v1/crews/:crewId/messages — message_kind=task_request (#242)', () => {
-  beforeEach(() => dispatchGroupTurnMock.mockClear());
 
   function seed(db: FakeDb) {
     db.rows.temporary_group_meta = [
@@ -533,7 +511,6 @@ describe('POST /v1/crews/:crewId/messages — message_kind=task_request (#242)',
 // 统一透出 entry.in_reply_to。session 帖的 in_reply_to(log_payload.in_reply_to)
 // 也走同一字段透出。
 describe('POST /v1/crews/:crewId/messages — reply_to 可见引用 (#377)', () => {
-  beforeEach(() => dispatchGroupTurnMock.mockClear());
 
   const REPLIED = '11111111-2222-4333-8444-555555555555';
 

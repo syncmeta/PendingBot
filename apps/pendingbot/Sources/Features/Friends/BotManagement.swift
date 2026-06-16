@@ -148,7 +148,7 @@ struct CreateBotSheet: View {
         } header: {
             Text("模型预设")
         } footer: {
-            Text("选一组或多组模型;对话时每轮从中随机挑一个,盲评后能在「我 → 模型竞技场榜单」看到你的偏好。")
+            Text("选一组或多组模型;对话时每轮从中随机挑一个,名字藏起来显示为 PendingModel,你可以猜它是哪个,猜了或放弃后揭晓。")
         }
     }
 
@@ -1451,7 +1451,7 @@ struct BotConfigView: View {
         } header: {
             Text("模型")
         } footer: {
-            Text("选一个模型就是固定用它;选两个及以上就是竞技场——每轮随机挑一个,对回答盲评后能在「我 → 模型竞技场榜单」看到你的偏好。")
+            Text("选一个模型就是固定用它;选两个及以上就每轮随机挑一个,名字藏起来显示为 PendingModel,你可以猜它是哪个,猜了或放弃后揭晓。")
         }
     }
 
@@ -2358,11 +2358,6 @@ private struct DomainListEditor: View {
 
 // MARK: - 分享机器人 / share page (link + QR)
 
-/// Pushed from ManageBotSheet for a public bot. Surfaces the three ways
-/// to add it — the typed slug (@handle), the universal link, and a QR —
-/// all keyed on the same `bots.slug`. Presentational only: the slug is
-/// the persisted one, so edits in ManageBotSheet must be saved first
-/// before they show up here (the caller passes the saved value).
 /// Invite-link share page (decisions.md D1). Bots are invite-only: this
 /// mints (or reuses) a reusable, revocable invite *link* for the bot via
 /// POST /v1/bots/:id/invite-links and shows its QR + URL. The link is

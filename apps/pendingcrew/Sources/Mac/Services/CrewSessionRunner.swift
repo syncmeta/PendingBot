@@ -431,7 +431,7 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         role == .captain ? "Captain" : kind.displayName + " · " + String(sessionId.prefix(6))
     }
 
-    /// 后端实现（claude = AgentTerminalSession；codex = app-server，待实现）。
+    /// 后端实现（claude = AgentTerminalSession；codex = app-server，按 kind 分流）。
     let backend: any SessionBackend
 
     /// 类型转换访问：仅当后端是终端（claude）时非 nil，供 `AgentTerminalView` 使用。
