@@ -410,66 +410,6 @@ export const SUBMIT_INQUIRY_ANSWER_TOOL: ChatCompletionTool = {
   },
 };
 
-// `post_to_crew` — spec v2 §9.3. Session (or, in this bot-side variant,
-// a captain/master bot) drops a key-milestone note onto the crew
-// whiteboard. Only meaningful inside a crew conversation; outside
-// crews the handler returns an error envelope.
-//
-// Category guidance (the LLM-facing world-model lives in
-// apps/pendingcrew/Resources/Prompts/session-world-model.{zh,en}.md §8,
-// canonical body in Langfuse — there is no apps/edge/prompts copy):
-//   - 'progress'   — ongoing-status update
-//   - 'question'   — blocking question for the crew
-//   - 'milestone'  — completed-step / hand-off
-export const POST_TO_CREW_TOOL: ChatCompletionTool = {
-  type: 'function',
-  function: {
-    name: 'post_to_crew',
-    parameters: {
-      type: 'object',
-      properties: {
-        content: {
-          type: 'string',
-          description:
-            '群聊白板上的一条关键节点消息 —— 只发"我开始了 / 我完成了 / 我卡住了 / 重要发现",别发每一步 IO 日志。1–4000 字。',
-        },
-        category: {
-          type: 'string',
-          enum: ['progress', 'question', 'milestone'],
-          description:
-            '可选分类: progress (进度更新) / question (需要别人回答的问题) / milestone (节点完成 / 交接)。',
-        },
-        mentions: {
-          type: 'array',
-          description:
-            '可选 @ 列表 —— 要定向通知谁。@session 会把这条直接投进那个 session 的信箱(让它下一轮看到);@human 仅作元数据(人在群聊里自己看,不进信箱)。不填 = 广播给全 crew。',
-          items: {
-            type: 'object',
-            properties: {
-              kind: {
-                type: 'string',
-                enum: ['session', 'human'],
-                description: 'session = 定向某个编码 session;human = @ 某个人(纯元数据)。',
-              },
-              target_id: {
-                type: 'string',
-                description: 'kind=session 时必填:目标 session 的 id(uuid)。',
-              },
-            },
-            required: ['kind'],
-          },
-        },
-        reply_to: {
-          type: 'string',
-          description:
-            '可选:你在回复哪条群聊消息的 id(uuid)。给了之后会自动 @ 那条消息的原发送者 —— 原帖是某 session 发的就投进它信箱,是人发的就把人标成收件人。',
-        },
-      },
-      required: ['content'],
-    },
-  },
-};
-
 // `start_crew` — bot proposes creating a new crew (spec v2 §6.4). The
 // tool does NOT actually create the crew; it drops a special log message
 // (`log_kind='crew_proposal'`) into the current conversation that
@@ -597,45 +537,6 @@ export const RECRUIT_TEMP_BOT_TOOL: ChatCompletionTool = {
         },
       },
       required: ['name'],
-    },
-  },
-};
-
-// `request_permission` — spec v2 §10. Agent (or captain bot acting in
-// the crew context) asks for human approval before performing a
-// high-risk action. Files a permission_requests row + writes a special
-// card (message_kind='permission_request') onto the crew whiteboard so
-// owner/admin humans can decide via the iOS/Mac card UI.
-//
-// In v1 this tool does NOT actually pause the agent (T4.5 peer_device
-// communication is what wires that round-trip). The tool just files the
-// card; the prompt-side note tells the model not to execute the
-// underlying action until status flips to 'approved' in a later turn.
-export const REQUEST_PERMISSION_TOOL: ChatCompletionTool = {
-  type: 'function',
-  function: {
-    name: 'request_permission',
-    parameters: {
-      type: 'object',
-      properties: {
-        action: {
-          type: 'string',
-          description:
-            '要请示批准的"高危操作"简短描述,1–400 字。会显示在卡片标题。例如「rm -rf node_modules」「向生产数据库写入」「调外部 API 付费」。',
-        },
-        details: {
-          type: 'object',
-          description:
-            '可选的结构化详情(任意 jsonb 对象)。卡片会把它折叠后展示给批准人 —— 命令、路径、影响范围、为何要做。',
-          additionalProperties: true,
-        },
-        risk_level: {
-          type: 'string',
-          enum: ['low', 'medium', 'high'],
-          description: '风险等级,默认 medium。卡片可据此染色 / 排序。',
-        },
-      },
-      required: ['action'],
     },
   },
 };

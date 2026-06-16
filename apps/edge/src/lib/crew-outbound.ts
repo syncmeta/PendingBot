@@ -1,8 +1,7 @@
 // Phase 2 — outbound @ + reply_to resolution for session/bot posts to a crew.
 //
-// Both the HTTP endpoint (POST /v1/sessions/:sessionId/post-to-crew) and the
-// in-process bot tool (lib/bot-reply/tools/post-to-crew.ts) need the same
-// logic: translate the spec-v2 `mentions` shape + an optional `reply_to`
+// The HTTP endpoint (POST /v1/sessions/:sessionId/post-to-crew) uses this to
+// translate the spec-v2 `mentions` shape + an optional `reply_to`
 // message id into the explicit recipient lists the
 // create_crew_announcement[_from_runner]_for_subject RPCs understand
 // (p_recipient_session_ids / p_recipient_member_ids), plus the set of session

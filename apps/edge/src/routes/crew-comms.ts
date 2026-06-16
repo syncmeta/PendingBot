@@ -969,8 +969,7 @@ const SessionRequestPermissionBody = z.object({
 //
 // The server-side reception for spec v2 §9.3's `post_to_crew` tool when
 // the agent (Claude Code / Codex) emits it inside a PendingCrew runner.
-// The runner translates the tool-call into this HTTP POST (the bot-side
-// in-process variant lives in lib/bot-reply/tools/post-to-crew.ts).
+// The runner translates the tool-call into this HTTP POST.
 //
 // Auth: device-grant only — the runner host owns the grant and is the
 // authoritative source for "this session emitted this tool call".
