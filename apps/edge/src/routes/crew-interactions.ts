@@ -24,31 +24,8 @@ import { z } from 'zod';
 import { requireSubjectAuth } from '../lib/device-grants';
 import { serviceClient, type SupabaseClient } from '../lib/supabase';
 import { jsonError } from '../lib/http-error';
+import type { Json } from '../db/schema';
 import type { AppBindings } from '../types';
-
-// schema.ts 还没为本迁移 regen（create_interaction_request / answer_interaction_request
-// + permission_requests.reply_text/request_kind）。沿用 T4.3 的做法：新 RPC + 新列
-// 走 untyped surface，主 session 跑 db push + types:db 后再收口。
-type UntypedRpcClient = {
-  rpc: (name: string, args?: Record<string, unknown>) => Promise<{ data: unknown; error: { message: string } | null }>;
-};
-function untypedRpc(client: SupabaseClient): UntypedRpcClient {
-  return client as unknown as UntypedRpcClient;
-}
-
-// Same rationale as untypedRpc: the list query reads `request_kind`, a column
-// added by this migration but not yet regenerated into schema.ts (deferred to
-// avoid pulling sibling branches' un-merged prod columns into this branch).
-// Query it through an untyped `.from` surface — runtime-safe (the column exists
-// on prod), just invisible to the stale generated types.
-type UntypedFromBuilder = {
-  select: (cols: string) => UntypedFromBuilder;
-  eq: (col: string, val: unknown) => UntypedFromBuilder;
-  order: (col: string, opts: { ascending: boolean }) => Promise<{ data: unknown; error: { message: string } | null }>;
-};
-function untypedFrom(client: SupabaseClient, table: string): UntypedFromBuilder {
-  return (client as unknown as { from: (t: string) => UntypedFromBuilder }).from(table);
-}
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isUuid = (s: string): boolean => UUID_RE.test(s);
@@ -73,10 +50,10 @@ crewInteractionRoutes.post('/:sessionId/interactions', requireSubjectAuth(['runn
   const session = await loadOwnedSession(c, svc, sessionId);
   if ('errorResponse' in session) return session.errorResponse;
 
-  const { data, error } = await untypedRpc(svc).rpc('create_interaction_request', {
+  const { data, error } = await svc.rpc('create_interaction_request', {
     p_session_id: sessionId,
     p_question: parsed.data.question,
-    p_payload: parsed.data.payload ?? {},
+    p_payload: (parsed.data.payload ?? {}) as Json,
   });
   if (error) return jsonError(c, 500, 'database_error', { detail: error.message });
   return c.json({ requestId: typeof data === 'string' ? data : null });
@@ -91,14 +68,15 @@ crewInteractionRoutes.get('/:sessionId/interactions', requireSubjectAuth([]), as
   const session = await loadOwnedSession(c, svc, sessionId);
   if ('errorResponse' in session) return session.errorResponse;
 
-  const { data, error } = await untypedFrom(svc, 'permission_requests')
+  const { data, error } = await svc
+    .from('permission_requests')
     .select('id, requested_action, detail, status, requested_at, request_kind')
     .eq('crew_session_id', sessionId)
     .eq('request_kind', 'question')
     .eq('status', 'pending')
     .order('requested_at', { ascending: true });
   if (error) return jsonError(c, 500, 'database_error', { detail: error.message });
-  const rows = (data ?? []) as Array<{ id: string; requested_action: string; detail: unknown; requested_at: string }>;
+  const rows = data ?? [];
   return c.json({ items: rows.map((r) => ({ id: r.id, question: r.requested_action, detail: r.detail, requestedAt: r.requested_at })) });
 });
 
@@ -139,7 +117,7 @@ crewInteractionAnswerRoutes.post('/:reqId/answer', requireSubjectAuth([]), async
   if (!callerUserId) return jsonError(c, 401, 'unauthorized');
 
   const svc = serviceClient(c.env);
-  const { error } = await untypedRpc(svc).rpc('answer_interaction_request', {
+  const { error } = await svc.rpc('answer_interaction_request', {
     p_id: reqId,
     p_reply_text: parsed.data.reply,
     p_caller_user_id: callerUserId,
