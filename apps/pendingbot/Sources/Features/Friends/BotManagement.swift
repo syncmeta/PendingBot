@@ -2358,11 +2358,6 @@ private struct DomainListEditor: View {
 
 // MARK: - 分享机器人 / share page (link + QR)
 
-/// Pushed from ManageBotSheet for a public bot. Surfaces the three ways
-/// to add it — the typed slug (@handle), the universal link, and a QR —
-/// all keyed on the same `bots.slug`. Presentational only: the slug is
-/// the persisted one, so edits in ManageBotSheet must be saved first
-/// before they show up here (the caller passes the saved value).
 /// Invite-link share page (decisions.md D1). Bots are invite-only: this
 /// mints (or reuses) a reusable, revocable invite *link* for the bot via
 /// POST /v1/bots/:id/invite-links and shows its QR + URL. The link is
