@@ -54,11 +54,12 @@ final class CallSession {
     /// the screen. CallView's speaker button toggles it.
     var isSpeakerOn: Bool = false
 
-    /// Running PND spend for this call, fed by `voice_cost` frames the
-    /// edge meter publishes after every model turn. 0 until the first
-    /// turn settles — the view hides the figure while it's still 0 so a
-    /// stale "0" doesn't sit next to the timer.
-    var cumulativePnd: Int = 0
+    /// Running spend for this call in **pnc_micros**, fed by `voice_cost`
+    /// frames the edge meter publishes after every model turn. Same unit and
+    /// amount (no markup) as the WalletDO debit, so it reconciles with the
+    /// wallet drain. 0 until the first turn settles — the view hides the
+    /// figure while it's still 0 so a stale "0" doesn't sit next to the timer.
+    var cumulativePncMicros: Int = 0
 
     /// Best-effort live transport diagnostics shown behind the gauge
     /// button on the call screen.
@@ -83,7 +84,7 @@ final class CallSession {
     /// engine for nothing.
     private var ringback: RingbackPlayer?
 
-    /// Conv-hub subscription that feeds `cumulativePnd` from server-side
+    /// Conv-hub subscription that feeds `cumulativePncMicros` from server-side
     /// per-turn voice_cost events. Held so terminate() can drop it.
     private var costSubscription: ConvSubscriptionToken?
 
@@ -177,7 +178,7 @@ final class CallSession {
 
         // Subscribe to the conv hub for `voice_cost` previews. The edge
         // meter publishes one of these after every turn's settleTurn,
-        // and the UI reads `cumulativePnd` off this observer.
+        // and the UI reads `cumulativePncMicros` off this observer.
         await subscribeToCost()
 
         // User-selected transport. "auto" (default) walks the chain
@@ -391,7 +392,7 @@ final class CallSession {
     }
 
     /// Subscribe to the conversation hub so `voice_cost` frames feed
-    /// `cumulativePnd`. We only need the cost slot — leave the other
+    /// `cumulativePncMicros`. We only need the cost slot — leave the other
     /// callbacks as the no-op defaults so this subscriber doesn't get
     /// woken up for every message in the conv.
     private func subscribeToCost() async {
@@ -404,8 +405,8 @@ final class CallSession {
                     // The server sends a monotonically growing cumulative
                     // for the session; clamp regressions out so a stale
                     // late-arriving frame can't make the number drop.
-                    if cost.cumulativePnd > self.cumulativePnd {
-                        self.cumulativePnd = cost.cumulativePnd
+                    if cost.cumulativePncMicros > self.cumulativePncMicros {
+                        self.cumulativePncMicros = cost.cumulativePncMicros
                     }
                 }
             },

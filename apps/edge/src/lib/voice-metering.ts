@@ -5,7 +5,8 @@ import {
   enqueueAudit,
   type ResolvedRoute,
 } from '../llm/router';
-import { getConfigInt, getMarkup, usdToPnd } from './billing';
+import { getConfigInt } from './billing';
+import { usdToPncMicros } from '../billing/pnc';
 import { publishToHub } from './realtime-publish';
 
 export const DEFAULT_REALTIMEKIT_AUDIO_PARTICIPANT_USD_PER_MINUTE = 0.0005;
@@ -148,29 +149,34 @@ export async function broadcastVoiceCostPreview(input: {
   sessionId: string;
   modelToCall: string | undefined;
   usage: VoiceTurnUsage;
-  cumulativePnd: number;
+  cumulativePncMicros: number;
   logPrefix: string;
   atMs?: number;
 }): Promise<number> {
   const usd = computeVoiceCost(input.modelToCall, input.usage);
-  if (usd == null) return input.cumulativePnd;
+  if (usd == null) return input.cumulativePncMicros;
 
   try {
-    const markup = await getMarkup(input.supa);
-    const delta = usdToPnd(usd, markup);
-    if (delta <= 0) return input.cumulativePnd;
-    const cumulativePnd = input.cumulativePnd + delta;
+    // Preview must match the actual debit exactly: pnc_micros via
+    // usdToPncMicros (the same converter router.ts / realtime-meter.ts use
+    // to debit the WalletDO) and NO runtime markup — markup only applies on
+    // the Polar pack sell side, never to live vendor cost. This keeps the
+    // running figure the user sees in-call identical in unit and amount to
+    // what their wallet drains, so the hang-up reconciliation matches.
+    const delta = usdToPncMicros(usd);
+    if (delta <= 0) return input.cumulativePncMicros;
+    const cumulativePncMicros = input.cumulativePncMicros + delta;
     await publishToHub(input.env, `conv:${input.conversationId}`, {
       type: 'voice_cost',
       conversation_id: input.conversationId,
       session_id: input.sessionId,
-      delta_pnd: delta,
-      cumulative_pnd: cumulativePnd,
+      delta_pnc_micros: delta,
+      cumulative_pnc_micros: cumulativePncMicros,
       at_ms: input.atMs ?? Date.now(),
     });
-    return cumulativePnd;
+    return cumulativePncMicros;
   } catch (err) {
     console.warn(`${input.logPrefix} broadcast cost failed`, err);
-    return input.cumulativePnd;
+    return input.cumulativePncMicros;
   }
 }

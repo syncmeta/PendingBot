@@ -68,10 +68,15 @@ export interface VoiceCallEvent {
 }
 
 // Per-turn voice call cost preview. Emitted by RealtimeMeterDO (1:1) and
-// RoomVoiceDO (group) right after settleTurn computes a turn's PND, so
-// the in-call UI can show running spend without waiting on the audit
-// queue / billing_debit round-trip. NOT a debit — the actual billing
-// still flows through AUDIT_QUEUE; this is purely a display number.
+// RoomVoiceDO (group) right after settleTurn computes a turn's cost, so
+// the in-call UI can show running spend without waiting on the WalletDO
+// debit round-trip. NOT a debit — the actual debit flows through
+// wallet.debit; this is purely a display mirror.
+//
+// Unit is **pnc_micros**: the exact same unit AND amount (no runtime
+// markup) the WalletDO debits via usdToPncMicros, so the in-call figure
+// reconciles with the wallet drain on hang-up. (Markup only applies on the
+// Polar pack sell side, never to live vendor cost.)
 //
 // Routing: both 1:1 and group calls publish on `conv:<conversationId>`.
 // For a 1:1 conv only the caller is a member, so the figure stays
@@ -81,10 +86,11 @@ export interface VoiceCostEvent {
   type: 'voice_cost';
   conversation_id: string;
   session_id: string;
-  // Per-turn delta and the running session total. cumulative_pnd is
-  // authoritative — clients can ignore delta and just render the total.
-  delta_pnd: number;
-  cumulative_pnd: number;
+  // Per-turn delta and the running session total, in pnc_micros.
+  // cumulative_pnc_micros is authoritative — clients can ignore delta and
+  // just render the total.
+  delta_pnc_micros: number;
+  cumulative_pnc_micros: number;
   // ms epoch at which this turn settled (server clock).
   at_ms: number;
 }

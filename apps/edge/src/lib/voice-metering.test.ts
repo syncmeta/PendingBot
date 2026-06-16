@@ -1,5 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { _resetMarkupCache } from './billing';
+import { describe, expect, it, vi } from 'vitest';
 import {
   broadcastVoiceCostPreview,
   computeRealtimeKitParticipantCostUsd,
@@ -11,10 +10,6 @@ import {
 } from './voice-metering';
 
 describe('voice metering helpers', () => {
-  beforeEach(() => {
-    _resetMarkupCache();
-  });
-
   it('splits cached realtime usage out of full-rate text and audio buckets', () => {
     expect(
       splitRealtimeUsage({
@@ -186,7 +181,7 @@ describe('voice metering helpers', () => {
     );
   });
 
-  it('broadcasts a live PND cost preview for known realtime models', async () => {
+  it('broadcasts a live pnc_micros cost preview matching the WalletDO debit (no markup)', async () => {
     const fetch = vi.fn(async () => ({
       ok: true,
       json: async () => ({ delivered: 1 }),
@@ -197,14 +192,13 @@ describe('voice metering helpers', () => {
         get: vi.fn(() => ({ fetch })),
       },
     };
-    const supa = {
-      from: vi.fn(() => ({
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        maybeSingle: vi.fn(async () => ({ data: { value: 2 }, error: null })),
-      })),
-    };
+    // supa is no longer touched for cost (markup lookup is gone); kept as a
+    // bare stub to satisfy the signature.
+    const supa = { from: vi.fn() };
 
+    // $0.6 vendor cost (1M input tokens × $0.6/1M). usdToPncMicros(0.6) =
+    // round(0.6 × 27 × 1_000_000) = 16_200_000 pnc_micros — the SAME value
+    // realtime-meter.ts debits to the WalletDO, no platform markup.
     const cumulative = await broadcastVoiceCostPreview({
       env: env as never,
       supa: supa as never,
@@ -218,20 +212,20 @@ describe('voice metering helpers', () => {
         audioOutputTokens: 0,
         cacheReadTokens: 0,
       },
-      cumulativePnd: 10,
+      cumulativePncMicros: 10,
       logPrefix: '[test]',
       atMs: 12345,
     });
 
-    expect(cumulative).toBe(3250);
+    expect(cumulative).toBe(16_200_010);
     expect(fetch).toHaveBeenCalledWith('https://hub.internal/publish', {
       method: 'POST',
       body: JSON.stringify({
         type: 'voice_cost',
         conversation_id: 'conv_123',
         session_id: 'sess_123',
-        delta_pnd: 3240,
-        cumulative_pnd: 3250,
+        delta_pnc_micros: 16_200_000,
+        cumulative_pnc_micros: 16_200_010,
         at_ms: 12345,
       }),
     });
@@ -261,7 +255,7 @@ describe('voice metering helpers', () => {
           audioOutputTokens: 0,
           cacheReadTokens: 0,
         },
-        cumulativePnd: 10,
+        cumulativePncMicros: 10,
         logPrefix: '[test]',
       }),
     ).resolves.toBe(10);
@@ -278,13 +272,7 @@ describe('voice metering helpers', () => {
         }),
       },
     };
-    const supa = {
-      from: vi.fn(() => ({
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        maybeSingle: vi.fn(async () => ({ data: { value: 2 }, error: null })),
-      })),
-    };
+    const supa = { from: vi.fn() };
 
     await expect(
       broadcastVoiceCostPreview({
@@ -300,7 +288,7 @@ describe('voice metering helpers', () => {
           audioOutputTokens: 0,
           cacheReadTokens: 0,
         },
-        cumulativePnd: 10,
+        cumulativePncMicros: 10,
         logPrefix: '[test]',
       }),
     ).resolves.toBe(10);

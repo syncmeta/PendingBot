@@ -45,15 +45,17 @@ struct VoiceCallFrame: Sendable {
 }
 
 /// "voice_cost" frames — emitted by RealtimeMeterDO (1:1) and
-/// RoomVoiceDO (group) after each settleTurn. Drives the live PND
-/// display in CallView / GroupCallView. `cumulativePnd` is the
-/// authoritative running total for the session; `deltaPnd` is the
-/// turn's increment (kept so callers can blink it if they want).
+/// RoomVoiceDO (group) after each settleTurn. Drives the live spend
+/// display in CallView / GroupCallView. Values are **pnc_micros**: the
+/// exact unit (and amount — no markup) the WalletDO debits, so the live
+/// figure reconciles with the wallet drain on hang-up. `cumulativePncMicros`
+/// is the authoritative running total for the session; `deltaPncMicros` is
+/// the turn's increment (kept so callers can blink it if they want).
 struct VoiceCostFrame: Sendable {
     let conversationId: String
     let sessionId: String
-    let deltaPnd: Int
-    let cumulativePnd: Int
+    let deltaPncMicros: Int
+    let cumulativePncMicros: Int
     let atMs: Double
 }
 
@@ -197,15 +199,15 @@ final class RealtimeSocket {
         case "voice_cost":
             guard let convId = raw.conversation_id,
                   let sid = raw.session_id,
-                  let delta = raw.delta_pnd,
-                  let cum = raw.cumulative_pnd,
+                  let delta = raw.delta_pnc_micros,
+                  let cum = raw.cumulative_pnc_micros,
                   let at = raw.at_ms
             else { return }
             onFrame(.voiceCost(VoiceCostFrame(
                 conversationId: convId,
                 sessionId: sid,
-                deltaPnd: delta,
-                cumulativePnd: cum,
+                deltaPncMicros: delta,
+                cumulativePncMicros: cum,
                 atMs: at,
             )))
         default:
@@ -228,10 +230,10 @@ final class RealtimeSocket {
         let participants: [RawParticipant]?
         let pending: [RawParticipant]?
         let diagnostics: GroupMediaDiagnostics?
-        // voice-cost fields
+        // voice-cost fields (pnc_micros — same unit/amount as the WalletDO debit)
         let session_id: String?
-        let delta_pnd: Int?
-        let cumulative_pnd: Int?
+        let delta_pnc_micros: Int?
+        let cumulative_pnc_micros: Int?
         let at_ms: Double?
     }
 

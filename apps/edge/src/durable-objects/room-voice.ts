@@ -225,7 +225,7 @@ export class RoomVoiceDO {
   private presenceAuditTimer: ReturnType<typeof setTimeout> | null = null;
   private humanEverJoined = false;
   private closed = false;
-  private cumulativePnd = 0;
+  private cumulativePncMicros = 0;
   private latestDiagnostics: MediaDiagnostics | null = null;
   private accumulatedHumanMs = new Map<string, number>();
   private accumulatedBotMs = new Map<string, number>();
@@ -1100,14 +1100,14 @@ export class RoomVoiceDO {
   ): Promise<void> {
     const ctx = this.ctx;
     if (!ctx) return;
-    this.cumulativePnd = await broadcastVoiceCostPreview({
+    this.cumulativePncMicros = await broadcastVoiceCostPreview({
       env: this.env,
       supa,
       conversationId: ctx.conversationId,
       sessionId: ctx.roomId,
       modelToCall,
       usage,
-      cumulativePnd: this.cumulativePnd,
+      cumulativePncMicros: this.cumulativePncMicros,
       logPrefix: '[room-voice]',
     });
   }
