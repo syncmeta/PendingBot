@@ -90,8 +90,11 @@ private struct CrewDAGNode: View {
     }
 
     /// 会话行样式(对齐 PendingBot `ConversationListRow`):36pt 头像 + 无衬线-16
-    /// 标题 + 最近一条消息 + 位置标签 + 相对时间。三角槽**仅在有子时占位**——
+    /// 标题 + 最近一条消息 + 相对时间。三角槽**仅在有子时占位**——
     /// 无子节点头像直接贴左,免左侧空白。
+    ///
+    /// **不再贴每行「本机/云端」location tag**(#369:侧栏已按 machine 分组,crew
+    /// 视觉嵌在所属 machine Section 下,行内派生标签既冗余又把派生列当事实源)。
     private var row: some View {
         HStack(alignment: .top, spacing: 8) {
             if !expandableChildren.isEmpty {
@@ -127,14 +130,13 @@ private struct CrewDAGNode: View {
                         .foregroundStyle(Theme.Palette.inkMuted)
                         .lineLimit(1)
                         .truncationMode(.tail)
-                    Spacer(minLength: 6)
                     if crew.parentCrewIds.count > 1 {
+                        Spacer(minLength: 6)
                         Image(systemName: "arrow.triangle.branch")
                             .font(Theme.Fonts.caption2)
                             .foregroundStyle(Theme.Palette.inkMuted)
                             .help("此 crew 挂在多个父 crew 之下,在每个父下都会出现")
                     }
-                    locationTag
                 }
             }
         }
@@ -146,17 +148,6 @@ private struct CrewDAGNode: View {
         )
         .contentShape(Rectangle())
         .onTapGesture { crewStore.selectCrew(crew.id) }
-    }
-
-    /// machine 位置标签(本机/云端),对齐 PendingBot 行右侧的"群/公/私"name pill。
-    private var locationTag: some View {
-        Text(crew.runtimeLocationKind?.shortLabel ?? crew.runtimeLocation)
-            .font(Theme.Fonts.rounded(size: 10, weight: .semibold))
-            .foregroundStyle(Theme.Palette.inkMuted)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(Theme.Palette.surfaceMuted))
-            .lineLimit(1)
     }
 
     /// 最近一条白板消息(本地 store);空则"还没有消息"。
