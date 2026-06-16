@@ -3945,7 +3945,6 @@ export type Database = {
       users: {
         Row: {
           avatar_path: string | null
-          balance_updated_at: string | null
           bio: string | null
           created_at: string
           custom_fields: Json
@@ -3958,7 +3957,6 @@ export type Database = {
         }
         Insert: {
           avatar_path?: string | null
-          balance_updated_at?: string | null
           bio?: string | null
           created_at?: string
           custom_fields?: Json
@@ -3971,7 +3969,6 @@ export type Database = {
         }
         Update: {
           avatar_path?: string | null
-          balance_updated_at?: string | null
           bio?: string | null
           created_at?: string
           custom_fields?: Json
