@@ -21,7 +21,7 @@ import {
   isNativeBackedOpenRouterSlug,
   looksNonChat,
 } from '../routes/models';
-import { resolveModelPreset, type PresetDef } from '../lib/model-presets';
+import { resolveModelPreset, makeCatalogProvider, type PresetDef } from '../lib/model-presets';
 import { serviceClient } from '../lib/supabase';
 
 export interface RandomModelConfig {
@@ -202,7 +202,9 @@ async function resolvePresetsToSlugs(env: Env, presetSlugs: string[]): Promise<s
     .eq('enabled', true);
   if (error) console.warn('[random-model] model_presets read failed', error.message);
   const defs = (data ?? []) as unknown as PresetDef[];
-  const resolved = await Promise.all(defs.map((d) => resolveModelPreset(env, d)));
+  // 同一 turn 内多个预设共享一份目录（冷缓存时只 build 一次而非 N 次）。
+  const provider = makeCatalogProvider(env);
+  const resolved = await Promise.all(defs.map((d) => resolveModelPreset(env, d, provider)));
   return [...new Set(resolved.flatMap((r) => r.models.map((m) => m.slug)))];
 }
 
