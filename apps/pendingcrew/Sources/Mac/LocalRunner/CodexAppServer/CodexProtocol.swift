@@ -5,13 +5,16 @@ import Foundation
 /// CodexRPCMessage encoding) keep this Foundation-only + unit-testable.
 enum CodexProtocol {
     static func initializeParams(clientName: String, version: String) -> [String: Any] {
+        // Shapes reconciled against `codex app-server generate-json-schema` (codex-cli 0.137.0):
+        // ClientInfo = {name, title?, version}; InitializeCapabilities = {experimentalApi,
+        // requestAttestation, optOutNotificationMethods?}. `requestAttestation` is non-optional in
+        // the schema (we don't want upstream attestation → false). `item/agentMessage/delta` is a
+        // real ServerNotification method, so opting out of it actually suppresses the delta stream
+        // (v1 renders on `item/completed` only).
         ["clientInfo": ["name": clientName, "title": clientName, "version": version],
          "capabilities": [
              "experimentalApi": true,
-             // v1 renders on item/completed only — opt out of streaming deltas to cut wire chatter.
-             // Exact method-name list is version-locked; reconcile against a real
-             // `codex app-server generate-json-schema` capture (real-machine tail). Opting out of a
-             // non-existent method is a harmless no-op, so this documented name is safe to ship now.
+             "requestAttestation": false,
              "optOutNotificationMethods": ["item/agentMessage/delta"],
          ]]
     }

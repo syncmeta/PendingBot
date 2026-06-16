@@ -40,7 +40,16 @@
   3. 一轮 turn 端到端渲染、审批 roundtrip、`developerInstructions` append-vs-replace 语义、计费 tick（`usedPercent`↑ + API dashboard 无账单）——全未真机验。
 - **行为分歧（有意 fail-safe）**: codex 审批 provider（`CrewSessionRunner.makeApprovalProvider`）long-poll 设了 ~30min 上限→超时判 `deny`，而 claude 的 `McpPermissionHook` 生产是**无限等人**。这是防 codex turn 永久挂死的安全侧选择，但和 claude 不一致；若要 codex 也无限等需改掉这个上限。
 - **未做（v1 明确 defer，按需再加）**: 逐字 delta/token 流式（已 opt-out，只渲染 `item/completed`）、`turn/steer` 回合中插入、`resume`/`fork`、额度展示 UI、peer rollout JSONL 跨读、codex hooks 系统。
-- **状态**: 待真机验证（代码可用、单测全绿、未合 main）。plan 末尾 Task 6.3 有真机验证清单。
+- **状态**: 🟡 协议层已对真 schema 核完（2026-06-16，`chore/ledger-reconcile`，codex-cli **0.137.0** 真机 `generate-json-schema` dump）。**inbound `CodexThreadItem` 字段名逐一比对完 + 修了 4 个真 bug**：① `userMessage` 取 `content:[UserInput]` 的 text（原读顶层 `text`→空气泡）；② `reasoning.summary`/`content` 是 `[String]` 数组（原当 String→推理渲染空）；③ `fileChange` 从 `changes:[FileUpdateChange].path` 派生 summary（原读不存在的 `summary`）；④ tool call 用 `server`+`tool`/`namespace`+`tool`/`tool`（原读不存在的 `name`→显示成 "mcpToolCall"）。测试改用真 schema fixture（原断言虚构字段=假绿，正是上次教训）。**已对真 schema 核为正确**：outbound `thread/start`（cwd/`config.mcp_servers`/`developerInstructions`/`approvalPolicy:on-request`/`sandbox:workspace-write`/`approvalsReviewer:user` 全合法枚举）、`turn/start.input=[{type:text,text,text_elements}]`(=`UserInput`)、`turn/interrupt`、notification 名 `turn/started`·`turn/completed`·`item/completed`(读 `params.turn.id`/`params.item` 对)、**command/fileChange 审批 decision `accept`/`decline`**(=`CommandExecutionApprovalDecision`)。initialize 补了 schema 必填的 `requestAttestation:false`。
+  - **剩余真机尾巴（仍未验）**：① **认证模型**（auth.json 自动继承 vs `account/login/start`，下一步用真 app-server initialize 探）；② **`item/permissions/requestApproval` 的 decision 形状没建模**（见下方新条 🟡 codex permissions 审批）；③ 一轮真 turn 端到端渲染 + 计费 tick（`usedPercent`↑ + dashboard 无账单）需真起 app-server 一次。plan 末尾 Task 6.3 有清单。未合 main。
+
+### 🟡 codex `item/permissions/requestApproval` 审批 decision 形状未建模（command/fileChange 审批正确）
+- **发现**: 2026-06-16 · `chore/ledger-reconcile`（对 codex-cli 0.137.0 真 schema 核审批 roundtrip）
+- **位置**: `apps/pendingcrew/Sources/Mac/LocalRunner/CodexAppServer/CodexAppServerBackend.swift:handleServerRequest`
+- **问题**: 该 handler 对所有 `*requestApproval` 服务器请求统一回 `{decision: "accept"|"decline"}`。这对 **command**(`item/commandExecution/requestApproval`)和 **fileChange** 审批是**正确**的（decision 枚举 = `accept`/`acceptForSession`/`cancel`/`decline`，已核）。但 **permissions** 审批（`item/permissions/requestApproval`）的 decision 是**另一套富结构**——一个标签联合：`deny` 或 `allow{ fileSystem: AdditionalFileSystemPermissions, network, scope: turn|session }`（`GrantedPermissionProfile`），**不接受裸 `"accept"`/`"decline"`**。
+- **影响**: 常见审批（批命令 / 批改文件，占 ~95%）正常。但 permissions 升级请求（网络放行 / sandbox 越权等较少见路径）会收到无效 decision → codex 大概率报错或挂起该 turn。pre-launch + 多数走 workspace-write 命令审批，影响面有限，但不是 0。
+- **建议**: handler 按 method 分流：`*permissions/requestApproval` → 单独构造 `{decision:{deny}}` / `{decision:{allow:{fileSystem,network,scope}}}`（按 `PermissionsRequestApprovalResponse` schema），其余维持 accept/decline。需先把 `GrantedPermissionProfile`/`AdditionalFileSystemPermissions` 几个小结构建模。
+- **状态**: 待办（command/fileChange 审批已验证正确；permissions 路径待真机遇到时按 schema 补）。
 
 ### 🟡 crew machine 收口 — runtime_location 降为派生镜像列 + CrewGround corpus 与服务端分家 + captainAgentKind 本地-only
 - **发现**: 2026-06-14 · `feat/crew-machine`（machine 概念 + 新建流程精简）
