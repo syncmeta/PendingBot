@@ -214,6 +214,19 @@
 
 ## 🟡 拆东墙补西墙
 
+### 🟡 cache-first 视图把缓存读放进 `.task` → 首帧后才注入,每次出现都闪一下(已修 3 个主面)
+- **发现**: 2026-06-16 · `fix/cache-first-init-paint`(用户报"头像/bot 名字/私有公有标签/对话页名字+模型 每次打开都过 0.x s 才更新,切 tab 回来也一样")
+- **位置**: `apps/pendingbot/Sources/Components/UserAvatar.swift`、`Features/Friends/FriendsTabView.swift`、`Features/Message/ConversationView.swift`(+`ConversationView+Loading.swift`);同类未改面见"残留"
+- **病根**: 这些视图号称 cache-first,但缓存读发生在 `.task`/`.onAppear` 闭包里 —— SwiftUI 的 `.task`/`onAppear` 在**首帧渲染之后**才跑,所以首帧画的是空/占位(`@State` 初值),0.x s 后缓存(或网络)值才注入 → 肉眼跳变。`.task` 每次 appear 都重跑;iPad/Mac 三列壳每次切 tab **重建**当前 tab(`FriendsTabView.load()` 的 `CancellationError` 注释自陈"Mac shell rebuilds the active tab on every selection change"),@State 清零 → 整体空→填,所以"切 tab 回来也闪"在 iPad/Mac 尤甚。`CacheRepository.cachedBots()/cachedContacts()`、`LocalDatabase.load*()`、`AvatarCache.shared.image(for:)` 全是同步的,本可在 `init` 同步读 —— 只是没这么用(`FriendsTabView.load()` 那段预热注释还写着"paint last-known friends **instantly**",但埋在 `.task` 里其实晚一帧)。
+- **影响**: 首帧渲染正确性 —— **就是 task #265「app 首屏可视渲染验证」一直挂着没验的那个洞的可见症状**。不崩,但每次进页/切 tab 都肉眼跳一下,廉价感。
+- **已修(本分支,均 iOS build 绿)**: 把同步缓存读从 `.task` 提到 `init`,用 `State(initialValue:)` 让首帧即带缓存值。① `UserAvatar`(`6ac8c98d`)init 同步 `AvatarCache` 命中即播种 `image` —— 覆盖所有头像(自己/对话头/好友列表/群 roster),暖缓存零闪;② `FriendsTabView`(`afb08e56`)`@MainActor init()` 播种 `bots`/`humans`/`lastActivity`,`load()` 收成纯网络刷新(删 `.task` 内预热块);③ `ConversationView`(`1969185f`)`bot==nil`(Mac/iPad detail 列)时 init 从本地 bots 缓存构造 `resolvedBot` 播种头部名字/模型后缀/语音键,`resolveBotIfNeeded` guard 改只判 `bot==nil` + 仅 fetch 结果变化才赋值(缓存对不重渲染=不闪,缓存旧静默纠正)。
+- **残留 / 同类未改面**:
+  1. **`MessageTabView` 会话列表仍在 `.task` hydrate**:行头像已被 ① 覆盖(不闪);行标题/排序的 `conversations` 仍 `.task` 注入 —— iPhone TabView 保活、列表持久基本无感,iPad/Mac 重建路径仍空→填。要彻底一致,同 ② 给它 `init` 播种 `ChatDataSource.cachedConversations()`。
+  2. **盲盒模型 pill 固有一跳**:`convModelState`(`has_pool`/`reveal_mode`/`model_revealed`)走 `GET /v1/conversations/:id/model`,**本地无缓存**。非盲盒会话靠 ③ 的 bot 模型兜底已不闪;盲盒会话仍会从"bot 模型名"跳到"PendingModel/抽中模型"。要消除得把会话模型态也落本地缓存(未做)。
+  3. **其它面未逐一审**:群设置(已 cache-first,需确认是否 init 播种)、信箱/钱包(本就无缓存,见各自审计条目)等还没按"init 同步播种"过一遍。
+- **约定(新)**: cache-first 视图的"首帧要显示的缓存值"应在 `init` 同步播种 `@State`(读方法是 `@MainActor` 同步的,init 标 `@MainActor` 即可),`.task` 只做网络刷新;别把它留在 `.task` 里 —— 那等于晚一帧,必闪。
+- **状态**: 🟡 进行中 —— 三个用户报的主面已修 + build 绿;残留 1/2/3 待定。**视觉验证(真不闪)需登录态 GUI 构建**(headless 装机回落 ad-hoc 签名→会话存不住,见 memory `feedback_sim_unsigned_keychain`),并入 task #265「首屏可视渲染验证」。
+
 ### 🟡 PendingCrew shared target 混入未 guard 的 AppKit，iOS build 当前被卡死 — ✅ 已解决 2026-06-16
 - **发现**: 2026-06-15 · `codex/pendingcrew-empty-placeholder`（给 PendingCrew 未选中 crew 空态换 custom symbol 时跑 iOS build）
 - **位置**: `apps/pendingcrew/Sources/Stores/LocalDataReset.swift`
