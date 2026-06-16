@@ -957,3 +957,5 @@
 - 🟢 **`GroupCallTransport.swift` 6 行空占位死文件 + 失实「必须保留」注释** — 注释称 pbxproj 仍引用故不能删,实为 `project.yml` 目录 glob 自动收录,删文件 + `xcodegen` 即可。详见审计 G2。
 
 - (注释/命名/spec 引用漂移 G3–G16 共十余处不单列,随对应代码改动捎带清,清单见审计报告;含 captain 编排 spec 注释、BYOK 命名、codex「待实现」、freeze 横幅注释、slug 旧注释、board 门禁注释、WorldRouter 命名、`decisions.md` R1、`users.is_admin` 疑似 dead 列)
+
+> **处置状态(2026-06-16,`chore/stale-model-audit` 共 14 commit,验证全绿)**:R1(edge bot-captain 编排全退役)/R2(扫码加群)/R3(balance 僵尸)/R1.4/G1/G2/Y1(WelcomeView 死壳)/Y2(location tag)/Y3(审批去轮询)/G4–G15(三端注释命名 + crew-interactions typed 收口)**已 commit 处置**。**剩待你输入/确认**:① **R4**(内联 prompt 迁 Langfuse,卡 seed 需部署);② **Y7**(DB cleanup drop,需确认时机 + `ai_picks` 去留);③ **G16 `users.is_admin`**:组 C 调查确认 board 门禁迁 Cloudflare Access 后该列已无活跃读取方(残留仅 2 条只 gate 不存在的 `authenticated` 直连角色的 RLS 策略 `billing_config_admin_write`/`redemption_codes_admin` + `types.ts:249 isAdmin?` dead 字段),建议随 Y7 DB cleanup 一并清,待你拍板。`captain_bot_id` 经核**保留**(客户端建 crew 活路径,非残留,详见审计处置进度)。

@@ -28,7 +28,10 @@
 - ✅ **G1** 盲评/竞技场榜单失效文案(`6c21722a`)· ✅ **G2** GroupCallTransport.swift 死文件(`15a1950b`)。
 - ✅ **R6**(session-world-model captain 渲染):随 `captain_bot_id` 保留而**保留**(它渲染 crew 的 captain 身份,不再是残留)。
 
-**剩余**:🔴 **R4**(4 处内联 prompt 迁 Langfuse —— 卡 seed,prompt-loader fail-loud 无 fallback,改了必须同步 seed 到 Langfuse,需部署/凭据)· 🟡 **Y7**(DB cleanup drop usage_events/cloud_machine_id/balance_credits —— 需确认时机 + ai_picks 去留)· 🟡 **Y1/Y2/Y3/Y4** · 🟢 **G4–G16** 注释/命名。
+- ✅ **Y1/Y2/Y3 + G4–G15 长尾**(`3b1389a1`/`04006cc9`/`d1e06b07`/`0ae8b77a` pendingcrew + `d3d0ea65`/`973fd616` edge + ios 注释 commit):Y1 WelcomeView 双模式死壳 + LocalSetupView 删、Y2 侧栏 DAG location tag 删(对齐 #369)、Y3 审批 store 去轮询(接目录监听 publisher,与 whiteboardChanges 同模式)、G11 crew-interactions untypedRpc 收口 typed、G4/G5/G6/G7/G8/G9/G10/G12 注释命名漂移。**三端 build 全绿**(Mac + iPad + iOS)+ edge typecheck 0 + 623 vitest。
+  - Y2/G13 留尾:`CrewDetailInspector`/`CrewListView`(iPad 平铺)的 location label 保留(#369 冗余理由不适用单行详情/平铺);`RuntimeLocation` enum + fly/peer 占位因此保留。G4 仅改反事实文案,`local-byok` 标识符不动(需数据迁移)。
+
+**剩余(需你输入/确认)**:🔴 **R4**(4 处内联 prompt 迁 Langfuse —— 卡 seed,prompt-loader fail-loud 无 fallback,改了必须同步 seed,需部署/凭据)· 🟡 **Y7**(DB cleanup drop usage_events/cloud_machine_id/balance_credits —— 需确认时机 + ai_picks 去留)· 🟢 **G16**(`users.is_admin`:组 C 调查确认对 board 已 dead —— 列 + 2 条只 gate `authenticated` 角色的残留 RLS + `types.ts:249 isAdmin` 字段,随 Y7 一并清,待你确认)· 🟢 **Y4**(语音预览 PNC 单位,跨 edge+iOS)。
 
 ---
 
