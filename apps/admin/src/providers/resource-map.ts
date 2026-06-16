@@ -16,8 +16,9 @@
 //
 // As of the board CMS P1 cut, the only mounted board resource is the preset
 // bots CRUD surface (creator_id-NULL template rows in pendingbot.bots),
-// gated by `requireAdmin`. P2–P4 resources (preset conversations/groups,
-// tools, KV config) come in follow-up cuts and get added here then.
+// gated by Cloudflare Access (requireCfAccess + requireBoardAdmin). P2–P4
+// resources (preset conversations/groups, tools, KV config) come in follow-up
+// cuts and get added here then.
 // ─────────────────────────────────────────────────────────────────────────
 
 export type ResourceRoute = {
@@ -40,7 +41,7 @@ export const RESOURCE_ROUTES: Record<string, ResourceRoute> = {
     basePath: 'board/preset-bots',
     exists: true,
     listKey: 'items',
-    note: 'EXISTING: /v1/board/preset-bots CRUD (requireAdmin).',
+    note: 'EXISTING: /v1/board/preset-bots CRUD (Cloudflare Access gated).',
   },
   // 预设会话模板 —— preset_conversation_templates(slug 主键)。EXISTS (P2)。
   preset_conversations: {

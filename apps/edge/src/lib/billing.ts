@@ -15,10 +15,10 @@ import { wallet } from '../billing/wallet-client';
 // models so ceil() rounding bites less.
 const USD_TO_PND = 2700;
 
-// Default markup if billing_config.markup is missing. WorldRouter is ~70%
-// of OpenRouter list; Apple IAP takes 30%; we want margin for ops + free
-// tier signup grant. 2.5× was the seed value and stays as the fallback
-// so a wiped billing_config never silently zeroes out billing.
+// Default markup if billing_config.markup is missing. Provider list cost is
+// the base; Apple IAP takes 30%; we want margin for ops + free tier signup
+// grant. 2.5× was the seed value and stays as the fallback so a wiped
+// billing_config never silently zeroes out billing.
 const DEFAULT_MARKUP = 2.5;
 
 // Worker-isolate cache for the markup value. The billing_config table is

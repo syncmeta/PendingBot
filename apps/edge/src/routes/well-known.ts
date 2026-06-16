@@ -15,8 +15,9 @@ import type { AppBindings } from '../types';
 // Path components currently covered:
 //   /c/*  contact-share QR (see Components/QRScannerView.swift)
 //   /g/*  group invite (see Features/Group/GroupJoinView.swift)
-//   /b/*  bot share (see Components/BotShareLink.swift) — slug-based,
-//         non-rotating: a public bot's slug is its public identity.
+//   /b/*  bot share (see Sources/Models/ShareLinks.swift) — invite-token
+//         based: the path component is an inviter-scoped, revocable invite
+//         token (minted by POST /v1/bots/:id/invite-links), not the bot slug.
 //   /d/*  device login QR for approving Mac apps from the signed-in iOS app.
 const AASA = {
   applinks: {

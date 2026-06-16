@@ -7,7 +7,7 @@
 // Sentry is read-only (envDefault/effective); it does not accept PUT changes
 // (the error-reporter kill-switch must stay zero-runtime-dependency — see
 // lib/feature-flags.ts header). Mounted under boardRoutes, so it inherits the
-// requireSession + requireAdmin gate.
+// Cloudflare Access gate (requireCfAccess + requireBoardAdmin).
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { jsonError } from '../lib/http-error';
