@@ -1,33 +1,24 @@
 import SwiftUI
 
-/// PendingCrew 启动选择页(T5.1 + T5.2)。
+/// PendingCrew 登录入口页(iOS 路径)。
 ///
-/// 首次进入(没有 device-grant token)显示这页,让用户在两条路径里挑:
-/// - **登录 PendingBot 账号** — 走 device-login QR(`LoginView`),享 unified
-///   billing + 云端 crew(Fly machine)。
-/// - **本机模式(Mac 专属)** — 驱动本机已登录的 claude/codex,无需 key,
-///   只在本机跑 crew。`LocalSetupView` 点"进入"即可。
+/// **接合 v2(spec 2026-06-10):双轨作废,本地为家**。macOS 上 `AppModel.isConfigured`
+/// 恒为 true(本地 backend 常驻)→ RootView 直进主界面,**这页在 macOS 永不渲染**。
+/// 它现在只服务 **iOS/iPad**:iOS 暂无本地后端(LocalRunner 是 macOS-only),仍需
+/// 先扫码登录拿 device-grant 才能进。
 ///
-/// iOS / iPad 不显本机模式按钮 — 本机后端(LocalRunner)是 macOS-only。
-///
-/// 选择信号通过 closure 返回 RootView,由 RootView 切换 `flow` state。这里
-/// **不直接** 操作 AppModel —— 状态切换的真正触发是 LoginView 拿到 token
-/// 或 LocalSetupView 调 `model.enterLocalMode()` 后 `AppModel.localModeSelected`
-/// 变化,RootView `@Published` 重新求值自动 route。
+/// 点「登录」走 device-login QR(`LoginView`)。状态切换的真正触发是 LoginView
+/// 拿到 token 后 `AppModel.credential` 变化、`isConfigured` 翻 true,RootView
+/// `@Published` 重新求值自动 route —— 这里**不直接**操作 AppModel。
 struct WelcomeView: View {
-    enum Choice {
-        case login
-        case localSetup
-    }
-
-    var onChoose: (Choice) -> Void
+    var onLogin: () -> Void
 
     var body: some View {
         VStack(spacing: 28) {
             Spacer(minLength: 24)
             header
             Spacer(minLength: 8)
-            buttons
+            loginButton
             Spacer(minLength: 16)
             footnote
             Spacer(minLength: 24)
@@ -45,51 +36,23 @@ struct WelcomeView: View {
                 .foregroundStyle(.tint)
             Text("PendingCrew")
                 .font(.largeTitle.weight(.semibold))
-            Text("选择启动方式")
+            Text("登录以开始")
                 .font(.title3)
                 .foregroundStyle(.secondary)
         }
     }
 
-    @ViewBuilder
-    private var buttons: some View {
-        VStack(spacing: 14) {
-            choiceButton(
-                icon: "qrcode",
-                title: "登录 PendingBot 账号",
-                subtitle: "扫码授权这台机器,解锁云端 crew"
-            ) {
-                onChoose(.login)
-            }
-            #if os(macOS)
-            choiceButton(
-                icon: "laptopcomputer",
-                title: "用本机的 claude / codex",
-                subtitle: "驱动本机已登录的 claude code / codex，无需 key，只在本机跑 crew"
-            ) {
-                onChoose(.localSetup)
-            }
-            #endif
-        }
-        .frame(maxWidth: 480)
-    }
-
-    private func choiceButton(
-        icon: String,
-        title: String,
-        subtitle: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
+    private var loginButton: some View {
+        Button(action: onLogin) {
             HStack(spacing: 14) {
-                Image(systemName: icon)
+                Image(systemName: "qrcode")
                     .font(.title2)
                     .frame(width: 32)
                     .foregroundStyle(.tint)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(title)
+                    Text("登录 PendingBot 账号")
                         .font(.headline)
-                    Text(subtitle)
+                    Text("扫码授权这台机器,解锁云端 crew")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.leading)
@@ -106,28 +69,13 @@ struct WelcomeView: View {
             .contentShape(RoundedRectangle(cornerRadius: 12))
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: 480)
     }
 
-    @ViewBuilder
     private var footnote: some View {
-        VStack(spacing: 4) {
-            #if os(macOS)
-            Text("两种模式各有取舍:登录走 PendingBot 账户管线、可用 Fly 云端机器;本机模式驱动本机已登录的 claude/codex,无需 key,只在本机跑 crew。")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 520)
-            Text("一次选定后本版不可在 app 内切换 — 想换模式需清掉对应凭据后重启。")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 520)
-            #else
-            Text("iPad 路径仅支持扫码登录;BYOK 是 Mac 专属(v1.0)。")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            #endif
-        }
+        Text("iPad 路径仅支持扫码登录;本机模式(驱动本机已登录的 claude/codex)是 Mac 专属(v1.0)。")
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
     }
 }

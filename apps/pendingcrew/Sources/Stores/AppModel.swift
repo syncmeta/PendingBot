@@ -25,9 +25,6 @@ final class AppModel: ObservableObject {
     @Published var apiBaseURL: String
     @Published private(set) var credential: PendingCrewAuthCredential?
 
-    /// 用户是否显式选了**本机模式**（驱动本机已登录的 claude/codex，不需要 key）。
-    @Published private(set) var localModeSelected: Bool
-
     /// 登录这台机的 PendingCrew 用户(auth.users.id)。best-effort:在
     /// subject 解析出来(`CrewStore.refreshSubjects` → `/v1/me/subject` 回
     /// `user_id`)之前为 nil。群聊 `CrewChatView` 用它把
@@ -51,8 +48,6 @@ final class AppModel: ObservableObject {
             KeychainStore.get(account: KeychainAccount.deviceGrant)
         )
         self.credential = cred
-        // 本机模式标记：登录态优先（登录时不进本机模式）。
-        self.localModeSelected = cred == nil && defaults.bool(forKey: DefaultsKey.localModeSelected)
     }
 
     /// 当前生效的 backend(接合 v2:**不再按 mode 路由**)。
@@ -68,14 +63,13 @@ final class AppModel: ObservableObject {
     }
 
     /// `RootView` 用它决定显 WelcomeView 还是直接进主界面。
-    /// **Mac 默认进本机模式**（驱动本机已登录的 claude/codex），不开屏让人选模式 ——
-    /// 登录是可选附加功能（侧栏入口）。iOS 仍需先登录（无本机后端）。
+    /// **Mac 恒 true**:本地为家(本地 backend 常驻),不开屏让人选模式 ——
+    /// 登录是可选能力叠加(侧栏入口)。iOS 仍需先登录(无本机后端)。
     var isConfigured: Bool {
-        if credential != nil { return true }
         #if os(macOS)
         return true
         #else
-        return localModeSelected
+        return credential != nil
         #endif
     }
 
@@ -151,13 +145,6 @@ final class AppModel: ObservableObject {
         currentUserId = userId
     }
 
-    /// 进入**本机模式**（驱动本机已登录的 claude/codex，不需要 key）。
-    /// `LocalSetupView` 的"进入"按钮调 —— 与有没有填 key 无关。
-    func enterLocalMode() {
-        localModeSelected = true
-        defaults.set(true, forKey: DefaultsKey.localModeSelected)
-    }
-
     // MARK: - T4.5 crew-session server lifecycle
 
     /// 本 app session 缓存的 runner-host id —— 第一个 logged crew session 时
@@ -204,8 +191,6 @@ final class AppModel: ObservableObject {
 
 private enum DefaultsKey {
     static let apiBaseURL = "PendingCrew.apiBaseURL"
-    /// 用户显式选了"本机模式"（驱动本机已登录的 claude/codex）。
-    static let localModeSelected = "PendingCrew.localModeSelected"
 }
 
 enum KeychainAccount {
