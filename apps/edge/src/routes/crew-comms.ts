@@ -51,7 +51,6 @@ import { serviceClient, userClient, type SupabaseClient } from '../lib/supabase'
 import { jsonError } from '../lib/http-error';
 import type { Json } from '../db/schema';
 import type { AppBindings } from '../types';
-import { dispatchGroupTurn } from '../lib/group-dispatch';
 import { resolveOutboundRecipients } from '../lib/crew-outbound';
 
 // ── messages → chat-entry mapping (spec §9: crew chat IS the conversation's
@@ -441,7 +440,7 @@ crewMessagesRoutes.post('/:crewId/messages', requireSubjectAuth(['crew:write']),
   const svc = serviceClient(c.env);
   const { data: meta, error: metaErr } = await svc
     .from('temporary_group_meta')
-    .select('conversation_id, responsible_subject_id, captain_bot_id')
+    .select('responsible_subject_id')
     .eq('conversation_id', crewId)
     .maybeSingle();
   if (metaErr) return jsonError(c, 500, 'database_error', { detail: metaErr.message });
@@ -485,8 +484,8 @@ crewMessagesRoutes.post('/:crewId/messages', requireSubjectAuth(['crew:write']),
   }
 
   // spec §9: the crew chat IS the conversation's `messages`. Insert the human's
-  // message synchronously (so the captain wake below sees it), then wake the
-  // captain to reply via the standard bot-reply pipeline.
+  // message, then enqueue it into the mailbox of each recipient crew session so
+  // the local runner picks it up (本地为家:edge 是邮差,不在 edge 唤醒 bot 回合).
   const messageId = crypto.randomUUID();
   // attachments jsonb 同时承载附件 ids 与 relay 来源标注(最小侵入:不加列、
   // 不改 log 卡机制)。Mac relay 上行(device-grant + senderLabel/localSessionId)
@@ -559,20 +558,6 @@ crewMessagesRoutes.post('/:crewId/messages', requireSubjectAuth(['crew:write']),
         console.warn('[crew] enqueue_session_mailbox failed', targetSessionId, enqErr.message);
       }
     }
-  }
-
-  const captainId = meta.captain_bot_id as string | null;
-  if (captainId) {
-    c.executionCtx.waitUntil(
-      dispatchGroupTurn({
-        env: c.env,
-        conversationId: crewId,
-        wakeBotIds: [captainId],
-        reason: 'mention',
-      })
-        .then(() => undefined)
-        .catch((e) => console.error('[crew] captain dispatch failed', e)),
-    );
   }
 
   return c.json({ messageId });

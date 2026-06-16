@@ -17,10 +17,6 @@ import { delegateToSpecialistTool } from './tools/delegate';
 import { askFriendTool } from './tools/ask-friend';
 import { submitInquiryAnswerTool } from './tools/submit-inquiry-answer';
 import { sendImagesTool } from './tools/send-images';
-import { startSessionTool } from './tools/start-session';
-import { startCrewTool } from './tools/start-crew';
-import { createChildCrewTool } from './tools/create-child-crew';
-import { recruitTempBotTool } from './tools/recruit-temp-bot';
 import { promptModelGuessTool } from './tools/prompt-model-guess';
 
 /// Single web-search citation. Stored on each bubble row's `citations`
@@ -151,18 +147,6 @@ export async function runTool(
     }
     if (name === 'send_images') {
       return await sendImagesTool(env, args, ctx);
-    }
-    if (name === 'start_crew') {
-      return await startCrewTool(env, args, ctx);
-    }
-    if (name === 'start_session') {
-      return await startSessionTool(env, args, ctx);
-    }
-    if (name === 'create_child_crew') {
-      return await createChildCrewTool(env, args, ctx);
-    }
-    if (name === 'recruit_temp_bot') {
-      return await recruitTempBotTool(env, args, ctx);
     }
     if (name === 'prompt_model_guess') {
       return await promptModelGuessTool(env, args, ctx);
