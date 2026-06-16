@@ -94,12 +94,12 @@
 - **修法**: 真机装上新构建、确认无别处引用后,在 Dashboard 把 legacy keys disable(可随时 re-enable,非删除)。官方截止 2026 年底,不急,但停得越早攻击面越小——legacy service_role JWT 与 JWT secret 绑定,不可单独轮换。
 - **状态**: 待办(一次 Dashboard 操作 + 真机冒烟)。
 
-### 🟡 board 管理台无可用浏览器登录路径(EU Supabase CAPTCHA 挡客户端登录)
+### 🟡 board 管理台无可用浏览器登录路径(EU Supabase CAPTCHA 挡客户端登录) — ✅ 已解决/被取代 2026-06-13
 - **发现**: 2026-06-09 · `feat/board-console` e2e 验证时
 - **现象**: `apps/admin` 登录页走 `supabase.auth.signInWithPassword`,EU 项目(zafhoiwwpanpuashtnxy)Auth 开了 CAPTCHA 保护 → 客户端登录返回 `captcha protection: request disallowed (no captcha_token found)`。客户端 OTP(`signInWithOtp`)同样会被 captcha 挡。**只有 service_role 的 admin API(generate_link+verify)能绕过 captcha** —— 这正是本次 e2e 用来 mint JWT 验证后端的方式。
 - **影响**: board 后端已端到端验证可用(requireAdmin/CRUD/audit 全通),但**没有真人能从浏览器登进去** —— 部署后前门仍是锁的。
 - **修法(择一,属"board auth 加固"未来工作)**: (a) 给登录页接 Cloudflare Turnstile 控件,`signInWithPassword({options:{captchaToken}})` 带 token;(b) 直接做用户定的 passkey+TOTP+密码栈(passkey 需先核 Supabase 原生支持,见下条相关);(c) 仅临时:Supabase 后台关 CAPTCHA 验完再开(不作为长期方案,削弱真 app 注册防护)。
-- **状态**: 待办。后端不阻塞;board 真正"可登录可用"前必须解决其一。**用户已拍板:接 Cloudflare Turnstile 控件**(待 site key + 确认 Supabase captcha provider=Turnstile)。
+- **状态**: ✅ 已解决/被取代（2026-06-13 · board 认证整体改走 **Cloudflare Access**，应用内不再放第二个登录，task #289）。CAPTCHA 挡的是 supabase 客户端登录，而 board 前端已删 login / auth-provider / supabase client —— 2026-06-16 复核 `apps/admin/src` 对 `signInWithPassword`/`signInWithOtp`/`supabase` **零命中**，登录走 Access（`credentials:include`）。原"接 Cloudflare Turnstile"方案随之作废；第二因子归 Access policy。
 
 ### 🟢 `wrangler dev` 默认 env 无 KV/DO/R2 绑定 — board feature-flags 本地 PUT 会 500
 - **发现**: 2026-06-09 · board e2e 时
@@ -205,13 +205,13 @@
 
 ## 🟡 拆东墙补西墙
 
-### 🟡 PendingCrew shared target 混入未 guard 的 AppKit，iOS build 当前被卡死
+### 🟡 PendingCrew shared target 混入未 guard 的 AppKit，iOS build 当前被卡死 — ✅ 已解决 2026-06-16
 - **发现**: 2026-06-15 · `codex/pendingcrew-empty-placeholder`（给 PendingCrew 未选中 crew 空态换 custom symbol 时跑 iOS build）
 - **位置**: `apps/pendingcrew/Sources/Stores/LocalDataReset.swift`
 - **问题**: `PendingCrew` target 的 `supportedDestinations` 同时包含 iOS/macOS，`project.yml` 又把整个 `Sources` 编进同一个 app target；但 `LocalDataReset.swift` 在 shared `Sources/Stores` 下直接 `import AppKit` 并调用 `NSWorkspace` / `NSApp`，没有 `#if os(macOS)` guard 或文件级排除。结果 `xcodebuild -project apps/pendingcrew/PendingCrew.xcodeproj -scheme PendingCrew -destination 'generic/platform=iOS Simulator' build` 在解析 AppKit 时直接失败。
 - **影响**: macOS build 仍绿，但 iPad/PendingCrew iOS 目标已经不是可验证状态；任何 shared UI 改动都无法用 iOS build 做回归检查，容易把“支持 iOS”的 project 配置变成纸面承诺。
 - **建议**: 把 `LocalDataReset` 拆成 cross-platform 协调器 + macOS-only relaunch 实现（或把该文件搬到 `Sources/Mac` 并给 iOS 提供 no-op/替代实现），同时让 `project.yml` 的 source inclusion 明确区分 shared 与 platform-only。
-- **状态**: 待办（本次只记录，不顺手修）
+- **状态**: ✅ 已解决（2026-06-16 · commit `3b1389a1` 审计 Y1 重写该文件时已按建议加 guard —— `import AppKit` 包进 `#if os(macOS)`、`NSWorkspace`/`NSApp` relaunch 全套 `#if os(macOS)` 围栏，iOS 端走 no-op）。2026-06-16 本 session 复验 `xcodebuild -project apps/pendingcrew/PendingCrew.xcodeproj -scheme PendingCrew -destination 'generic/platform=iOS Simulator' build` = **BUILD SUCCEEDED**。当时其它分支记的"双端 build 绿"才对，本条"iOS build 卡死"（2026-06-15 codex 分支）已失效。
 
 ### 🟡 本地白板 app↔helper 并发读写同一 JSON（无锁，last-write-wins 偶丢消息）
 - **发现**: 2026-06-08 · feat/session-crew-comms（chunk 4 实装 L7）
@@ -249,13 +249,13 @@
   5. `PendingCrewAPI.appendSessionEvent` 现 caller-less，留作 Phase 2 复用；不用则删。
 - **状态**: 待办（Phase 2 隧道补 #1）。**Phase 1 像素级真验未做**——需用户本机 claude/codex 登录态起 app 验终端托管/注入/交互。
 
-### 🟡 captain `recruit_temp_bot` 招的 ephemeral_bot 暂无消费方
+### 🟡 captain `recruit_temp_bot` 招的 ephemeral_bot 暂无消费方 — ✅ 已解决/作废 2026-06-16
 - **发现**: 2026-06-05 · feat/crew-captain-orchestration（captain 工具补全）
 - **位置**: `apps/edge/src/lib/bot-reply/tools/recruit-temp-bot.ts`（写 `temporary_group_members.member_kind='ephemeral_bot'` + `ephemeral_spec`）
 - **问题**: 工具结构上对（无触发器、service-role insert 安全），但招进来的 ephemeral_bot 行**没有任何 edge / iOS 代码读或渲染**——`ephemeral_bot`/`ephemeral_spec` 目前只出现在生成的 schema.ts。即招了也不会在花名册显示、更不会在群里发言/被唤醒。
 - **影响**: `recruit_temp_bot` 当前是"结构有效但端到端无效"的半截工具。captain 调它不会出错，但临时 bot 不会真的参与。
 - **建议**: 要让它端到端可用，需补：① 花名册渲染 ephemeral_bot 成员；② 一条让 ephemeral 参与者能被唤醒发言的 turn 路径（类似 captain dispatch）。归 captain 编排后续 + T5.3。
-- **状态**: 待办（工具已落，消费方待建）
+- **状态**: ✅ 已解决/作废（2026-06-16 · 审计 R1 把 edge bot-当-captain 编排面整套退役，`recruit_temp_bot` 工具随之删除）。2026-06-16 复核：`apps/edge/src/lib/bot-reply/tools/recruit-temp-bot.ts` 文件已不存在、`recruit_temp_bot`/`recruitTempBot` 在 edge src **零命中**。消费方无需再建（工具本身没了）；captain=本地 session 模型下不走这条 edge 招募路径。
 
 ### 🟡 normalize_email 双实现（SQL + TS）须手动保持同步
 - **发现**: 2026-06-04 · fix/billing-tails-email-norm（#252 email 规范化）
@@ -315,13 +315,13 @@
 - **建议**: 二选一：(a) 放宽 `bots_visible_read`，让 `visibility='public_invite'` 对所有 authenticated 可 SELECT（public 的本意就是可被发现自加）；(b) 加一个 service-role 的 `GET /b/:slug` 解析端点，绕开 client 直查 + RLS。改完跑 #128 验证（含真机扫码闭环），通后翻 #121-128 状态。注意 `is_bot_invitee` 的"单向门"语义要和 spec `project_bot_visibility` 对齐确认。
 - **状态**: ✅ **已解决/被取代（2026-06-03 核实）** —— 旧的「client 直查 bots 表靠 RLS」分享路径已被**邀请链接模型**(decisions.md D1，task #191-194)整体取代：`bot_invite_links` 表 + `apps/edge/src/routes/bot-invites.ts` 的 `GET /v1/bot-invites/:token`(service-role RPC `bot_invite_link_resolve` 预览) + `POST /:token/redeem`(`bot_invite_link_redeem` 授予)。iOS 走 `resolveBotInvite`/`redeemBotInvite` 经 worker，**不再 client 直查 bots 表**，所以 RLS 堵死的结构性病根消失(redeem 由 service-role 写，bots/user_bot_contacts RLS 保持严格)。注:这是「结构性 blocker 消失」，完整的陌生人扫码闭环真机 QA 仍未单独跑(并入分享功能整体验证)。
 
-### 🔴 PendingBot Mac 端业务接入只覆盖 5 tab 中的 1 个,其余仍是 placeholder
+### 🔴 PendingBot Mac 端业务接入只覆盖 5 tab 中的 1 个,其余仍是 placeholder — ✅ 已解决/被取代 2026-06-09
 - **发现**: 2026-05-29 · feat/mac-multiplat-t01-p0(worktree wf_bb2bdb07-141-5)
 - **位置**: `apps/pendingbot/Sources/Mac/MacRootView.swift`、`apps/pendingbot/Sources/Features/**`、`apps/pendingbot/project.yml`
 - **问题**: T0.1 P0 把 `project.yml` 里的 `EXCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]` 大锅排除摘掉了,改用 `#if os(iOS) ... #endif` 包住每个 iOS-only 文件。但实际包了 `Sources/Components/*` + `Sources/Features/*` 整两层目录(再加 Networking 里 7 个文件),原因是这些目录里的 UI 类全部转性依赖 UIKit / PushKit / CallKit / Theme(UIColor) / Haptics(UIKit)。Mac build 现在能过,但能拿来用的 Mac 真实视图只有 `MacMeView`(账号信息 + 退出登录),消息 / 好友 / Crew / 来信 4 个 tab 仍是 `MacTabPlaceholder`。
 - **影响**: 用户在 Mac 端只能看自己账号 + 登出,看不到任何聊天、好友、Crew、来信内容 — Mac 端基本不可用。后续 T0.1 P1+P2 真正接业务时,要把 iOS 业务里 UIKit-tied 的小部件抽成 cross-platform 等价物(`UIImage`→`Image+platform helper`、`UIPasteboard`→`NSPasteboard`、`Haptics`→Mac noop、`UIViewRepresentable` 桥不能用要找 SwiftUI 等价或 Mac-only 重写),工作量按文件数估在 30+ 文件级别;短期不可能"开关一拨就好"。
 - **建议**: T0.1 P1 — 先把 Models / Storage / Networking 里已 cross-platform 的部分往上抽通用 `Theme` / `PlatformColor` / `PlatformImage` 抽象层,让 `Sources/Components/` 里小部件(`UserAvatar` / `BotAvatar` / `Theme` / `Haptics` / `Platform` / `RelativeMessageTime` / `EmptyHint`)能不带 `#if os(iOS)` 编译过 Mac;T0.1 P2 — 接 `MessageTabView` 等价物(读 supabase `conversations` + 走 `ChatStream` 已是纯 Foundation),把"消息" tab 做出来。Crew / Call 强依赖 PushKit/CallKit 的,Mac 端等 v2 再说。
-- **状态**: 部分完成（P0 + P1 好友 tab — 2026-05-30。P1: ContactsAPI 解耦成 view-independent `ContactProfile`(Networking 现可在 Mac 编译)、`HumanPick(_:ContactProfile)` 映射、`MacFriendsView` 接入好友 tab 显示真实联系人,替换 placeholder;Mac+iOS build 双绿。剩余 P2: 消息 / Crew / 来信 3 个 tab 仍 placeholder — 消息 tab 依赖 `Features/Message/*` 的 UIKit 拆层,工作量最大。见 commit 388f24fd/4eff9d8e(P0) + 本轮 Mac IM merge。）
+- **状态**: ✅ 已解决/被取代（2026-06-09 · 被 `feat/tri-platform-ui` 彻底版整体取代，合 main `b4d0b131` —— 五个 tab 全部 conform 共享 `FeatureSurface` 渲染，`WideRootView` 内零 Mac 平行列，详见本文件「🔴 `Features/*` 被无谓 `#if os(iOS)` 一刀切」条的处置记录）。2026-06-16 复核：`apps/pendingbot/Sources/Mac/` 只剩 `MacWelcomeView.swift`（登录壳），4 个 `MacTabPlaceholder` 已不存在。剩余仅 Phase 7 三端真机/模拟器可视验证（task #290）+ 个别降级项（Mac composer 两横幅 #291 / 二维码名片 #292）。原"部分完成 · P1 好友 tab"描述以此失效。
 
 ### ✅ Apple IAP JWS 验证未实现 — IAP 路由当前 fail-closed
 - **发现**: 2026-05-29 · feat/billing-v2-webhooks
@@ -331,13 +331,13 @@
 - **建议**: 实现路径已写在 `verifyAppleJws` 函数注释里：(1) 解 JWS header.x5c → 3 张 DER cert；(2) ASN.1 解 X.509 取 SPKI + issuer；(3) 链验证（leaf signed by intermediate, intermediate by root, ECDSA-P256）；(4) Root SHA-256 比对 Apple Root CA G2 / G3 内嵌指纹；(5) 校验 NotBefore/NotAfter；(6) importKey('spki', leaf.spki, 'ECDSA P-256') + verify on signing input；(7) 校验 `iss==='Apple Inc.'` 和 `bundleId === env.APPLE_IAP_BUNDLE_ID`。落地后，本文件这条状态置为已解决。
 - **状态**: ✅ 已修复（2026-05-30 · 零依赖手写 DER/ASN.1。新增 `apps/edge/src/lib/billing-v2-iap-verify.ts`：`verifyAppleJwsChain` 做 x5c 链解码 → 每张 cert 解析（SPKI/validity/ECDSA 签名 DER→JOSE raw）→ **Apple Root CA G3 SHA-256 根固定**（常量已用 openssl 双工具核对官方 cert）→ validity 窗口 → 链验证（leaf←intermediate←root + root 自签）→ SubtleCrypto ES256 验 `header.payload` → decode payload。`verifyAppleJws` 改为调它 + `bundleId===env.APPLE_IAP_BUNDLE_ID` 断言，函数签名不变、三个 caller 零改动。单测 `billing-v2-iap.test.ts` 用 SubtleCrypto 现造 P-256 三级链 + DER builder，覆盖 happy/篡改/错根/断链/过期/非ES256/默认pin拒自签根/签名输入字节——14 测全绿，typecheck 0 error。**仍待真机**：无真实 Apple sandbox JWS，端到端未跑，首次接 iOS IAP 时需用 sandbox 交易回归一次。）
 
-### 🔴 计费事实源、成本字段和销售 markup 混在旧 credits 框架里
+### 🔴 计费事实源、成本字段和销售 markup 混在旧 credits 框架里 — 🟡 框架已拆/大部分解决 2026-06-16
 - **发现**: 2026-05-29 · codex/billing-v2-design
 - **位置**: `apps/edge/src/llm/router.ts`、`apps/edge/src/lib/billing.ts`、`apps/edge/src/lib/ai-gateway.ts`、`supabase/migrations/20260514065304_local_cost_billing.sql`、`supabase/migrations/20260516042918_drop_audit_observability.sql`
 - **问题**: 现有计费路径把 provider-reported cost、AI Gateway cost、本地价格表估算、voice 本地计算、web tool 成本和 runtime markup 折进 `audit_log.cost_usd` / `tool_cost_usd` / `cost_credits` 这组旧字段里。历史迁移曾把 `cost_usd` 从“provider cost”改成“local pricebook cost”，后续又删掉 `provider_cost_usd` 和 raw model call 表并转向 AI Gateway 作为事实源，导致字段名、注释和实际结算语义互相打架。
 - **影响**: 新增服务计费时容易继续塞进 parent audit 单列，无法清楚解释“供应商真实成本、用户扣减单位、销售利润”三者关系；余额门槛也只能用粗糙固定阈值，无法按服务预授权。当前已出现有 token 且 Gateway 有成本但落成 `skipped` 的行，说明计费链路缺少明确的 settling/failure 状态。
 - **建议**: 以 `docs/billing-v2-design.md` 为目标态重做：PNC 作为成本单位，`27 PNC = 1 USD`；运行时不加 markup，销售 pack 时加 markup；用 usage events + pack ledger + reserve/settle 替代单列 `cost_credits`；所有 LLM、工具、语音、RealtimeKit、sandbox、存储等变量成本都进入统一 usage event。
-- **状态**: 待办
+- **状态**: 🟡 大部分已解决/演进（旧 credits 框架已拆）。计费已转 **PNC 为成本单位 + 运行时不加 markup + WalletDO 门禁/扣费 + usage 维度**，引擎外包 Polar(钱包/MoR)+RevenueCat(iOS)（见 `project_billing_outsourcing`）。2026-06-16 审计 + 复核佐证：`balance_credits`/`lifetime_topup_credits` 等 v1 credits 列已从 schema drop（schema.ts grep 零命中）、`getMarkup`/`usdToPnd`/`USD_TO_PND`/`DEFAULT_MARKUP` 已删（审计 Y4）、`getBalance`+`/v1/me/balance` 已删（R3）。**剩余尾巴**（见本文件「v1 billing 表 + 死函数留冷备」🟡 条）：`group-billing.ts splitAndDebit`、`balance-cache.ts`、`redemption_codes` 表（`billing_redeem` 仍活）未清；且整套 Polar/RevenueCat 引擎**端到端未验**（pre-launch，计费未开）。原"待办"以此更新。
 
 ### 🟡 Sandbox runtime usage_event 暂以 vendor_cost_usd=0 落账
 - **发现**: 2026-05-29 · worktree-wf_bb2bdb07-141-3 (#183 billing v2 sandbox 接入)
