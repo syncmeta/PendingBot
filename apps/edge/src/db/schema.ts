@@ -82,39 +82,6 @@ export type Database = {
           },
         ]
       }
-      ai_picks: {
-        Row: {
-          created_at: string
-          id: string
-          metadata: Json
-          source: string | null
-          summary: string | null
-          title: string | null
-          url: string | null
-          user_id: string
-        }
-        Insert: {
-          created_at?: string
-          id?: string
-          metadata?: Json
-          source?: string | null
-          summary?: string | null
-          title?: string | null
-          url?: string | null
-          user_id: string
-        }
-        Update: {
-          created_at?: string
-          id?: string
-          metadata?: Json
-          source?: string | null
-          summary?: string | null
-          title?: string | null
-          url?: string | null
-          user_id?: string
-        }
-        Relationships: []
-      }
       attachments: {
         Row: {
           byte_size: number
