@@ -435,7 +435,7 @@
 - **问题**: billing v2 cutover 后，权威扣费已全部走 v2 PNC（settleUsage）。但通话过程中给客户端广播的"本次通话已花费"实时预览仍走 v1 路径：`getMarkup(billing_config.markup) × usdToPnd`，单位是 PND ∂，字段名 `delta_pnd`/`cumulative_pnd`。用户在通话里看到 ∂ 估算，挂断后进钱包看到的是 PNC——单位对不上。
 - **影响**: 纯展示层不一致，不影响真实扣费（扣费已是 v2 权威）。但用户体验割裂；且这是 billing.ts 里 getMarkup/usdToPnd 仅剩的运行时调用点，挡着把这两个 v1 函数彻底删掉。
 - **建议**: 把广播改成 PNC：`usdToPncMicros(costUsd)` 累加，字段改 `delta_pnc_micros`/`cumulative_pnc_micros`，iOS voice_cost 处理同步改单位 + 文案。改完即可从 billing.ts 删 getMarkup/usdToPnd。
-- **状态**: 待办
+- **状态**: ✅ 已解决（2026-06-16，审计 Y4，merge `4e74e093`）—— 广播改 `usdToPncMicros` + `delta_pnc_micros`/`cumulative_pnc_micros`，iOS 同步改解码 + `WalletV2Format.formatPnc` 显示；markup 函数族 getMarkup/usdToPnd/USD_TO_PND/DEFAULT_MARKUP 已从 billing.ts 删除。端到端真验（通话中显示）待真流量。
 
 ### 🟡 v1 billing 表 + 死函数在 cutover 后留作冷备，未删
 - **发现**: 2026-05-29 · feat/billing-v2-cutover
@@ -443,7 +443,7 @@
 - **问题**: billing v2 cutover 让 v2 成为权威，v1 的扣费/gate 逻辑已不再被运行时调用（gate 已改读 v2 packs，debit 已改 settleUsage）。但 v1 的表和一批导出函数留着没删——作为一个周期的冷备，万一迁移有遗漏可回查。`/v1/me/balance`、`/v1/me/redeem`、`group-billing.ts`、`billing.ts` 的大部分导出现在是死代码（仅被自己的单测引用）。
 - **影响**: 死代码 + 未用表，读代码时容易误以为还在用 v1；balance-cache.ts 的 KV 缓存也不再被写。不致命，但要在 v2 线上跑稳一个周期后清掉。
 - **建议**: 跑稳后开 chore 分支：删 group-billing.ts、billing.ts 里 v1-only 导出、/me/balance + /me/redeem（或改 redeem 走 v2 issuePack）、balance-cache.ts；再写一个 drop-v1-tables 迁移（备份后 DROP）。
-- **状态**: 待办
+- **状态**: 🟡 大部分已清（2026-06-16，审计 R3/Y4/Y7）—— `users.balance_credits`/`lifetime_topup_credits`/`lifetime_spent_credits`/`balance_updated_at` + `usage_events` 已 db push drop；`subject_wallets`/`billing_ledger`/`topups`/`group_member_billing` 此前已 drop；billing.ts 的 getBalance（R3）/getMarkup/usdToPnd（Y4）+ `/v1/me/balance`（R3）已删。**剩**：`group-billing.ts splitAndDebit`、`balance-cache.ts`、`redemption_codes` 表（`billing_redeem` 仍用、活）未动。
 
 ### 🟡 sandbox / container runtime 没有任何计费路径（v1 + v2 都缺）
 - **发现**: 2026-05-29 · feat/billing-v2-services
@@ -915,7 +915,7 @@
 - ✅ **[已修 2026-06-12 #285] `boardResource` list 硬编码 `.limit(500)` 静默截断** — 改 `?limit(≤500)/?offset` + `count:'exact'`,返回 `total`/`has_more`,前端 data-provider 已读 total。下方原条目留档:
 - 🟡 **`boardResource` list 硬编码 `.limit(500)` 是魔法值且静默截断** — `feat/board-console`(2026-06-08)。`apps/edge/src/lib/board-resource.ts` 的 LIST 路由写死 `.limit(500)`,既是裸魔法数(无命名、无注释来由),又**无 count / has_more 信号**:行数超 500 时直接静默吃掉尾部,前端无从得知列表被截。preset-bots 量小(模板行数十级)不会触顶,当前安全;**P2 换大表(如模型目录、未来用户可见的大集合)前应提为 `opts.listLimit`(显式可配)或加真正的分页**(cursor / offset + `count: 'exact'` 回传总数 / `has_more`),否则换表那刻就埋下"列表只显示前 500"的隐性数据缺失。
 
-- 🔴 **PendingCrew 的 crew 组织/DAG 还建在 edge 上,违背「本地为家」定调** — `feat/crew-session-inspector`(2026-06-13,用户指出)。接合 v2(`2026-06-10` spec)定死:PendingCrew 结合云端**只有两件** —— ① 跨端遥控;② bot/人类账号经 edge 信箱作为成员加入 crew。**其余一律本地**。但现状里 crew DAG / 责任分账还是 edge-first 旧设计:`LocalBackend.attachParent` 直接抛 `notSupportedInByok`,DAG 只能在登录态 + edge crew 上做;edge 侧 `crews.ts` 还留着 `create_crew_with_captain` / `attach-parent` RPC / crew 详情带 parents/children/shares 等一整套。这是早期 edge-first 设计没跟着 local-first 重构搬回本地的残留(用户原话「之前模型瞎弄的」)。**本次已开始纠偏**:DAG 折叠树改纯本地实现(`LocalCrew` 加 parentCrewIds + `LocalCrewStore.attachParent` + 本地树 UI,不碰 edge)。**尾巴**:edge 侧那套 crew-org 代码(RPC/路由/Swift EdgeBackend.attachParent)需系统排查——哪些是「遥控/信箱」必需保留、哪些是纯组织模型残留该退役;别再往 edge crew-org 上加东西。需要一次专门的「edge crew 代码按本地为家收口」审计。
+- 🔴 **PendingCrew 的 crew 组织/DAG 还建在 edge 上,违背「本地为家」定调** — `feat/crew-session-inspector`(2026-06-13,用户指出)。接合 v2(`2026-06-10` spec)定死:PendingCrew 结合云端**只有两件** —— ① 跨端遥控;② bot/人类账号经 edge 信箱作为成员加入 crew。**其余一律本地**。但现状里 crew DAG / 责任分账还是 edge-first 旧设计:`LocalBackend.attachParent` 直接抛 `notSupportedInByok`,DAG 只能在登录态 + edge crew 上做;edge 侧 `crews.ts` 还留着 `create_crew_with_captain` / `attach-parent` RPC / crew 详情带 parents/children/shares 等一整套。这是早期 edge-first 设计没跟着 local-first 重构搬回本地的残留(用户原话「之前模型瞎弄的」)。**本次已开始纠偏**:DAG 折叠树改纯本地实现(`LocalCrew` 加 parentCrewIds + `LocalCrewStore.attachParent` + 本地树 UI,不碰 edge)。**尾巴**:edge 侧那套 crew-org 代码(RPC/路由/Swift EdgeBackend.attachParent)需系统排查——哪些是「遥控/信箱」必需保留、哪些是纯组织模型残留该退役;别再往 edge crew-org 上加东西。需要一次专门的「edge crew 代码按本地为家收口」审计。**✅ 2026-06-16 部分收口**（审计 R1，merge `7852a687`）：edge bot-reply 的 **captain 编排面**（start_crew/start_session/create_child_crew/recruit_temp_bot 工具 + captain persona 注入 + crew-comms 唤醒 + crew-proposal decide）已全退役（`captain_bot_id` 字段保留——客户端建 crew 的活路径）。**剩**：crew DAG / 责任分账的本地化（`EdgeBackend.attachParent`、crews.ts 的 `attach-parent` / parents-children-shares 一整套）仍是 edge-first，待续。
 
 - 🟡 **PendingCrew session inspector + 聊天右侧栏 只编译验证,GUI 冒烟待用户** — `feat/crew-session-inspector`(2026-06-13)。重置到 main(三端共享 UI 迁移后)重落 inspector + QQ Mac 右侧栏(待审批上/成员下)。macOS BUILD SUCCEEDED,但点 session 头像弹 inspector / 「+」多开 / 待审批就地答 / 成员行选中 等交互**未在 GUI 跑过**(headless 跑不出);备份分支 `backup/crew-inspector-prerebase` 留旧实现。改动全 `#if os(macOS)`,iOS/iPad 未单独 build。
 
@@ -958,4 +958,4 @@
 
 - (注释/命名/spec 引用漂移 G3–G16 共十余处不单列,随对应代码改动捎带清,清单见审计报告;含 captain 编排 spec 注释、BYOK 命名、codex「待实现」、freeze 横幅注释、slug 旧注释、board 门禁注释、WorldRouter 命名、`decisions.md` R1、`users.is_admin` 疑似 dead 列)
 
-> **处置状态(2026-06-16,`chore/stale-model-audit` 共 14 commit,验证全绿)**:R1(edge bot-captain 编排全退役)/R2(扫码加群)/R3(balance 僵尸)/R1.4/G1/G2/Y1(WelcomeView 死壳)/Y2(location tag)/Y3(审批去轮询)/G4–G15(三端注释命名 + crew-interactions typed 收口)**已 commit 处置**。**剩待你输入/确认**:① **R4**(内联 prompt 迁 Langfuse,卡 seed 需部署);② **Y7**(DB cleanup drop,需确认时机 + `ai_picks` 去留);③ **G16 `users.is_admin`**:组 C 调查确认 board 门禁迁 Cloudflare Access 后该列已无活跃读取方(残留仅 2 条只 gate 不存在的 `authenticated` 直连角色的 RLS 策略 `billing_config_admin_write`/`redemption_codes_admin` + `types.ts:249 isAdmin?` dead 字段),建议随 Y7 DB cleanup 一并清,待你拍板。`captain_bot_id` 经核**保留**(客户端建 crew 活路径,非残留,详见审计处置进度)。
+> **处置状态(2026-06-16,`chore/stale-model-audit`,26 commit / 5 次合 main,main `48ea5179`,✅ 全线收口)**:审计全部处置完成 —— R1(edge bot-captain 编排全退役)/R2/R3/R1.4/G1/G2/Y1/Y2/Y3/G4–G15 + **R4**(5 个内联 prompt 迁 Langfuse + seed prod)/ **Y4**(语音 PNC 单位)/ **Y7**(DB cleanup db push:usage_events/cloud_machine_id/4 个余额列/is_admin+2 RLS+审计触发器)/ **G16**(is_admin)/ **ai_picks** + **balance_updated_at** drop。edge typecheck 0 + 616 vitest + 三端 build + 部署 prod(`70230cdc`)+ 冒烟零 500 全绿。`captain_bot_id` 经核**保留**(客户端建 crew 活路径,非残留)。**唯剩端到端真验尾巴**(pre-launch 无真流量):captain 退役群聊回复 / R4 getPrompt / Y4 voice 待真触发。

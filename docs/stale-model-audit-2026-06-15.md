@@ -33,7 +33,9 @@
 
 - ✅ **R4 / Y4 / Y7 / G16 全部处置完成**(merge `4e74e093`):**R4** 5 个 prompt 迁 Langfuse(seed prod 5 个 production 版本 + 部署 worker `70230cdc` + name 匹配核实)· **Y4** 语音预览改 `usdToPncMicros`(PNC micros、no markup,与扣费同口径;edge+iOS,删 markup 函数族 getMarkup/usdToPnd/...)· **Y7** DB cleanup **已 db push prod**(drop `usage_events`/`cloud_machine_id`/3 余额列/`is_admin`+2 RLS+审计触发器,重建 `users_ensure_subject_trg` 移出 3 列)· **G16** `is_admin` 随 Y7 清。edge typecheck 0 + 616 vitest + iOS build + 部署冒烟(零 500)全绿。
 
-**唯二剩余**:① **`ai_picks`** 表 —— 安全分类器拦下(用户对它只回答「这是什么」= 问而非授权),已摘出迁移,待用户明确「删」· ② **`balance_updated_at`** billing-v1 第 4 同族僵尸列 —— 保守保留,可随 `ai_picks` 一并清。
+**DB 清理全部完成**:① **`ai_picks`** 表已 drop(迁移 `20260616040829`,用户 2026-06-16 明确授权)· ② **`balance_updated_at`** 已 drop(迁移 `20260616045143`,先重建 `users_ensure_subject_trg` 移出 UPDATE OF 再删;核实唯一函数体引用 `billing_credit` RPC 早在 `20260603112148` 已 DROP CASCADE,无运行时隐患)。**billing-v1 余额列家族(balance_credits / lifetime_topup_credits / lifetime_spent_credits / balance_updated_at)全清**。
+
+> ⚠️ **drop 列核查教训**:`DROP COLUMN` 只被 `UPDATE OF`/view/生成列依赖**阻断**,函数体/触发器 body 里读列**不阻断 drop、却会运行时炸**。本次清 `balance_updated_at` 时撞见 `billing_credit` RPC body 写这些列(幸已 DROP),提醒:drop 列前要 grep 函数体/触发器 body 引用,不只 `UPDATE OF`。
 **真验尾巴(pre-launch 无真流量)**:captain 退役 + R4 `getPrompt` + Y4 voice 的端到端需真消息/通话触发,部署冒烟只验了「worker 没炸」的下限。
 
 ---
