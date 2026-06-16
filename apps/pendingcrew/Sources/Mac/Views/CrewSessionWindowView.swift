@@ -454,7 +454,8 @@ struct CrewSessionWindowView: View {
             sessionStatus: run.status != .running ? "exited" : (run.isWorking ? "working" : "idle"),
             isSession: true,
             // 头像红点 = 有未读待办/消息(非前台 run)。复用切换条同一份未读数,
-            // badgeCount 已排除选中的前台 run 且随 badgeTick 每 2s 重算。
+            // badgeCount 已排除选中的前台 run;`badgeTick` 由白板变更事件 bump(去轮询),
+            // 白板有新动作(含 agent 跨进程 post)时即重算。
             hasNotification: badgeCount(for: run) > 0)
     }
 

@@ -75,7 +75,7 @@ struct CaptainTemplateEditorSheet: View {
                     TextField("或手填 (provider/model)", text: $model)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(.callout, design: .monospaced))
-                    Text("格式:provider/model。provider 必须是 anthropic / openai / google,要在 BYOK 里有对应 key。")
+                    Text("格式:provider/model。provider 必须是 anthropic / openai / google。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
