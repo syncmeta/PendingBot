@@ -113,11 +113,11 @@ export class RealtimeMeterDO {
   private ctx: MeterContext | null = null;
   private turnIndex = 0;
   private closed = false;
-  /// Running PND total previewed to the in-call UI via `voice_cost`
-  /// hub events. Authoritative billing still flows through AUDIT_QUEUE;
-  /// this is a display-only mirror of what the consumer will end up
-  /// debiting, computed turn-by-turn so the user sees spend live.
-  private cumulativePnd = 0;
+  /// Running pnc_micros total previewed to the in-call UI via `voice_cost`
+  /// hub events. Same unit (pnc_micros, usdToPncMicros, no markup) as the
+  /// WalletDO debit above, so the live figure reconciles with the wallet on
+  /// hang-up — this is a display-only mirror of what actually gets debited.
+  private cumulativePncMicros = 0;
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -471,8 +471,8 @@ export class RealtimeMeterDO {
 
     // Mirror the debit's pricing into the in-call UI so the user sees a
     // running spend figure within ~100 ms of the model's response.done.
-    // Display applies the platform markup (usdToPnd) and is intentionally
-    // separate from the vendor-cost WalletDO debit above.
+    // Same unit as the WalletDO debit above (pnc_micros, no markup) so the
+    // preview reconciles with the actual wallet drain on hang-up.
     void this.broadcastCost(ctx, route?.modelToCall, supa, turnUsage);
   }
 
@@ -488,14 +488,14 @@ export class RealtimeMeterDO {
     // the conversation, and a 1:1 conv has only the caller subscribed
     // so the figure stays private without needing a separate user-hub
     // path. Group voice fans out on the same key in room-voice.ts.
-    this.cumulativePnd = await broadcastVoiceCostPreview({
+    this.cumulativePncMicros = await broadcastVoiceCostPreview({
       env: this.env,
       supa,
       conversationId: ctx.conversationId,
       sessionId: ctx.sessionId,
       modelToCall,
       usage,
-      cumulativePnd: this.cumulativePnd,
+      cumulativePncMicros: this.cumulativePncMicros,
       logPrefix: '[realtime-meter]',
     });
   }

@@ -2,12 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   InsufficientBalanceError,
   RedemptionError,
-  _resetMarkupCache,
   getBalanceGateState,
-  getMarkup,
   redeemCode,
   requireBalance,
-  usdToPnd,
 } from './billing';
 import type { SupabaseClient } from './supabase';
 import type { Env } from '../types';
@@ -69,87 +66,11 @@ function stubSupa(
 }
 
 afterEach(() => {
-  _resetMarkupCache();
   vi.useRealTimers();
 });
 
-describe('usdToPnd', () => {
-  // 1 USD = 2700 PND headline; the markup multiplies on top. The
-  // function ceils so a fractional debit never silently rounds DOWN
-  // (which would leak free LLM tokens at scale).
-  it('multiplies USD by 2700 × markup and ceils', () => {
-    // $0.001 × 2700 × 2.5 = 6.75 → ceil → 7
-    expect(usdToPnd(0.001, 2.5)).toBe(7);
-    // $1 × 2700 × 2.5 = 6750
-    expect(usdToPnd(1, 2.5)).toBe(6750);
-    // $0.0001 × 2700 × 2 = 0.54 → ceil → 1 (smallest billable unit)
-    expect(usdToPnd(0.0001, 2)).toBe(1);
-  });
-
-  it('returns 0 for null / 0 / negative cost', () => {
-    expect(usdToPnd(null, 2.5)).toBe(0);
-    expect(usdToPnd(undefined, 2.5)).toBe(0);
-    expect(usdToPnd(0, 2.5)).toBe(0);
-    expect(usdToPnd(-1, 2.5)).toBe(0);
-  });
-
-  it('returns 0 for non-positive / non-finite markup (no free passes)', () => {
-    // If markup somehow comes through as 0 / NaN / Infinity we'd
-    // otherwise either zero out billing or blow up arithmetic — both
-    // bad. Returning 0 means a fallback path can still run while ops
-    // notices the unbilled rows.
-    expect(usdToPnd(1, 0)).toBe(0);
-    expect(usdToPnd(1, -1)).toBe(0);
-    expect(usdToPnd(1, Number.NaN)).toBe(0);
-    expect(usdToPnd(1, Number.POSITIVE_INFINITY)).toBe(0);
-  });
-});
-
-describe('getMarkup', () => {
-  it('reads billing_config.markup when present', async () => {
-    const supa = stubSupa({
-      billing_config: () => ({ data: { value: 3 }, error: null }),
-    });
-    expect(await getMarkup(supa)).toBe(3);
-  });
-
-  it('falls back to DEFAULT_MARKUP (2.5) when key is missing', async () => {
-    const supa = stubSupa({
-      billing_config: () => ({ data: null, error: null }),
-    });
-    expect(await getMarkup(supa)).toBe(2.5);
-  });
-
-  it('falls back to DEFAULT_MARKUP on DB error', async () => {
-    // A transient Supabase outage must not zero out billing — fallback
-    // keeps the call path alive on the documented seed value.
-    const supa = stubSupa({
-      billing_config: () => ({ data: null, error: { message: 'connection refused' } }),
-    });
-    expect(await getMarkup(supa)).toBe(2.5);
-  });
-
-  it('caches for 60s and refreshes after expiry', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
-    let calls = 0;
-    const supa = stubSupa({
-      billing_config: () => {
-        calls += 1;
-        return { data: { value: 2 + calls }, error: null }; // 3, 4, 5...
-      },
-    });
-    expect(await getMarkup(supa)).toBe(3);
-    // 30s later — still cached
-    vi.advanceTimersByTime(30_000);
-    expect(await getMarkup(supa)).toBe(3);
-    expect(calls).toBe(1);
-    // 31s later (61s total) — refreshed
-    vi.advanceTimersByTime(31_000);
-    expect(await getMarkup(supa)).toBe(4);
-    expect(calls).toBe(2);
-  });
-});
+// usdToPnd / getMarkup 测试已删:billing-v1 markup 换算退役(语音成本预览
+// 已切到 usdToPncMicros 同口径),对应函数从 billing.ts 删除。
 
 // 计费 P2: the pre-call gate reads the subject's strong-consistent WalletDO
 // cached balance (env.WALLET, one DO per subject) and blocks ONLY when

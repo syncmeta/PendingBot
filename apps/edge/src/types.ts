@@ -246,7 +246,6 @@ export interface HonoVars {
     scopes: string[];
     appKind: string;
   };
-  isAdmin?: boolean;
   /// Cloudflare Access-authenticated email for the board console
   /// (set by requireCfAccess). Board authz/audit key off this, not userId.
   boardEmail?: string;

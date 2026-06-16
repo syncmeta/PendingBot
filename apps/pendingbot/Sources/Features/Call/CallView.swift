@@ -162,8 +162,8 @@ struct CallView: View {
                     .monospacedDigit()
                     .opacity(0)
             }
-            if session.cumulativePnd > 0 {
-                Text("本次通话的费用：\(session.cumulativePnd) PND")
+            if session.cumulativePncMicros > 0 {
+                Text("本次通话的费用：\(WalletV2Format.formatPnc(session.cumulativePncMicros)) PNC")
                     .font(Theme.Fonts.subheadline)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)

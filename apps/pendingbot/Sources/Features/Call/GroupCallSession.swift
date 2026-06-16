@@ -38,11 +38,12 @@ final class GroupCallSession {
 
     var isSpeakerOn: Bool = false
 
-    /// Running PND spend across all bot legs in the room, fed by the
-    /// `voice_cost` frames RoomVoiceDO publishes on the conv hub after
-    /// every settleTurn. 0 until the first turn — view hides the figure
-    /// until then so an empty "0 PND" doesn't sit on the screen.
-    var cumulativePnd: Int = 0
+    /// Running spend across all bot legs in the room, in **pnc_micros**, fed
+    /// by the `voice_cost` frames RoomVoiceDO publishes on the conv hub after
+    /// every settleTurn. Same unit/amount (no markup) as the WalletDO debit.
+    /// 0 until the first turn — view hides the figure until then so an empty
+    /// "0 PNC" doesn't sit on the screen.
+    var cumulativePncMicros: Int = 0
 
     /// Current bot roster from the room control plane. Drives the
     /// participant list.
@@ -112,7 +113,7 @@ final class GroupCallSession {
     /// PSTN call); the in-app UI still works without the system surface.
     private var callKitUUID: UUID?
 
-    /// Conv-hub subscription feeding `cumulativePnd` from server-side
+    /// Conv-hub subscription feeding `cumulativePncMicros` from server-side
     /// per-turn voice_cost events. Dropped on terminate.
     private var costSubscription: ConvSubscriptionToken?
 
@@ -488,7 +489,7 @@ final class GroupCallSession {
         }
     }
 
-    /// Open a conv-hub subscription that feeds `cumulativePnd` from the
+    /// Open a conv-hub subscription that feeds `cumulativePncMicros` from the
     /// server's voice_cost events. Other observers on the same channel
     /// (banners, message stream) keep working through this token —
     /// observers are independent.
@@ -524,8 +525,8 @@ final class GroupCallSession {
             onVoiceCost: { [weak self] cost in
                 Task { @MainActor [weak self] in
                     guard let self else { return }
-                    if cost.cumulativePnd > self.cumulativePnd {
-                        self.cumulativePnd = cost.cumulativePnd
+                    if cost.cumulativePncMicros > self.cumulativePncMicros {
+                        self.cumulativePncMicros = cost.cumulativePncMicros
                     }
                 }
             },

@@ -43,6 +43,7 @@ import {
   withFallback,
 } from './router';
 import { modelSupportsVision } from './catalog';
+import { ensurePromptOverridesLoaded, getPrompt } from './prompt-loader';
 
 /// When the conversation's main model lacks vision and no
 /// per-conversation override is set, fall back to this slug. Picked
@@ -181,11 +182,6 @@ interface VisionDeps {
   visionOverride: string | null;
 }
 
-const SUMMARY_PROMPT =
-  '请观察这张图片，输出严格的 JSON（不要 markdown 代码块），格式：' +
-  '{"summary":"一两句中文描述，包含画面主体和氛围","tags":["3-5 个短标签","每个不超过 8 个字"]}。' +
-  '若图片包含明显文字（截图、文档、海报等），把关键文字一并写入 summary。';
-
 interface SummaryJson {
   summary: string;
   tags: string[];
@@ -223,6 +219,10 @@ export async function summarizeAttachment(
   const { supa, env } = deps;
   const startedAt = Date.now();
   const turnId = uuidv7();
+  // Warm the prompt cache so the sync getPrompt('image-summary') below hits
+  // memory. This entry point is reached from the message-create hook /
+  // re-summarization sweep, neither of which warms prompts upstream.
+  await ensurePromptOverridesLoaded(env);
 
   // Cast through unknown — schema.ts is regenerated lazily after each
   // migration; the new summary_* columns lift in 0064 but the typed
@@ -284,7 +284,7 @@ export async function summarizeAttachment(
             {
               role: 'user',
               content: [
-                { type: 'text', text: SUMMARY_PROMPT },
+                { type: 'text', text: getPrompt('image-summary') },
                 part,
               ],
             },

@@ -6,6 +6,7 @@ import {
 import type { ChatCompletionCreateParamsNonStreaming } from 'openai/resources/chat/completions';
 import { serviceClient } from './supabase';
 import { uuidv7 } from './ids';
+import { ensurePromptOverridesLoaded, getPrompt } from '../llm/prompt-loader';
 import type { Env } from '../types';
 
 // First-version "call me when..." description, generated immediately
@@ -33,6 +34,10 @@ export async function generateInitialBotDescription(input: {
 }): Promise<{ description: string; auditLogId: string | null }> {
   const { env, conversationId, botId } = input;
   const supa = serviceClient(env);
+  // Warm the prompt cache so the sync getPrompt('group-bot-intro') below
+  // hits memory. Invoked from the group_invite_bot path, which doesn't warm
+  // prompts upstream.
+  await ensurePromptOverridesLoaded(env);
 
   // Idempotent: bail if a description already exists. The DB has UNIQUE
   // (conversation_id, bot_id) so duplicate generation would error
@@ -77,11 +82,7 @@ export async function generateInitialBotDescription(input: {
   const botName = bot.display_name as string;
   const botPrimaryModel = (bot.model_id as string | null) || 'unknown';
 
-  const systemPrompt = `你正在帮一个机器人写"何时叫我"说明,挂在群聊调度器查得到的位置。要求:
-- 中文,1-2 句话,不超过 80 字
-- 写"我适合什么话题/什么场景被叫出来发言"
-- 不要写客套话,不要写自我介绍,直接说话题
-- 不要透露自己用什么模型`;
+  const systemPrompt = getPrompt('group-bot-intro');
 
   const userPrompt = `机器人名字: ${botName}
 机器人后台模型: ${botPrimaryModel}

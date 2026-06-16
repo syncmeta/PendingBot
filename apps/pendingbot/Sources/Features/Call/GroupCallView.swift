@@ -154,8 +154,8 @@ struct GroupCallView: View {
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                 }
-                if session.cumulativePnd > 0 {
-                    Text("\(session.cumulativePnd) PND")
+                if session.cumulativePncMicros > 0 {
+                    Text("\(WalletV2Format.formatPnc(session.cumulativePncMicros)) PNC")
                         .font(Theme.Fonts.subheadline)
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
