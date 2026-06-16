@@ -80,34 +80,10 @@ export function usdToPnd(
 // Balance lookup
 // ---------------------------------------------------------------------------
 
-export interface BalanceInfo {
-  balance_credits: number;
-  lifetime_topup_credits: number;
-  lifetime_spent_credits: number;
-}
-
-/**
- * Read the user's current balance + lifetime totals. Uses whichever
- * client is passed (user-scoped JWT for RLS-checked reads from /me, or
- * service-role for internal pre-call gating). Returns null if the user
- * row isn't visible / doesn't exist.
- */
-export async function getBalance(
-  supa: SupabaseClient,
-  userId: string,
-): Promise<BalanceInfo | null> {
-  const { data, error } = await supa
-    .from('users')
-    .select('balance_credits, lifetime_topup_credits, lifetime_spent_credits')
-    .eq('id', userId)
-    .maybeSingle();
-  if (error || !data) return null;
-  return {
-    balance_credits: Number(data.balance_credits) || 0,
-    lifetime_topup_credits: Number(data.lifetime_topup_credits) || 0,
-    lifetime_spent_credits: Number(data.lifetime_spent_credits) || 0,
-  };
-}
+// getBalance(读 users.balance_credits / lifetime_* + /v1/me/balance 端点)已删:
+// billing-v1 僵尸路径 —— users.balance_credits 在 WalletDO/Polar 切换后已无写入方,
+// iOS 也不再调 /v1/me/balance。主体余额统一走 WalletDO(见 getBalanceGateState 下方
+// + billing/wallet-client.ts:wallet.gate)。列本身的 DROP 留给后续迁移。
 
 // getSubjectBalance(读 subject_wallets)已删(#226):subject_wallets 表退役,
 // 主体余额统一走 WalletDO(Polar 缓存,见 billing/wallet-client.ts:wallet.gate)。
