@@ -31,7 +31,10 @@
 - ✅ **Y1/Y2/Y3 + G4–G15 长尾**(`3b1389a1`/`04006cc9`/`d1e06b07`/`0ae8b77a` pendingcrew + `d3d0ea65`/`973fd616` edge + ios 注释 commit):Y1 WelcomeView 双模式死壳 + LocalSetupView 删、Y2 侧栏 DAG location tag 删(对齐 #369)、Y3 审批 store 去轮询(接目录监听 publisher,与 whiteboardChanges 同模式)、G11 crew-interactions untypedRpc 收口 typed、G4/G5/G6/G7/G8/G9/G10/G12 注释命名漂移。**三端 build 全绿**(Mac + iPad + iOS)+ edge typecheck 0 + 623 vitest。
   - Y2/G13 留尾:`CrewDetailInspector`/`CrewListView`(iPad 平铺)的 location label 保留(#369 冗余理由不适用单行详情/平铺);`RuntimeLocation` enum + fly/peer 占位因此保留。G4 仅改反事实文案,`local-byok` 标识符不动(需数据迁移)。
 
-**剩余(需你输入/确认)**:🔴 **R4**(4 处内联 prompt 迁 Langfuse —— 卡 seed,prompt-loader fail-loud 无 fallback,改了必须同步 seed,需部署/凭据)· 🟡 **Y7**(DB cleanup drop usage_events/cloud_machine_id/balance_credits —— 需确认时机 + ai_picks 去留)· 🟢 **G16**(`users.is_admin`:组 C 调查确认对 board 已 dead —— 列 + 2 条只 gate `authenticated` 角色的残留 RLS + `types.ts:249 isAdmin` 字段,随 Y7 一并清,待你确认)· 🟢 **Y4**(语音预览 PNC 单位,跨 edge+iOS)。
+- ✅ **R4 / Y4 / Y7 / G16 全部处置完成**(merge `4e74e093`):**R4** 5 个 prompt 迁 Langfuse(seed prod 5 个 production 版本 + 部署 worker `70230cdc` + name 匹配核实)· **Y4** 语音预览改 `usdToPncMicros`(PNC micros、no markup,与扣费同口径;edge+iOS,删 markup 函数族 getMarkup/usdToPnd/...)· **Y7** DB cleanup **已 db push prod**(drop `usage_events`/`cloud_machine_id`/3 余额列/`is_admin`+2 RLS+审计触发器,重建 `users_ensure_subject_trg` 移出 3 列)· **G16** `is_admin` 随 Y7 清。edge typecheck 0 + 616 vitest + iOS build + 部署冒烟(零 500)全绿。
+
+**唯二剩余**:① **`ai_picks`** 表 —— 安全分类器拦下(用户对它只回答「这是什么」= 问而非授权),已摘出迁移,待用户明确「删」· ② **`balance_updated_at`** billing-v1 第 4 同族僵尸列 —— 保守保留,可随 `ai_picks` 一并清。
+**真验尾巴(pre-launch 无真流量)**:captain 退役 + R4 `getPrompt` + Y4 voice 的端到端需真消息/通话触发,部署冒烟只验了「worker 没炸」的下限。
 
 ---
 
