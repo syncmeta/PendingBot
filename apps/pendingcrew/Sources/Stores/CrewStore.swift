@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import Combine
 
 /// Crew 列表 + detail 缓存。
 ///
@@ -35,6 +36,12 @@ final class CrewStore: ObservableObject {
 
     private unowned let appModel: AppModel
 
+    /// crew-naming：机长 `rename_crew` 经 `LocalCrewControlStore` 写的待改名，
+    /// 由 `LocalWhiteboardStore.directoryChanged`（跨进程目录监听）触发排空落地。
+    /// 仅 macOS（本地 crew 的家）；只起一次。
+    private var didStartRenameWatch = false
+    private var renameWatch: AnyCancellable?
+
     init(appModel: AppModel) {
         self.appModel = appModel
     }
@@ -64,6 +71,7 @@ final class CrewStore: ObservableObject {
     // MARK: - Refresh
 
     func refreshList() async {
+        startRenameWatchIfNeeded()   // crew-naming：首刷时挂上改名监听（仅 macOS，幂等）
         guard let backend = currentBackend() else { return }
         loadingList = true
         defer { loadingList = false }
@@ -214,5 +222,32 @@ final class CrewStore: ObservableObject {
             return nil
         }
         return backend
+    }
+
+    // MARK: - crew-naming：机长改名落地（仅 macOS）
+
+    /// 挂上改名监听（幂等，仅 macOS）。机长 `rename_crew` 经离线 helper 把待改名
+    /// 写进共享 `--dir`（= 白板目录）→ app 的 `directoryChanged` 跨进程目录监听触发
+    /// → 排空落地到 `LocalCrewStore` + 刷新侧栏。启动先排空一次，兜住 app 没开时写入的改名。
+    /// `setTitle` 写的是 `local-crews.json`（另一目录），不触发白板目录监听 → 不成环。
+    private func startRenameWatchIfNeeded() {
+        #if os(macOS)
+        guard !didStartRenameWatch else { return }
+        didStartRenameWatch = true
+        LocalWhiteboardStore.shared.startWatching()
+        Task { await applyPendingRenames() }
+        renameWatch = LocalWhiteboardStore.shared.directoryChanged
+            .sink { [weak self] in
+                Task { @MainActor in await self?.applyPendingRenames() }
+            }
+        #endif
+    }
+
+    /// 排空 `LocalCrewControlStore` 的待改名，逐条落到 `LocalCrewStore`；有变更才刷新列表。
+    private func applyPendingRenames() async {
+        let renames = LocalCrewControlStore.shared.drainRenames()
+        guard !renames.isEmpty else { return }
+        for r in renames { LocalCrewStore.shared.setTitle(r.crewId, r.title) }
+        await refreshList()
     }
 }
