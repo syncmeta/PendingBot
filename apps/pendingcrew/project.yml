@@ -80,6 +80,13 @@ targets:
       - path: Sources/Stores/LocalWhiteboardStore.swift
       # 待审批/待决策 store（ask 工具 + 权限 hook 用），同自包含。
       - path: Sources/Stores/LocalApprovalStore.swift
+      # crew-naming（2026-06-17）：控制通道 store（机长 rename_crew 写待改名）+
+      # LocalCrewStore（setTitle/地名兜底）+ PlaceNames（地名池）。均自包含 Foundation；
+      # PlaceNames 读 Bundle.main，测试 bundle 无 crewground_places.txt → 回落 ["Atlantis"]，
+      # 不崩，断言「非『未命名』」仍成立。
+      - path: Sources/Stores/LocalCrewControlStore.swift
+      - path: Sources/Stores/LocalCrewStore.swift
+      - path: Sources/Stores/PlaceNames.swift
       # 家族 SSO 凭据共享组存储（纯 Foundation+Security，自包含）。
       - path: Sources/Support/FamilyCredentialStore.swift
       # 机器分组纯函数（依赖 Models 里的 Machine / CrewSummary，已编进 bundle）。

@@ -120,13 +120,18 @@ struct CreateCrewSheet: View {
                 optionButton("自动", selected: titleMode == .auto) { titleMode = .auto }
                 optionButton("手动", selected: titleMode == .manual) { titleMode = .manual }
             }
-            // 框始终在：自动模式下禁用 + 占位「Captain 来取名」、内容空；
+            // 自动模式：只读显示已挑好的随机地名（建完即为 crew 初始名）；
             // 手动模式启用，可填。
-            TextField(titleMode == .auto ? "Captain 来取名" : "例如：重构鉴权模块",
-                      text: titleMode == .auto ? .constant("") : $title)
+            TextField(titleMode == .auto ? "…" : "例如：重构鉴权模块",
+                      text: titleMode == .auto ? .constant(crewGroundName) : $title)
                 .textFieldStyle(.roundedBorder)
                 .disabled(titleMode == .auto)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            if titleMode == .auto {
+                Text("先用这个地名；Captain 摸清这个 crew 在做什么后会改成更贴切的短名。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -394,12 +399,14 @@ struct CreateCrewSheet: View {
         do {
             let subjectId = try await resolveResponsibleSubjectId()
             let resolvedDir = try resolveWorkingDirectory()
+            // 自动模式：用已挑好的随机地名做初始名（就是框里显示、CrewGround 目录
+            // 同名的那个）；captain 之后用 rename_crew 改成短标签。手动模式：用户填的。
             let titleValue: String? = (titleMode == .manual)
                 ? {
                     let t = title.trimmingCharacters(in: .whitespaces)
                     return t.isEmpty ? nil : t
                 }()
-                : nil
+                : (crewGroundName.isEmpty ? nil : crewGroundName)
             let request = CreateCrewRequest.make(
                 responsibleSubjectId: subjectId,
                 title: titleValue,
