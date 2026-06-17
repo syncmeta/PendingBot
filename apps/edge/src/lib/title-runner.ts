@@ -9,6 +9,7 @@ import {
 } from '../llm/router';
 import { ensurePromptOverridesLoaded, getPrompt } from '../llm/prompt-loader';
 import { uuidv7 } from './ids';
+import { getModelRole } from './model-roles';
 
 // Title runner — auto-generates a short conversation name by summarizing
 // the first few turns. Fire-and-forget via waitUntil; failure leaves the
@@ -24,7 +25,8 @@ const MAX_TITLE_CHARS = 32;
 
 // Titling is a throwaway summarization — always run it on a cheap small
 // model rather than the (possibly expensive) model the bot chats with.
-const TITLE_MODEL_SLUG = 'google/gemma-4-31b-it';
+// Slug is board-configurable via the 'title' system model-role
+// (lib/model-roles.ts); code default = google/gemma-4-31b-it.
 
 export interface RunTitleInput {
   env: Env;
@@ -56,11 +58,12 @@ export async function runTitle(input: RunTitleInput): Promise<void> {
     .join('\n');
   if (!transcript) return;
 
+  const titleModel = await getModelRole(env, 'title');
   try {
     const { result: completion, route, routeTrace } = await withFallback(
       supa,
       env,
-      { modelSlug: TITLE_MODEL_SLUG, taskType: 'title', metadata: { turnId } },
+      { modelSlug: titleModel, taskType: 'title', metadata: { turnId } },
       (r) => {
         const request = {
           model: r.modelToCall,

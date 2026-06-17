@@ -20,6 +20,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
 import { userClient, serviceClient } from '../lib/supabase';
+import { getModelRole } from '../lib/model-roles';
 import { getBalanceGateState } from '../lib/billing';
 import { resolveRoute } from '../llm/router';
 import { buildSystemPrompt, type BuildSystemPromptInput } from '../llm/builder';
@@ -54,11 +55,11 @@ realtimeRoutes.use('*', requireSession());
 // shared helpers
 // =============================================================================
 
-// Default voice model slug — the fallback when the bot has no realtime
-// model pinned. The bot voice-model picker values are model slugs
-// (gpt-realtime-2 / gpt-realtime-mini-2025-12-15) so a pinned model
-// resolves and prices directly.
-const DEFAULT_VOICE_MODEL_SLUG = 'gpt-realtime-2';
+// Voice fallback model — used when the bot has no realtime model pinned.
+// Lives in the board's `voiceDefault` role (lib/model-roles.ts), resolved
+// per call via getModelRole so ops can repoint it without a redeploy. The
+// bot voice-model picker values are model slugs (gpt-realtime-2 /
+// gpt-realtime-mini-2025-12-15) so a pinned model resolves and prices directly.
 
 interface SessionContext {
   userId: string;
@@ -75,8 +76,8 @@ interface SessionContext {
     output_mode: 'single' | 'bubble';
     voice_call_enabled: boolean;
     /// Bot-level default realtime model (bots.config.voiceModel), or null
-    /// when the bot has never been configured — callers fall back to
-    /// DEFAULT_VOICE_MODEL_SLUG.
+    /// when the bot has never been configured — callers fall back to the
+    /// board's `voiceDefault` role (lib/model-roles.ts).
     voice_model: string | null;
     /// IANA timezone of the bot (bots.tz). Public bots only; private bots
     /// leave it NULL. Surfaced in the system prompt so the bot knows its
@@ -322,7 +323,7 @@ realtimeRoutes.post('/session', async (c) => {
   // (bots.config.voiceModel), then the route fallback. There is no
   // client-supplied model — the picker lives in the bot settings and is
   // persisted, not sent per call.
-  const voiceModel = ctx.bot.voice_model ?? DEFAULT_VOICE_MODEL_SLUG;
+  const voiceModel = ctx.bot.voice_model ?? (await getModelRole(c.env, 'voiceDefault'));
 
   // Route resolution keyed on the resolved voice model slug. Routing is
   // pure passthrough (see llm/providers.ts): the slug goes upstream

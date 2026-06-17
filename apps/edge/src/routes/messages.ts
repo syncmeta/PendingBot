@@ -10,7 +10,8 @@ import { runTitle } from '../lib/title-runner';
 import { requireBalance, InsufficientBalanceError } from '../lib/billing';
 import { gateConversation } from '../billing/usage-gate';
 import { resolveGroupMentions } from '../lib/group-mentions';
-import { summarizeAttachments, DEFAULT_VISION_MODEL } from '../llm/vision';
+import { summarizeAttachments } from '../llm/vision';
+import { getModelRole } from '../lib/model-roles';
 import { UUID_RE } from '../lib/ids';
 import { jsonError } from '../lib/http-error';
 import type { Json } from '../db/schema';
@@ -701,7 +702,7 @@ messageRoutes.post('/start', async (c) => {
   // Detached attachment summarization for the just-created conv.
   // scheduleAttachmentSummary resolves the bot's own default vision model
   // (bots.config.visionModel), then the bot.model_id-vs-vision check, then
-  // DEFAULT_VISION_MODEL.
+  // the 'vision' model-role default.
   if (parsed.attachmentIds && parsed.attachmentIds.length > 0) {
     c.executionCtx.waitUntil(
       scheduleAttachmentSummary({
@@ -1495,7 +1496,7 @@ function maybeAutoLookback(input: {
 }
 
 // Resolves the conversation's main model (bot.model_id, falling back to
-// DEFAULT_VISION_MODEL when the conv has no bot pinned), then kicks off
+// the 'vision' model-role default when the conv has no bot pinned), then kicks off
 // summarizeAttachments for the just-uploaded image set. Self-contained so
 // the route can fire it via waitUntil without holding up the response.
 async function scheduleAttachmentSummary(input: {
@@ -1504,14 +1505,14 @@ async function scheduleAttachmentSummary(input: {
   userId: string;
   attachmentIds: string[];
   /// May be null for user_user / no-bot self convs — those use
-  /// DEFAULT_VISION_MODEL directly since there's no main model to align
+  /// the 'vision' model-role default directly since there's no main model to align
   /// with.
   botId: string | null;
   visionOverride: string | null;
 }): Promise<void> {
   try {
     const supa = serviceClient(input.env);
-    let mainModelSlug: string = DEFAULT_VISION_MODEL;
+    let mainModelSlug: string = await getModelRole(input.env, 'vision');
     // Conversation pin wins; otherwise the bot's own default vision
     // model (bots.config.visionModel) fills in before pickVisionModel's
     // auto path takes over.

@@ -12,6 +12,32 @@
 
 ---
 
+### 🟢 系统级 model slug 全是硬编码常量 — ✅ 工程收口 2026-06-17（7/7 角色收进 board + admin UI；剩部署尾巴）
+- **发现**: 2026-06-17 · `feat/preset-content-realign`（排查「预设机器人配置对不上」延伸出的全库引用审计）
+- **背景/用户定的纪律**: **model slug 绝不硬编码**，不适合硬编码的配置统一收进 board CMS 管理（同 `feedback_no_hardcoded_prompts` 把 prompt 赶进 loader 通道的思路）。现状是各功能的「系统模型角色」都写死成代码常量，散落多处、无统一配置入口；其中一批还是早期手编、没核验过的占位 slug。
+- **位置（系统 model 角色硬编码全清单，edge 为主）**:
+  - 会话标题 → `apps/edge/src/lib/title-runner.ts:27` `TITLE_MODEL_SLUG = 'google/gemma-4-31b-it'`（✅ 2026-06-17 核验存在于 OpenRouter 目录，有效）
+  - 群消息路由 fallback → `apps/edge/src/llm/group-router.ts:52` `FALLBACK_MODEL_SLUG = 'google/gemma-4-31b-it'`（同上有效）
+  - 群机器人介绍 fallback → `apps/edge/src/lib/group-bot-intro.ts:27` `MODEL_FALLBACK = 'google/gemma-4-31b-it'`（同上有效）
+  - 识图/视觉 → `apps/edge/src/llm/vision.ts:53` `DEFAULT_VISION_MODEL = 'moonshotai/kimi-latest'`
+  - 写信探索/协作 → `apps/edge/src/lib/envelope-runner.ts:78-79` `DEFAULT_EXPLORER_MODEL`/`DEFAULT_COLLABORATOR_MODEL = '~google/gemini-flash-latest'`（iOS 镜像 `apps/pendingbot/Sources/Features/Envelope/EnvelopeAPI.swift:121-122`）
+  - 语音默认模型 → `gpt-realtime-2` 散在 `durable-objects/realtime-meter.ts:47`/`durable-objects/room-voice.ts:42`/`routes/group-voice.ts:74`/`routes/realtime.ts:61`/`llm/providers.ts:94`；mini 档 `llm/providers.ts:101` `gpt-realtime-mini-2025-12-15`（iOS 镜像 `BotManagement.swift:1285,1506-1507`）
+  - delegate 工具默认/示例 slug → `apps/edge/src/lib/bot-reply/tools/delegate.ts:26-27`（`claude-opus-4.7` / `~google/gemini-2.5-pro`）+ 描述 `tool-defs.ts:343`
+  - 附件视觉总结（迁移 seed）→ `supabase/migrations/0064_attachments_vision_summary.sql:65-68`（`anthropic/claude-opus-4.7` + `claude-sonnet-4.6`）
+  - 预设 bot / 每用户 self bot 的 `bots.model_id`（产品向另有 spec 覆盖，见关联）
+  - 标题任务曾 pin（`0036_pin_title_to_gemma.sql`）→ 配置已迁 KV、表已 drop，仅留迁移痕迹
+- **明确排除（非「选模型」硬编码，别误伤）**: provider/apiStyle 关键字 `'gemini'`（`providers.ts:26/37`、`bot-reply/index.ts:866`、`delegate.ts:100` 的路由判断）；preset resolver 的 series/author 匹配串（`model-presets.ts:17/178`）；iOS 厂商图标/显示名映射（`ModelPicker.swift`、`SubConversationView.swift:117/119`）。
+- **问题**:
+  - ~~`gemma-4-31b-it` 疑失效~~ **已核验（2026-06-17 curl OpenRouter 337 模型）：全部硬编码 slug（`google/gemma-4-31b-it` / `moonshotai/kimi-latest` / `~google/gemini-flash-latest` / `anthropic/claude-opus-4.7` / `claude-sonnet-4.6`）均存在、有效**——基础设施这批常量没有失效 bug，问题纯粹是「配置卫生」（写死、散落、运营不可配），非功能故障。语音 `gpt-realtime-2` 走 OpenAI 原生 realtime 端点、不经 OpenRouter，目录无匹配属正常。
+  - 没有统一的「系统模型角色」配置入口——换代/纠错都要改代码 + 发版；`task_routing`/模型目录配置 #263 已迁 KV，这批 fallback/固定模型是漏网的代码常量。
+- **影响**: 失效 slug 直接让对应功能报错；违反配置化纪律，运营/产品改不了。（bot 引用侧脏数据经审计已穷尽：裸 `bot_slug` 仅 `preset_conversation_templates`〔ipsum 悬空〕+ `preset_group_templates`〔dolor/adipiscing 悬空〕两处，其余 19 张表 `bot_id` 均有 FK 兜底——产品向 spec 覆盖。）
+- **建议（收进 board 的形态）**:
+  1. 起一组「系统模型角色」配置 key（title / group-router-fallback / group-bot-intro / vision / envelope-explorer / envelope-collaborator / voice-default / voice-mini / delegate-default / attachment-vision），走已有的 KV config 通道（#263 的 config→KV loader），board 出一个管理页编辑，跟 `model_presets` 页同处。
+  2. edge 各处常量改成「读 config，读不到才回落代码默认」；代码默认换成当前**有效**的规范 slug（先核验 OpenRouter 目录）。
+  3. iOS 侧镜像的默认（envelope/voice）改为从 `/v1/config` 之类下发，别两端各写一份。
+- **状态**: 🟢 **基座 + 7/7 角色全落、工程收口**（注册表最终 7 个角色：title / groupRouter / groupBotIntro / vision / envelopeExplorer / envelopeCollaborator / voiceDefault。伪角色 `voiceMini` 已从注册表删除——`gpt-realtime-mini` 只是 `REALTIME_PRICING` 的价格表 key、从不当默认值，留着会让 board 出现一个"改了没用"的项）。基座 `6b0ab921`；swap 提交：`4ecf801d`（title/group-router/group-bot-intro）、`590b054f`（vision —— `pickVisionModel` 加 `defaultSlug` 参数保持纯函数，调用方 resolve）、`193d06c4`（envelope×2 —— `resolveEnvelopeSettings` 加 `defaults` 参数）、`b856b97c`（**voiceDefault** —— 删 `DEFAULT_VOICE_MODEL_SLUG` 常量，6 处 swap：`durable-objects/realtime-meter`×2 + `room-voice`×2 + `routes/group-voice` + `routes/realtime`；4 处在 DO 上下文用 `this.env`，2 处路由用 `c.env`；`room-voice.toContainerSpec` 保持纯函数、加 `defaultModel` 参数由两个 async 调用方 resyncContainer/addBot 传入）。**admin 配置页已落** `c07736b5`（`apps/admin/src/pages/model-roles.tsx`，镜像 feature-flags，运营可在 board 改各角色 slug；App.tsx 注册 `model_roles` resource + 路由；admin tsc 0）。**至此 7/7 角色端到端可配**（edge 读 config + board 有 UI）。全部 edge + admin typecheck 0、零回归（每个角色 code default 与旧硬编码逐字节相同 → 空 KV = 旧行为）。**剩余尾巴（非硬编码债，按需）**：① iOS envelope/voice 默认改 `/v1/config` 下发（可选，client 侧 UI 兜底、非源真相）。② **部署才真生效**：edge worker 未 deploy、admin Pages 未发（deploy 是 deliberate 步骤，按需做）。
+- **关联**: 预设内容漂移（产品向）spec `docs/superpowers/specs/2026-06-17-preset-content-realignment-design.md` —— 同根（占位 model slug）；那份管「预设 bot/引导/群」的内容，本条管「基础设施硬编码 model 角色」的工程治理。
+
 ### 🟡 codex `item/permissions/requestApproval` 回错响应形状（套了 `{decision}`，真 schema 要 `{permissions}`）
 - **发现**: 2026-06-17 · `fix/codex-mcp-tool-approval`（修 post_to_crew 被拒、对 codex 0.137.0 真 schema 时顺手撞见）
 - **位置**: `apps/pendingcrew/Sources/Mac/LocalRunner/CodexAppServer/CodexAppServerBackend.swift` `handleServerRequest` 的 `.approval` 分支。

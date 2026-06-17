@@ -7,6 +7,7 @@ import type { ChatCompletionCreateParamsNonStreaming } from 'openai/resources/ch
 import { serviceClient } from './supabase';
 import { uuidv7 } from './ids';
 import { ensurePromptOverridesLoaded, getPrompt } from '../llm/prompt-loader';
+import { getModelRole } from './model-roles';
 import type { Env } from '../types';
 
 // First-version "call me when..." description, generated immediately
@@ -24,7 +25,6 @@ import type { Env } from '../types';
 // tool (M9 polish wires the tool surface). The point of the initial
 // row is "router knows the bot exists and roughly what it's about".
 
-const MODEL_FALLBACK = 'google/gemma-4-31b-it';
 const MAX_DESC_TOKENS = 200;
 
 export async function generateInitialBotDescription(input: {
@@ -75,8 +75,8 @@ export async function generateInitialBotDescription(input: {
 
   // Pick the same router model the group uses for classification —
   // semantically this IS the same model class. Per-group override wins;
-  // otherwise the MODEL_FALLBACK baseline, same as group-router.ts.
-  const modelSlug = meta?.router_model_slug ?? MODEL_FALLBACK;
+  // otherwise the groupBotIntro model-role default (board-configurable).
+  const modelSlug = meta?.router_model_slug ?? (await getModelRole(env, 'groupBotIntro'));
 
   const groupTitle = (meta?.title as string | null) || '一个群聊';
   const botName = bot.display_name as string;
