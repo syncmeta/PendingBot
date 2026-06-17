@@ -213,18 +213,21 @@ final class McpServer {
         }
     }
 
-    /// 阻塞 long-poll 直到待决策被答复，返回答复文本。v1 不设硬超时（一直等；记 tech-debt）。
-    /// `maxWaits` 仅给单测（到点返回占位）。`pollInterval` 单测可调小避免久等。
-    func awaitReply(reqId: String, pollInterval: TimeInterval = 0.5, maxWaits: Int? = nil) -> String {
+    /// 阻塞 long-poll 直到待决策被答复或到上限，返回答复文本 / 超时占位。
+    /// **绝不无限等**：默认 ~30min 上限（3600 × 0.5s，与 codex 审批 provider 一致）——
+    /// 一个没人答的 `ask` 若一直阻塞，会让 codex 那一轮的 `tools/call` 永不返回，整个
+    /// turn 卡死在「运行中…」（codex session 跑半天不出东西的根因之一）。到点返回
+    /// 「自行判断」让 agent 继续。`pollInterval`/`maxWaits` 给单测调小。
+    func awaitReply(reqId: String, pollInterval: TimeInterval = 0.5, maxWaits: Int = 3600) -> String {
         var waits = 0
-        while true {
+        while waits < maxWaits {
             if let it = approvals.item(crewId: crewId, id: reqId), it.status == "answered" {
                 return it.reply ?? "（已答复，无文本）"
             }
-            if let maxWaits, waits >= maxWaits { return "（暂无人响应 —— 请自行判断后继续）" }
             waits += 1
             Thread.sleep(forTimeInterval: pollInterval)
         }
+        return "（暂无人响应 —— 请自行判断后继续）"
     }
 
     /// 把 `post_to_crew` 的 `mentions` 参数（JSON 数组）解析成本地 mention 模型。

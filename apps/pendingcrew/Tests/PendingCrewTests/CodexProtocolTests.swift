@@ -60,4 +60,28 @@ final class CodexProtocolTests: XCTestCase {
         XCTAssertEqual(p["threadId"] as? String, "thr_1")
         XCTAssertEqual(p["turnId"] as? String, "turn_9")
     }
+
+    // MARK: - Server-request handling (codex → client) — every kind must be answerable.
+    // Guards the codex hang: silently dropping any server-request blocks the turn forever.
+
+    func testServerRequestKindClassifiesEveryRealMethod() {
+        // Real `ServerRequest` enum, codex-cli 0.137.0 generate-json-schema.
+        XCTAssertEqual(CodexProtocol.serverRequestKind(method: "item/commandExecution/requestApproval"), .approval)
+        XCTAssertEqual(CodexProtocol.serverRequestKind(method: "item/fileChange/requestApproval"), .approval)
+        XCTAssertEqual(CodexProtocol.serverRequestKind(method: "item/permissions/requestApproval"), .approval)
+        XCTAssertEqual(CodexProtocol.serverRequestKind(method: "mcpServer/elicitation/request"), .elicitation)
+        // Everything we don't model → unsupported, but STILL answered (with an error), never dropped.
+        XCTAssertEqual(CodexProtocol.serverRequestKind(method: "item/tool/requestUserInput"), .unsupported)
+        XCTAssertEqual(CodexProtocol.serverRequestKind(method: "item/tool/call"), .unsupported)
+        XCTAssertEqual(CodexProtocol.serverRequestKind(method: "account/chatgptAuthTokens/refresh"), .unsupported)
+        XCTAssertEqual(CodexProtocol.serverRequestKind(method: "attestation/generate"), .unsupported)
+    }
+
+    func testElicitationDeclineResultMatchesRealSchema() {
+        // McpServerElicitationRequestResponse = { action: accept|decline|cancel, content? };
+        // decline carries no content. v1 declines so the turn never blocks on us.
+        let r = CodexProtocol.elicitationDeclineResult()
+        XCTAssertEqual(r["action"] as? String, "decline")
+        XCTAssertNil(r["content"], "decline carries no content")
+    }
 }
