@@ -69,6 +69,17 @@ final class LocalCrewStore {
         return crew.detail
     }
 
+    /// 改 crew 标题（captain `rename_crew` 经控制通道落地，由 `CrewStore` 调）。
+    /// 空标题 / crew 不存在 / 同名 → 忽略（幂等，避免无谓重写 + 变更信号）。
+    func setTitle(_ id: String, _ title: String) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, var crew = crews[id], crew.title != trimmed else { return }
+        crew.title = trimmed
+        crew.updatedAt = ISO8601DateFormatter().string(from: Date())
+        crews[id] = crew
+        persistToDisk()
+    }
+
     /// 新建本地 crew。返回包含自生成的 crewId + captainBotId(本地都用 UUID)。
     ///
     /// captain 当前只接 `systemGenerated(templateName:)` —— reuseBot 走的是
@@ -93,11 +104,12 @@ final class LocalCrewStore {
 
         let crew = LocalCrew(
             id: id,
-            // title 缺省/空 = 自动 → 本地占位 "未命名 crew"（后续接本机 captain
-            // 总结时回填真名；本地路径没有 captain summary，先放占位）。
+            // title 缺省/空 = 自动 → 兜底一个随机地名（CreateCrewSheet 正常路径会把
+            // 已挑好的 crewGroundName 传进来，这里只是空标题的防御兜底）。不再出现
+            // 「未命名 crew」；captain 搞清楚 crew 做什么后用 rename_crew 改成短标签。
             title: request.title?.trimmingCharacters(in: .whitespaces).isEmpty == false
                 ? request.title!.trimmingCharacters(in: .whitespaces)
-                : "未命名 crew",
+                : (PlaceNames.all.randomElement() ?? "Crew"),
             responsibleSubjectId: request.responsibleSubjectId,
             // 本地 crew 恒「本机」 —— runtime_location 永远 local_host。
             runtimeLocation: "local_host",
@@ -285,7 +297,8 @@ final class LocalCrewStore {
 /// 比 CrewDetail 少 parents/children/shares。
 private struct LocalCrew: Codable, Equatable {
     let id: String
-    let title: String
+    /// `var` —— captain `rename_crew` 经 `LocalCrewStore.setTitle` 改名。
+    var title: String
     let responsibleSubjectId: String
     let runtimeLocation: String
     let workingDirectory: String?
@@ -299,7 +312,8 @@ private struct LocalCrew: Codable, Equatable {
     /// 起对应 agent。旧 JSON 缺此键 → decodeIfPresent 兜底 nil（下游回落 `.codex`）。
     var captainAgentKind: String? = nil
     let createdAt: String
-    let updatedAt: String
+    /// `var` —— `setTitle` 改名时一并刷新。
+    var updatedAt: String
     /// 本地 crew DAG 的**父边**:本 crew 挂在哪些父 crew 之下(crew id 列表)。
     /// 「家」在本地 —— DAG 组织模型不走 edge,纯本地持久化。children 不存,渲染
     /// 时从「谁的 parentCrewIds 含本 crew」反推。旧 JSON 缺此键 → 默认空数组
