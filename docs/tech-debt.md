@@ -35,7 +35,7 @@
   1. 起一组「系统模型角色」配置 key（title / group-router-fallback / group-bot-intro / vision / envelope-explorer / envelope-collaborator / voice-default / voice-mini / delegate-default / attachment-vision），走已有的 KV config 通道（#263 的 config→KV loader），board 出一个管理页编辑，跟 `model_presets` 页同处。
   2. edge 各处常量改成「读 config，读不到才回落代码默认」；代码默认换成当前**有效**的规范 slug（先核验 OpenRouter 目录）。
   3. iOS 侧镜像的默认（envelope/voice）改为从 `/v1/config` 之类下发，别两端各写一份。
-- **状态**: 🟡 已盘点（完整清单，见上）+ 已落本条；**未动手改**。实现 = 一个独立 feature（KV config + board 页 + edge 各处换读 + iOS 下发），按用户「收进 board」方向排。
+- **状态**: 🟡 **基座已建**（commit `6b0ab921`：`apps/edge/src/lib/model-roles.ts` 角色注册表 + `getModelRole(env, role)` helper〔override ?? code default，isolate 60s 缓存，KV 失败回落〕+ `routes/board-model-roles.ts` GET/PUT + 挂 `/v1/board/model-roles`；edge typecheck 0；纯新增、零回归）。**待**：① edge 各调用点 swap 成 `await getModelRole(env, …)`（这步才真正移除硬编码本体，regression-sensitive，逐处验）② admin 配置页（镜像 `feature-flags.tsx` + resource-map）③ iOS envelope/voice 默认改 `/v1/config` 下发，别两端各写。
 - **关联**: 预设内容漂移（产品向）spec `docs/superpowers/specs/2026-06-17-preset-content-realignment-design.md` —— 同根（占位 model slug）；那份管「预设 bot/引导/群」的内容，本条管「基础设施硬编码 model 角色」的工程治理。
 
 ### 🟡 codex `item/permissions/requestApproval` 回错响应形状（套了 `{decision}`，真 schema 要 `{permissions}`）
