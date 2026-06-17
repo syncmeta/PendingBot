@@ -115,8 +115,16 @@ struct CodexTranscriptView: View {
 
     @ViewBuilder
     private func reasoningRow(summary: String?, content: String?) -> some View {
+        let hasSummary = summary?.isEmpty == false
+        let hasContent = content?.isEmpty == false
+        // 思考正文:优先 content(原始推理);ChatGPT 鉴权下 content 空、可读推理在
+        // summary(由 summaryTextDelta 累积),回退到它。
+        let bodyText = hasContent ? (content ?? "") : (summary ?? "")
+        // 标题:summary 与 content 同时存在时 summary 作短标题;否则固定「思考过程」
+        // (避免把整段 summary 塞进单行标题)。
+        let labelText = (hasSummary && hasContent) ? (summary ?? "思考过程") : "思考过程"
         DisclosureGroup {
-            Text(content ?? summary ?? "")
+            Text(bodyText)
                 .font(Theme.Fonts.footnote)
                 .foregroundStyle(Theme.Palette.inkMuted)
                 .textSelection(.enabled)
@@ -127,9 +135,10 @@ struct CodexTranscriptView: View {
                 Image(systemName: "brain")
                     .font(Theme.Fonts.caption)
                     .foregroundStyle(Theme.Palette.inkMuted)
-                Text(summary ?? "思考过程")
+                Text(labelText)
                     .font(Theme.Fonts.caption.weight(.medium))
                     .foregroundStyle(Theme.Palette.inkMuted)
+                    .lineLimit(1)
             }
         }
         .padding(.horizontal, 10)
