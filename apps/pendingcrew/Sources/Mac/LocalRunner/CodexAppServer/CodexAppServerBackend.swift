@@ -112,12 +112,28 @@ final class CodexAppServerBackend: ObservableObject, SessionBackend {
         if method == "turn/completed" { activeTurnId = nil; isWorking = false }
     }
 
+    /// EVERY server-request must be answered — codex blocks the turn waiting on our
+    /// reply, so silently dropping one = 「运行中…」转圈不结束 forever (the codex hang).
+    /// The old `guard hasSuffix("requestApproval") else { return }` dropped elicitations,
+    /// user-input requests, dynamic tool calls, token refreshes — any of which hung the turn.
     private func handleServerRequest(id: Int, method: String, params: [String: Any]) async {
-        guard method.hasSuffix("requestApproval") else { return }
-        let summary = (params["command"] as? String) ?? (params["reason"] as? String) ?? method
-        let decisions = (params["availableDecisions"] as? [String]) ?? ["accept", "decline"]
-        let decision = await approvalProvider(summary, decisions)
-        try? await connection.respond(serverId: id, result: ["decision": decision])
+        switch CodexProtocol.serverRequestKind(method: method) {
+        case .approval:
+            let summary = (params["command"] as? String) ?? (params["reason"] as? String) ?? method
+            let decisions = (params["availableDecisions"] as? [String]) ?? ["accept", "decline"]
+            let decision = await approvalProvider(summary, decisions)
+            try? await connection.respond(serverId: id, result: ["decision": decision])
+        case .elicitation:
+            // No elicitation UI in v1 → decline so the MCP server resolves the elicitation
+            // and the turn proceeds, instead of codex hanging on a reply we never send.
+            try? await connection.respond(serverId: id, result: CodexProtocol.elicitationDeclineResult())
+        case .unsupported:
+            // Fail-safe for anything we don't model (item/tool/requestUserInput,
+            // item/tool/call, account/*, attestation/*): reply with an error so codex
+            // fails just that operation and continues the turn rather than blocking.
+            try? await connection.respondError(serverId: id, code: -32601,
+                                               message: "client does not handle \(method)")
+        }
     }
 }
 #endif

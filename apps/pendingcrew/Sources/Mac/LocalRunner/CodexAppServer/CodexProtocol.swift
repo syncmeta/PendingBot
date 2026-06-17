@@ -55,5 +55,28 @@ enum CodexProtocol {
     static func turnInterruptParams(threadId: String, turnId: String) -> [String: Any] {
         ["threadId": threadId, "turnId": turnId]
     }
+
+    // MARK: - Server-initiated requests (codex → client)
+
+    /// Classifies an inbound server-request so the backend ALWAYS answers it. Silently
+    /// dropping any server-request blocks the turn forever (codex waits on our reply) —
+    /// that is the codex「运行中…」转圈不结束 root cause. The real `ServerRequest` enum
+    /// (codex-cli 0.137.0 `generate-json-schema`) is: three `*requestApproval` +
+    /// `mcpServer/elicitation/request` + `item/tool/requestUserInput` + `item/tool/call`
+    /// + `account/chatgptAuthTokens/refresh` + `attestation/generate`.
+    enum ServerRequestKind: Equatable { case approval, elicitation, unsupported }
+
+    static func serverRequestKind(method: String) -> ServerRequestKind {
+        if method.hasSuffix("requestApproval") { return .approval }   // command / fileChange / permissions
+        if method == "mcpServer/elicitation/request" { return .elicitation }
+        return .unsupported
+    }
+
+    /// Reply for `mcpServer/elicitation/request`. v1 has no elicitation UI → decline so
+    /// the MCP server resolves the elicitation as declined and the turn proceeds (instead
+    /// of codex blocking forever on our reply). Shape per real schema
+    /// `McpServerElicitationRequestResponse` = `{ action: accept|decline|cancel, content? }`;
+    /// `decline` carries no content.
+    static func elicitationDeclineResult() -> [String: Any] { ["action": "decline"] }
 }
 #endif

@@ -10,6 +10,7 @@ actor CodexAppServerConnection {
     private let process = Process()
     private let stdinPipe = Pipe()
     private let stdoutPipe = Pipe()
+    private let stderrPipe = Pipe()
     private let dispatcher = CodexRPCDispatcher()
     private var nextId = 0
     private var readBuffer = Data()
@@ -22,7 +23,7 @@ actor CodexAppServerConnection {
         process.environment = env                  // env guard already stripped OPENAI_API_KEY for codex
         process.standardInput = stdinPipe
         process.standardOutput = stdoutPipe
-        process.standardError = Pipe()
+        process.standardError = stderrPipe
     }
 
     /// Spawn + initialize handshake. Wire the streaming + server-request callbacks.
@@ -37,6 +38,12 @@ actor CodexAppServerConnection {
             guard !data.isEmpty else { return }
             Task { await self?.ingest(data) }
         }
+        // Drain stderr too. codex writes tracing/diagnostics there; if nobody reads it,
+        // the ~64KB kernel pipe buffer fills, codex blocks on the write, and the whole
+        // app-server stalls — a "turn never completes" deadlock that only surfaces after
+        // sustained output (a short turn stays under 64KB, which is why unit/one-turn
+        // checks pass). Discarded in v1; we just need to keep the pipe empty.
+        stderrPipe.fileHandleForReading.readabilityHandler = { h in _ = h.availableData }
         process.terminationHandler = { [weak self] _ in
             Task { await self?.handleTermination() }
         }
@@ -71,6 +78,10 @@ actor CodexAppServerConnection {
 
     func respond(serverId: Int, result: [String: Any]) throws {
         try writeLine(CodexRPCMessage.encodeResponse(id: serverId, result: result))
+    }
+
+    func respondError(serverId: Int, code: Int, message: String) throws {
+        try writeLine(CodexRPCMessage.encodeError(id: serverId, code: code, message: message))
     }
 
     private func writeLine(_ line: String) throws {
