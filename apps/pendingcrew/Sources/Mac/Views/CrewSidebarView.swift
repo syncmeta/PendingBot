@@ -75,30 +75,12 @@ struct CrewSidebarView: View {
         } message: {
             Text("签出后本机 device grant 立即失效;若需切换到别的身份(本人 / 群账号),签出后重新扫码即可。本机 crew 不受影响。")
         }
-        // 本机模式可选登录（登录 SSO C2）：扫码完成后 model.isAuthenticated
-        // 翻 true，onChange 自动收 sheet —— LoginView 自身只切 .approved
-        // 状态不会 dismiss。
+        // 本机模式可选登录（登录 SSO C2）：先展示确认卡（有本机凭据时）
+        // 或直接 LoginView（无凭据时）。登录成功后 CrewLoginSheet 自动 dismiss。
         .sheet(isPresented: $showingLogin) {
-            // 右上角给关闭按钮（LoginView 本体是全屏 flow 设计，没有 dismiss）；
-            // Esc（cancelAction）同样可关。
-            ZStack(alignment: .topTrailing) {
-                LoginView()
-                Button {
-                    showingLogin = false
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.title2)
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .keyboardShortcut(.cancelAction)
-                .padding(12)
-                .help("关闭")
-            }
-            .frame(minWidth: 480, minHeight: 560)
-        }
-        .onChange(of: model.isAuthenticated) { _, authed in
-            if authed { showingLogin = false }
+            CrewLoginSheet()
+                .environmentObject(model)
+                .frame(minWidth: 420, minHeight: 480)
         }
     }
 
