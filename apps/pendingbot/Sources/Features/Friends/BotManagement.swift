@@ -98,7 +98,8 @@ struct CreateBotSheet: View {
                 await loadPresets()
             }
         }
-        .macSheetMinSize()
+        // 「新建机器人」窗高压低一点(640→520);Form 内容超出照常滚动。
+        .macSheetMinSize(minHeight: 520)
     }
 
     // ── Sections ─────────────────────────────────────────────────────────
