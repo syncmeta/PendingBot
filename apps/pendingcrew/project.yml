@@ -129,6 +129,10 @@ targets:
       # 跨平台）。原在 Sources/Mac/LocalRunner（随整目录编进 bundle），移到
       # Sources/Services 后需显式列出 —— CrewRealtimeClientTests 单测 codec。
       - path: Sources/Services/CrewRealtimeClient.swift
+      # InMemoryKeyValueStore.swift：纯内存 KV（无 Supabase import），供
+      # InMemoryAuthStorageTests 单测。CrewSupabaseStack.swift 有 import Supabase
+      # 不能进 test bundle。
+      - path: Sources/Services/InMemoryKeyValueStore.swift
       # CrewLoginIdentity.swift：确认卡展示模型，从 FamilyCredential 派生（纯
       # Foundation，自包含）。FamilyCredentialStore 已在 bundle。
       - path: Sources/Services/CrewLoginIdentity.swift
