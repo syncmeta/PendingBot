@@ -43,7 +43,7 @@
 ### 新增 `LocalCrewControlStore`（共享文件通道）
 
 - 新文件 `apps/pendingcrew/Sources/Stores/LocalCrewControlStore.swift`，Foundation-only、`@unchecked Sendable`，仿 `LocalApprovalStore`，编进 **app + `pendingcrew-mcp` helper + 测试** 三处。
-- 与 `LocalWhiteboardStore` / `LocalApprovalStore` 共用同一个 `--dir`（app 已监听该目录）。
+- 与 `LocalWhiteboardStore` / `LocalApprovalStore` 共用同一个 `--dir` —— **已确认** helper 的 `--dir` = `LocalWhiteboardStore.defaultDirectory`（[`LocalSessionLaunch.swift:18`](../../../apps/pendingcrew/Sources/Mac/LocalRunner/LocalSessionLaunch.swift)），正是 app `directoryChanged` 监听的目录，所以控制文件落盘即触发 app。
 - 一条待改名 = 一个文件 `<dir>/<crewId>.crewmeta.json` = `{ "title": <name>, "ts": <iso8601> }`（atomic 写，last-write-wins）。与白板 `<crewId>.json` 后缀不同，不冲突。
 - 方法：
   - `requestRename(crewId:, name:)` — 写/覆盖文件。
@@ -81,12 +81,12 @@
 5. `CrewStore`：全局 rename 监听 + 排空 + 刷新（macOS）。**测试**：drain→apply 逻辑确定性单测（直接调）；FSEvents 接线靠 Mac build + 手动。
 6. `CreateCrewSheet`：自动模式 title 用 `crewGroundName` + 框只读显示。
 7. `crew-captain.zh.md`：加命名条。
-8. `project.yml` / xcodegen：新文件落进 app + helper + 测试 target（多半 glob 自动；跑 `xcodegen` 后 build 确认）。
+8. `project.yml`：主 `PendingCrew` target glob `Sources` 自动收新文件（app + helper 同二进制）。但 **`PendingCrewTests` 是显式文件清单**，须手动追加 `Sources/Stores/LocalCrewControlStore.swift` + `Sources/Stores/LocalCrewStore.swift` + `Sources/Stores/PlaceNames.swift`（测试 `setTitle` / 地名兜底 / control store；测试 bundle 里 `Bundle.main` 找不到 `crewground_places.txt` → `PlaceNames` 回落 `["Atlantis"]`，断言「非『未命名』」仍成立）。跑 `xcodegen` 重生工程。
 
 ## 验证
 
-- `cd apps/pendingcrew && swift test`（PendingCrewTests）全过。
-- `xcodebuild -scheme PendingBot -destination 'platform=macOS' build` 过。
+- `cd apps/pendingcrew && xcodebuild test -scheme PendingCrew -destination 'platform=macOS'`（PendingCrewTests bundle，无 Package.swift）全过。
+- Mac GUI build：`xcodebuild -project PendingBot.xcodeproj -scheme PendingBot -destination 'platform=macOS' build` 过。
 - 手动：建 crew → 标题是地名（不是「未命名」）；CrewGround 模式目录名与标题一致。
 - captain 真机改名 = 要起 captain session 的重路径，单测覆盖工具+落地后，作为手动尾巴（记 progress）。
 
