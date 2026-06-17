@@ -15,6 +15,18 @@ enum CrewSenderNaming {
         return "会话 · \(sid.prefix(6))"
     }
 
+    /// 一条**本地白板消息**映射到 wire `sender_display_name` 的取值。
+    ///
+    /// relay 搬进来的消息带远端名(`relayName`),要显示;但**本机人类自己发的消息
+    /// (senderKind=="user")绝不能**把本地兜底名("我")塞进这个字段 —— 中栏
+    /// `CrewSenderResolver` 把 `senderDisplayName != nil` 当"远端他人"的 relay 守卫,
+    /// 折进去会让自己的消息被误判成 relay → 渲染到左侧(#3)。session 进展折
+    /// `localName`(如"机长")作兜底显示名(relay 名优先)。
+    static func localWireDisplayName(
+        senderKind: String, relayName: String?, localName: String?) -> String? {
+        senderKind == "user" ? relayName : (relayName ?? localName)
+    }
+
     /// 从 crew 成员构造气泡/roster 头像 sender。`CrewRosterBar` 与
     /// `CrewSessionWindowView` 共用,成员列表和 inspector 的头像/名字保持一致。
     static func groupSender(for m: CrewMember, captainBotId: String?) -> GroupBubbleSender {

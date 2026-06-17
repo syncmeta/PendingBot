@@ -322,10 +322,11 @@ final class LocalBackend: PendingCrewBackend {
                     action: nil, taskBrief: nil, runnerKind: nil),
                 attachments: nil,
                 relay: nil,
-                // 发送者名:relay 搬进来的带 edge 侧名字(senderDisplayName);本地
-                // 产生的(session post_to_crew / 人类)带 senderName。两者皆喂给中栏
-                // resolver,优先显示;都无则走 members 解析,行为不变。
-                senderDisplayName: m.senderDisplayName ?? m.senderName,
+                // 发送者名收口在 CrewSenderNaming.localWireDisplayName:relay 远端名要显示,
+                // 但本机人类自己发的消息(senderKind=="user")不折本地 senderName("我"),
+                // 否则中栏 resolver 的 relay 守卫会把自己误判成 relay → 左对齐(#3)。
+                senderDisplayName: CrewSenderNaming.localWireDisplayName(
+                    senderKind: m.senderKind, relayName: m.senderDisplayName, localName: m.senderName),
                 // 本地白板消息没有 edge 成员 id —— 恒 nil。
                 senderMemberId: nil,
                 // #377 — 本地白板消息的回复引用(Phase 6 已加 LocalWhiteboardMessage.inReplyTo)。
