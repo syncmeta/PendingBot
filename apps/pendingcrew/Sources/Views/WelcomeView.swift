@@ -1,14 +1,15 @@
 import SwiftUI
 
-/// PendingCrew 登录入口页(iOS 路径)。
+/// PendingCrew 登录入口(确认卡 ↔ 直接登录页)的容器。
 ///
-/// **接合 v2(spec 2026-06-10):双轨作废,本地为家**。macOS 上 `AppModel.isConfigured`
-/// 恒为 true(本地 backend 常驻)→ RootView 直进主界面,**这页在 macOS 永不渲染**。
-/// 它现在只服务 **iOS/iPad**:iOS 暂无本地后端(LocalRunner 是 macOS-only),仍需
-/// 先扫码登录拿 device-grant 才能进。
+/// 两条进入路径:
+/// - **iPad**:`RootView` 在未配置(无 device grant)时渲染本页。
+/// - **macOS**:本地为家,RootView 直进主界面;本页改由侧栏的 `CrewLoginSheet`
+///   按需弹出(登录是可选能力叠加)。
 ///
-/// 逻辑：检测到本机已登录(共享 keychain 有家族凭据)→ 先展示确认卡；
-/// 用户确认 → `model.tryFamilySSO()` mint；失败/无凭据 → 降到 `LoginView`。
+/// 逻辑:检测到本机已登录(共享 keychain 有家族凭据)→ 先展示确认卡;用户确认 →
+/// `model.tryFamilySSO()` 静默 mint;失败/无凭据/点「换其它账号」→ 落到平台对应
+/// 的直接登录页(`CrewMacWelcomeView` / `CrewWelcomeView`,内含 Apple/Google/邮箱/扫码)。
 struct WelcomeView: View {
     @EnvironmentObject private var model: AppModel
     @State private var showingLogin = false
@@ -44,7 +45,11 @@ struct WelcomeView: View {
                     }
                 }
             } else {
-                LoginView()
+                #if os(macOS)
+                CrewMacWelcomeView()
+                #else
+                CrewWelcomeView()
+                #endif
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

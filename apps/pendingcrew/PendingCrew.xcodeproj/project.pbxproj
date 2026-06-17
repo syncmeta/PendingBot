@@ -43,7 +43,6 @@
 		2D5D0C99758956E078A87DBB /* AttachmentDownload.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86D9B513CE57706636562FBC /* AttachmentDownload.swift */; };
 		2DFC3899F9816634824C1EFF /* CrewSessionWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FFA131E8A46E341E75F7A01 /* CrewSessionWindowView.swift */; };
 		2E8C82D57D69A6E66326F41F /* InMemoryKeyValueStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6471A342942BE11D1B7BAF02 /* InMemoryKeyValueStore.swift */; };
-		2F4C8E9B74443BE19546AC44 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DFC0F15C2EF325530543B30 /* LoginView.swift */; };
 		2FBED63D73C912B1126427C7 /* Subject.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCB0A9A2B511BAA8446CF9A4 /* Subject.swift */; };
 		320E6F3BA540DEC23C81B541 /* CrewComposerMentionsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4E6A0DAA702E21E6FB3928A /* CrewComposerMentionsTests.swift */; };
 		336192C555B6417C3568CEF8 /* CrewChatMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED731B9FBC4FCAABA1696C82 /* CrewChatMessage.swift */; };
@@ -61,6 +60,7 @@
 		4A6CD3FE34267E982D109A47 /* CrewImageLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A00A8F1ACE8B62458AB9300 /* CrewImageLoader.swift */; };
 		4AB17DC5C8411A562B83A090 /* LocalSessionWorldModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F1C7822F4F8AFCC1F3AC147 /* LocalSessionWorldModel.swift */; };
 		4AC6269E4A657341E5773089 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 476A276CBDA4640936A8B817 /* Assets.xcassets */; };
+		4C914E54BF91ABAAB8AE90D9 /* CrewWelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 863011EBE216AF301ACE6507 /* CrewWelcomeView.swift */; };
 		4F59538F204A70290C10B1C5 /* CrewTimeSeparator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 653E5262E263AED9996AF100 /* CrewTimeSeparator.swift */; };
 		50E92F718E5EC71E96ECD0F8 /* CrewCenterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 845C8C15B805012BF7FD6165 /* CrewCenterView.swift */; };
 		52F1C0BB14E36C13F1D5047F /* HookEmitter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92B4FFD76B026D94E642C541 /* HookEmitter.swift */; };
@@ -80,6 +80,7 @@
 		6942FF0B2E3D04AF1005374B /* PendingCrewApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C09067E3C1637408FEED8F2 /* PendingCrewApp.swift */; };
 		6946E20F33073EB653928874 /* BubbleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12F1664795349F8BF80036C4 /* BubbleView.swift */; };
 		69933D16E7836C959E8DD675 /* CrewRosterBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D4475F4F6F662461F71C1B9 /* CrewRosterBar.swift */; };
+		6A0B3597817047CB1EEA18A3 /* CrewMacWelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA596ABA0D14AA9C8BEB0159 /* CrewMacWelcomeView.swift */; };
 		6ACBB093D8F44B8F81B6F5DB /* claude_stream.jsonl in Resources */ = {isa = PBXBuildFile; fileRef = DA26B3AE2AB22AA26494B7EB /* claude_stream.jsonl */; };
 		6AD5BB1B6ADE7861673B3436 /* CrewRelaySyncLogic.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68229C444C6E759D51FB09BB /* CrewRelaySyncLogic.swift */; };
 		6B976C105E5A83BAD1ACCD3A /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = BE5215583878F2D9251B8F7D /* MarkdownUI */; };
@@ -206,6 +207,7 @@
 		E83ED263489E417F3CD48192 /* CrewListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D60CE404DBA41800A4216C77 /* CrewListView.swift */; };
 		E8A4CD9994C8276834D659F3 /* LocalSessionLaunch.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE16EE932E2CBB87B2A7D691 /* LocalSessionLaunch.swift */; };
 		E8A563E5B8F3443DE835008B /* MathRendering.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9450E68B7E2E3E57819F7A77 /* MathRendering.swift */; };
+		E94F0F20970E786F34527402 /* CrewQRLoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 023022BA240D7EFFC08D6BF2 /* CrewQRLoginView.swift */; };
 		E98C5C70533EECF07B9B2378 /* MachineGrouping.swift in Sources */ = {isa = PBXBuildFile; fileRef = D61EF9C80E279F17B39492B4 /* MachineGrouping.swift */; };
 		EA0A4A8A6688901245AF283A /* CrewDetailInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF2A5D7FFEA710FBD8771B72 /* CrewDetailInspector.swift */; };
 		EB82BC6650DAEA2D09DD9785 /* PendingCrewBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3431B4DF325BB67DBBFAFA45 /* PendingCrewBackend.swift */; };
@@ -233,6 +235,7 @@
 /* Begin PBXFileReference section */
 		00A7D9CD365C5CDA21A05246 /* CrewInteractionCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewInteractionCard.swift; sourceTree = "<group>"; };
 		00E43DF9DE6F86E40248C41F /* CrewMentionPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewMentionPicker.swift; sourceTree = "<group>"; };
+		023022BA240D7EFFC08D6BF2 /* CrewQRLoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewQRLoginView.swift; sourceTree = "<group>"; };
 		051E45F99057FB8295F991DA /* CrewSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewSummary.swift; sourceTree = "<group>"; };
 		07B9E918E0B797CF2286F0A4 /* CodexRPCDispatcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexRPCDispatcherTests.swift; sourceTree = "<group>"; };
 		08C7D3AFEE8F6C3E6596F75D /* WelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeView.swift; sourceTree = "<group>"; };
@@ -263,7 +266,6 @@
 		2CC4D38A8ADADF050411F604 /* LocalRunnerPlaceholder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalRunnerPlaceholder.swift; sourceTree = "<group>"; };
 		2CD2E19FFE0BDAC1918FA06E /* IPadShell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPadShell.swift; sourceTree = "<group>"; };
 		2D28D0DC0130419B8FD88E95 /* CrewMailboxWaker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewMailboxWaker.swift; sourceTree = "<group>"; };
-		2DFC0F15C2EF325530543B30 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
 		34017164BC4AFAA13A7AC997 /* CrewRealtimeClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewRealtimeClientTests.swift; sourceTree = "<group>"; };
 		3431B4DF325BB67DBBFAFA45 /* PendingCrewBackend.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingCrewBackend.swift; sourceTree = "<group>"; };
 		37325956B9504E5FFA86D188 /* LocalApprovalStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalApprovalStoreTests.swift; sourceTree = "<group>"; };
@@ -312,6 +314,7 @@
 		7CCD472BA2B27A5116C0E0AD /* CodexThreadItemTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexThreadItemTests.swift; sourceTree = "<group>"; };
 		845C8C15B805012BF7FD6165 /* CrewCenterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewCenterView.swift; sourceTree = "<group>"; };
 		85701E0A44CE34A85B831771 /* ColorHex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorHex.swift; sourceTree = "<group>"; };
+		863011EBE216AF301ACE6507 /* CrewWelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewWelcomeView.swift; sourceTree = "<group>"; };
 		8659160BA978CA311E9673E2 /* SessionProxyProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionProxyProtocol.swift; sourceTree = "<group>"; };
 		86D9B513CE57706636562FBC /* AttachmentDownload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentDownload.swift; sourceTree = "<group>"; };
 		87F000A18A5E886FA706EC9B /* session-world-model.zh.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "session-world-model.zh.md"; sourceTree = "<group>"; };
@@ -371,6 +374,7 @@
 		D75149E56C43DE393B0F774D /* ServerImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerImage.swift; sourceTree = "<group>"; };
 		D8011F49B6E57993FB1D1B9F /* CrewLocalMentionInjectLogic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewLocalMentionInjectLogic.swift; sourceTree = "<group>"; };
 		DA26B3AE2AB22AA26494B7EB /* claude_stream.jsonl */ = {isa = PBXFileReference; path = claude_stream.jsonl; sourceTree = "<group>"; };
+		DA596ABA0D14AA9C8BEB0159 /* CrewMacWelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewMacWelcomeView.swift; sourceTree = "<group>"; };
 		DB1B368878F5794ADB109327 /* SessionProxyClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionProxyClient.swift; sourceTree = "<group>"; };
 		DB97F9F0E2E939FEA9FEFE63 /* CrewDetail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewDetail.swift; sourceTree = "<group>"; };
 		DE16EE932E2CBB87B2A7D691 /* LocalSessionLaunch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalSessionLaunch.swift; sourceTree = "<group>"; };
@@ -536,6 +540,7 @@
 				D6F39A5FF531F20F719F31F7 /* CrewDAGTreeView.swift */,
 				EF2A5D7FFEA710FBD8771B72 /* CrewDetailInspector.swift */,
 				0FA2CEFC8329F65E4BDCD223 /* CrewLoginSheet.swift */,
+				DA596ABA0D14AA9C8BEB0159 /* CrewMacWelcomeView.swift */,
 				6FFA131E8A46E341E75F7A01 /* CrewSessionWindowView.swift */,
 				5D1BA79194E7AC4E6DAA2491 /* CrewSettingsView.swift */,
 				E0BCE95B8A380020947CB207 /* CrewSidebarView.swift */,
@@ -634,8 +639,9 @@
 			children = (
 				D6447BDB872CAA8AB0D2B333 /* AccountConfirmCard.swift */,
 				D60CE404DBA41800A4216C77 /* CrewListView.swift */,
+				023022BA240D7EFFC08D6BF2 /* CrewQRLoginView.swift */,
+				863011EBE216AF301ACE6507 /* CrewWelcomeView.swift */,
 				2CD2E19FFE0BDAC1918FA06E /* IPadShell.swift */,
-				2DFC0F15C2EF325530543B30 /* LoginView.swift */,
 				A48848C6D823FBAAA912491A /* PendingCrewPlaceholderIcon.swift */,
 				08C7D3AFEE8F6C3E6596F75D /* WelcomeView.swift */,
 			);
@@ -977,10 +983,12 @@
 				455CDF65E099EAF95CDCB358 /* CrewLoginExchange.swift in Sources */,
 				BF6BEBC6820091701D10C214 /* CrewLoginIdentity.swift in Sources */,
 				727ADE263D21FB2FB59C8A81 /* CrewLoginSheet.swift in Sources */,
+				6A0B3597817047CB1EEA18A3 /* CrewMacWelcomeView.swift in Sources */,
 				09B59D5C37D3953440612A34 /* CrewMailboxWakeLogic.swift in Sources */,
 				6E48F0426269423D6F2208D2 /* CrewMailboxWaker.swift in Sources */,
 				8F83FDCF91A7447813D653DF /* CrewMentionPicker.swift in Sources */,
 				BFBAAF89FE49D7DC1F5E1146 /* CrewModels.swift in Sources */,
+				E94F0F20970E786F34527402 /* CrewQRLoginView.swift in Sources */,
 				6C67AA2C516C73B9AAF994FA /* CrewRealtimeClient.swift in Sources */,
 				E516AADDB9ED8727F67B7D3E /* CrewRelayAgent.swift in Sources */,
 				6AD5BB1B6ADE7861673B3436 /* CrewRelaySyncLogic.swift in Sources */,
@@ -995,6 +1003,7 @@
 				C542203A4DDCFF1972A4083E /* CrewSupabaseStack.swift in Sources */,
 				4F59538F204A70290C10B1C5 /* CrewTimeSeparator.swift in Sources */,
 				AA997E38D04E4B2DB4A55FB7 /* CrewTurnstileWebView.swift in Sources */,
+				4C914E54BF91ABAAB8AE90D9 /* CrewWelcomeView.swift in Sources */,
 				B0D6D5AA3EA01F3C9BD44091 /* CrewWelcomeViewModel.swift in Sources */,
 				DEFB49BB11DC799D2544D97B /* DeviceIdentity.swift in Sources */,
 				DFC7D547D8BD7A03378DA23F /* DeviceLogin.swift in Sources */,
@@ -1020,7 +1029,6 @@
 				E8A4CD9994C8276834D659F3 /* LocalSessionLaunch.swift in Sources */,
 				4AB17DC5C8411A562B83A090 /* LocalSessionWorldModel.swift in Sources */,
 				5ACC0A7A8AA165B111990C18 /* LocalWhiteboardStore.swift in Sources */,
-				2F4C8E9B74443BE19546AC44 /* LoginView.swift in Sources */,
 				B6354746E8966251161A34F4 /* MacRootView.swift in Sources */,
 				2C5E9ADC4EF5B0D2767865CA /* Machine.swift in Sources */,
 				D7A3CE1A30CE4689155798D4 /* MachineGrouping.swift in Sources */,

@@ -8,27 +8,26 @@ import AppKit
 import UIKit
 #endif
 
-/// 未登录态首屏。
+/// PendingCrew 设备登录(扫码)的自包含内容视图。
 ///
-/// 流程（spec v2 §4.4）：
-/// 1. 用户点 "扫码登录到 PendingBot 账号" → 调
-///    `POST /v1/device-login/challenges`（不传 subjectId，让 PendingBot
-///    端选 subject）
-/// 2. 渲染 QR + 验证码；同时启动 polling task 每 2s 调
-///    `GET /v1/device-login/challenges/:id`
-/// 3. PendingBot 用户扫码 + 在手机端选 subject + 批准 → poll 拿到
-///    `deviceGrantToken` → `model.saveDeviceGrantToken(token)`
-/// 4. AppModel 切换到 isAuthenticated，RootView 自动切回三栏 placeholder
+/// 从旧 `LoginView` 抽出的 device-login QR 流程,**不带任何外层 chrome**(header /
+/// 标题 / 整页布局都不画)——调用方负责摆放:
+/// - Mac:塞进 `CrewMacWelcomeView` 左侧 logo 槽(扫码 pill 切换 logo↔二维码)。
+/// - iPad:`CrewWelcomeView` 的扫码 pill 弹出(inline 展开 / sheet)。
 ///
-/// scaffold 阶段不暴露 "选 subject" UI — 这一步在 PendingBot 手机端做
-/// （iOS subject picker，T1.3 P2）。
-struct LoginView: View {
+/// 流程(spec v2 §4.4,与旧 LoginView 成功分支逐字一致):
+/// 1. `POST /v1/device-login/challenges`(`appKind = pendingcrew_macos`,不传
+///    subjectId → 让 PendingBot 端选 subject)
+/// 2. 渲染 QR + 验证码;每 2s `GET /v1/device-login/challenges/:id` poll
+/// 3. PendingBot 用户扫码 + 选 subject + 批准 → poll 拿到 `deviceGrantToken`
+///    → `model.saveDeviceGrantToken(token)` + 家族凭据落共享 keychain
+/// 4. `isAuthenticated` 翻 true → RootView 自动切回主界面 / 登录 sheet 关闭
+struct CrewQRLoginView: View {
     @EnvironmentObject private var model: AppModel
     @State private var challenge: DeviceLoginChallenge?
     @State private var status: Status = .idle
     @State private var pollTask: Task<Void, Never>?
     @State private var errorMessage: String?
-    @State private var familySSOBusy = false
 
     enum Status: Equatable {
         case idle
@@ -39,126 +38,72 @@ struct LoginView: View {
     }
 
     var body: some View {
-        VStack(spacing: 24) {
-            header
+        VStack(spacing: 16) {
             switch status {
             case .idle:
-                idleSection
+                ProgressView()
+                    .controlSize(.regular)
             case .requesting:
                 ProgressView("正在生成登录二维码…")
                     .controlSize(.regular)
+                    .font(Theme.Fonts.footnote)
             case .waitingForApproval:
                 challengeSection
             case .approved:
                 VStack(spacing: 8) {
                     Image(systemName: "checkmark.seal.fill")
-                        .font(.system(size: 48))
+                        .font(.system(size: 44))
                         .foregroundStyle(.green)
                     Text("登录成功，正在进入…")
+                        .font(Theme.Fonts.footnote)
                         .foregroundStyle(Theme.Palette.inkMuted)
                 }
             case .error:
                 errorSection
             }
-            Spacer()
         }
-        .padding(.horizontal, 40)
-        .padding(.vertical, 48)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity)
+        .task { start() }
         .onDisappear { pollTask?.cancel() }
     }
 
     // MARK: - Sections
 
-    private var header: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "rectangle.connected.to.line.below")
-                .font(.system(size: 48))
-                .foregroundStyle(Theme.Palette.accent)
-            Text("PendingCrew")
-                .font(.largeTitle.weight(.semibold))
-                .foregroundStyle(Theme.Palette.ink)
-            Text("从 PendingBot 扫码授权这台设备")
-                .foregroundStyle(Theme.Palette.inkMuted)
-        }
-    }
-
-    private var idleSection: some View {
-        VStack(spacing: 12) {
-            if model.familySSOAvailable {
-                Button {
-                    Task {
-                        familySSOBusy = true
-                        let ok = await model.tryFamilySSO()
-                        familySSOBusy = false
-                        if ok {
-                            status = .approved
-                        } else {
-                            errorMessage = "本机 PendingBot 登录凭据可能已失效，请改用扫码登录。"
-                            status = .error
-                        }
-                    }
-                } label: {
-                    Label("用本机 PendingBot 账号登录", systemImage: "person.crop.circle.badge.checkmark")
-                        .frame(maxWidth: .infinity)
-                }
-                .controlSize(.large)
-                .buttonStyle(.borderedProminent)
-                .disabled(familySSOBusy)
-
-                Text("或")
-                    .font(.caption)
-                    .foregroundStyle(Theme.Palette.inkMuted)
-            }
-
-            Button {
-                start()
-            } label: {
-                Label("扫码登录到 PendingBot 账号", systemImage: "qrcode")
-                    .frame(maxWidth: .infinity)
-            }
-            .controlSize(.large)
-            .buttonStyle(.borderedProminent)
-            Text("默认以本人 user_account 身份登录；在 PendingBot 端可以\n切换到自己有 owner / admin 权限的群账号。")
-                .font(.footnote)
-                .multilineTextAlignment(.center)
-                .foregroundStyle(Theme.Palette.inkMuted)
-        }
-    }
-
     private var challengeSection: some View {
         guard let challenge else { return AnyView(EmptyView()) }
         return AnyView(
-            VStack(spacing: 16) {
+            VStack(spacing: 14) {
                 if let image = qrImage(payload: challenge.qrPayload) {
                     image
                         .resizable()
                         .interpolation(.none)
                         .scaledToFit()
-                        .frame(width: 220, height: 220)
+                        .frame(width: 200, height: 200)
                         .padding(8)
                         .background(.white)
-                        .cornerRadius(8)
+                        .cornerRadius(12)
+                        .shadow(color: .black.opacity(0.08), radius: 12, y: 4)
                 } else {
                     Text("无法生成二维码")
+                        .font(Theme.Fonts.footnote)
                         .foregroundStyle(.secondary)
                 }
                 VStack(spacing: 4) {
                     Text("或在 PendingBot 输入验证码")
-                        .font(.footnote)
+                        .font(Theme.Fonts.caption)
                         .foregroundStyle(Theme.Palette.inkMuted)
                     Text(challenge.code)
-                        .font(.system(.title2, design: .monospaced).weight(.semibold))
+                        .font(Theme.Fonts.monospaced(size: 20, weight: .semibold))
                         .foregroundStyle(Theme.Palette.ink)
                         .tracking(2)
                 }
-                ProgressView()
-                    .controlSize(.small)
-                Text("等待 PendingBot 端批准（4 分钟内有效）")
-                    .font(.footnote)
-                    .foregroundStyle(Theme.Palette.inkMuted)
-                Button("取消", role: .cancel) { cancel() }
-                    .buttonStyle(.borderless)
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("等待 PendingBot 端批准（4 分钟内有效）")
+                        .font(Theme.Fonts.caption)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                }
             }
         )
     }
@@ -166,9 +111,10 @@ struct LoginView: View {
     private var errorSection: some View {
         VStack(spacing: 12) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 36))
+                .font(.system(size: 32))
                 .foregroundStyle(.orange)
             Text(errorMessage ?? "登录失败")
+                .font(Theme.Fonts.footnote)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(Theme.Palette.inkMuted)
             Button("重试") { start() }
@@ -265,14 +211,6 @@ struct LoginView: View {
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
             }
         }
-    }
-
-    private func cancel() {
-        pollTask?.cancel()
-        pollTask = nil
-        challenge = nil
-        status = .idle
-        errorMessage = nil
     }
 
     private func makeAPI() -> PendingCrewAPI {
