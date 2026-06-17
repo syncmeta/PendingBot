@@ -136,6 +136,9 @@ targets:
       # CrewLoginIdentity.swift：确认卡展示模型，从 FamilyCredential 派生（纯
       # Foundation，自包含）。FamilyCredentialStore 已在 bundle。
       - path: Sources/Services/CrewLoginIdentity.swift
+      # CrewLoginExchange.swift：临时 session → pfa_ → pdg_ 兑换编排（纯
+      # Foundation，不含 Supabase import）。teardown 在成败两路都 await。
+      - path: Sources/Services/CrewLoginExchange.swift
       # Sources/Models/（CrewDetail / CrewSummary / UserSubject / DeviceLogin /
       # ModelCatalogEntry）：LocalRunner 传递引用了这些类型。
       - path: Sources/Models
