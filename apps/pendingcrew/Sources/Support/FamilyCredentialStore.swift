@@ -7,7 +7,13 @@ import Security
 /// 凭据签发那一刻用户在 PendingBot 里 approve 的就是这个 subject。
 struct FamilyCredential: Codable, Equatable {
     let token: String        // pfa_*
-    let subjectId: String    // 登录时批准的 subject，silent mint 的默认目标
+    let subjectId: String    // 默认 mint 目标（个人主体）
+    /// 同发布者确认卡展示用 —— PendingBot 写入侧在登录时带上。可选：旧 payload
+    /// 无此字段时 decode 不失败（确认卡降级到通用文案，mint 后再回填真实身份）。
+    var displayName: String?
+    /// 用户自有头像的 seed（pendingbot.users.custom_fields.avatar_seed），
+    /// 驱动确认卡的 BotAvatar 字形。可选，同上降级。
+    var avatarSeed: String?
 }
 
 /// 家族 SSO 凭据存储 —— 落在**共享 keychain access group**。

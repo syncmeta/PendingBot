@@ -72,6 +72,30 @@ struct PendingCrewAPI {
         return try await perform(request)
     }
 
+    // MARK: - Direct-login family credential
+
+    /// `POST /v1/me/family-credential` — 用 Supabase session 的 access token（Bearer）
+    /// 签发一张家族 SSO 凭据（`pfa_*`）。
+    ///
+    /// **直接登录路径**（PendingBot Mac 自身登录，无需扫码）：
+    ///   1. Supabase 完成登录，拿到 `accessToken`（user JWT）。
+    ///   2. 调本方法 → 得到 `pfa_` 凭据 + 绑定的 `subjectId`。
+    ///   3. 再调 `mintGrant(familyCredential: pfa_, ...)` 换 scoped device grant（`pdg_*`）。
+    ///
+    /// edge 走 `requireSession()` 门，所以 Authorization 用 Supabase user JWT，
+    /// 不是 `pdg_` / `pfa_`。
+    func issueFamilyCredential(
+        accessToken: String,
+        deviceName: String = currentDeviceName()
+    ) async throws -> CrewFamilyCredentialResponse {
+        struct Body: Encodable { let deviceName: String }
+        return try await post(
+            path: "v1/me/family-credential",
+            body: Body(deviceName: deviceName),
+            bearer: accessToken
+        )
+    }
+
     // MARK: - Family SSO mint
 
     /// `POST /v1/device-grant/mint` — 用家族凭据（`pfa_*`，来自共享 keychain
@@ -638,6 +662,25 @@ struct PendingCrewAPI {
         }
         return try JSONDecoder().decode(Response.self, from: data)
     }
+}
+
+// MARK: - Family credential response
+
+/// `POST /v1/me/family-credential` 的响应。
+///
+/// edge 返回 camelCase JSON（`familyCredential.token`、`familyCredential.subjectId`、
+/// `displayName`），与字段名完全对应，不需要 CodingKeys。
+struct CrewFamilyCredentialResponse: Decodable {
+    struct Cred: Decodable {
+        /// `pfa_` 前缀的家族 SSO 凭据明文 token（只在此响应里出现一次，请立即存档）。
+        let token: String
+        /// 凭据绑定的默认 subject（通常是个人 `user_account` 主体）。
+        /// `mintGrant` 时应以此值作 `subjectId`，除非调用方想换目标 subject。
+        let subjectId: String
+    }
+    let familyCredential: Cred
+    /// 绑定 subject 的显示名（`personal.display_name`），可选。
+    let displayName: String?
 }
 
 // MARK: - Error envelope (private to PendingCrewAPI)

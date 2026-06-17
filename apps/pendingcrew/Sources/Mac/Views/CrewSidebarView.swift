@@ -11,7 +11,7 @@ struct CrewSidebarView: View {
     @EnvironmentObject private var model: AppModel
     @State private var showingCreateSheet = false
     @State private var confirmingSignOut = false
-    /// 本机模式下侧栏的可选登录入口（登录 SSO C2）—— 弹 LoginView sheet 扫码。
+    /// 本机模式下侧栏的可选登录入口（登录 SSO C2）—— 弹直接登录 sheet（CrewLoginSheet）。
     @State private var showingLogin = false
     /// 折叠起来的机器分组 id 集合（默认全展开）。
     @State private var collapsedMachineIds: Set<String> = []
@@ -29,8 +29,8 @@ struct CrewSidebarView: View {
             }
             .listStyle(.sidebar)
             // 当前身份 + 切换/登出。device grant 是 subject-scoped(spec v2 §4.4),
-            // 想换 subject 必须撤掉这台机器的 grant 重新扫码 —— 所以"切换身份"
-            // 路径就是签出后再去 LoginView 扫一遍。这里集中放在 sidebar 底部,
+            // 想换 subject 必须撤掉这台机器的 grant 重新登录 —— 所以"切换身份"
+            // 路径就是签出后再去直接登录页登一遍。这里集中放在 sidebar 底部,
             // 让 user 始终能看见"我现在以谁的身份在花钱"。
             identityFooter
         }
@@ -75,30 +75,12 @@ struct CrewSidebarView: View {
         } message: {
             Text("签出后本机 device grant 立即失效;若需切换到别的身份(本人 / 群账号),签出后重新扫码即可。本机 crew 不受影响。")
         }
-        // 本机模式可选登录（登录 SSO C2）：扫码完成后 model.isAuthenticated
-        // 翻 true，onChange 自动收 sheet —— LoginView 自身只切 .approved
-        // 状态不会 dismiss。
+        // 本机模式可选登录（登录 SSO C2）：先展示确认卡（有本机凭据时）
+        // 或直接登录页（无凭据时）。登录成功后 CrewLoginSheet 自动 dismiss。
         .sheet(isPresented: $showingLogin) {
-            // 右上角给关闭按钮（LoginView 本体是全屏 flow 设计，没有 dismiss）；
-            // Esc（cancelAction）同样可关。
-            ZStack(alignment: .topTrailing) {
-                LoginView()
-                Button {
-                    showingLogin = false
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.title2)
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .keyboardShortcut(.cancelAction)
-                .padding(12)
-                .help("关闭")
-            }
-            .frame(minWidth: 480, minHeight: 560)
-        }
-        .onChange(of: model.isAuthenticated) { _, authed in
-            if authed { showingLogin = false }
+            CrewLoginSheet()
+                .environmentObject(model)
+                .frame(minWidth: 420, minHeight: 480)
         }
     }
 
