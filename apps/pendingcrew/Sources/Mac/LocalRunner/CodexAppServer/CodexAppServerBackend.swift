@@ -124,9 +124,13 @@ final class CodexAppServerBackend: ObservableObject, SessionBackend {
             let decision = await approvalProvider(summary, decisions)
             try? await connection.respond(serverId: id, result: ["decision": decision])
         case .elicitation:
-            // No elicitation UI in v1 → decline so the MCP server resolves the elicitation
-            // and the turn proceeds, instead of codex hanging on a reply we never send.
-            try? await connection.respond(serverId: id, result: CodexProtocol.elicitationDeclineResult())
+            // codex 0.137.0 delivers the MCP tool-call approval prompt AS an elicitation
+            // (`_meta.codex_approval_kind == "mcp_tool_call"`). Auto-approve those — the
+            // crew comms tools are the session's own trusted channel (mirrors claude
+            // excluding them from its PreToolUse gate); declining them rejected every
+            // crew tool call. Genuine input-form elicitations still decline (no v1 UI; a
+            // reply still lets the turn proceed instead of hanging). See elicitationResult.
+            try? await connection.respond(serverId: id, result: CodexProtocol.elicitationResult(params: params))
         case .unsupported:
             // Fail-safe for anything we don't model (item/tool/requestUserInput,
             // item/tool/call, account/*, attestation/*): reply with an error so codex

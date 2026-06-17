@@ -84,4 +84,29 @@ final class CodexProtocolTests: XCTestCase {
         XCTAssertEqual(r["action"] as? String, "decline")
         XCTAssertNil(r["content"], "decline carries no content")
     }
+
+    func testElicitationResultAcceptsMcpToolCallApproval() {
+        // codex 0.137.0 delivers the MCP tool-call approval AS an elicitation carrying
+        // _meta.codex_approval_kind == "mcp_tool_call". Auto-accept it — crew tools are
+        // trusted; declining it is what rejected the captain's post_to_crew check-in.
+        let params: [String: Any] = [
+            "serverName": "crew",
+            "message": "Allow the crew MCP server to run tool \"post_to_crew\"?",
+            "_meta": ["codex_approval_kind": "mcp_tool_call", "tool_description": "post to crew whiteboard"],
+        ]
+        let r = CodexProtocol.elicitationResult(params: params)
+        XCTAssertEqual(r["action"] as? String, "accept")
+    }
+
+    func testElicitationResultDeclinesGenuineInputForm() {
+        // A real MCP elicitation (no codex_approval_kind) has no v1 UI → decline so the
+        // turn proceeds instead of hanging; we never blanket-accept and submit empty input.
+        let params: [String: Any] = [
+            "serverName": "crew",
+            "message": "What is your name?",
+            "requestedSchema": ["type": "object", "properties": ["name": ["type": "string"]]],
+        ]
+        let r = CodexProtocol.elicitationResult(params: params)
+        XCTAssertEqual(r["action"] as? String, "decline")
+    }
 }
