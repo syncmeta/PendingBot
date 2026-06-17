@@ -2,12 +2,13 @@
 import SwiftUI
 import AppKit
 
-/// Mac 主视图：两栏 + 按需 inspector。
+/// Mac 主视图：三栏（crew 列表 | 群聊 | session 终端），各栏独立折叠、互不强收。
 ///
-/// - 左栏 CrewSidebarView ── crew 列表 + 新建 / 刷新
+/// - 左栏 CrewSidebarView ── crew 列表 + 新建 / 刷新（标准 sidebar 开关折叠）
 /// - 主栏 CrewCenterView   ── 选中 crew 的群聊会话页（白板 + 沟通渠道）
-/// - inspector CrewSessionWindowView ── session 终端（切换条 + 终端 + composer +
-///   审批卡片），**不再常驻**：点群聊里的 session 头像 / 「+」/ toolbar 开关才弹出。
+/// - 右栏 CrewSessionWindowView ── session 终端（切换条 + 终端 + composer +
+///   审批卡片）。toolbar「Session 终端」开关 / 点 session 头像 / 「+」翻它的可见性；
+///   **开它不再强收左 sidebar** —— 三栏可同时在（宽屏；窄屏各自手动折叠）。
 ///
 /// Sidebar / Center / SessionWindow 都用 @EnvironmentObject 拿 CrewStore +
 /// AppModel；CrewSessionRunner 是 view-local（一个窗口一份，多 run 并存由它自己
@@ -20,11 +21,10 @@ struct MacThreePaneView: View {
     /// edge 信箱同步代理（接合 v2 block 3）—— window 级常驻，登录态下对已
     /// 接入 PendingBot 的 crew 跑 5s 拉/推循环。
     @StateObject private var relayAgent = CrewRelayAgent()
-    /// session inspector 呈现态。中栏 roster 头像点击 / 「+」/ toolbar 开关翻它。
+    /// 右栏 session 终端的可见性。中栏 roster 头像点击 / 「+」/ toolbar 开关翻它。
+    /// 与左 sidebar **互不联动**（三栏各自折叠，回到 §9.3「右栏常驻 session」的初衷）。
     @State private var inspectorPresented = false
-    /// 侧栏可见性。inspector 关时 `.all`(左 sidebar + 中栏并存)；inspector 开时
-    /// 经 `onChange` 自动翻 `.detailOnly`(收起左 sidebar 腾宽)—— 否则
-    /// sidebar + 中栏 + 固定宽 inspector 三段总宽超屏，窗口挂到屏幕外。
+    /// 左 sidebar 可见性 —— 用户用标准 sidebar 开关控制，不再随右栏开合自动收放。
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
@@ -51,20 +51,9 @@ struct MacThreePaneView: View {
                 }
             }
         }
-        // inspector 开 → 若 sidebar 还展开着就收起它（用户要的：开 inspector 自动让
-        // sidebar 收）。**关 inspector 不自动弹回 sidebar** —— sidebar 由用户手动控制。
-        .onChange(of: inspectorPresented) { _, open in
-            if open, columnVisibility != .detailOnly {
-                withAnimation { columnVisibility = .detailOnly }
-            }
-        }
-        // 用户手动展开 sidebar(翻回 .all) 且 inspector 还开着 → 收起 inspector（互斥）。
-        // inspector 自己开时只把 columnVisibility 设 .detailOnly，不会触发这里，无回环。
-        .onChange(of: columnVisibility) { _, vis in
-            if vis == .all && inspectorPresented {
-                withAnimation { inspectorPresented = false }
-            }
-        }
+        // 左 sidebar 与右栏终端**互不联动**(去掉旧的「开终端自动收 sidebar」互斥)——
+        // 用户要三栏共存:crew 列表、群聊、session 终端各自独立折叠(标准 sidebar 开关 /
+        // toolbar「Session 终端」开关)。窄屏总宽吃紧时由用户手动收某一栏。
         // 建 crew 后自动起机长（用户要的零摩擦：新建即启动 + 群里报到，无需手动点
         // 「启动 Captain」）。store 在 createCrew 完成后 set crewId；这里持有
         // sessionRunner，best-effort 拉起后置 nil。

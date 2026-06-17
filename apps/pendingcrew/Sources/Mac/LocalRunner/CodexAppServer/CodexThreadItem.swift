@@ -121,5 +121,15 @@ struct CodexThreadItem: Decodable, Identifiable, Equatable {
             kind = .unknown(type: type)
         }
     }
+
+    /// Synthetic construction — `CodexTranscript` builds/updates `reasoning` items
+    /// from the streamed delta notifications. Under ChatGPT auth the final
+    /// `item/completed` reasoning item completes with an empty `summary` (the real
+    /// chain-of-thought is `encrypted_content`), so the only readable text is the
+    /// `item/reasoning/summaryTextDelta` stream we accumulate. See CodexTranscript.
+    init(id: String, kind: Kind) {
+        self.id = id
+        self.kind = kind
+    }
 }
 #endif

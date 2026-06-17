@@ -213,10 +213,35 @@ struct CrewChatView: View {
         }?.id
     }
 
-    /// Candidates for the current `@<prefix>`, filtered from the roster.
+    /// @ 候选的成员源。macOS 本地态把**在跑的 worker session**(`sessionRunner.runs`)
+    /// 合成成 `code_session` 成员并入 —— roster(`LocalBackend.listCrewMembers`)只含
+    /// captain + 本机人类,本地 session 不在里头(#2:普通 session 进不了 @ 名单的根因)。
+    /// captain 已由 `.captain` 候选覆盖,这里跳过(`role != .captain`);已在 roster 的
+    /// session(登录态)按 codeSessionId 去重。
+    private var mentionMembers: [CrewMember] {
+        #if os(macOS)
+        let known = Set(members.compactMap {
+            $0.memberKind == "code_session" ? $0.codeSessionId : nil
+        })
+        let runMembers: [CrewMember] = sessionRunner.runs
+            .filter { $0.status == .running && $0.role != .captain && !known.contains($0.sessionId) }
+            .map { run in
+                CrewMember(
+                    id: run.sessionId, memberKind: "code_session", userId: nil, botId: nil,
+                    codeSessionId: run.sessionId, displayName: run.displayName, role: nil,
+                    status: "active", representsCrewId: nil,
+                    sessionStatus: run.isWorking ? "running" : nil)
+            }
+        return members + runMembers
+        #else
+        return members
+        #endif
+    }
+
+    /// Candidates for the current `@<prefix>`, filtered from the roster (+ local runs).
     private func mentionCandidates(for prefix: String) -> [CrewMentionCandidate] {
         crewMentionCandidates(
-            members: members,
+            members: mentionMembers,
             captainBotId: captainBotId,
             prefix: prefix,
             selfMemberId: selfMemberId)
@@ -540,8 +565,13 @@ struct CrewChatView: View {
         let runStates: [CrewLocalMentionInjectLogic.RunState] = sessionRunner.runs
             .filter { $0.status == .running }
             .map { .init(sessionId: $0.sessionId, isBusy: $0.backend.isBusy) }
+        // @机长 → captain 是本地 run(role==.captain),解析出它的 sessionId 让决策核心
+        // 一视同仁按 session 唤醒(#1:之前 .captain 被忽略 → @机长 机长不醒)。
+        let captainSessionId = sessionRunner.runs
+            .first { $0.role == .captain && $0.status == .running }?.sessionId
         let injections = CrewLocalMentionInjectLogic.decide(
-            mentions: mentions, runs: runStates, messageText: text, senderName: "我")
+            mentions: mentions, runs: runStates, messageText: text, senderName: "我",
+            captainSessionId: captainSessionId)
         for inj in injections {
             sessionRunner.runs
                 .first { $0.sessionId == inj.sessionId && $0.status == .running }?
