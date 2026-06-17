@@ -32,6 +32,7 @@ struct MacRootGate: View {
                         .foregroundStyle(Theme.Palette.inkMuted)
                 }
                 .frame(minWidth: 770, minHeight: 420)
+                .background(MacWindowGrowAnchorRecorder())
             } else if store.current == nil {
                 MacWelcomeView()
             } else {
@@ -41,6 +42,43 @@ struct MacRootGate: View {
                 WideRootView()
                     .frame(minWidth: 920, minHeight: 620)
             }
+        }
+    }
+}
+
+/// 把「登录前」窗口的中心 + 尺寸(hydrate 占位 / 登录页)带给
+/// `MacMainWindowStyler`:登录后窗口从小窗长到主尺寸时,用它把中心搬回原处,
+/// 让窗口「以中心为锚」展开,而不是钉住左上角往右下方蹿。
+@MainActor
+enum MacWindowGrowAnchor {
+    static var center: NSPoint?
+    static var preSize: NSSize?
+}
+
+/// 贴在登录前内容背后,持续把当前窗口中心/尺寸记到 `MacWindowGrowAnchor`。
+/// 登录后该视图随登录页一起被移除,自然停止记录;主窗 styler 再消费并清空。
+private struct MacWindowGrowAnchorRecorder: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let v = NSView(frame: .zero)
+        DispatchQueue.main.async { [weak v] in
+            if let w = v?.window { context.coordinator.record(w) }
+        }
+        return v
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async { [weak nsView] in
+            if let w = nsView?.window { context.coordinator.record(w) }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    @MainActor
+    final class Coordinator {
+        func record(_ window: NSWindow) {
+            MacWindowGrowAnchor.center = NSPoint(x: window.frame.midX, y: window.frame.midY)
+            MacWindowGrowAnchor.preSize = window.frame.size
         }
     }
 }
@@ -106,6 +144,7 @@ struct MacWelcomeView: View {
         .frame(minWidth: 770, minHeight: 420, alignment: .center)
         .background(Theme.Palette.canvas.ignoresSafeArea())
         .background(MacLoginWindowStyler())
+        .background(MacWindowGrowAnchorRecorder())
         .onChange(of: vm.otpSent) { _, sent in
             if sent { focusedField = .code }
         }
