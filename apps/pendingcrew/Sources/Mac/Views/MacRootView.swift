@@ -32,27 +32,24 @@ struct MacThreePaneView: View {
             CrewSidebarView()
                 .navigationSplitViewColumnWidth(min: 240, ideal: 280)
         } detail: {
-            CrewCenterView(inspectorPresented: $inspectorPresented)
-                .environmentObject(sessionRunner)
-                // **detail 必须完全无宽度约束** —— 诊断证明任何约束(navigationSplitView
-                // ColumnWidth ideal / .frame minWidth)都会让它在 inspector present 时不肯
-                // 让位、霸占整个容器宽,inspector 被挤到溢出(就是那三张被切的图)。无约束时
-                // 它当 NavigationSplitView 天然弹性填充栏,inspector 一开就自动让出空间。
-        }
-        .inspector(isPresented: $inspectorPresented) {
-            CrewSessionWindowView()
-                .environmentObject(sessionRunner)
-                // 可拖动（min/ideal/max）。SwiftUI 原生 .inspector 有个首帧 bug：present 当帧
-                // 列宽不落定 → 内容被挤、左侧被切，要等一次对 divider 的 geometry 变化才复位
-                // （就是用户反馈的"手动拖一下才正常"）。兜底见本文件底部
-                // `InspectorFirstFrameRelayout`（inspector 翻开后程序化 ±1 窗宽强制 relayout）。
-                // 注：旧注释里说的 `CrewSessionWindowView.resyncInspectorDivider` 兜底是错的——
-                // 那函数从未存在；当年纯靠 detail 弹性 + 终端低抗压缩的隐式首帧行为撑着,脆弱易回归。
-                // 列宽：右栏内嵌的是 Claude/Codex 全屏 TUI，列数 = 栏宽 / 字宽。配 11pt
-                // 紧凑字体(见 AgentTerminalView)后 cell ~6.6pt：min 360≈54 列、ideal 480≈72、
-                // max 560≈84(≈TUI 设计宽度)。**max 不抬过 560** —— tech-debt 有记「inspector 拖到
-                // max 时聊天栏被挤破」,抬 max 会加剧那个已知未决问题;真正治乱靠字体不靠更宽。
-                .inspectorColumnWidth(min: 360, ideal: 480, max: 560)
+            // 群聊 + 按需的 session 终端，放进**确定性分栏**（HSplitView 底层是 NSSplitView，
+            // 列宽首次布局即确定性协商）。**不再用 `.inspector`** —— 它"present 当帧只测一次
+            // 内容宽、之后不重测"才是"展开左侧被切、要手拖 divider"那类回归的病灶（详见
+            // docs/tech-debt.md）。终端栏只在 inspectorPresented 时出现；隐藏时 detail 就是群聊
+            // 满宽。detail 列本身不设宽度约束（保持弹性），min 宽都落在 HSplitView 的子栏上。
+            HSplitView {
+                CrewCenterView(inspectorPresented: $inspectorPresented)
+                    .environmentObject(sessionRunner)
+                    .frame(minWidth: 320)
+                if inspectorPresented {
+                    CrewSessionWindowView()
+                        .environmentObject(sessionRunner)
+                        // 右栏内嵌 Claude/Codex 全屏 TUI，列数 = 栏宽 / 字宽。配 11pt 紧凑字体
+                        // （见 AgentTerminalView）cell ~6.6pt：min 360≈54 列、ideal 480≈72。
+                        // NSSplitView 首帧即给到这个宽，不会像 .inspector 那样被切、要手拖。
+                        .frame(minWidth: 360, idealWidth: 480)
+                }
+            }
         }
         // inspector 开 → 若 sidebar 还展开着就收起它（用户要的：开 inspector 自动让
         // sidebar 收）。**关 inspector 不自动弹回 sidebar** —— sidebar 由用户手动控制。
@@ -89,10 +86,6 @@ struct MacThreePaneView: View {
         // 去掉 toolbar 底部那条灰色分隔线（详见 WindowSeparatorRemover）。tick 传
         // selectedCrewId —— 切 crew 时借 updateNSView 重设，抢在 SwiftUI 把它重置回去之后。
         .background(WindowSeparatorRemover(tick: crewStore.selectedCrewId ?? ""))
-        // inspector 展开当帧强制一次列宽 relayout —— 兜 SwiftUI .inspector 的首帧 bug
-        // （详见本文件底部 InspectorFirstFrameRelayout）。这是"展开 inspector 左侧被切、
-        // 必须手拖 divider 才正常"那个回归的确定性根治。
-        .background(InspectorFirstFrameRelayout(presented: inspectorPresented))
         .task {
             // 首次进入时把列表 + subjects 都拉一遍 —— subjects 用于创建
             // crew sheet 的 picker，提前 prefetch 避免 sheet 打开时空。
@@ -150,36 +143,6 @@ private final class SeparatorKillerView: NSView {
         window.titlebarAppearsTransparent = true
         if !window.styleMask.contains(.fullSizeContentView) {
             window.styleMask.insert(.fullSizeContentView)
-        }
-    }
-}
-
-/// 兜 SwiftUI 原生 `.inspector` 的首帧布局 bug —— present 当帧 inspector 列宽不会落定到
-/// 正确值（内容被挤、左侧被切），要等一次对 divider 的 geometry 变化才复位（用户体感就是
-/// "手动拖一下 divider 才正常"）。本 helper 在 inspector 翻开那次（false→true）把宿主窗口
-/// 宽度 +1 再还原，跨两个 runloop tick 各触发一次 layout pass，强制 AppKit 对 inspector 的
-/// NSSplitView 重新分栏 —— 等价用户"拖一下"，但自动、即时、±1pt 不可见。
-///
-/// 为何需要：根治本应靠"detail 列弹性填充 + 终端 NSView 低水平抗压缩"让首帧恰好对，但那是
-/// 脆弱的隐式行为，2026-06-15 晚 fix/crew-captain-terminal 改终端列宽/头像栏后回归。这层把
-/// "对的布局有没有被应用到首帧"从靠运气变成确定性触发，后续再动 inspector 内容也不重演。
-/// 只在 present 那一拍触发（Coordinator 记上次态）—— 否则 isWorking 等频繁重渲染会反复抖窗。
-private struct InspectorFirstFrameRelayout: NSViewRepresentable {
-    var presented: Bool
-    func makeCoordinator() -> Coordinator { Coordinator() }
-    final class Coordinator { var lastPresented = false }
-    func makeNSView(context: Context) -> NSView { NSView(frame: .zero) }
-    func updateNSView(_ nsView: NSView, context: Context) {
-        let was = context.coordinator.lastPresented
-        context.coordinator.lastPresented = presented
-        guard presented, !was else { return }   // 只在 false→true 那一拍触发
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            guard let win = nsView.window else { return }
-            let orig = win.frame
-            var bumped = orig
-            bumped.size.width += 1
-            win.setFrame(bumped, display: false)
-            DispatchQueue.main.async { win.setFrame(orig, display: true) }
         }
     }
 }
