@@ -12,16 +12,18 @@
 
 ---
 
-### 🟡 PendingCrew 登录搬 PendingBot + 同发布者确认卡 — P1 落地，真签名链路 + P2 未做
+### 🟡 PendingCrew 登录搬 PendingBot + 同发布者确认卡 — P1+P2 代码落地，待真签名 GUI + Apple/Google 后台配置
 - **发现**: 2026-06-17 · `feat/pendingcrew-login-port`（P1：确认卡 + 现有扫码视觉对齐；spec/plan `2026-06-17-pendingcrew-login-port*`）
 - **背景**: 登录入口改为「检测本机 PendingBot 已登录（共享 keychain `pfa_`）→ 确认卡一键 mint `pendingcrew_control` grant / 换号→登录页」。**沿用 scoped grant 安全模型**（PendingCrew 不持全权 Supabase session，守 2026-06-08 SSO spec）。PendingBot 家族凭据 payload 加 `displayName`/`avatarSeed` 且放开到 iOS 也写；edge `/v1/me/family-credential` 回 `displayName`。P1（T1-T7）：PendingCrew 215 单测绿 + Mac/iPad build 绿 + PendingBot 双 build 绿 + edge typecheck 0。
 - **真签名尾巴（必须 Xcode GUI 正常签名验，headless ad-hoc 必 `-34018`，别在 build 绿就判 done —— 按 `feedback_no_shortcut_debt` verify 要覆盖最终使用路径）**:
   1. **共享 keychain 跨 app 真读**：PendingBot（已登录）写 `pfa_`+profile 进共享组 `M42BKJN82S.com.pendingname.shared` → PendingCrew `CrewLoginIdentity.current()` 真读到、确认卡显示正确头像+账号。需两个 Apple Development 正常签名 app。
   2. **确认卡端到端**：Mac 侧栏「登录」→ sheet 出确认卡 →「继续」→ `tryFamilySSO` mint grant → 进主界面；iPad 同链路（首屏 gate）。
   3. **iPad 检测依赖 PendingBot-iOS 写凭据**：T2 已放开 writer 到 iOS，但「同一台 iPad 上 PendingBot 登录→写 `pfa_`→PendingCrew 读」未真机验。
-- **P2 未做（直接登录栈，plan T9-T15）**：Apple/Google/邮箱直接登录（vendored 登录栈 + 内存态 Supabase + `session→pfa_→mint→signOut` 兑换）。P2 引 supabase-swift + GoogleSignIn 两个重依赖进 PendingCrew（仅为拿一次性 session，D5 Port-Full）；需用户在 Google Cloud Console 为 `com.pendingname.pendingcrew` 建 iOS OAuth client id + 加进 Supabase Authorized Client IDs。**P2 前不拆扫码**（本机无 PendingBot 的新 iPad 用户当前靠扫码登录）。
+  4. **Apple Sign In capability 未注册**：PendingCrew App ID（`com.pendingname.pendingcrew`）在 Apple Developer portal 没开 Sign in with Apple → headless 加 `com.apple.developer.applesignin` entitlement 必挂签名（T9 已回退、保留 build 绿）。修：Xcode GUI → Signing & Capabilities → 「+ Sign in with Apple」（automatic signing 自动注册到 App ID）→ 再把 entitlement 加回 `PendingCrew.entitlements`。在此之前 Apple 直接登录运行时不可用（代码已就位、编译通过）。
+  5. **Google OAuth client id 未建**：需 Cloud Console 给 `com.pendingname.pendingcrew` 建 iOS client id、填进 `Info.plist` `GIDClientID`（现为 `YOUR_` 占位 → `CrewGoogleSignIn.run()` 抛 `.missingClientID`）、并加进 Supabase Auth → Google → Authorized Client IDs。
+- **P2 已落代码（直接登录栈，plan T9-T15，218 单测 + Mac/iPad build 绿，T14 过独立 reviewer APPROVED）**：Apple/Google/邮箱直接登录 = vendored `Crew{Email,Apple,Google}SignIn`/`CrewWelcomeViewModel`/`CrewTurnstileWebView` + 内存态 `CrewSupabaseStack`（session 不落 keychain）+ `CrewLoginExchange`（`session→pfa_→mint→signOut`，失败也清，TDD）。`CrewWelcomeView`(iPad)/`CrewMacWelcomeView`(Mac) 三胶囊 + 邮箱，旧 `LoginView` 删（扫码并入 `CrewQRLoginView`）。引 supabase-swift + GoogleSignIn 两重依赖进 PendingCrew（仅为一次性 session，D5 Port-Full）。**Apple/Google 后台配好前，邮箱 OTP + 扫码 + 确认卡已是可用路径；P2 前不拆扫码**（现作第三胶囊保留）。
 - **附带修复（已闭合）**: `PendingCrewTests` 7 个 Codex/Session 测试文件的 stale `@testable import PendingCrew`（host-less bundle 编不过）→ 改纯 `import XCTest`，commit `74ce8047`。意味 #345-360「completed」时该单测 bundle 从未 `xcodebuild test` 真跑绿（completed=已验证 纪律漏，已补绿 215 测）。
-- **状态**: 🟡 P1 代码落地、待真签名 GUI 验；P2 待做。
+- **状态**: 🟡 P1+P2 代码全落地（18 commit，build/单测全绿）；待 ① Apple Sign In capability（Xcode GUI）② Google client id（Cloud Console）③ 一次签名 GUI E2E（确认卡/三直接登录/扫码 + session 不落盘核查）。未合 main（用户发起）。
 
 ### 🟡 新建机器人模型预设 — 数据源近似 + 端到端待部署后真验
 - **发现**: 2026-06-15 · `feat/create-bot-presets`（新建机器人一页式 + 模型预设）
