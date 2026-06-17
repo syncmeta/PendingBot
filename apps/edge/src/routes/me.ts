@@ -352,7 +352,7 @@ meRoutes.post('/family-credential', async (c) => {
   const supa = userClient(c.env, userJwt);
   const { data: personal, error: subjectErr } = await supa
     .from('subjects')
-    .select('id')
+    .select('id, display_name')
     .eq('subject_type', 'user_account')
     .eq('user_id', userId)
     .eq('status', 'active')
@@ -380,7 +380,10 @@ meRoutes.post('/family-credential', async (c) => {
     return jsonError(c, 500, 'internal_error');
   }
 
-  return c.json({ familyCredential: { token, subjectId: personal.id } });
+  return c.json({
+    familyCredential: { token, subjectId: personal.id },
+    displayName: personal.display_name ?? null,
+  });
 });
 
 // POST /v1/me/redeem — trade a redemption code for credits. Atomic in
