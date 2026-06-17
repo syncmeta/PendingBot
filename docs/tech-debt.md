@@ -12,6 +12,22 @@
 
 ---
 
+### 🟢 captain prompt 提到的 `start_session` 工具未实装
+- **发现**: 2026-06-17 · `feat/crew-naming`
+- **位置**: `apps/pendingcrew/Resources/Prompts/crew-captain.zh.md`（写 `start_session(brief, runner?)`）vs `apps/pendingcrew/Sources/Mcp/McpServer.swift`（只有 post_to_crew / read_whiteboard / ask / answer_decision / rename_crew）。
+- **问题**: prompt 教机长用 `start_session` 把明确编码任务排队，但本地 MCP server **没这个工具**——机长调不到。起 worker session 的真实通路（手动 `CrewSessionWindowView` / relay `task_request`）不经此工具。prompt 与实装漂移（spec 概念先行、工具没补）。
+- **影响**: 机长可能调一个不存在的工具 → 收到「未知工具」。本次 crew-naming 只在同文件加命名条、未碰这条，单独记。
+- **建议**: 要么在 McpServer 实装 `start_session`（captain-only，写 task_request 进控制/白板通道、app 起 session），要么把 prompt 改成现有真实通路的说法。
+- **状态**: 待办（与 crew-naming 无耦合）。
+
+### 🟡 PendingCrewTests 的 `@testable import PendingCrew` 无构建序边 → 干净 `xcodebuild test` 编不过
+- **发现**: 2026-06-17 · `feat/crew-naming`（跑新单测时撞上）
+- **位置**: `apps/pendingcrew/Tests/PendingCrewTests/`（`Codex*Tests` / `SessionConfigTests` 用 `@testable import PendingCrew`）+ `apps/pendingcrew/project.yml`（PendingCrewTests `dependencies:` 只有 SwiftTerm；pbxproj 里 0 个 PBXTargetDependency 指向 app target）。
+- **问题**: 测试 bundle 是 standalone（`TEST_HOST=""`），多数自包含源码**直接编进 bundle**；但 6 个测试文件 `@testable import PendingCrew` 取只在 app module 里的类型（Codex* / SessionConfig）。test target **没有**对 app target 的依赖边 → `xcodebuild test -scheme PendingCrew` 从干净 DerivedData 跑报 `unable to resolve module dependency: 'PendingCrew'`，只有 DerivedData 里已存在 app 的 testable swiftmodule（IDE 跑过 / 先 build）时才偶然过。
+- **影响**: 命令行/CI 无法可靠跑这套 XCTest（本仓 Swift 的 pre-merge 约定本就是 `xcodebuild build` 不是 test，平时不暴露）。新写单测（含 crew-naming 三个）连带跑不了 —— 本次靠 standalone `swiftc` 跑通新逻辑（LocalCrewControlStore + 名字归一化，12 检查全过）+ app build 编译兜住。
+- **建议**: 二选一让 CLI 可跑：(a) 给 PendingCrewTests 加 `dependencies: - target: PendingCrew`（注意直编进 bundle 的自包含源码与 module 内同名类型可能撞符号，需确认 @testable 测试文件与直编源码不交叉引用）；(b) 把 Codex*/SessionConfig 的**源文件**也加进 test target 显式清单、去掉那几处 `@testable import`（与现有自包含约定一致）。
+- **状态**: 待办（pre-existing，非 crew-naming 引入；记下供 CI 化时收口）。
+
 ### 🟡 新建机器人模型预设 — 数据源近似 + 端到端待部署后真验
 - **发现**: 2026-06-15 · `feat/create-bot-presets`（新建机器人一页式 + 模型预设）
 - **背景**: bot 模型池从手挑改成 board 管规则、OpenRouter 目录动态解析的"预设"。spec `2026-06-15-create-bot-presets-design.md`、plan `2026-06-15-create-bot-presets.md`。edge typecheck 0 + 599 vitest 全绿 + iOS build 绿，但 **E2E 全未真验**（见下）。
