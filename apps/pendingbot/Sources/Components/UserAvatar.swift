@@ -16,6 +16,23 @@ struct UserAvatar: View {
 
     @State private var image: PlatformImage?
 
+    init(seed: String, attachmentId: String?, size: CGFloat = 36) {
+        self.seed = seed
+        self.attachmentId = attachmentId
+        self.size = size
+        // Seed the image synchronously from the process-lifetime cache so a
+        // warm hit paints the real avatar on the FIRST frame. Without this the
+        // cache read happens inside `.task` (which SwiftUI runs *after* the
+        // first paint), so every appearance — including tab switches that
+        // recreate the view — flashed the `BotAvatar` fallback for a frame
+        // before the photo swapped in.
+        if let id = attachmentId, !id.isEmpty {
+            _image = State(initialValue: AvatarCache.shared.image(for: id))
+        } else {
+            _image = State(initialValue: nil)
+        }
+    }
+
     var body: some View {
         Group {
             if let image {
