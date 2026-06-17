@@ -8,6 +8,7 @@ import { requireCfAccess, requireBoardAdmin } from '../lib/cf-access';
 import { boardResource } from '../lib/board-resource';
 import { bustModelPresetCaches } from '../lib/model-presets';
 import { boardFeatureFlagsRoutes } from './board-feature-flags';
+import { boardModelRolesRoutes } from './board-model-roles';
 import type { AppBindings } from '../types';
 
 export const boardRoutes = new Hono<AppBindings>();
@@ -212,3 +213,5 @@ boardRoutes.route(
 
 // ── 功能开关(单例 KV blob,非表行) ──────────────────────────
 boardRoutes.route('/feature-flags', boardFeatureFlagsRoutes);
+// ── 系统模型角色(单例 KV blob:title/group-router/vision/voice 等的默认 slug) ──
+boardRoutes.route('/model-roles', boardModelRolesRoutes);
