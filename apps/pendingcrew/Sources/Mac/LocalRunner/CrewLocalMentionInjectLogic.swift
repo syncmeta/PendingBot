@@ -12,10 +12,12 @@ import Foundation
 /// 人按了发送就把消息塞给目标 run。
 ///
 /// 输入:本次发送的 staged `[CrewMention]`、每个本地 run 的「身份 + 是否空闲」
-/// 快照(`RunState`)、消息正文 + 发送者名。输出:一组 `Injection`(给哪个 run
-/// 注入什么文本)。busy 的 run **不打断**(下一轮白板注入会带到);非 `@session`
-/// 的 mention(broadcast / captain / human)在本地直投路径**不**唤醒具体 run
-/// (broadcast 靠白板每轮注入覆盖;captain/human 不是本地 run 目标)。
+/// 快照(`RunState`)、消息正文 + 发送者名、以及 captain 本地 run 的 sessionId
+/// (`captainSessionId`,调用方解析后传入)。输出:一组 `Injection`(给哪个 run
+/// 注入什么文本)。busy 的 run **不打断**(下一轮白板注入会带到)。
+/// `@session` 按目标 sessionId 唤醒;`@captain` 解析到 captain 本地 run 的
+/// sessionId 后**同样唤醒**(#1:之前 captain 被忽略 → @机长 机长不醒);
+/// broadcast / human 在本地直投路径**不**唤醒具体 run(broadcast 靠白板每轮注入覆盖)。
 ///
 /// 抽成纯函数让「哪些 run 该醒 / 注入什么」可在不起真 PTY / app-server 的前提下
 /// 单测(对齐 `CrewMailboxWakeLogic` 的风格)。活体「找 run → run.send」的 IO
@@ -37,23 +39,33 @@ enum CrewLocalMentionInjectLogic {
 
     /// 核心决策。
     ///
-    /// 对每个 `@session` mention,找到对应的本地 run:
+    /// 对每个 `@session` / `@captain` mention,找到对应的本地 run:
     ///   * 命中且空闲(`!isBusy`)→ 产出一条 `Injection`(注入定向文本唤醒)。
     ///   * 命中但 busy → 跳过(不打断;下一轮白板注入会带到)。
     ///   * 没有对应本地 run(远端 session / 已结束)→ 跳过(本地无可投目标)。
-    /// 非 `@session` 的 mention 一律忽略(见类型注释)。
+    /// `@captain` 解析到 `captainSessionId`(调用方从在跑的 captain run 取);为 nil
+    /// (本地没在跑 captain)则忽略。broadcast / human 一律忽略(见类型注释)。
     ///
-    /// 同一 session 被 @ 多次 → 去重,只注入一次。
+    /// 同一目标被 @ 多次 → 去重,只注入一次。
     static func decide(
         mentions: [CrewMention],
         runs: [RunState],
         messageText: String,
-        senderName: String
+        senderName: String,
+        captainSessionId: String? = nil
     ) -> [Injection] {
-        // 目标 session id 集合(保序去重)。
+        // 目标 session id 集合(保序去重)。@session → 目标 sessionId;
+        // @captain → captain 本地 run 的 sessionId(调用方解析后传入)。
         var targets: [String] = []
-        for m in mentions where m.kind == "session" {
-            if let sid = m.targetId, !targets.contains(sid) { targets.append(sid) }
+        for m in mentions {
+            switch m.kind {
+            case "session":
+                if let sid = m.targetId, !targets.contains(sid) { targets.append(sid) }
+            case "captain":
+                if let cid = captainSessionId, !targets.contains(cid) { targets.append(cid) }
+            default:
+                break   // broadcast / human:本地直投不唤醒具体 run
+            }
         }
         guard !targets.isEmpty else { return [] }
 
