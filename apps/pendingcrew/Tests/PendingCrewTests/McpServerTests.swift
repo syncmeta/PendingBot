@@ -11,7 +11,13 @@ final class McpServerTests: XCTestCase {
     private func server(_ dir: URL, isCaptain: Bool = false) -> McpServer {
         McpServer(store: LocalWhiteboardStore(directory: dir),
                   approvals: LocalApprovalStore(directory: dir),
+                  control: LocalCrewControlStore(directory: dir),
                   crewId: "c", sessionId: "sess-1", isCaptain: isCaptain)
+    }
+    private func callRenameCrew(_ s: McpServer, name: String) -> String {
+        s.handleLine("""
+        {"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"rename_crew","arguments":{"name":"\(name)"}}}
+        """) ?? ""
     }
     private func callAnswerDecision(_ s: McpServer, reqId: String, reply: String) -> String {
         s.handleLine("""
@@ -203,5 +209,43 @@ final class McpServerTests: XCTestCase {
         let s = server(tempDir(), isCaptain: true)
         let id = s.approvals.raise(crewId: "c", kind: "decision", sessionId: "w", summary: "q")
         XCTAssertTrue(callAnswerDecision(s, reqId: id, reply: "  ").contains("reply 不能为空"))
+    }
+
+    // MARK: - rename_crew（机长专用，crew-naming）
+
+    func testNonCaptainToolsListLacksRenameCrew() {
+        let r = server(tempDir()).handleLine(#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#)!
+        XCTAssertFalse(r.contains("rename_crew"))
+    }
+
+    func testCaptainToolsListHasRenameCrew() {
+        let r = server(tempDir(), isCaptain: true).handleLine(#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#)!
+        XCTAssertTrue(r.contains("rename_crew"))
+    }
+
+    func testNonCaptainRenameCrewRejected() {
+        let s = server(tempDir())
+        XCTAssertTrue(callRenameCrew(s, name: "鉴权重构").contains("仅机长可用"))
+        XCTAssertNil(s.control.pendingRename(crewId: "c"))
+    }
+
+    func testCaptainRenameCrewWritesControl() {
+        let s = server(tempDir(), isCaptain: true)
+        let r = callRenameCrew(s, name: "鉴权重构")
+        XCTAssertTrue(r.contains("已把 crew 改名为「鉴权重构」"))
+        XCTAssertEqual(s.control.pendingRename(crewId: "c"), "鉴权重构")
+    }
+
+    func testRenameCrewEmptyRejected() {
+        let s = server(tempDir(), isCaptain: true)
+        XCTAssertTrue(callRenameCrew(s, name: "   ").contains("name 不能为空"))
+        XCTAssertNil(s.control.pendingRename(crewId: "c"))
+    }
+
+    // 名字收成单行标签：换行/多空白 → 单空格。
+    func testRenameCrewCollapsesWhitespace() {
+        let s = server(tempDir(), isCaptain: true)
+        _ = callRenameCrew(s, name: "鉴权   重构")
+        XCTAssertEqual(s.control.pendingRename(crewId: "c"), "鉴权 重构")
     }
 }

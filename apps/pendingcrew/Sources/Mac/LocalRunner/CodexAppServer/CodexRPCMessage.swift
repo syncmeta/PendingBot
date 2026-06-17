@@ -19,6 +19,11 @@ enum CodexRPCMessage {
     static func encodeResponse(id: Int, result: [String: Any]) throws -> String {
         try encode(["id": id, "result": result])
     }
+    /// Error reply to a server-initiated request we don't model — keeps codex from
+    /// blocking the turn waiting on a response we'd otherwise never send.
+    static func encodeError(id: Int, code: Int, message: String) throws -> String {
+        try encode(["id": id, "error": ["code": code, "message": message]])
+    }
     private static func encode(_ obj: [String: Any]) throws -> String {
         let data = try JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys])
         return String(decoding: data, as: UTF8.self)

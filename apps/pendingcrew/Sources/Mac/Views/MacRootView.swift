@@ -32,25 +32,24 @@ struct MacThreePaneView: View {
             CrewSidebarView()
                 .navigationSplitViewColumnWidth(min: 240, ideal: 280)
         } detail: {
-            CrewCenterView(inspectorPresented: $inspectorPresented)
-                .environmentObject(sessionRunner)
-                // **detail 必须完全无宽度约束** —— 诊断证明任何约束(navigationSplitView
-                // ColumnWidth ideal / .frame minWidth)都会让它在 inspector present 时不肯
-                // 让位、霸占整个容器宽,inspector 被挤到溢出(就是那三张被切的图)。无约束时
-                // 它当 NavigationSplitView 天然弹性填充栏,inspector 一开就自动让出空间。
-        }
-        .inspector(isPresented: $inspectorPresented) {
-            CrewSessionWindowView()
-                .environmentObject(sessionRunner)
-                // 可拖动（min/ideal/max）。SwiftUI 原生 .inspector 有个首帧 bug：
-                // 内容 hosting view 不会在 present 当帧同步到列宽，要等一次对 inspector
-                // divider 的 geometry 变化才复位（用户手动"拖一下"）。CrewSessionWindowView
-                // 在 onAppear 后做一次程序化 divider 同步兜这个 bug（见那里 resyncInspectorDivider）。
-                // 列宽：右栏内嵌的是 Claude/Codex 全屏 TUI，列数 = 栏宽 / 字宽。配 11pt
-                // 紧凑字体(见 AgentTerminalView)后 cell ~6.6pt：min 360≈54 列、ideal 480≈72、
-                // max 560≈84(≈TUI 设计宽度)。**max 不抬过 560** —— tech-debt 有记「inspector 拖到
-                // max 时聊天栏被挤破」,抬 max 会加剧那个已知未决问题;真正治乱靠字体不靠更宽。
-                .inspectorColumnWidth(min: 360, ideal: 480, max: 560)
+            // 群聊 + 按需的 session 终端，放进**确定性分栏**（HSplitView 底层是 NSSplitView，
+            // 列宽首次布局即确定性协商）。**不再用 `.inspector`** —— 它"present 当帧只测一次
+            // 内容宽、之后不重测"才是"展开左侧被切、要手拖 divider"那类回归的病灶（详见
+            // docs/tech-debt.md）。终端栏只在 inspectorPresented 时出现；隐藏时 detail 就是群聊
+            // 满宽。detail 列本身不设宽度约束（保持弹性），min 宽都落在 HSplitView 的子栏上。
+            HSplitView {
+                CrewCenterView(inspectorPresented: $inspectorPresented)
+                    .environmentObject(sessionRunner)
+                    .frame(minWidth: 320)
+                if inspectorPresented {
+                    CrewSessionWindowView()
+                        .environmentObject(sessionRunner)
+                        // 右栏内嵌 Claude/Codex 全屏 TUI，列数 = 栏宽 / 字宽。配 11pt 紧凑字体
+                        // （见 AgentTerminalView）cell ~6.6pt：min 360≈54 列、ideal 480≈72。
+                        // NSSplitView 首帧即给到这个宽，不会像 .inspector 那样被切、要手拖。
+                        .frame(minWidth: 360, idealWidth: 480)
+                }
+            }
         }
         // inspector 开 → 若 sidebar 还展开着就收起它（用户要的：开 inspector 自动让
         // sidebar 收）。**关 inspector 不自动弹回 sidebar** —— sidebar 由用户手动控制。

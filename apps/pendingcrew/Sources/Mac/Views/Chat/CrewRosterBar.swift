@@ -13,7 +13,7 @@ struct CrewRosterBar: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 14) {
                 ForEach(members) { m in
-                    let sender = groupSenderFor(m)
+                    let sender = CrewSenderNaming.groupSender(for: m, captainBotId: captainBotId)
                     VStack(spacing: 3) {
                         CrewAvatarBadges(sender: sender, size: 28)
                         Text(sender.displayName)
@@ -28,32 +28,5 @@ struct CrewRosterBar: View {
             .padding(.vertical, 8)
         }
         .background(Theme.Palette.surfaceMuted.opacity(0.5))
-    }
-
-    /// Build a `GroupBubbleSender` from a `CrewMember` for `CrewAvatarBadges`.
-    /// Maps the same fields that `CrewSenderResolver` uses when resolving a
-    /// whiteboard entry, so roster and bubble avatars stay visually identical.
-    private func groupSenderFor(_ m: CrewMember) -> GroupBubbleSender {
-        let isCaptain = m.memberKind == "captain" || (m.botId != nil && m.botId == captainBotId)
-        let isSession = m.memberKind == "code_session"
-        let isHuman   = m.memberKind == "human"
-        let seed = m.botId ?? m.userId ?? m.codeSessionId ?? m.id
-        let name: String = {
-            if let n = m.displayName, !n.isEmpty { return n }
-            if isCaptain  { return "Captain" }
-            if isHuman    { return "我" }
-            if isSession  { return "session" }
-            return "bot"
-        }()
-        return GroupBubbleSender(
-            kind: isHuman ? .user : .bot,
-            id: seed,
-            displayName: name,
-            avatarPath: nil,
-            avatarSeed: seed,
-            isCaptain: isCaptain,
-            sessionStatus: m.sessionStatus,
-            isSession: isSession
-        )
     }
 }

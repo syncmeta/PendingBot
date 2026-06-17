@@ -3,6 +3,7 @@ import type { Env } from '../types';
 import { cleanupOrphanUploads } from './uploads-cleanup';
 import { reapStuckEnvelopes } from './envelope-reaper';
 import { finalizeExpiredAccountDeletions } from './account-deletion-sweep';
+import { warmModelPresets } from './preset-warm';
 
 // Workers cron entrypoint. wrangler.jsonc declares `triggers.crons` with
 // each schedule pattern; the same handler routes by `controller.cron`.
@@ -13,6 +14,8 @@ import { finalizeExpiredAccountDeletions } from './account-deletion-sweep';
 //   "*/5 * * * *"  every 5 min — envelope-run watchdog (force-fail
 //                  envelope_runs rows stuck in 'running' past the loop's
 //                  4-min wall budget)
+//   "*/30 * * * *" every 30 min — warm model-presets KV (catalog + per-preset
+//                  + list cache) so the bot-builder picker never pays cold cost
 //
 // The hourly "5 * * * *" idle-sandbox sweep was retired when the
 // code-exec tool moved off Daytona — the Cloudflare Sandbox SDK
@@ -38,6 +41,8 @@ export async function handleScheduled(
     );
   } else if (cron === '*/5 * * * *') {
     ctx.waitUntil(safe('envelope-reaper', () => reapStuckEnvelopes(env)));
+  } else if (cron === '*/30 * * * *') {
+    ctx.waitUntil(safe('preset-warm', () => warmModelPresets(env)));
   } else {
     console.warn('[cron] unmatched schedule', cron);
   }

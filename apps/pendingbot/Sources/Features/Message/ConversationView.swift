@@ -436,12 +436,32 @@ struct ConversationView: View {
         )
     }
 
+    @MainActor
     init(conversation: Conversation, bot: Bot?, pendingPeer: PendingPeer? = nil,
          onChange: @escaping () -> Void = {}) {
         self._conversation = State(initialValue: conversation)
         self.bot = bot
         self._pendingPeer = State(initialValue: pendingPeer)
         self.onChange = onChange
+        // When the caller didn't supply a bot — the Mac/iPad 3-column shell
+        // builds the detail column from a *different* MessageTabView instance
+        // whose `bots` @State is empty, so `bot` arrives nil — seed
+        // `resolvedBot` synchronously from the local bots cache so the header
+        // name + model suffix + voice button paint from cache on the FIRST
+        // frame instead of popping in only after the async
+        // `resolveBotIfNeeded()` lands. Falls back to nil (the prior async
+        // path) when the bot isn't cached, so non-added/public bots are
+        // unchanged.
+        let seededBot: Bot? = (bot == nil && !conversation.bot_id.isEmpty)
+            ? CacheRepository.cachedBots()
+                .first(where: { $0.id == conversation.bot_id })
+                .map {
+                    Bot(id: $0.id, display_name: $0.display_name, access_mode: nil,
+                        model: $0.model_id, visibility: $0.visibility,
+                        creator_id: $0.creator_id, voice_call_enabled: $0.voice_call_enabled)
+                }
+            : nil
+        self._resolvedBot = State(initialValue: seededBot)
     }
 
     var body: some View {

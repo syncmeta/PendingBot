@@ -24,15 +24,30 @@
 - **P2 已落代码（直接登录栈，plan T9-T15，218 单测 + Mac/iPad build 绿，T14 过独立 reviewer APPROVED）**：Apple/Google/邮箱直接登录 = vendored `Crew{Email,Apple,Google}SignIn`/`CrewWelcomeViewModel`/`CrewTurnstileWebView` + 内存态 `CrewSupabaseStack`（session 不落 keychain）+ `CrewLoginExchange`（`session→pfa_→mint→signOut`，失败也清，TDD）。`CrewWelcomeView`(iPad)/`CrewMacWelcomeView`(Mac) 三胶囊 + 邮箱，旧 `LoginView` 删（扫码并入 `CrewQRLoginView`）。引 supabase-swift + GoogleSignIn 两重依赖进 PendingCrew（仅为一次性 session，D5 Port-Full）。**Apple/Google 后台配好前，邮箱 OTP + 扫码 + 确认卡已是可用路径；P2 前不拆扫码**（现作第三胶囊保留）。
 - **附带修复（已闭合）**: `PendingCrewTests` 7 个 Codex/Session 测试文件的 stale `@testable import PendingCrew`（host-less bundle 编不过）→ 改纯 `import XCTest`，commit `74ce8047`。意味 #345-360「completed」时该单测 bundle 从未 `xcodebuild test` 真跑绿（completed=已验证 纪律漏，已补绿 215 测）。
 - **状态**: 🟡 P1+P2 代码全落地（18 commit，build/单测全绿）；待 ① Apple Sign In capability（Xcode GUI）② Google client id（Cloud Console）③ 一次签名 GUI E2E（确认卡/三直接登录/扫码 + session 不落盘核查）。未合 main（用户发起）。
+### 🟢 captain prompt 提到的 `start_session` 工具未实装
+- **发现**: 2026-06-17 · `feat/crew-naming`
+- **位置**: `apps/pendingcrew/Resources/Prompts/crew-captain.zh.md`（写 `start_session(brief, runner?)`）vs `apps/pendingcrew/Sources/Mcp/McpServer.swift`（只有 post_to_crew / read_whiteboard / ask / answer_decision / rename_crew）。
+- **问题**: prompt 教机长用 `start_session` 把明确编码任务排队，但本地 MCP server **没这个工具**——机长调不到。起 worker session 的真实通路（手动 `CrewSessionWindowView` / relay `task_request`）不经此工具。prompt 与实装漂移（spec 概念先行、工具没补）。
+- **影响**: 机长可能调一个不存在的工具 → 收到「未知工具」。本次 crew-naming 只在同文件加命名条、未碰这条，单独记。
+- **建议**: 要么在 McpServer 实装 `start_session`（captain-only，写 task_request 进控制/白板通道、app 起 session），要么把 prompt 改成现有真实通路的说法。
+- **状态**: 待办（与 crew-naming 无耦合）。
+
+### 🟡 PendingCrewTests 的 `@testable import PendingCrew` 无构建序边 → 干净 `xcodebuild test` 编不过
+- **发现**: 2026-06-17 · `feat/crew-naming`（跑新单测时撞上）
+- **位置**: `apps/pendingcrew/Tests/PendingCrewTests/`（`Codex*Tests` / `SessionConfigTests` 用 `@testable import PendingCrew`）+ `apps/pendingcrew/project.yml`（PendingCrewTests `dependencies:` 只有 SwiftTerm；pbxproj 里 0 个 PBXTargetDependency 指向 app target）。
+- **问题**: 测试 bundle 是 standalone（`TEST_HOST=""`），多数自包含源码**直接编进 bundle**；但 6 个测试文件 `@testable import PendingCrew` 取只在 app module 里的类型（Codex* / SessionConfig）。test target **没有**对 app target 的依赖边 → `xcodebuild test -scheme PendingCrew` 从干净 DerivedData 跑报 `unable to resolve module dependency: 'PendingCrew'`，只有 DerivedData 里已存在 app 的 testable swiftmodule（IDE 跑过 / 先 build）时才偶然过。
+- **影响**: 命令行/CI 无法可靠跑这套 XCTest（本仓 Swift 的 pre-merge 约定本就是 `xcodebuild build` 不是 test，平时不暴露）。新写单测（含 crew-naming 三个）连带跑不了 —— 本次靠 standalone `swiftc` 跑通新逻辑（LocalCrewControlStore + 名字归一化，12 检查全过）+ app build 编译兜住。
+- **建议**: 二选一让 CLI 可跑：(a) 给 PendingCrewTests 加 `dependencies: - target: PendingCrew`（注意直编进 bundle 的自包含源码与 module 内同名类型可能撞符号，需确认 @testable 测试文件与直编源码不交叉引用）；(b) 把 Codex*/SessionConfig 的**源文件**也加进 test target 显式清单、去掉那几处 `@testable import`（与现有自包含约定一致）。
+- **状态**: ✅ 已闭合 by `feat/pendingcrew-login-port`（commit `74ce8047` 把那 7 个 `Codex*`/`SessionConfig` 测试文件的 `@testable import PendingCrew` 改成纯 `import XCTest`，靠直编进 bundle 的源码供符号 = 该条建议的 (b) 方案）。两分支合并后 `xcodebuild -scheme PendingCrew test` 从干净跑 **238 测全绿**，CLI 可靠可跑。
 
 ### 🟡 新建机器人模型预设 — 数据源近似 + 端到端待部署后真验
 - **发现**: 2026-06-15 · `feat/create-bot-presets`（新建机器人一页式 + 模型预设）
 - **背景**: bot 模型池从手挑改成 board 管规则、OpenRouter 目录动态解析的"预设"。spec `2026-06-15-create-bot-presets-design.md`、plan `2026-06-15-create-bot-presets.md`。edge typecheck 0 + 599 vitest 全绿 + iOS build 绿，但 **E2E 全未真验**（见下）。
 - **尾巴**:
-  1. **端点冒烟 + 模拟器 E2E 未做**：`GET /v1/model-presets` 的 curl 冒烟、以及 iOS 模拟器走一遍（建私有/公有/自定义/换名字/点预设看模型/进自定义页是否秒开/无外部采用者公有 bot 可删）都**需要 worker 部署后才能验** —— 代码已 committed 但未 deploy，DB 迁移已 db push prod（表存在但服务端代码未上线）。合并 + 部署后必须补这轮真验，别在单测/build 绿就判 done（按 `feedback_no_shortcut_debt`：verify 要覆盖最终使用路径）。**这也是 plan Task 4.1 Step4 / 4.2 的"中国旗舰真实 slug + 原生路由是否生效"实测点**。
+  1. **端点冒烟 + 模拟器 E2E 未做**：`GET /v1/model-presets` 的 curl 冒烟、以及 iOS 模拟器走一遍（建私有/公有/自定义/换名字/点预设看模型/进自定义页是否秒开/无外部采用者公有 bot 可删）都**需要 worker 部署后才能验** —— 代码已 committed 但未 deploy，DB 迁移已 db push prod（表存在但服务端代码未上线）。合并 + 部署后必须补这轮真验，别在单测/build 绿就判 done（按 `feedback_no_shortcut_debt`：verify 要覆盖最终使用路径）。**这也是 plan Task 4.1 Step4 / 4.2 的"中国旗舰真实 slug + 原生路由是否生效"实测点**。`fix/model-presets`(2026-06-16) 的旗舰 `latest_in_series` 改造 + 列表性能根治也并入此轮真验：部署后 curl `GET /v1/model-presets` 确认 top-flagship/cn-flagship 返回真旗舰（opus-4.8 / gpt-5.5 / v4-pro / qwen3.7-max / kimi-k2.6 / glm-5.1 / minimax-m3），并看 CF 日志冷/热耗时确认冷启动不再卡（catalog 由 N× build 收敛成 1× + `*/30` cron 预热）。**注意部署顺序：先 deploy worker（认 `latest_in_series` resolver）再 db push（改两预设 kind），反了旧 worker 不识新 kind 会让这俩预设解析返回空**。
   2. **最热门 = LMArena 评分代理，非真实使用量榜**：OR 官方用量榜(`datasets/get-rankings-daily`)要 `OPENROUTER_API_KEY`，edge 没有(目录公开/推理走 AI Gateway 统一计费)，用户拍板 v1 不加 secret。现用 LMArena `text` 子集 rating 排序——语义是"评测质量榜"。将来要"真热门"再加 OR key + 换 `most_popular` resolver 数据源。
-  3. **旗舰 most_expensive 会选到 pro/ultra 档**：实测真目录，`top_flagship` 的 openai 落到 `o1-pro`(blended≈195)而非 GPT-5.1 主线档（`blended_usd_per_million` 是混合成本估算,缓存权重大,不完全等于"档位"）。board 可把该预设 `params.flagship` 切 `latest_in_series`(配 `series` glob)兜。中国厂同理可能落到 code/preview/turbo 变体。
-  4. **速度快候选集 cap 40 + min_rating 1200 是拍的**：`resolveFastest` 候选筛选阈值（质量下限、候选规模）按当时真实数据拍的，未长期观察；模型生态变了可能需调。
+  3. ~~**旗舰 most_expensive 会选到 pro/ultra 档**~~ **（已闭合，`fix/model-presets` 2026-06-16）**：top-flagship/cn-flagship 改 `latest_in_series` —— 每条产品线锚 series 前缀，系列内按 `-./` 分段排除小号/特化/滚动别名后取发布日最新（实测选出 opus-4.8 / gpt-5.5 / deepseek-v4-pro / qwen3.7-max / kimi-k2.6 / glm-5.1 / minimax-m3，全是真旗舰；most_expensive 之前选的是 o1-pro 2025-03 老款、deepseek-r1-distill 蒸馏小模型）。**但引入新命名-漂移尾巴（🟢，留意）**：① series 前缀（openai 用 `gpt-5`）锁了大版本，`gpt-6` 出来要改 seed（新迁移 UPDATE `params.lines`）；② `NON_FLAGSHIP_SEGMENTS` 排除集（fast/flash/mini/nano/lite/air/turbo/distill/code/preview/exp/plus）按当前 7 家命名拍的，新厂商用别的小号命名会漏（段精确匹配已避免 `mini`→`minimax` 误杀，但关键词黑名单本质脆弱）。新模型若选错旗舰，先查 `model-presets.ts` 的 `isNonFlagshipVariant` + 该迁移的 seed `lines`。真正想根治可改 `manual` 由 board 维护具体 slug（旗舰是季度级慢变量）——本次按用户"要 opus/gpt/kimi latest 这种"选了自动方案。
+  4. **速度快候选集 cap + min_rating 1200 是拍的**：`resolveFastest` 候选筛选阈值（质量下限、候选规模）按当时真实数据拍的，未长期观察；模型生态变了可能需调。cap 2026-06-16(`fix/model-presets`)由 40 降到 15（每候选要单发 OpenRouter endpoints 请求拿吞吐，Workers ~6 并发连接上限下 40 会排长队拖慢冷解析）。
 
 ### 🟡 去轮询 Phase 5 — 本地跨进程靠目录监听、远端 hub 真推 + iOS 实时通道未验
 - **发现**: 2026-06-15 · `feat/crew-comms-rework`（Phase 5：群聊去 3s/2s 轮询，改事件驱动）
@@ -55,6 +70,13 @@
 - **未做（v1 明确 defer，按需再加）**: 逐字 delta/token 流式（已 opt-out，只渲染 `item/completed`）、`turn/steer` 回合中插入、`resume`/`fork`、额度展示 UI、peer rollout JSONL 跨读、codex hooks 系统。
 - **状态**: 🟡 协议层已对真 schema 核完（2026-06-16，`chore/ledger-reconcile`，codex-cli **0.137.0** 真机 `generate-json-schema` dump）。**inbound `CodexThreadItem` 字段名逐一比对完 + 修了 4 个真 bug**：① `userMessage` 取 `content:[UserInput]` 的 text（原读顶层 `text`→空气泡）；② `reasoning.summary`/`content` 是 `[String]` 数组（原当 String→推理渲染空）；③ `fileChange` 从 `changes:[FileUpdateChange].path` 派生 summary（原读不存在的 `summary`）；④ tool call 用 `server`+`tool`/`namespace`+`tool`/`tool`（原读不存在的 `name`→显示成 "mcpToolCall"）。测试改用真 schema fixture（原断言虚构字段=假绿，正是上次教训）。**已对真 schema 核为正确**：outbound `thread/start`（cwd/`config.mcp_servers`/`developerInstructions`/`approvalPolicy:on-request`/`sandbox:workspace-write`/`approvalsReviewer:user` 全合法枚举）、`turn/start.input=[{type:text,text,text_elements}]`(=`UserInput`)、`turn/interrupt`、notification 名 `turn/started`·`turn/completed`·`item/completed`(读 `params.turn.id`/`params.item` 对)、**command/fileChange 审批 decision `accept`/`decline`**(=`CommandExecutionApprovalDecision`)。initialize 补了 schema 必填的 `requestAttestation:false`。
   - **真机实测已补（2026-06-16 · 本机 codex 0.137.0 已登录 · `chore/ledger-reconcile`）**：① **认证模型 ✅** —— 真起 app-server 发 `account/read` 返 `{type:chatgpt, planType:prolite}`，**自动继承 `~/.codex/auth.json`**，无需 `account/login/start`；backend「不做登录流、假设自动继承」的设计正确（内部 spec 对、官方文档「客户端驱动登录」在此版本不适用）。③ **真 turn 端到端 ✅** —— `thread/start`→`turn/start` 一轮，收到 `item/completed`：`userMessage`(`content:[UserInput]`)、`reasoning`(`summary`/`content` 均为**数组**)、`agentMessage`(`text:"PONG"`, `phase:"final_answer"`)——与修后 `CodexThreadItem` 解码**逐字段吻合**（活体验证，非仅静态 schema）；**计费 tick ✅** `thread/tokenUsage/updated` 带真 token 数（total/input/cached/output/reasoning）。**剩**：② permissions 审批 decision 形状（见下条，命令/改文件审批已验证正确）+ 一次 **app 内 `CodexTranscriptView` 活体渲染**（数据层已证，只差 GUI 像素，并入 Mac GUI QA #342/#290）。codex-app-server 已合 main（「未合 main」字样失效）。
+  - **🔴→✅ codex session「跑半天转圈不结束、不知道在干嘛」根因 found+fixed（2026-06-17 · `fix/codex-session-hang`，commit `cb12cb64`+`f70eecb3`）**：用户报 codex session 卡死、claude 没事。真机复现（注入**真 crew MCP server 二进制** + captain prompt，codex-cli 0.137.0）定位为一类「turn 永不 complete」的挂死：
+    1. **`handleServerRequest` 把非审批的 server-request 一律静默丢**（根因，已修）。codex 在 turn 里会发 `mcpServer/elicitation/request`（你 `~/.codex` 一堆全局插件触发的 MCP elicitation）等客户端回复，原 `guard method.hasSuffix("requestApproval") else { return }` 直接 return 不答 → codex 永等、`turn/completed` 永不来 → 右栏「运行中…」转圈不结束。claude 在自己进程里处理 elicitation，所以不挂。**修**：handleServerRequest 改 switch（`CodexProtocol.serverRequestKind`）—— approval 走审批、`mcpServer/elicitation/request` 回 `{action:decline}`（真 schema `McpServerElicitationRequestResponse`，v1 无 elicitation UI）、其余未建模（`item/tool/requestUserInput`/`item/tool/call`/`account/*`/`attestation/*`）一律回 JSON-RPC error 兜底，**绝不再静默丢 = 绝不挂死整轮**。
+    2. **crew `ask` 工具无限阻塞**（已修）：`McpServer.awaitReply` 原 `while true`（生产 maxWaits=nil），没人答就让 codex 那次 `tools/call` 永不返回 → turn 挂死。加默认 maxWaits=3600（≈30min，与审批 provider 一致），到点返回「自行判断」。
+    3. **codex stderr 没人读的潜伏死锁**（顺手修）：原 `standardError = Pipe()` 无 readabilityHandler，codex 往 stderr 写满 ~64KB 内核缓冲会阻塞写、卡死整个 app-server——只有长 session 累积到才撞上（短 turn/单测验不出）。加 handler 持续清空。
+    - **CodexProtocolTests** 加真 schema 回归护栏（serverRequestKind 覆盖全部 ServerRequest 方法 + decline 形状），app build 绿 + 相关单测全绿。
+    - **仍未真机 GUI 活验**：本机登录态在已安装旧 build，本地新 build 签名不同够不到那份 keychain 会话，没法自驱跑到「起 codex captain」态 —— 需用户 rebuild 起一个 codex captain session 看是否报到完成（不再转圈）。协议层已证「答 decline 即解锁」。
+    - **残留（本次明确未覆盖，用户选「只根治挂死」）**：(a) **permissions 审批 decision 形状**仍走 accept/decline（见下条 #permissions，permissions 归 `.approval` 不进兜底分支）—— 少见的网络/sandbox 升级审批仍可能被 codex 判无效→挂；(b) **crew codex 继承你整份 `~/.codex` 全局插件**（computer-use/codex_apps/cloudflare-api[未登录]/xcodebuild/browser…，复现时见 `codex_apps` startup failed/transport error）—— 若某全局插件的 tool call 自己 hang（codex↔插件，绕过客户端），server-request 兜底救不了，需「crew session 隔离全局插件（dedicated CODEX_HOME / `-c` 关插件）」，用户本轮明确不做；(c) **无逐字流式**（delta opt-out，只渲 `item/completed`）= 用户「不知道在干嘛」的另一半，turn 进行中只有「运行中…」转圈无细节，v1 defer，要像 claude 实时流需开 delta + 渲进行态。
 
 ### 🟡 codex `item/permissions/requestApproval` 审批 decision 形状未建模（command/fileChange 审批正确）
 - **发现**: 2026-06-16 · `chore/ledger-reconcile`（对 codex-cli 0.137.0 真 schema 核审批 roundtrip）
@@ -62,7 +84,7 @@
 - **问题**: 该 handler 对所有 `*requestApproval` 服务器请求统一回 `{decision: "accept"|"decline"}`。这对 **command**(`item/commandExecution/requestApproval`)和 **fileChange** 审批是**正确**的（decision 枚举 = `accept`/`acceptForSession`/`cancel`/`decline`，已核）。但 **permissions** 审批（`item/permissions/requestApproval`）的 decision 是**另一套富结构**——一个标签联合：`deny` 或 `allow{ fileSystem: AdditionalFileSystemPermissions, network, scope: turn|session }`（`GrantedPermissionProfile`），**不接受裸 `"accept"`/`"decline"`**。
 - **影响**: 常见审批（批命令 / 批改文件，占 ~95%）正常。但 permissions 升级请求（网络放行 / sandbox 越权等较少见路径）会收到无效 decision → codex 大概率报错或挂起该 turn。pre-launch + 多数走 workspace-write 命令审批，影响面有限，但不是 0。
 - **建议**: handler 按 method 分流：`*permissions/requestApproval` → 单独构造 `{decision:{deny}}` / `{decision:{allow:{fileSystem,network,scope}}}`（按 `PermissionsRequestApprovalResponse` schema），其余维持 accept/decline。需先把 `GrantedPermissionProfile`/`AdditionalFileSystemPermissions` 几个小结构建模。
-- **状态**: 待办（command/fileChange 审批已验证正确；permissions 路径待真机遇到时按 schema 补）。
+- **状态**: 待办（command/fileChange 审批已验证正确；permissions 路径待真机遇到时按 schema 补）。`fix/codex-session-hang`(2026-06-17) 的 server-request 兜底**不覆盖本条** —— permissions 后缀含 `requestApproval` → 归 `.approval` 走 accept/decline，仍是错形状；要修得按 method 单独分流构造 `PermissionsRequestApprovalResponse`。
 
 ### 🟡 crew machine 收口 — runtime_location 降为派生镜像列 + CrewGround corpus 与服务端分家 + captainAgentKind 本地-only
 - **发现**: 2026-06-14 · `feat/crew-machine`（machine 概念 + 新建流程精简）
@@ -226,6 +248,19 @@
 - **状态**: 🟡 进行中 —— **email 规范化半已落**（迁移 20260604102812：`normalize_email` + `welcome_bonus_grants` dedup 账本 + billing-grant `claimWelcomeBonus`；已 push EU + typecheck/497 测试绿，commit 6ab22018）。**DeviceCheck/App Attest 主力半仍待办**（硬卡真机，见 task #252）。
 
 ## 🟡 拆东墙补西墙
+
+### 🟡 cache-first 视图把缓存读放进 `.task` → 首帧后才注入,每次出现都闪一下(已修 3 个主面)
+- **发现**: 2026-06-16 · `fix/cache-first-init-paint`(用户报"头像/bot 名字/私有公有标签/对话页名字+模型 每次打开都过 0.x s 才更新,切 tab 回来也一样")
+- **位置**: `apps/pendingbot/Sources/Components/UserAvatar.swift`、`Features/Friends/FriendsTabView.swift`、`Features/Message/ConversationView.swift`(+`ConversationView+Loading.swift`);同类未改面见"残留"
+- **病根**: 这些视图号称 cache-first,但缓存读发生在 `.task`/`.onAppear` 闭包里 —— SwiftUI 的 `.task`/`onAppear` 在**首帧渲染之后**才跑,所以首帧画的是空/占位(`@State` 初值),0.x s 后缓存(或网络)值才注入 → 肉眼跳变。`.task` 每次 appear 都重跑;iPad/Mac 三列壳每次切 tab **重建**当前 tab(`FriendsTabView.load()` 的 `CancellationError` 注释自陈"Mac shell rebuilds the active tab on every selection change"),@State 清零 → 整体空→填,所以"切 tab 回来也闪"在 iPad/Mac 尤甚。`CacheRepository.cachedBots()/cachedContacts()`、`LocalDatabase.load*()`、`AvatarCache.shared.image(for:)` 全是同步的,本可在 `init` 同步读 —— 只是没这么用(`FriendsTabView.load()` 那段预热注释还写着"paint last-known friends **instantly**",但埋在 `.task` 里其实晚一帧)。
+- **影响**: 首帧渲染正确性 —— **就是 task #265「app 首屏可视渲染验证」一直挂着没验的那个洞的可见症状**。不崩,但每次进页/切 tab 都肉眼跳一下,廉价感。
+- **已修(本分支,均 iOS build 绿)**: 把同步缓存读从 `.task` 提到 `init`,用 `State(initialValue:)` 让首帧即带缓存值。① `UserAvatar`(`6ac8c98d`)init 同步 `AvatarCache` 命中即播种 `image` —— 覆盖所有头像(自己/对话头/好友列表/群 roster),暖缓存零闪;② `FriendsTabView`(`afb08e56`)`@MainActor init()` 播种 `bots`/`humans`/`lastActivity`,`load()` 收成纯网络刷新(删 `.task` 内预热块);③ `ConversationView`(`1969185f`)`bot==nil`(Mac/iPad detail 列)时 init 从本地 bots 缓存构造 `resolvedBot` 播种头部名字/模型后缀/语音键,`resolveBotIfNeeded` guard 改只判 `bot==nil` + 仅 fetch 结果变化才赋值(缓存对不重渲染=不闪,缓存旧静默纠正)。
+- **残留 / 同类未改面**:
+  1. **`MessageTabView` 会话列表仍在 `.task` hydrate**:行头像已被 ① 覆盖(不闪);行标题/排序的 `conversations` 仍 `.task` 注入 —— iPhone TabView 保活、列表持久基本无感,iPad/Mac 重建路径仍空→填。要彻底一致,同 ② 给它 `init` 播种 `ChatDataSource.cachedConversations()`。
+  2. **盲盒模型 pill 固有一跳**:`convModelState`(`has_pool`/`reveal_mode`/`model_revealed`)走 `GET /v1/conversations/:id/model`,**本地无缓存**。非盲盒会话靠 ③ 的 bot 模型兜底已不闪;盲盒会话仍会从"bot 模型名"跳到"PendingModel/抽中模型"。要消除得把会话模型态也落本地缓存(未做)。
+  3. **其它面未逐一审**:群设置(已 cache-first,需确认是否 init 播种)、信箱/钱包(本就无缓存,见各自审计条目)等还没按"init 同步播种"过一遍。
+- **约定(新)**: cache-first 视图的"首帧要显示的缓存值"应在 `init` 同步播种 `@State`(读方法是 `@MainActor` 同步的,init 标 `@MainActor` 即可),`.task` 只做网络刷新;别把它留在 `.task` 里 —— 那等于晚一帧,必闪。
+- **状态**: 🟡 进行中 —— 三个用户报的主面已修 + build 绿;残留 1/2/3 待定。**视觉验证(真不闪)需登录态 GUI 构建**(headless 装机回落 ad-hoc 签名→会话存不住,见 memory `feedback_sim_unsigned_keychain`),并入 task #265「首屏可视渲染验证」。
 
 ### 🟡 PendingCrew shared target 混入未 guard 的 AppKit，iOS build 当前被卡死 — ✅ 已解决 2026-06-16
 - **发现**: 2026-06-15 · `codex/pendingcrew-empty-placeholder`（给 PendingCrew 未选中 crew 空态换 custom symbol 时跑 iOS build）
@@ -450,7 +485,7 @@
 - **影响**: Mac 端会一直停在"空壳"阶段——每加一个 Mac 业务功能，都要先拆一刀 UIKit 门或者整段重写跨平台版。任由它发展，最终会形成"iOS 业务代码 + Mac 重写"两套并行实现的根基级分裂；T4.6 Crew Tab V2 多端方案能成立，是因为 Crew 一开始就走 SwiftUI-only。普通 IM 这块没有同样的预算，相当于 spec §11 三端齐目标被偷偷降级成"iOS+iPad 齐,Mac 占位"。
 - **建议**: 接 Mac IM 之前必须先做一次跨平台抽层，至少这几步：(1) 把 `Models/`、`Storage/AccountStore`、`Storage/UnreadStore`、`Networking/APIClient`、`Networking/RealtimeManager` 等纯 Foundation 模块从 macOS 的 EXCLUDED 列表里拿出来（这些文件已经不 import UIKit）；(2) `Features/Message/*` 里 UIViewRepresentable 子组件抽进 `Components/iOS/` 子目录,顶层 view 用 `#if os(iOS)` / `#if os(macOS)` 各跑一份；(3) 写明哪些 iOS-only 能力（CallKit/PushKit/相机/UIImage 编码）在 Mac 上的对应方案（不做 / NSImage / 文件选择器）。短期不要为了多接一个 tab 而随手加 `#if`，会让以后真正拆层时阻力越大。
 - **状态**: 待办（T1.4 stream 升级 Mac shell 到三列结构,但中间和右栏仍是 placeholder；真正的 Mac IM 接入留给后续 Phase 2+ stream）
-=======
+
 ### 🟡 通话内 voice_cost 实时预览还在用 v1 PND markup（与 v2 PNC 钱包单位不一致）
 - **发现**: 2026-05-29 · feat/billing-v2-cutover
 - **位置**: `apps/edge/src/lib/voice-metering.ts:broadcastVoiceCostPreview`（getMarkup + usdToPnd）、`apps/edge/src/durable-objects/room-voice.ts:broadcastCost`、iOS `RealtimeSocket`/`Manager` 的 `voice_cost` 处理（`delta_pnd`/`cumulative_pnd` 字段）
@@ -981,3 +1016,5 @@
 - (注释/命名/spec 引用漂移 G3–G16 共十余处不单列,随对应代码改动捎带清,清单见审计报告;含 captain 编排 spec 注释、BYOK 命名、codex「待实现」、freeze 横幅注释、slug 旧注释、board 门禁注释、WorldRouter 命名、`decisions.md` R1、`users.is_admin` 疑似 dead 列)
 
 > **处置状态(2026-06-16,`chore/stale-model-audit`,26 commit / 5 次合 main,main `48ea5179`,✅ 全线收口)**:审计全部处置完成 —— R1(edge bot-captain 编排全退役)/R2/R3/R1.4/G1/G2/Y1/Y2/Y3/G4–G15 + **R4**(5 个内联 prompt 迁 Langfuse + seed prod)/ **Y4**(语音 PNC 单位)/ **Y7**(DB cleanup db push:usage_events/cloud_machine_id/4 个余额列/is_admin+2 RLS+审计触发器)/ **G16**(is_admin)/ **ai_picks** + **balance_updated_at** drop。edge typecheck 0 + 616 vitest + 三端 build + 部署 prod(`70230cdc`)+ 冒烟零 500 全绿。`captain_bot_id` 经核**保留**(客户端建 crew 活路径,非残留)。**唯剩端到端真验尾巴**(pre-launch 无真流量):captain 退役群聊回复 / R4 getPrompt / Y4 voice 待真触发。
+
+- ✅ ~~**PendingCrew Mac inspector 首帧列宽被切**~~ **（已根治 2026-06-17,commit `033b7e15`,computer-use GUI 实测通过）** — 用户连问两次根因、要"别再回来",故没停在 window-nudge(治标)上,做了结构性根治：**把 session 终端从 `.inspector` 整个搬出,放进 detail 列里的 `HSplitView`(底层 NSSplitView)确定性分栏** —— 列宽首帧即确定性协商,整类"展开左侧被切、要手拖 divider"消失,以后再改终端内容/列宽也不重演;中间那版 `InspectorFirstFrameRelayout` ±1 窗宽 nudge 已删。**GUI 实测**(最窄 minWidth 窗口):开 inspector → 进终端模式,左侧头像竖条+内容首帧即完整、无需手拖;拖 divider 重排正常。**总教训**:SwiftUI `.inspector` 对"宽度敏感的常驻内容"本就不可靠(present 当帧只测一次内容宽、之后不重测);这种场景别用 `.inspector`,用 `HSplitView`/`NSSplitView`/三栏 NavigationSplitView 等确定性分栏。**根因留档**:回归触发是 `fix/crew-captain-terminal`(2026-06-15 晚把 inspector min/ideal 300/400→360/480 喂 11pt 紧凑字体 TUI 的列数,顶过了"detail 弹性 + 终端低抗压缩"那套隐式平衡仅有的 ~60pt 窄余量);更早那次"detail 去贪婪列宽"根治是真的、只是一直骑在窄余量上不稳。`MacRootView` 旧注释曾谎称 `CrewSessionWindowView.resyncInspectorDivider` 兜底,该函数从未存在。

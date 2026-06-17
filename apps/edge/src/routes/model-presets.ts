@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { requireSession } from '@pendingbot/identity';
 import type { Env } from '../types';
 import { serviceClient } from '../lib/supabase';
-import { resolveModelPreset, MODEL_PRESETS_LIST_CACHE_KEY, type PresetDef } from '../lib/model-presets';
+import { resolveModelPreset, makeCatalogProvider, MODEL_PRESETS_LIST_CACHE_KEY, type PresetDef } from '../lib/model-presets';
 
 export const modelPresetsRoutes = new Hono<{ Bindings: Env }>();
 
@@ -26,7 +26,9 @@ modelPresetsRoutes.get('/', async (c) => {
   if (error) throw error;
 
   const defs = (data ?? []) as unknown as PresetDef[];
-  const resolved = await Promise.all(defs.map((d) => resolveModelPreset(c.env, d)));
+  // 一份目录喂所有预设（避免每个预设各自 build catalog 的 N× 冷启动开销）。
+  const provider = makeCatalogProvider(c.env);
+  const resolved = await Promise.all(defs.map((d) => resolveModelPreset(c.env, d, provider)));
   await c.env.MEMORY.put(LIST_CACHE_KEY, JSON.stringify(resolved), {
     expirationTtl: LIST_TTL_SEC,
   }).catch(() => {});

@@ -11,6 +11,9 @@ import Foundation
 final class McpServer {
     let store: LocalWhiteboardStore
     let approvals: LocalApprovalStore
+    /// crew 元数据控制通道（机长 `rename_crew` → 写待改名，app 侧 `CrewStore`
+    /// 排空落地）。与 store/approvals 同 `--dir` —— 离线 helper 唯一能碰的共享文件层。
+    let control: LocalCrewControlStore
     let crewId: String
     let sessionId: String
     /// 机长 session 标记（helper `--captain` flag 传入）—— 解锁机长专用工具
@@ -21,10 +24,12 @@ final class McpServer {
     /// nil（未传 label / 旧调用）→ 渲染退回 `session:<id>`，保持兼容。
     let sessionLabel: String?
 
-    init(store: LocalWhiteboardStore, approvals: LocalApprovalStore, crewId: String, sessionId: String,
+    init(store: LocalWhiteboardStore, approvals: LocalApprovalStore, control: LocalCrewControlStore,
+         crewId: String, sessionId: String,
          isCaptain: Bool = false, sessionLabel: String? = nil) {
         self.store = store
         self.approvals = approvals
+        self.control = control
         self.crewId = crewId
         self.sessionId = sessionId
         self.isCaptain = isCaptain
@@ -109,6 +114,17 @@ final class McpServer {
                         "required": ["reqId", "reply"],
                     ],
                 ])
+                tools.append([
+                    "name": "rename_crew",
+                    "description": "（机长专用）给这个 crew 起名字。用**标签的思想**：一个短概括，不是一句描述。等你搞清楚这个 crew 在做什么再叫，例：「鉴权重构」「深色模式」「语音重连」。别写成长句、别带标点、别加前后缀。搞清楚后改一次就够，别反复改；人类要是已经起了个有意义的名字，就别动。",
+                    "inputSchema": [
+                        "type": "object",
+                        "properties": [
+                            "name": ["type": "string", "description": "短标签（几个字的概括）。"],
+                        ],
+                        "required": ["name"],
+                    ],
+                ])
             }
             return result(id: id, ["tools": tools])
         case "tools/call":
@@ -178,23 +194,40 @@ final class McpServer {
             }
             approvals.answer(crewId: crewId, id: reqId, reply: reply)
             return toolResult(id: id, text: "已答复，发起的 session 将继续。")
+        case "rename_crew":
+            // 机长专用（crew-naming）：写一条待改名进控制通道；app 侧 CrewStore
+            // 排空落地到 LocalCrewStore.setTitle 并刷新侧栏。不限长度 —— 标签思想
+            // 靠描述 + prompt 引导；这里只把名字收成单行（空白/换行折成单空格）+ 拒空。
+            guard isCaptain else {
+                return toolResult(id: id, text: "ERROR: 仅机长可用")
+            }
+            let raw = (args["name"] as? String) ?? ""
+            let name = raw.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            guard !name.isEmpty else {
+                return toolResult(id: id, text: "ERROR: name 不能为空")
+            }
+            control.requestRename(crewId: crewId, name: name)
+            return toolResult(id: id, text: "已把 crew 改名为「\(name)」。")
         default:
             return toolResult(id: id, text: "ERROR: 未知工具 \(name ?? "nil")")
         }
     }
 
-    /// 阻塞 long-poll 直到待决策被答复，返回答复文本。v1 不设硬超时（一直等；记 tech-debt）。
-    /// `maxWaits` 仅给单测（到点返回占位）。`pollInterval` 单测可调小避免久等。
-    func awaitReply(reqId: String, pollInterval: TimeInterval = 0.5, maxWaits: Int? = nil) -> String {
+    /// 阻塞 long-poll 直到待决策被答复或到上限，返回答复文本 / 超时占位。
+    /// **绝不无限等**：默认 ~30min 上限（3600 × 0.5s，与 codex 审批 provider 一致）——
+    /// 一个没人答的 `ask` 若一直阻塞，会让 codex 那一轮的 `tools/call` 永不返回，整个
+    /// turn 卡死在「运行中…」（codex session 跑半天不出东西的根因之一）。到点返回
+    /// 「自行判断」让 agent 继续。`pollInterval`/`maxWaits` 给单测调小。
+    func awaitReply(reqId: String, pollInterval: TimeInterval = 0.5, maxWaits: Int = 3600) -> String {
         var waits = 0
-        while true {
+        while waits < maxWaits {
             if let it = approvals.item(crewId: crewId, id: reqId), it.status == "answered" {
                 return it.reply ?? "（已答复，无文本）"
             }
-            if let maxWaits, waits >= maxWaits { return "（暂无人响应 —— 请自行判断后继续）" }
             waits += 1
             Thread.sleep(forTimeInterval: pollInterval)
         }
+        return "（暂无人响应 —— 请自行判断后继续）"
     }
 
     /// 把 `post_to_crew` 的 `mentions` 参数（JSON 数组）解析成本地 mention 模型。
