@@ -69,48 +69,30 @@ private struct FirstLaunchDisclosureGate: ViewModifier {
 #endif
 
 /// 启动路由(T5.1 + T5.2)。两种顶层态:
-/// 1. **WelcomeView → LoginView** — 没凭据时的 iOS 登录入口(扫码授权这台机)。
-///    完成的那一刻 `AppModel.credential` 变化让 `isConfigured` 翻 true,
-///    RootView 自动切到 #2。**macOS 上 `isConfigured` 恒 true → 这条永不渲染**
+/// 1. **WelcomeView** — 没凭据时的 iOS 登录入口。WelcomeView 内部管理
+///    确认卡 ↔ LoginView 的切换；完成登录的那一刻 `AppModel.credential` 变化
+///    让 `isConfigured` 翻 true,RootView 自动切到 #2。
+///    **macOS 上 `isConfigured` 恒 true → 这条永不渲染**
 ///    (本地为家,本地 backend 常驻;登录是侧栏可选能力叠加)。
 /// 2. **主界面** — Mac 走 `MacThreePaneView`,iPad/iOS 走 `IPadShell`
-///
-/// `flow` 由 RootView 本地持有,仅用于"我点没点 WelcomeView 的登录按钮"
-/// 这种 UI 瞬态;凭据本身的有无是真实数据源(AppModel)。一旦凭据写下来,
-/// `model.isConfigured` 优先取胜,flow 无所谓。
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var crewStore: CrewStore
-
-    enum Flow {
-        case welcome
-        case login
-    }
-
-    /// 本地 UI 选择 — 仅在 `!model.isConfigured` 时生效。
-    /// 凭据写入后 `model.isConfigured == true` 优先,flow 无所谓。
-    @State private var flow: Flow = .welcome
 
     var body: some View {
         Group {
             if model.isConfigured {
                 authenticatedRoot
             } else {
-                switch flow {
-                case .welcome:
-                    WelcomeView { flow = .login }
-                case .login:
-                    LoginView()
-                }
+                WelcomeView()
             }
         }
         // 家族 SSO 不在启动时静默登录（用户定调：登录必须是用户显式动作）——
         // 入口在侧栏身份菜单「用本机 PendingBot 身份登录」，点一下才 mint。
-        // 凭据消失(签出)时清 crew 缓存 + flow 回 welcome。
+        // 凭据消失(签出)时清 crew 缓存。
         .onChange(of: model.isConfigured) { _, configured in
             if !configured {
                 crewStore.reset()
-                flow = .welcome
             }
         }
         // 登录/登出时清缓存重拉 —— 接合 v2 后 macOS backend 恒为本地,

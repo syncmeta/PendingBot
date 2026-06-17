@@ -144,6 +144,7 @@
 		BA64F31E29C3BE38DA3BEEB0 /* LocalCodingAgentSpec.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF8E8FC64275B7932540FB17 /* LocalCodingAgentSpec.swift */; };
 		BB8A60B4EA3480F81FF8F9C6 /* McpPermissionHook.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53FB4DF079945BBB34443F32 /* McpPermissionHook.swift */; };
 		BB9D4063C7CC4E62EA3F8550 /* CrewLocalMentionInjectLogic.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8011F49B6E57993FB1D1B9F /* CrewLocalMentionInjectLogic.swift */; };
+		BCA3260298D69C7A5B96FF19 /* AccountConfirmCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6447BDB872CAA8AB0D2B333 /* AccountConfirmCard.swift */; };
 		BD0F787201964CD2E1F9A3ED /* BotAvatar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B4E7D20BBF4EE8A2C7AE4C9 /* BotAvatar.swift */; };
 		BD6B888078A57E6B76DF9CE8 /* McpServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E5A7C63B37740B3B978DBBA /* McpServer.swift */; };
 		BDC267627A50BEE0256332D4 /* LocalCodingAgentKind.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECFF7155D04A3862EC79E34B /* LocalCodingAgentKind.swift */; };
@@ -339,6 +340,7 @@
 		D36E53A3EEA55369A75ADB82 /* McpPermissionHookTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = McpPermissionHookTests.swift; sourceTree = "<group>"; };
 		D60CE404DBA41800A4216C77 /* CrewListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewListView.swift; sourceTree = "<group>"; };
 		D61EF9C80E279F17B39492B4 /* MachineGrouping.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MachineGrouping.swift; sourceTree = "<group>"; };
+		D6447BDB872CAA8AB0D2B333 /* AccountConfirmCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountConfirmCard.swift; sourceTree = "<group>"; };
 		D6F39A5FF531F20F719F31F7 /* CrewDAGTreeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewDAGTreeView.swift; sourceTree = "<group>"; };
 		D75149E56C43DE393B0F774D /* ServerImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerImage.swift; sourceTree = "<group>"; };
 		D8011F49B6E57993FB1D1B9F /* CrewLocalMentionInjectLogic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewLocalMentionInjectLogic.swift; sourceTree = "<group>"; };
@@ -583,6 +585,7 @@
 		8F1C388DCA575DFB675B0C77 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				D6447BDB872CAA8AB0D2B333 /* AccountConfirmCard.swift */,
 				D60CE404DBA41800A4216C77 /* CrewListView.swift */,
 				2CD2E19FFE0BDAC1918FA06E /* IPadShell.swift */,
 				2DFC0F15C2EF325530543B30 /* LoginView.swift */,
@@ -873,6 +876,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BCA3260298D69C7A5B96FF19 /* AccountConfirmCard.swift in Sources */,
 				797555301B1D57CE5DBCE75C /* AgentTerminalSession.swift in Sources */,
 				8A2E0ED4E2DCD8D29C657CBB /* AgentTerminalView.swift in Sources */,
 				47D83B78734AEC171EAC5853 /* AppModel.swift in Sources */,

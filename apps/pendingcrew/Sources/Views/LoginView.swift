@@ -55,7 +55,7 @@ struct LoginView: View {
                         .font(.system(size: 48))
                         .foregroundStyle(.green)
                     Text("登录成功，正在进入…")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Theme.Palette.inkMuted)
                 }
             case .error:
                 errorSection
@@ -74,11 +74,12 @@ struct LoginView: View {
         VStack(spacing: 8) {
             Image(systemName: "rectangle.connected.to.line.below")
                 .font(.system(size: 48))
-                .foregroundStyle(.tint)
+                .foregroundStyle(Theme.Palette.accent)
             Text("PendingCrew")
                 .font(.largeTitle.weight(.semibold))
+                .foregroundStyle(Theme.Palette.ink)
             Text("从 PendingBot 扫码授权这台设备")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.Palette.inkMuted)
         }
     }
 
@@ -107,7 +108,7 @@ struct LoginView: View {
 
                 Text("或")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.Palette.inkMuted)
             }
 
             Button {
@@ -121,7 +122,7 @@ struct LoginView: View {
             Text("默认以本人 user_account 身份登录；在 PendingBot 端可以\n切换到自己有 owner / admin 权限的群账号。")
                 .font(.footnote)
                 .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.Palette.inkMuted)
         }
     }
 
@@ -145,16 +146,17 @@ struct LoginView: View {
                 VStack(spacing: 4) {
                     Text("或在 PendingBot 输入验证码")
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Theme.Palette.inkMuted)
                     Text(challenge.code)
                         .font(.system(.title2, design: .monospaced).weight(.semibold))
+                        .foregroundStyle(Theme.Palette.ink)
                         .tracking(2)
                 }
                 ProgressView()
                     .controlSize(.small)
                 Text("等待 PendingBot 端批准（4 分钟内有效）")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.Palette.inkMuted)
                 Button("取消", role: .cancel) { cancel() }
                     .buttonStyle(.borderless)
             }
@@ -168,7 +170,7 @@ struct LoginView: View {
                 .foregroundStyle(.orange)
             Text(errorMessage ?? "登录失败")
                 .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.Palette.inkMuted)
             Button("重试") { start() }
                 .buttonStyle(.borderedProminent)
         }
