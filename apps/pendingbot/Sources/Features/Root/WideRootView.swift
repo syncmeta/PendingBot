@@ -70,7 +70,7 @@ struct WideRootView: View {
     /// 合并侧栏 = 窄图标 rail ＋ 当前 tab 的 list,整体作为 split view 的
     /// **唯一可折叠首列**(2 栏布局:sidebar | detail)。折叠按钮一下收起 rail+list,
     /// 把整宽让给右侧详情。五个 tab 同构 —— 「我」也有列表列(账号/设置菜单),
-    /// 点条目右栏出详情。列宽 = rail(56)+ list,可拖动 300–520。
+    /// 点条目右栏出详情。列宽 = rail(56)+ list,可拖动 300–560。
     private var combinedSidebar: some View {
         HStack(spacing: 0) {
             tabRail
@@ -88,8 +88,8 @@ struct WideRootView: View {
         // 所以整条侧栏是同一块原生底、中间无分隔。自糊 NSVisualEffectView 在
         // 这个被 MacMainWindowStyler 强制不透明的窗口里 behind-window 透不出来,
         // 反而发灰带渐变,故不用。
-        // 列宽加大(默认 420);「我」现在也有列表列,不再 56px 特例。
-        .navigationSplitViewColumnWidth(min: 320, ideal: 420, max: 560)
+        // 列宽:默认 360(更紧凑);「我」现在也有列表列,不再 56px 特例。
+        .navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 560)
     }
 
     private var tabRail: some View {
