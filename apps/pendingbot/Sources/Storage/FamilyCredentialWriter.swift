@@ -1,7 +1,9 @@
-#if os(macOS)
 import Foundation
 import Security
 import OSLog
+#if canImport(UIKit)
+import UIKit
+#endif
 
 private let log = Logger.category("family-sso")
 
@@ -10,7 +12,8 @@ private let log = Logger.category("family-sso")
 /// PendingCrew 的 `FamilyCredentialStore`（apps/pendingcrew/Sources/Support/
 /// FamilyCredentialStore.swift）从共享 keychain 组读这条凭据，拿去调
 /// `POST /v1/device-grant/mint` 静默换自己的 scoped device grant，免扫码。
-/// 这里是缺的另一半：PendingBot Mac 登录后把凭据写进去、登出时清掉。
+/// 这里是缺的另一半：PendingBot 登录后把凭据写进去、登出时清掉。
+/// iOS 和 macOS 都写，确保 iPad 版 PendingCrew 也能静默登录。
 ///
 /// ⚠️ 字节级契约：service / access group / JSON 字段名必须与 PendingCrew 的
 /// FamilyCredentialStore 完全一致 —— 改任何一边都要同步另一边。
@@ -88,21 +91,47 @@ enum FamilyCredentialWriter {
     // MARK: - 签发同步
 
     /// 有有效会话但共享组里还没有凭据时，找 worker 签发一张并写入。
+    /// displayName / avatarSeed 来自调用方已解析的 profile（AccountStore.refreshProfileFlags
+    /// 在拿到 custom_fields 后调用），写进凭据供 PendingCrew 确认卡离线展示。
+    /// 端点若已部署 Task 3（返回顶层 displayName），则以本地 profile 为优先、
+    /// 端点回包兜底；若未部署，则只用本地传入值（均可选）。
     /// 幂等（已有就跳过）；失败只 log —— 缺凭据只影响 PendingCrew 静默登录，
     /// 不能反过来影响 PendingBot 自己的登录流。
-    static func syncIfNeeded() async {
+    static func syncIfNeeded(displayName: String?, avatarSeed: String?) async {
         guard get() == nil else { return }
         struct Body: Encodable { let deviceName: String }
-        struct Response: Decodable { let familyCredential: FamilyCredential }
-        let deviceName = Host.current().localizedName ?? "Mac"
+        // 端点回包：{ familyCredential: { token, subjectId }, displayName: <top-level, 可选> }
+        // （displayName 由 Task 3 在 edge 加；未部署时为 nil，可选解码不失败）
+        struct Response: Decodable {
+            struct Cred: Decodable { let token: String; let subjectId: String }
+            let familyCredential: Cred
+            let displayName: String?
+        }
+        let deviceName = currentFamilyDeviceName()
         do {
             let res: Response = try await APIClient()
                 .post("v1/me/family-credential", body: Body(deviceName: deviceName))
-            set(res.familyCredential)
+            set(FamilyCredential(
+                token: res.familyCredential.token,
+                subjectId: res.familyCredential.subjectId,
+                displayName: displayName ?? res.displayName,   // 本地 profile 优先，端点回包兜底
+                avatarSeed: avatarSeed
+            ))
             log.info("family credential issued and stored")
         } catch {
             log.error("family credential issuance failed: \(String(describing: error), privacy: .public)")
         }
     }
 }
-#endif
+
+// MARK: - 平台设备名
+
+private func currentFamilyDeviceName() -> String {
+    #if os(macOS)
+    return Host.current().localizedName ?? "Mac"
+    #elseif os(iOS)
+    return UIDevice.current.name
+    #else
+    return "Device"
+    #endif
+}
