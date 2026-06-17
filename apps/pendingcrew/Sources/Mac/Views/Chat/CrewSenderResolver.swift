@@ -36,10 +36,9 @@ enum CrewSenderResolver {
 
         case "session":
             let m = members.first { $0.codeSessionId != nil && $0.codeSessionId == entry.senderSessionId }
-            let short = entry.senderSessionId.map { "session · \($0.prefix(8))" } ?? "session"
             return CrewSender(
                 kind: .session,
-                displayName: m?.displayName ?? short,
+                displayName: m?.displayName ?? CrewSenderNaming.sessionFallback(entry.senderSessionId),
                 avatarSeed: entry.senderSessionId ?? entry.id,
                 isCaptain: false, sessionStatus: m?.sessionStatus, isMine: false
             )

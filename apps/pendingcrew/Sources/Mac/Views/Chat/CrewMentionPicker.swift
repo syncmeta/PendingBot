@@ -77,7 +77,7 @@ struct CrewMentionPicker: View {
         switch k {
         case .broadcast: return "全员"
         case .captain:   return "机长"
-        case .session:   return "session"
+        case .session:   return "会话"
         case .human:     return "成员"
         }
     }

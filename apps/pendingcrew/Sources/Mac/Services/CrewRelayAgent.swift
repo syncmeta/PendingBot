@@ -253,7 +253,7 @@ final class CrewRelayAgent: ObservableObject {
         case "bot":
             return "bot" + (entry.senderBotId.map { " · \($0.prefix(8))" } ?? "")
         case "session":
-            return "session" + (entry.senderSessionId.map { " · \($0.prefix(8))" } ?? "")
+            return CrewSenderNaming.sessionFallback(entry.senderSessionId)
         default:
             return entry.senderKind
         }
@@ -264,7 +264,7 @@ final class CrewRelayAgent: ObservableObject {
     static func localSenderLabel(_ m: LocalWhiteboardMessage, captainName: String?) -> String {
         switch m.senderKind {
         case "user": return "我 (Mac)"
-        case "session": return "session" + (m.senderSessionId.map { " · \($0.prefix(8))" } ?? "")
+        case "session": return CrewSenderNaming.sessionFallback(m.senderSessionId)
         case "captain": return captainName ?? "Captain"
         default: return m.senderKind
         }
