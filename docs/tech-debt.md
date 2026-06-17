@@ -12,7 +12,7 @@
 
 ---
 
-### 🟡 系统级 model slug 全是硬编码常量 — 一批占位/疑失效 + 该统一收进 board 配置
+### 🟢 系统级 model slug 全是硬编码常量 — ✅ 工程收口 2026-06-17（7/7 角色收进 board + admin UI；剩部署尾巴）
 - **发现**: 2026-06-17 · `feat/preset-content-realign`（排查「预设机器人配置对不上」延伸出的全库引用审计）
 - **背景/用户定的纪律**: **model slug 绝不硬编码**，不适合硬编码的配置统一收进 board CMS 管理（同 `feedback_no_hardcoded_prompts` 把 prompt 赶进 loader 通道的思路）。现状是各功能的「系统模型角色」都写死成代码常量，散落多处、无统一配置入口；其中一批还是早期手编、没核验过的占位 slug。
 - **位置（系统 model 角色硬编码全清单，edge 为主）**:
@@ -35,7 +35,7 @@
   1. 起一组「系统模型角色」配置 key（title / group-router-fallback / group-bot-intro / vision / envelope-explorer / envelope-collaborator / voice-default / voice-mini / delegate-default / attachment-vision），走已有的 KV config 通道（#263 的 config→KV loader），board 出一个管理页编辑，跟 `model_presets` 页同处。
   2. edge 各处常量改成「读 config，读不到才回落代码默认」；代码默认换成当前**有效**的规范 slug（先核验 OpenRouter 目录）。
   3. iOS 侧镜像的默认（envelope/voice）改为从 `/v1/config` 之类下发，别两端各写一份。
-- **状态**: 🟡 **基座 + 6/7 角色已落**（注册表最终 7 个角色：title / groupRouter / groupBotIntro / vision / envelopeExplorer / envelopeCollaborator / voiceDefault。伪角色 `voiceMini` 已从注册表删除——`gpt-realtime-mini` 只是 `REALTIME_PRICING` 的价格表 key、从不当默认值，留着会让 board 出现一个"改了没用"的项）。基座 `6b0ab921`；swap 提交：`4ecf801d`（title/group-router/group-bot-intro）、`590b054f`（vision —— `pickVisionModel` 加 `defaultSlug` 参数保持纯函数，调用方 resolve）、`193d06c4`（envelope×2 —— `resolveEnvelopeSettings` 加 `defaults` 参数）。**admin 配置页已落** `c07736b5`（`apps/admin/src/pages/model-roles.tsx`，镜像 feature-flags，运营可在 board 改各角色 slug；App.tsx 注册 `model_roles` resource + 路由；admin tsc 0）。**至此 6/7 角色端到端可配**（edge 读 config + board 有 UI）。全部 edge + admin typecheck 0、零回归。**待**：① **voiceDefault swap** —— `gpt-realtime-2` 仍硬编码在 6 处（`durable-objects/realtime-meter`×2 + `room-voice`×2 + `routes/group-voice` + `routes/realtime`），其中 4 处在 **DO 上下文**（env = `this.env`）、属 realtime 音频路径，all-or-nothing、最高风险、voice churn 最低 → 留专注 pass 做。② iOS envelope/voice 默认改 `/v1/config` 下发（可选，client 侧 UI 兜底、非源真相）。③ **部署才真生效**：edge worker 未 deploy、admin Pages 未发（deploy 是 deliberate 步骤，按需做）。
+- **状态**: 🟢 **基座 + 7/7 角色全落、工程收口**（注册表最终 7 个角色：title / groupRouter / groupBotIntro / vision / envelopeExplorer / envelopeCollaborator / voiceDefault。伪角色 `voiceMini` 已从注册表删除——`gpt-realtime-mini` 只是 `REALTIME_PRICING` 的价格表 key、从不当默认值，留着会让 board 出现一个"改了没用"的项）。基座 `6b0ab921`；swap 提交：`4ecf801d`（title/group-router/group-bot-intro）、`590b054f`（vision —— `pickVisionModel` 加 `defaultSlug` 参数保持纯函数，调用方 resolve）、`193d06c4`（envelope×2 —— `resolveEnvelopeSettings` 加 `defaults` 参数）、`b856b97c`（**voiceDefault** —— 删 `DEFAULT_VOICE_MODEL_SLUG` 常量，6 处 swap：`durable-objects/realtime-meter`×2 + `room-voice`×2 + `routes/group-voice` + `routes/realtime`；4 处在 DO 上下文用 `this.env`，2 处路由用 `c.env`；`room-voice.toContainerSpec` 保持纯函数、加 `defaultModel` 参数由两个 async 调用方 resyncContainer/addBot 传入）。**admin 配置页已落** `c07736b5`（`apps/admin/src/pages/model-roles.tsx`，镜像 feature-flags，运营可在 board 改各角色 slug；App.tsx 注册 `model_roles` resource + 路由；admin tsc 0）。**至此 7/7 角色端到端可配**（edge 读 config + board 有 UI）。全部 edge + admin typecheck 0、零回归（每个角色 code default 与旧硬编码逐字节相同 → 空 KV = 旧行为）。**剩余尾巴（非硬编码债，按需）**：① iOS envelope/voice 默认改 `/v1/config` 下发（可选，client 侧 UI 兜底、非源真相）。② **部署才真生效**：edge worker 未 deploy、admin Pages 未发（deploy 是 deliberate 步骤，按需做）。
 - **关联**: 预设内容漂移（产品向）spec `docs/superpowers/specs/2026-06-17-preset-content-realignment-design.md` —— 同根（占位 model slug）；那份管「预设 bot/引导/群」的内容，本条管「基础设施硬编码 model 角色」的工程治理。
 
 ### 🟡 codex `item/permissions/requestApproval` 回错响应形状（套了 `{decision}`，真 schema 要 `{permissions}`）
