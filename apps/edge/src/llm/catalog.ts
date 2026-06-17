@@ -48,7 +48,7 @@ async function getCatalog(): Promise<Map<string, CatalogEntry> | null> {
 
 /// True iff OpenRouter lists this model id as accepting image input.
 /// Unknown slugs return false — conservatively assume no vision so the
-/// caller routes through DEFAULT_VISION_MODEL.
+/// caller routes through the 'vision' model-role default.
 export async function modelSupportsVision(slug: string): Promise<boolean> {
   if (!slug) return false;
   const byId = await getCatalog();
