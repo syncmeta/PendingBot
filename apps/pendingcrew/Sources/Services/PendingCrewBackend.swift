@@ -311,7 +311,9 @@ final class LocalBackend: PendingCrewBackend {
             CrewWhiteboardEntry(
                 id: m.id,
                 senderKind: m.senderKind,
-                senderSessionId: nil,
+                // session 作者 id 透传(原写死 nil)—— 中栏据此解析 session 名 + 点气泡
+                // 跳右栏对应终端 + 回复定位到该 session。user 消息本就 nil(不受影响)。
+                senderSessionId: m.senderSessionId,
                 senderUserId: m.senderUserId,
                 senderBotId: nil,
                 messageKind: "instruction",

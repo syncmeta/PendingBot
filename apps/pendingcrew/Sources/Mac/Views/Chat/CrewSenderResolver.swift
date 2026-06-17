@@ -36,9 +36,14 @@ enum CrewSenderResolver {
 
         case "session":
             let m = members.first { $0.codeSessionId != nil && $0.codeSessionId == entry.senderSessionId }
+            // 名字优先级:roster 成员名(登录态)→ entry.senderDisplayName(本地 session
+            // 经 post_to_crew 带的 label,如「机长」/「Claude Code · abc」)→ 兜底「会话」。
+            // 本地 session 不在 roster,过去只能落兜底「会话」;加 senderDisplayName 这层后
+            // 本地 session 也显真名。
             return CrewSender(
                 kind: .session,
-                displayName: m?.displayName ?? CrewSenderNaming.sessionFallback(entry.senderSessionId),
+                displayName: m?.displayName ?? entry.senderDisplayName
+                    ?? CrewSenderNaming.sessionFallback(entry.senderSessionId),
                 avatarSeed: entry.senderSessionId ?? entry.id,
                 isCaptain: false, sessionStatus: m?.sessionStatus, isMine: false
             )

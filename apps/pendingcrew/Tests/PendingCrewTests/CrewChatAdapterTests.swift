@@ -183,6 +183,26 @@ final class CrewChatAdapterTests: XCTestCase {
         // when member is found it should be forwarded.
         XCTAssertEqual(s.sessionStatus, "running")
     }
+
+    // ── 6. 本地 session 消息(无 roster 成员)→ 退到 senderDisplayName 真名,不显「会话」 ──
+
+    func testLocalSessionMessage_fallsBackToSenderDisplayName() throws {
+        // 本地 session(机长/worker)经 post_to_crew 发的消息:senderSessionId 有值但
+        // 不在 roster(本地 session 不进 roster),senderDisplayName 带 label「机长」。
+        // 过去 resolver 只认 roster → 落兜底「会话」;现退到 senderDisplayName。
+        let entry = try makeEntry(
+            id: "e-localsess",
+            senderKind: "session",
+            senderSessionId: "captain-abc123",
+            senderDisplayName: "机长",
+            summary: "已报到"
+        )
+        let (_, sender) = CrewChatAdapter.adapt(
+            entry, members: [], captainBotId: nil, localUserId: "local-byok-user")
+        let s = try XCTUnwrap(sender)
+        XCTAssertTrue(s.isSession)
+        XCTAssertEqual(s.displayName, "机长", "本地 session 名退到 senderDisplayName,不显兜底「会话」")
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
