@@ -12,6 +12,14 @@
 
 ---
 
+### 🟡 codex `item/permissions/requestApproval` 回错响应形状（套了 `{decision}`，真 schema 要 `{permissions}`）
+- **发现**: 2026-06-17 · `fix/codex-mcp-tool-approval`（修 post_to_crew 被拒、对 codex 0.137.0 真 schema 时顺手撞见）
+- **位置**: `apps/pendingcrew/Sources/Mac/LocalRunner/CodexAppServer/CodexAppServerBackend.swift` `handleServerRequest` 的 `.approval` 分支。
+- **问题**: 三个 `*/requestApproval` 共用一句 `respond(serverId:id, result:["decision": decision])`。对 `item/commandExecution` / `item/fileChange` 正确（响应 schema = `{decision: <enum>}`，accept/decline 是合法枚举值）；但对 **`item/permissions/requestApproval`** 错 —— 真 schema `PermissionsRequestApprovalResponse` **required `{permissions: GrantedPermissionProfile, scope?, strictAutoReview?}`，根本没有 `decision` 字段**（`codex app-server generate-json-schema` 0.137.0 核对）。回 `{decision:...}` → codex 解不出 → 该权限请求会失败/被当拒。
+- **影响**: codex worker session 若申请超出 `workspace-write` sandbox 的额外权限（网络访问 / cwd 外写），这条审批会坏 —— agent 拿不到权限或 turn 出错。captain 报到只 `post_to_crew`（不碰额外权限）所以没撞上；本次 `post_to_crew` 被拒是 elicitation 那条（`mcp_tool_call` approval，已修 `158021d2`），与此**独立**。
+- **建议**: `.approval` 按 method 分形状回包 —— permissions 分支：allow→授予 requested permissions（`{permissions:<granted>}`）、deny→空 profile（`{permissions:{}}` = 批准空 = 实际不给）；别套 `{decision}`。改前先用真 codex 跑一轮触发 permissions 审批，确认 codex 对 malformed 响应的实际行为 + 正确 grant 形状（本次没做，避免扩散当前 fix 的 scope）。
+- **状态**: 待办（独立于 elicitation 修复；真实触发前低优先）。
+
 ### 🟡 PendingCrew 登录搬 PendingBot + 同发布者确认卡 — P1+P2 代码落地，待真签名 GUI + Apple/Google 后台配置
 - **发现**: 2026-06-17 · `feat/pendingcrew-login-port`（P1：确认卡 + 现有扫码视觉对齐；spec/plan `2026-06-17-pendingcrew-login-port*`）
 - **背景**: 登录入口改为「检测本机 PendingBot 已登录（共享 keychain `pfa_`）→ 确认卡一键 mint `pendingcrew_control` grant / 换号→登录页」。**沿用 scoped grant 安全模型**（PendingCrew 不持全权 Supabase session，守 2026-06-08 SSO spec）。PendingBot 家族凭据 payload 加 `displayName`/`avatarSeed` 且放开到 iOS 也写；edge `/v1/me/family-credential` 回 `displayName`。P1（T1-T7）：PendingCrew 215 单测绿 + Mac/iPad build 绿 + PendingBot 双 build 绿 + edge typecheck 0。
