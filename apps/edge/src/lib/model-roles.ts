@@ -45,12 +45,11 @@ export const MODEL_ROLE_DEFAULTS = {
   /** Envelope collaborator pass — lib/envelope-runner.ts */
   envelopeCollaborator: '~google/gemini-flash-latest',
   /** Realtime voice fallback model (used when no per-bot/conv voice model is
-   *  pinned) — durable-objects/realtime-meter + room-voice, routes/group-voice +
-   *  realtime. NOTE: still hardcoded at those 6 call sites (DO context); this
-   *  registry entry is ready but the swap is deferred (see tech-debt). The
-   *  `gpt-realtime-*` slugs route via OpenAI's native realtime endpoint, not
-   *  OpenRouter; `gpt-realtime-mini` is only a REALTIME_PRICING key, never a
-   *  default, so it is intentionally NOT a role here. */
+   *  pinned) — resolved via getModelRole at the 6 call sites in
+   *  durable-objects/realtime-meter + room-voice and routes/group-voice +
+   *  realtime. The `gpt-realtime-*` slugs route via OpenAI's native realtime
+   *  endpoint, not OpenRouter; `gpt-realtime-mini` is only a REALTIME_PRICING
+   *  key, never a default, so it is intentionally NOT a role here. */
   voiceDefault: 'gpt-realtime-2',
 } as const;
 

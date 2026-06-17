@@ -2,6 +2,7 @@ import { getContainer } from '@cloudflare/containers';
 import type { Env } from '../types';
 import { serviceClient } from '../lib/supabase';
 import { resolveRoute } from '../llm/router';
+import { getModelRole } from '../lib/model-roles';
 import { publishToHub, type VoiceCallEvent } from '../lib/realtime-publish';
 import {
   broadcastVoiceCostPreview,
@@ -39,7 +40,9 @@ import {
 
 // Hard wall-clock cap, mirrors RealtimeMeterDO / lib/realtime-sessions.ts.
 const MAX_CALL_MS = 30 * 60 * 1000;
-const DEFAULT_VOICE_MODEL_SLUG = 'gpt-realtime-2';
+// Voice fallback model lives in the board's `voiceDefault` role
+// (lib/model-roles.ts) — resolved per call via getModelRole(this.env, ...)
+// and threaded into toContainerSpec, so ops can repoint it without a redeploy.
 
 // iOS posts /control/heartbeat while the call is up. A human whose last
 // heartbeat is older than PRESENCE_TIMEOUT_MS is swept; once the last admin
@@ -496,7 +499,8 @@ export class RoomVoiceDO {
   private async resyncContainer(): Promise<boolean> {
     const ctx = this.ctx;
     if (!ctx || !this.mediaWs) return false;
-    const specs = [...this.bots.values()].map((leg) => this.toContainerSpec(leg.spec));
+    const voiceDefault = await getModelRole(this.env, 'voiceDefault');
+    const specs = [...this.bots.values()].map((leg) => this.toContainerSpec(leg.spec, voiceDefault));
     const cmds = buildResyncCommands(
       { token: roomMediaToken(ctx), openaiApiKey: this.env.OPENAI_API_KEY ?? '' },
       specs,
@@ -741,15 +745,20 @@ export class RoomVoiceDO {
     this.bots.set(spec.botId, leg);
 
     await this.ensureMedia();
-    this.sendMedia({ t: 'add-bot', spec: this.toContainerSpec(spec) });
+    this.sendMedia({
+      t: 'add-bot',
+      spec: this.toContainerSpec(spec, await getModelRole(this.env, 'voiceDefault')),
+    });
   }
 
   // Translate the DO's BotSpec into the container's wire spec — flattening
   // the voice block and resolving the tool set (the DO owns permissions).
-  private toContainerSpec(spec: BotSpec): ContainerBotSpec {
+  // `defaultModel` is the board-configured voiceDefault, resolved by the
+  // async caller (this fn stays sync — no env access here).
+  private toContainerSpec(spec: BotSpec, defaultModel: string): ContainerBotSpec {
     return {
       botId: spec.botId,
-      model: spec.model || DEFAULT_VOICE_MODEL_SLUG,
+      model: spec.model || defaultModel,
       instructions: spec.instructions,
       voice: spec.voiceConfig.voice || 'marin',
       turnDetection: spec.voiceConfig.turnDetection,
@@ -1063,7 +1072,7 @@ export class RoomVoiceDO {
     let route;
     try {
       route = await resolveRoute(supa, this.env, {
-        modelSlug: leg.spec.model || DEFAULT_VOICE_MODEL_SLUG,
+        modelSlug: leg.spec.model || (await getModelRole(this.env, 'voiceDefault')),
         preferProvider: 'openai',
         metadata: { userId: ctx.billUserId, conversationId: ctx.conversationId },
       });
