@@ -265,10 +265,16 @@ private struct MacMainWindowStyler: NSViewRepresentable {
     final class Coordinator {
         private weak var window: NSWindow?
         private var observed = false
+        // 登录→主窗只做一次的「保持中心」处理(见 anchorGrowToCenter)。
+        private var growHandled = false
+        private var growConsumed = false
+        private var anchorCenter: NSPoint?
+        private var anchorPreSize: NSSize?
 
         func attach(to window: NSWindow) {
             self.window = window
             Self.restore(window)
+            anchorGrowToCenter(window)
             guard !observed else { return }
             observed = true
             let nc = NotificationCenter.default
@@ -277,12 +283,54 @@ private struct MacMainWindowStyler: NSViewRepresentable {
                 NSWindow.didBecomeMainNotification,
                 NSWindow.didResizeNotification,
             ] {
-                nc.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                nc.addObserver(forName: name, object: window, queue: .main) { [weak self] note in
                     MainActor.assumeIsolated {
                         guard let self, let w = self.window else { return }
                         Self.restore(w)
+                        // 主窗因 .contentSize 从登录小窗长到主尺寸时会再发
+                        // didResize —— 借这一拍把窗口重新锚回登录前的中心。
+                        if note.name == NSWindow.didResizeNotification {
+                            self.anchorGrowToCenter(w)
+                        }
                     }
                 }
+            }
+        }
+
+        /// 让窗口从登录/占位小窗「长大」到主 app 尺寸时**以中心为锚**展开,
+        /// 而不是 SwiftUI `.windowResizability(.contentSize)` 默认的「钉住左上角」
+        /// —— 后者会让窗口往右下方蹿。一次性:读 `MacWindowGrowAnchor` 里登录
+        /// 前记录的中心 + 旧尺寸,等 grow 落定(窗口确实变大)后把中心搬回去。
+        private func anchorGrowToCenter(_ window: NSWindow) {
+            guard !growHandled else { return }
+            if !growConsumed {
+                growConsumed = true
+                anchorCenter = MacWindowGrowAnchor.center
+                anchorPreSize = MacWindowGrowAnchor.preSize
+                MacWindowGrowAnchor.center = nil
+                MacWindowGrowAnchor.preSize = nil
+            }
+            guard let center = anchorCenter else { growHandled = true; return }
+            DispatchQueue.main.async { [weak self, weak window] in
+                guard let self, let window, !self.growHandled else { return }
+                // grow 还没落定(仍≈登录尺寸)→ 留给 grow 的 didResize 再触发。
+                if let pre = self.anchorPreSize,
+                   window.frame.width <= pre.width + 1,
+                   window.frame.height <= pre.height + 1 {
+                    return
+                }
+                self.growHandled = true
+                var frame = window.frame
+                frame.origin.x = (center.x - frame.width / 2).rounded()
+                frame.origin.y = (center.y - frame.height / 2).rounded()
+                // 夹在可见屏内,别把标题栏顶出屏幕。
+                if let visible = window.screen?.visibleFrame {
+                    frame.origin.x = min(max(frame.origin.x, visible.minX),
+                                         max(visible.minX, visible.maxX - frame.width))
+                    frame.origin.y = min(max(frame.origin.y, visible.minY),
+                                         max(visible.minY, visible.maxY - frame.height))
+                }
+                window.setFrame(frame, display: true, animate: false)
             }
         }
 
