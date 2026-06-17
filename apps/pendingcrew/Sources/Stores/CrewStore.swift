@@ -100,14 +100,32 @@ final class CrewStore: ObservableObject {
     }
 
     func refreshSubjects() async {
-        guard let backend = currentBackend() else { return }
         loadingSubjects = true
         defer { loadingSubjects = false }
+        // 身份是**账号级**概念 —— 登录态一律走 edge `/v1/me/subjects` 拿真实主体
+        // (display_name / kind / userId)。**不能**经 `appModel.backend`:macOS 上
+        // 它恒为 `LocalBackend`(本地为家),其 `listMySubjects` 返回写死的假主体
+        // 「本机 (BYOK)」—— 于是登录后侧栏身份一直显示这个假名而非真实账号
+        // (本 fix 的病根)。与 `refreshMachines()` 同构:authed → edge,否则本地兜底。
+        if appModel.isAuthenticated {
+            // 登录态只认 edge 真实主体,**绝不**回落本地假主体(否则又显示
+            // 「本机 (BYOK)」)。拉取失败保留上次 subjects、只记 error,不挡 UI。
+            guard let api = try? appModel.loggedAPIClient() else { return }
+            do {
+                subjects = try await api.listMySubjects()
+                // 回填登录用户 id(群聊区分"自己的气泡")—— 真实主体带 userId。
+                appModel.setCurrentUserIdIfResolved(subjects.first?.userId)
+            } catch {
+                self.error = "加载身份失败：\(error.localizedDescription)"
+            }
+            return
+        }
+        // 未登录(Mac 本地态):LocalBackend 合成的「本机 (BYOK)」假主体,供
+        // CreateCrewSheet 拿 `subjects.first?.id` 当本地 crew 的 responsibleSubjectId。
+        // iOS 未登录无 backend → 留空(WelcomeView 时态)。
+        guard let backend = appModel.backend else { subjects = []; return }
         do {
             subjects = try await backend.listMySubjects()
-            // 回填登录用户 id(群聊区分"自己的气泡")。best-effort:仅在
-            // subject 带真实 userId 时更新(BYOK 假 subject 是 nil,忽略)。
-            appModel.setCurrentUserIdIfResolved(subjects.first?.userId)
         } catch {
             self.error = "加载 subject 列表失败：\(error.localizedDescription)"
         }

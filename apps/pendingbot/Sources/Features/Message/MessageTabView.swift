@@ -1049,8 +1049,16 @@ extension MessageTabView: FeatureSurface {
     func detailColumn(selection: ChatDest?) -> some View {
         Group {
             if let dest = selection {
-                destinationView(for: dest)
-                    .id(destinationKey(dest))
+                // 包一层 NavigationStack:`ConversationView` 用
+                // `.navigationDestination(isPresented:)` push 进机器人/会话设置,
+                // 而 split-view 的 detail 列本身**不是**导航栈 —— 缺了它,Mac/iPad
+                // 宽屏壳里点齿轮「机器人设置」完全没反应(bool 翻了但无处可推)。
+                // 与 `MeTabView.detailColumn` 同款。`.id` 钉在外层:切会话时连同
+                // 导航栈一起换成干净实例。
+                NavigationStack {
+                    destinationView(for: dest)
+                }
+                .id(destinationKey(dest))
             } else {
                 EmptyDetailHint(systemImage: "bubble.left.and.bubble.right")
             }

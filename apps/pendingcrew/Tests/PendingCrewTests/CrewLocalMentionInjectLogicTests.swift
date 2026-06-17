@@ -71,5 +71,38 @@ final class CrewLocalMentionInjectLogicTests: XCTestCase {
             senderName: "我")
         XCTAssertEqual(out.count, 1)
     }
+
+    // ── #1: @机长 唤醒 captain run ───────────────────────────────────────────
+
+    func testCaptainMentionWakesCaptainRun() {
+        // @机长 → 调用方把 captain 本地 run 的 sessionId 传入 → 空闲则注入唤醒(#1)。
+        let out = CrewLocalMentionInjectLogic.decide(
+            mentions: [.captain],
+            runs: [run("captain-abc", busy: false)],
+            messageText: "汇报进度",
+            senderName: "我",
+            captainSessionId: "captain-abc")
+        XCTAssertEqual(out.map(\.sessionId), ["captain-abc"])
+        XCTAssertTrue(out.first!.text.contains("汇报进度"))
+    }
+
+    func testCaptainMentionBusyNotInterrupted() {
+        let out = CrewLocalMentionInjectLogic.decide(
+            mentions: [.captain],
+            runs: [run("captain-abc", busy: true)],
+            messageText: "x", senderName: "我",
+            captainSessionId: "captain-abc")
+        XCTAssertTrue(out.isEmpty, "captain busy 不打断")
+    }
+
+    func testCaptainMentionWithoutRunningCaptainIgnored() {
+        // 本地没在跑 captain(captainSessionId nil)→ @机长 不注入(不崩),退回旧行为。
+        let out = CrewLocalMentionInjectLogic.decide(
+            mentions: [.captain],
+            runs: [run("sess-a", busy: false)],
+            messageText: "x", senderName: "我",
+            captainSessionId: nil)
+        XCTAssertTrue(out.isEmpty)
+    }
 }
 #endif

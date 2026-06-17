@@ -72,11 +72,33 @@ enum CodexProtocol {
         return .unsupported
     }
 
-    /// Reply for `mcpServer/elicitation/request`. v1 has no elicitation UI → decline so
-    /// the MCP server resolves the elicitation as declined and the turn proceeds (instead
-    /// of codex blocking forever on our reply). Shape per real schema
-    /// `McpServerElicitationRequestResponse` = `{ action: accept|decline|cancel, content? }`;
-    /// `decline` carries no content.
+    /// Reply for `mcpServer/elicitation/request`. CRITICAL: in codex-cli 0.137.0 the
+    /// **MCP tool-call approval prompt is delivered AS an elicitation** carrying
+    /// `_meta.codex_approval_kind == "mcp_tool_call"` (verified against a live
+    /// `codex app-server` turn — NOT a `*/requestApproval`). So blanket-declining every
+    /// elicitation declined every crew tool call: codex marked the `mcpToolCall` failed
+    /// with `error:"user rejected MCP tool call"`, which is why the codex captain's
+    /// `post_to_crew` check-in was rejected and never posted.
+    ///
+    /// The crew comms tools (`post_to_crew`/`read_whiteboard`/`ask`/…) are the session's
+    /// own trusted nervous system and must auto-approve — exactly as the claude backend
+    /// excludes them from its PreToolUse gate (`LocalSessionLaunch` `permGates =
+    /// "computer-use"`; crew tools never gated). A crew session only ever wires the one
+    /// trusted `crew` MCP server, so accepting `mcp_tool_call` elicitations is correct
+    /// here (dangerous ops — shell/file — still gate via `*/requestApproval`). Genuine
+    /// input-form elicitations (no `codex_approval_kind`) keep declining: v1 has no UI to
+    /// fill them, and declining lets the turn proceed instead of hanging on a reply we'd
+    /// never send. Shape per `McpServerElicitationRequestResponse` =
+    /// `{ action: accept|decline|cancel, content? }`; accept/decline carry no content.
+    static func elicitationResult(params: [String: Any]) -> [String: Any] {
+        let meta = params["_meta"] as? [String: Any]
+        if (meta?["codex_approval_kind"] as? String) == "mcp_tool_call" {
+            return ["action": "accept"]
+        }
+        return elicitationDeclineResult()
+    }
+
+    /// Bare decline reply for a genuine (non-approval) elicitation.
     static func elicitationDeclineResult() -> [String: Any] { ["action": "decline"] }
 }
 #endif

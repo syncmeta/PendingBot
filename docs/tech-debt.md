@@ -38,6 +38,14 @@
 - **状态**: 🟡 已盘点（完整清单，见上）+ 已落本条；**未动手改**。实现 = 一个独立 feature（KV config + board 页 + edge 各处换读 + iOS 下发），按用户「收进 board」方向排。
 - **关联**: 预设内容漂移（产品向）spec `docs/superpowers/specs/2026-06-17-preset-content-realignment-design.md` —— 同根（占位 model slug）；那份管「预设 bot/引导/群」的内容，本条管「基础设施硬编码 model 角色」的工程治理。
 
+### 🟡 codex `item/permissions/requestApproval` 回错响应形状（套了 `{decision}`，真 schema 要 `{permissions}`）
+- **发现**: 2026-06-17 · `fix/codex-mcp-tool-approval`（修 post_to_crew 被拒、对 codex 0.137.0 真 schema 时顺手撞见）
+- **位置**: `apps/pendingcrew/Sources/Mac/LocalRunner/CodexAppServer/CodexAppServerBackend.swift` `handleServerRequest` 的 `.approval` 分支。
+- **问题**: 三个 `*/requestApproval` 共用一句 `respond(serverId:id, result:["decision": decision])`。对 `item/commandExecution` / `item/fileChange` 正确（响应 schema = `{decision: <enum>}`，accept/decline 是合法枚举值）；但对 **`item/permissions/requestApproval`** 错 —— 真 schema `PermissionsRequestApprovalResponse` **required `{permissions: GrantedPermissionProfile, scope?, strictAutoReview?}`，根本没有 `decision` 字段**（`codex app-server generate-json-schema` 0.137.0 核对）。回 `{decision:...}` → codex 解不出 → 该权限请求会失败/被当拒。
+- **影响**: codex worker session 若申请超出 `workspace-write` sandbox 的额外权限（网络访问 / cwd 外写），这条审批会坏 —— agent 拿不到权限或 turn 出错。captain 报到只 `post_to_crew`（不碰额外权限）所以没撞上；本次 `post_to_crew` 被拒是 elicitation 那条（`mcp_tool_call` approval，已修 `158021d2`），与此**独立**。
+- **建议**: `.approval` 按 method 分形状回包 —— permissions 分支：allow→授予 requested permissions（`{permissions:<granted>}`）、deny→空 profile（`{permissions:{}}` = 批准空 = 实际不给）；别套 `{decision}`。改前先用真 codex 跑一轮触发 permissions 审批，确认 codex 对 malformed 响应的实际行为 + 正确 grant 形状（本次没做，避免扩散当前 fix 的 scope）。
+- **状态**: 待办（独立于 elicitation 修复；真实触发前低优先）。
+
 ### 🟡 PendingCrew 登录搬 PendingBot + 同发布者确认卡 — P1+P2 代码落地，待真签名 GUI + Apple/Google 后台配置
 - **发现**: 2026-06-17 · `feat/pendingcrew-login-port`（P1：确认卡 + 现有扫码视觉对齐；spec/plan `2026-06-17-pendingcrew-login-port*`）
 - **背景**: 登录入口改为「检测本机 PendingBot 已登录（共享 keychain `pfa_`）→ 确认卡一键 mint `pendingcrew_control` grant / 换号→登录页」。**沿用 scoped grant 安全模型**（PendingCrew 不持全权 Supabase session，守 2026-06-08 SSO spec）。PendingBot 家族凭据 payload 加 `displayName`/`avatarSeed` 且放开到 iOS 也写；edge `/v1/me/family-credential` 回 `displayName`。P1（T1-T7）：PendingCrew 215 单测绿 + Mac/iPad build 绿 + PendingBot 双 build 绿 + edge typecheck 0。
@@ -103,6 +111,7 @@
     - **CodexProtocolTests** 加真 schema 回归护栏（serverRequestKind 覆盖全部 ServerRequest 方法 + decline 形状），app build 绿 + 相关单测全绿。
     - **仍未真机 GUI 活验**：本机登录态在已安装旧 build，本地新 build 签名不同够不到那份 keychain 会话，没法自驱跑到「起 codex captain」态 —— 需用户 rebuild 起一个 codex captain session 看是否报到完成（不再转圈）。协议层已证「答 decline 即解锁」。
     - **残留（本次明确未覆盖，用户选「只根治挂死」）**：(a) **permissions 审批 decision 形状**仍走 accept/decline（见下条 #permissions，permissions 归 `.approval` 不进兜底分支）—— 少见的网络/sandbox 升级审批仍可能被 codex 判无效→挂；(b) **crew codex 继承你整份 `~/.codex` 全局插件**（computer-use/codex_apps/cloudflare-api[未登录]/xcodebuild/browser…，复现时见 `codex_apps` startup failed/transport error）—— 若某全局插件的 tool call 自己 hang（codex↔插件，绕过客户端），server-request 兜底救不了，需「crew session 隔离全局插件（dedicated CODEX_HOME / `-c` 关插件）」，用户本轮明确不做；(c) **无逐字流式**（delta opt-out，只渲 `item/completed`）= 用户「不知道在干嘛」的另一半，turn 进行中只有「运行中…」转圈无细节，v1 defer，要像 claude 实时流需开 delta + 渲进行态。
+    - **✅ codex「思考过程是空的」根因 found+fixed（2026-06-17 · `fix/crew-chat-bugs`）**：真实 reasoning `item/completed` 在 ChatGPT 鉴权下带 `summary:[]`(空)+`encrypted_content`(加密原文,本机今日 rollout JSONL 实证),可读思考**只在** `item/reasoning/summaryTextDelta` 增量流里 —— 而 v1 opt-out 了 deltas → 「思考过程」恒空白。**修**：`CodexTranscript` 按 `itemId` 累积 `summaryTextDelta`/`textDelta`（随流出现并增长），`item/completed` 空 summary 时保留累积值（非空则以 completed 为准）；`CodexThreadItem` 加 memberwise init 供合成。把上面 (c) 的**推理那半边**接通了（`agentMessage` 逐字流式仍 defer）。单测（`CodexTranscriptTests` 两条新回归）+ macOS/iOS build 绿；**一次 app 内 `CodexTranscriptView` 真 codex 回合活验仍欠**（同 keychain 旧 build 问题，并入 Mac GUI QA #290）。
 
 ### 🟡 codex `item/permissions/requestApproval` 审批 decision 形状未建模（command/fileChange 审批正确）
 - **发现**: 2026-06-16 · `chore/ledger-reconcile`（对 codex-cli 0.137.0 真 schema 核审批 roundtrip）

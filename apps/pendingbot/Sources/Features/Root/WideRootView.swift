@@ -70,7 +70,7 @@ struct WideRootView: View {
     /// 合并侧栏 = 窄图标 rail ＋ 当前 tab 的 list,整体作为 split view 的
     /// **唯一可折叠首列**(2 栏布局:sidebar | detail)。折叠按钮一下收起 rail+list,
     /// 把整宽让给右侧详情。五个 tab 同构 —— 「我」也有列表列(账号/设置菜单),
-    /// 点条目右栏出详情。列宽 = rail(56)+ list,可拖动 300–520。
+    /// 点条目右栏出详情。列宽 = rail(56)+ list,可拖动 300–560。
     private var combinedSidebar: some View {
         HStack(spacing: 0) {
             tabRail
@@ -88,8 +88,8 @@ struct WideRootView: View {
         // 所以整条侧栏是同一块原生底、中间无分隔。自糊 NSVisualEffectView 在
         // 这个被 MacMainWindowStyler 强制不透明的窗口里 behind-window 透不出来,
         // 反而发灰带渐变,故不用。
-        // 列宽加大(默认 420);「我」现在也有列表列,不再 56px 特例。
-        .navigationSplitViewColumnWidth(min: 320, ideal: 420, max: 560)
+        // 列宽:默认 360(更紧凑);「我」现在也有列表列,不再 56px 特例。
+        .navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 560)
     }
 
     private var tabRail: some View {
@@ -265,10 +265,16 @@ private struct MacMainWindowStyler: NSViewRepresentable {
     final class Coordinator {
         private weak var window: NSWindow?
         private var observed = false
+        // 登录→主窗只做一次的「保持中心」处理(见 anchorGrowToCenter)。
+        private var growHandled = false
+        private var growConsumed = false
+        private var anchorCenter: NSPoint?
+        private var anchorPreSize: NSSize?
 
         func attach(to window: NSWindow) {
             self.window = window
             Self.restore(window)
+            anchorGrowToCenter(window)
             guard !observed else { return }
             observed = true
             let nc = NotificationCenter.default
@@ -277,12 +283,54 @@ private struct MacMainWindowStyler: NSViewRepresentable {
                 NSWindow.didBecomeMainNotification,
                 NSWindow.didResizeNotification,
             ] {
-                nc.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                nc.addObserver(forName: name, object: window, queue: .main) { [weak self] note in
                     MainActor.assumeIsolated {
                         guard let self, let w = self.window else { return }
                         Self.restore(w)
+                        // 主窗因 .contentSize 从登录小窗长到主尺寸时会再发
+                        // didResize —— 借这一拍把窗口重新锚回登录前的中心。
+                        if note.name == NSWindow.didResizeNotification {
+                            self.anchorGrowToCenter(w)
+                        }
                     }
                 }
+            }
+        }
+
+        /// 让窗口从登录/占位小窗「长大」到主 app 尺寸时**以中心为锚**展开,
+        /// 而不是 SwiftUI `.windowResizability(.contentSize)` 默认的「钉住左上角」
+        /// —— 后者会让窗口往右下方蹿。一次性:读 `MacWindowGrowAnchor` 里登录
+        /// 前记录的中心 + 旧尺寸,等 grow 落定(窗口确实变大)后把中心搬回去。
+        private func anchorGrowToCenter(_ window: NSWindow) {
+            guard !growHandled else { return }
+            if !growConsumed {
+                growConsumed = true
+                anchorCenter = MacWindowGrowAnchor.center
+                anchorPreSize = MacWindowGrowAnchor.preSize
+                MacWindowGrowAnchor.center = nil
+                MacWindowGrowAnchor.preSize = nil
+            }
+            guard let center = anchorCenter else { growHandled = true; return }
+            DispatchQueue.main.async { [weak self, weak window] in
+                guard let self, let window, !self.growHandled else { return }
+                // grow 还没落定(仍≈登录尺寸)→ 留给 grow 的 didResize 再触发。
+                if let pre = self.anchorPreSize,
+                   window.frame.width <= pre.width + 1,
+                   window.frame.height <= pre.height + 1 {
+                    return
+                }
+                self.growHandled = true
+                var frame = window.frame
+                frame.origin.x = (center.x - frame.width / 2).rounded()
+                frame.origin.y = (center.y - frame.height / 2).rounded()
+                // 夹在可见屏内,别把标题栏顶出屏幕。
+                if let visible = window.screen?.visibleFrame {
+                    frame.origin.x = min(max(frame.origin.x, visible.minX),
+                                         max(visible.minX, visible.maxX - frame.width))
+                    frame.origin.y = min(max(frame.origin.y, visible.minY),
+                                         max(visible.minY, visible.maxY - frame.height))
+                }
+                window.setFrame(frame, display: true, animate: false)
             }
         }
 

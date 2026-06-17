@@ -2,6 +2,12 @@
 
 **最近对账：2026-06-17**（对照实际代码 / 迁移 / git，不是看 task 标记）
 
+> **2026-06-17 修 codex 机长 `post_to_crew` 被拒（`fix/codex-mcp-tool-approval`，root-cause 实测，inline）**：codex-cli 0.137.0 把「是否允许调 MCP 工具」的审批**作为一条 elicitation**下发（`_meta.codex_approval_kind=="mcp_tool_call"`），**不是** `*/requestApproval`。旧 `handleServerRequest` 把所有 elicitation 一律 `{action:"decline"}` → codex 把该 mcpToolCall 标 failed（`error:"user rejected MCP tool call"`）→ 机长报「post_to_crew 调用被拒绝」、报到发不出。**实为所有 codex session 的所有 crew 工具（post_to_crew/read_whiteboard/ask/…）全被自动拒**，captain 报到只是最先撞上的。
+> - **根因实证**：用真 `codex app-server` + 仿 `McpServer` 的 stdio MCP server 跑一轮复现：decline→`user rejected`；accept→`tools/call` 真到达 server、mcpToolCall status=completed。schema 经 `codex app-server generate-json-schema`(0.137.0) 核（ServerRequest 10 法、`McpServerElicitationRequestResponse={action,content?}`）。
+> - **修**（commit `158021d2`）：`CodexProtocol.elicitationResult(params:)` 对 `mcp_tool_call` 审批回 `{action:"accept"}`（crew 工具是 session 自家可信通道，对齐 claude `permGates="computer-use"` 把 crew 排除出 gate）；真输入型 elicitation 仍 decline（无 UI，回包让 turn 继续不挂死）；危险 shell/file 仍走 `*/requestApproval` 人工审批。+2 单测，`CodexProtocolTests` 10 绿 + macOS BUILD SUCCEEDED。
+> - **GUI E2E 已过**：真 PendingCrew.app（含本修复的 build）起 codex 机长 → 右栏 transcript 显示 `crew.post_to_crew · completed` + final_answer「已报到。」→ 群聊白板出现机长报到「我在，已接任本 crew 机长，先待命。」。修复前同操作必报「调用被拒绝」、白板空。computer-use 驱动验，截图存档。
+> - **顺手记 tech-debt 🟡**：同 `.approval` 分支对 `item/permissions/requestApproval` 回错形状（套 `{decision}`，真 schema 要 `{permissions}`）—— 独立 latent bug，codex worker 申请额外权限时才撞，已记登记册。
+
 > **2026-06-17 PendingCrew 登录搬 PendingBot + 同发布者确认卡 P1+P2（`feat/pendingcrew-login-port`，subagent-driven，ledger task #409-423，18 commit）**：spec/plan `2026-06-17-pendingcrew-login-port*`。用户定调 —— PendingCrew 登录页搬 PendingBot 那套（Apple/Google/邮箱/扫码）；本机 PendingBot 已登录则显示头像+账号一键确认，换号回登录页。**沿用 scoped grant**（PendingCrew 只持受限 `pendingcrew_control` device-grant、不持全权 Supabase session，守 2026-06-08 SSO spec），P2 直接登录栈再上。
 > - **P1（T1-T7 全绿）**：① `FamilyCredential` payload 两端加可选 `displayName`/`avatarSeed`（codec 单测）；② PendingBot writer 带 profile 且放开到 **iOS 也写/登出也清**（原 `#if os(macOS)`）；③ edge `/v1/me/family-credential` 回包加 `displayName`；④ `CrewLoginIdentity` 确认卡展示模型 + 单测；⑤ `AccountConfirmCard` 视图（vendored BotAvatar）；⑥ iPad gate 改确认卡优先 + RootView 删 `flow` 简化 + LoginView 视觉对齐 Theme；⑦ Mac 侧栏「登录」入口转 `CrewLoginSheet`（包 self-managing `WelcomeView`，`isAuthenticated` 翻 true 自关）。
 > - **验证**：PendingCrew **215 单测 0 失败** + Mac/iPad build 绿；PendingBot iOS+macOS build 绿（T2）；edge typecheck 0（T3）。

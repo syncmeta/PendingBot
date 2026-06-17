@@ -15,6 +15,9 @@ struct CrewSidebarView: View {
     @State private var showingLogin = false
     /// 折叠起来的机器分组 id 集合（默认全展开）。
     @State private var collapsedMachineIds: Set<String> = []
+    /// 登录账号头像 seed —— 在 footer `.task` 里从家族凭据(共享 keychain)解析一次,
+    /// 不在 render 路径上碰 keychain。见 `identityFooter`。
+    @State private var identityAvatarSeed: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -194,10 +197,15 @@ struct CrewSidebarView: View {
         Group {
             if model.isAuthenticated {
                 HStack(spacing: 10) {
-                    Image(systemName: identityIcon)
-                        .font(.title3)
-                        .foregroundStyle(.tint)
-                        .frame(width: 26)
+                    // 登录账号头像:用家族凭据里的 avatar_seed(与登录确认卡 BotAvatar
+                    // 同字形,跨 app 一致);缺凭据(如未签名构建)回落 subject id —— 仍每
+                    // 账号稳定。原先这里是写死的 SF Symbol 占位,不随身份变(`identityIcon`
+                    // 已退役)。
+                    BotAvatar(
+                        seed: identityAvatarSeed ?? crewStore.subjects.first?.id ?? "?",
+                        size: 26
+                    )
+                    .frame(width: 26)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(identityTitle)
                             .font(.callout.weight(.medium))
@@ -221,6 +229,13 @@ struct CrewSidebarView: View {
                     .menuStyle(.borderlessButton)
                     .menuIndicator(.hidden)
                     .fixedSize()
+                }
+                // 头像 seed 解析放 `.task`(不在 render 路径碰 keychain);subject 解析
+                // 出来后 id 变 → 重跑一次拿到稳定回落。家族凭据里的 avatar_seed 与登录
+                // 确认卡同字形,缺则回落 subject id。
+                .task(id: crewStore.subjects.first?.id) {
+                    identityAvatarSeed = CrewLoginIdentity.current()?.avatarSeed
+                        ?? crewStore.subjects.first?.id
                 }
             } else {
                 Button {
@@ -249,13 +264,8 @@ struct CrewSidebarView: View {
     }
 
     // identity 三件套只在已登录 footer 渲染(未登录 footer 是登录菜单,
-    // 自带文案)—— 接合 v2 后不再按 mode 分叉。
-    private var identityIcon: String {
-        crewStore.subjects.first?.kindEnum == .groupAccount
-            ? "person.3.fill"
-            : "person.crop.circle.fill"
-    }
-
+    // 自带文案)—— 接合 v2 后不再按 mode 分叉。头像走 `BotAvatar(seed:)`
+    // (见 footer),不再用 SF Symbol。
     private var identityTitle: String {
         crewStore.subjects.first?.displayName ?? "已登录"
     }

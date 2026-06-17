@@ -1370,11 +1370,17 @@ extension FriendsTabView: FeatureSurface {
     func detailColumn(selection: PendingPeer?) -> some View {
         Group {
             if let peer = selection {
-                ConversationView(
-                    conversation: pendingConversation(for: peer),
-                    bot: bot(for: peer),
-                    pendingPeer: peer
-                )
+                // 包一层 NavigationStack:`ConversationView` 用
+                // `.navigationDestination(isPresented:)` push 进机器人/会话设置,
+                // split-view 的 detail 列本身不是导航栈,缺了它 Mac/iPad 宽屏壳里
+                // 点齿轮设置完全没反应。与 `MeTabView.detailColumn` / 消息 tab 同款。
+                NavigationStack {
+                    ConversationView(
+                        conversation: pendingConversation(for: peer),
+                        bot: bot(for: peer),
+                        pendingPeer: peer
+                    )
+                }
                 .id(peer)
             } else {
                 EmptyDetailHint(systemImage: "person.2")
