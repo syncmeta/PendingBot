@@ -42,8 +42,9 @@ enum CrewAppleSignIn {
     }
 
     /// Run the ASAuthorizationController flow and exchange the result with
-    /// Supabase. The returned session is also automatically persisted by
-    /// the supabase-swift Auth client and surfaced via its authStateChanges.
+    /// Supabase. In PendingCrew the session lands in CrewSupabaseStack's
+    /// in-memory storage (never keychain); the caller hands its accessToken
+    /// to CrewLoginExchange and then signs out, so it's one-time only.
     static func run() async throws -> Session {
         let nonce = randomNonce()
         let hashedNonce = sha256(nonce)

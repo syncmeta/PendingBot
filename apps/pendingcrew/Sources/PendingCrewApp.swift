@@ -70,7 +70,7 @@ private struct FirstLaunchDisclosureGate: ViewModifier {
 
 /// 启动路由(T5.1 + T5.2)。两种顶层态:
 /// 1. **WelcomeView** — 没凭据时的 iOS 登录入口。WelcomeView 内部管理
-///    确认卡 ↔ LoginView 的切换；完成登录的那一刻 `AppModel.credential` 变化
+///    确认卡 ↔ 直接登录页（CrewWelcomeView/CrewMacWelcomeView）的切换；完成登录的那一刻 `AppModel.credential` 变化
 ///    让 `isConfigured` 翻 true,RootView 自动切到 #2。
 ///    **macOS 上 `isConfigured` 恒 true → 这条永不渲染**
 ///    (本地为家,本地 backend 常驻;登录是侧栏可选能力叠加)。
