@@ -2,13 +2,17 @@
 import SwiftUI
 import AppKit
 
-/// Mac 主视图：三栏（crew 列表 | 群聊 | session 终端），各栏独立折叠、互不强收。
+/// Mac 主视图：三栏（crew 列表 | 群聊 | session 终端），用**一个 `HSplitView`**承载。
 ///
-/// - 左栏 CrewSidebarView ── crew 列表 + 新建 / 刷新（标准 sidebar 开关折叠）
+/// - 左栏 CrewSidebarView ── crew 列表 + 新建 / 刷新
 /// - 主栏 CrewCenterView   ── 选中 crew 的群聊会话页（白板 + 沟通渠道）
-/// - 右栏 CrewSessionWindowView ── session 终端（切换条 + 终端 + composer +
-///   审批卡片）。toolbar「Session 终端」开关 / 点 session 头像 / 「+」翻它的可见性；
-///   **开它不再强收左 sidebar** —— 三栏可同时在（宽屏；窄屏各自手动折叠）。
+/// - 右栏 CrewSessionWindowView ── 成员列表 / session 终端 + composer + 审批卡片，
+///   **默认常驻**（toolbar「Session 终端」开关可临时收）。
+///
+/// **为什么不用 NavigationSplitView**：它按各列 ideal 把窗口**撑大**，三栏共存时总宽超屏
+/// → 窗口挂到屏幕外、左 sidebar 被裁（去掉「开终端自动收 sidebar」互斥后冒出来的回归，
+/// 截图实证）。`HSplitView`(NSSplitView) 是把**现有窗宽分配**给三栏、首栏恒在 x=0、窄了
+/// 缩到各自 min —— 不会负偏移裁掉、也不会撑窗超屏。详见 docs/tech-debt.md「inspector 被切」。
 ///
 /// Sidebar / Center / SessionWindow 都用 @EnvironmentObject 拿 CrewStore +
 /// AppModel；CrewSessionRunner 是 view-local（一个窗口一份，多 run 并存由它自己
@@ -21,39 +25,29 @@ struct MacThreePaneView: View {
     /// edge 信箱同步代理（接合 v2 block 3）—— window 级常驻，登录态下对已
     /// 接入 PendingBot 的 crew 跑 5s 拉/推循环。
     @StateObject private var relayAgent = CrewRelayAgent()
-    /// 右栏 session 终端的可见性。中栏 roster 头像点击 / 「+」/ toolbar 开关翻它。
-    /// 与左 sidebar **互不联动**（三栏各自折叠，回到 §9.3「右栏常驻 session」的初衷）。
-    @State private var inspectorPresented = false
-    /// 左 sidebar 可见性 —— 用户用标准 sidebar 开关控制，不再随右栏开合自动收放。
-    @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    /// 右栏 成员列表/session 终端的可见性。**默认常驻**（§9.3「右栏常驻 session」初衷）;
+    /// toolbar「Session 终端」开关 / roster 头像 / 「+」翻它,可临时收起腾给群聊。
+    @State private var inspectorPresented = true
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
+        // 三栏一个 HSplitView(底层 NSSplitView):把**现有窗宽分配**给三栏,而不是像
+        // NavigationSplitView 那样按各列 ideal 把窗口**撑大**到超屏 → 左 sidebar 被推到屏幕外
+        // 裁掉(去掉「开终端自动收 sidebar」互斥后冒出来的回归,截图实证)。NSSplitView 首栏恒在
+        // x=0、绝不负偏移;窄了各栏缩到 min,不挂屏幕外。中栏弹性吃 slack、两侧 cap 住不抢宽。
+        HSplitView {
             CrewSidebarView()
-                .navigationSplitViewColumnWidth(min: 240, ideal: 280)
-        } detail: {
-            // 群聊 + 按需的 session 终端，放进**确定性分栏**（HSplitView 底层是 NSSplitView，
-            // 列宽首次布局即确定性协商）。**不再用 `.inspector`** —— 它"present 当帧只测一次
-            // 内容宽、之后不重测"才是"展开左侧被切、要手拖 divider"那类回归的病灶（详见
-            // docs/tech-debt.md）。终端栏只在 inspectorPresented 时出现；隐藏时 detail 就是群聊
-            // 满宽。detail 列本身不设宽度约束（保持弹性），min 宽都落在 HSplitView 的子栏上。
-            HSplitView {
-                CrewCenterView(inspectorPresented: $inspectorPresented)
+                .frame(minWidth: 230, idealWidth: 264, maxWidth: 340)
+            CrewCenterView(inspectorPresented: $inspectorPresented)
+                .environmentObject(sessionRunner)
+                .frame(minWidth: 380)
+            if inspectorPresented {
+                // 右栏内嵌 Claude/Codex 全屏 TUI / 成员列表。min 320≈48 列起,cap 560 不抢宽
+                //（让中栏吃 slack,免得右栏像之前那样霸占大半屏留一片空白）。
+                CrewSessionWindowView()
                     .environmentObject(sessionRunner)
-                    .frame(minWidth: 320)
-                if inspectorPresented {
-                    CrewSessionWindowView()
-                        .environmentObject(sessionRunner)
-                        // 右栏内嵌 Claude/Codex 全屏 TUI，列数 = 栏宽 / 字宽。配 11pt 紧凑字体
-                        // （见 AgentTerminalView）cell ~6.6pt：min 360≈54 列、ideal 480≈72。
-                        // NSSplitView 首帧即给到这个宽，不会像 .inspector 那样被切、要手拖。
-                        .frame(minWidth: 360, idealWidth: 480)
-                }
+                    .frame(minWidth: 320, idealWidth: 380, maxWidth: 560)
             }
         }
-        // 左 sidebar 与右栏终端**互不联动**(去掉旧的「开终端自动收 sidebar」互斥)——
-        // 用户要三栏共存:crew 列表、群聊、session 终端各自独立折叠(标准 sidebar 开关 /
-        // toolbar「Session 终端」开关)。窄屏总宽吃紧时由用户手动收某一栏。
         // 建 crew 后自动起机长（用户要的零摩擦：新建即启动 + 群里报到，无需手动点
         // 「启动 Captain」）。store 在 createCrew 完成后 set crewId；这里持有
         // sessionRunner，best-effort 拉起后置 nil。
