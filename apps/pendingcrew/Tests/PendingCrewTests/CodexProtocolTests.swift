@@ -34,17 +34,21 @@ final class CodexProtocolTests: XCTestCase {
         XCTAssertNil(p["model"]); XCTAssertNil(p["developerInstructions"]); XCTAssertNil(p["config"])
         XCTAssertEqual(p["approvalPolicy"] as? String, "on-request")   // policy always present
     }
-    func testTurnStartPrependsWhiteboardAsLeadingTextInput() {
-        // codex has no `additionalContext` field — the whiteboard rides as a leading
-        // text input item, ahead of the user's text (real-schema verified).
+    func testTurnStartPutsWhiteboardInAdditionalContext() {
+        // codex's native per-turn context channel is `turn/start.additionalContext`
+        // (experimental, unlocked via initialize.experimentalApi). The whiteboard rides
+        // there as a deduped `kind:"untrusted"` entry — NOT prepended into input.
         let p = CodexProtocol.turnStartParams(threadId: "thr_1", text: "go", whiteboard: "unread:1")
         XCTAssertEqual(p["threadId"] as? String, "thr_1")
-        XCTAssertNil(p["additionalContext"], "codex turn/start has no additionalContext field")
+        // user's text is the SOLE input item (whiteboard no longer rides in input)
         let input = p["input"] as? [[String: Any]]
-        XCTAssertEqual(input?.count, 2)
-        XCTAssertEqual(input?.first?["type"] as? String, "text")
-        XCTAssertEqual(input?.first?["text"] as? String, "unread:1")   // whiteboard first
-        XCTAssertEqual(input?.last?["text"] as? String, "go")          // user text last
+        XCTAssertEqual(input?.count, 1)
+        XCTAssertEqual(input?.first?["text"] as? String, "go")
+        // whiteboard rides in additionalContext under a stable key, kind untrusted
+        let ac = p["additionalContext"] as? [String: [String: Any]]
+        let wb = ac?["crew_whiteboard"]
+        XCTAssertEqual(wb?["value"] as? String, "unread:1")
+        XCTAssertEqual(wb?["kind"] as? String, "untrusted")
     }
     func testTurnStartIsSingleTextInputWhenNoWhiteboard() {
         for wb in [nil, ""] as [String?] {
