@@ -31,6 +31,7 @@ import type { Context } from 'hono';
 import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
 import { userClient, serviceClient } from '../lib/supabase';
+import { getModelRole } from '../lib/model-roles';
 import { buildSystemPrompt } from '../llm/builder';
 import { getBotMemory } from '../lib/memory';
 import { resolveLocale } from '../i18n/locale';
@@ -69,10 +70,9 @@ import type { AppBindings } from '../types';
 export const groupVoiceRoutes = new Hono<AppBindings>();
 groupVoiceRoutes.use('*', requireSession());
 
-// Default realtime model when a bot's config doesn't pin one. (Voice id +
-// turn-detection defaults live in lib/voice-config.)
-const DEFAULT_VOICE_MODEL_SLUG = 'gpt-realtime-2';
-
+// Default realtime model when a bot's config doesn't pin one lives in the
+// board's `voiceDefault` role (lib/model-roles.ts) — resolved per call via
+// getModelRole. (Voice id + turn-detection defaults live in lib/voice-config.)
 const DEFAULT_REALTIMEKIT_HUMAN_PRESET = 'group_call_host';
 const DEFAULT_REALTIMEKIT_BOT_PRESET = 'group_call_participant';
 const REALTIMEKIT_MEETING_TTL_SECONDS = 2 * 60 * 60;
@@ -200,7 +200,7 @@ async function buildBotSpec(
 
   return {
     botId: bot.id,
-    model: configString(bot.config, 'voiceModel') ?? DEFAULT_VOICE_MODEL_SLUG,
+    model: configString(bot.config, 'voiceModel') ?? (await getModelRole(c.env, 'voiceDefault')),
     instructions,
     voiceConfig: resolveVoiceConfig(bot.config),
   };

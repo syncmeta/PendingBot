@@ -73,6 +73,44 @@ struct FriendsTabView: View {
     /// 列模式开关:true = body 渲染 Mac 壳的 list 列(见 body 注释)。
     var renderAsMacListColumn = false
 
+    /// Cache-first seed, applied **synchronously at construction** so the very
+    /// first painted frame already shows last-known friends + their
+    /// private/public tags + recent-chat order — instead of an empty list that
+    /// fills in 0.x s later. The reads are synchronous (`@MainActor` GRDB
+    /// cache); `.task { load() }` stays the network-refresh pass only. Before
+    /// this, the seed lived inside `.task`, which SwiftUI runs *after* first
+    /// paint, so every appearance (and every iPad/Mac tab rebuild that
+    /// reconstructs this view) flashed empty before the cache landed.
+    /// `.listColumn`/`.detailColumn` mutate a `var view = self` copy after this
+    /// init, so the Mac-shell entry points inherit the same seed.
+    @MainActor
+    init() {
+        _bots = State(initialValue: CacheRepository.cachedBots().map {
+            BotPick(id: $0.id, display_name: $0.display_name,
+                    model_id: $0.model_id, visibility: $0.visibility,
+                    creator_id: $0.creator_id,
+                    voice_call_enabled: $0.voice_call_enabled,
+                    addedAt: $0.added_at ?? 0)
+        })
+        _humans = State(initialValue: CacheRepository.cachedContacts().map {
+            HumanPick(id: $0.id, alias: $0.alias,
+                      displayName: $0.display_name,
+                      avatarPath: $0.avatar_path,
+                      avatarSeed: $0.avatar_seed ?? $0.id,
+                      addedAt: $0.added_at ?? 0)
+        })
+        // Recent-chat sort key, seeded from cached conversations so "按最近聊天"
+        // order is right on the first frame too. Bots map cleanly by bot_id;
+        // user_user peers fill in once the network query in `load()` lands.
+        var seeded: [String: Int] = [:]
+        for conv in LocalDatabase.shared.loadConversations() {
+            if let botId = conv.bot_id, !botId.isEmpty {
+                seeded["bot:\(botId)"] = max(seeded["bot:\(botId)"] ?? 0, conv.last_activity_at)
+            }
+        }
+        _lastActivity = State(initialValue: seeded)
+    }
+
     /// The selection the sidebar reads for row highlight: the shell's
     /// binding when the list is hosted by the Mac shell, otherwise the
     /// internal @State. This is the single seam that lets one `sidebarBody`
@@ -765,48 +803,11 @@ struct FriendsTabView: View {
     }
 
     private func load() async {
-        // Hydrate from local cache so the tab paints last-known friends
-        // instantly instead of flashing empty until the network round-trip
-        // lands. First-paint fallback only — guarded on `bots.isEmpty &&
-        // humans.isEmpty` so a pull-to-refresh on a warm screen doesn't
-        // visibly drop fresh data back to cache while the call is in
-        // flight. Pending friend requests aren't cached: the state changes
+        // First-paint hydration from the local cache now happens synchronously
+        // in `init()` (the cache-first seed there), so the list never flashes
+        // empty before this network round-trip lands. `load()` is the refresh
+        // pass only. Pending friend requests aren't cached — the state changes
         // too quickly to be worth showing stale.
-        if bots.isEmpty && humans.isEmpty {
-            let cachedBots = CacheRepository.cachedBots()
-            let cachedContacts = CacheRepository.cachedContacts()
-            if !cachedBots.isEmpty {
-                self.bots = cachedBots.map {
-                    BotPick(id: $0.id, display_name: $0.display_name,
-                            model_id: $0.model_id, visibility: $0.visibility,
-                            creator_id: $0.creator_id,
-                            voice_call_enabled: $0.voice_call_enabled,
-                            addedAt: $0.added_at ?? 0)
-                }
-            }
-            if !cachedContacts.isEmpty {
-                self.humans = cachedContacts.map {
-                    HumanPick(id: $0.id, alias: $0.alias,
-                              displayName: $0.display_name,
-                              avatarPath: $0.avatar_path,
-                              avatarSeed: $0.avatar_seed ?? $0.id,
-                              addedAt: $0.added_at ?? 0)
-                }
-            }
-            // Seed the recent-chat sort key from the cached conversations so
-            // the "按最近聊天" order is roughly right on first paint. Bots map
-            // cleanly by bot_id; user_user convs don't carry the peer id in
-            // the cache, so humans fill in once the network query below lands.
-            if lastActivity.isEmpty {
-                var seeded: [String: Int] = [:]
-                for conv in LocalDatabase.shared.loadConversations() {
-                    if let botId = conv.bot_id, !botId.isEmpty {
-                        seeded["bot:\(botId)"] = max(seeded["bot:\(botId)"] ?? 0, conv.last_activity_at)
-                    }
-                }
-                lastActivity = seeded
-            }
-        }
         loading = true; defer { loading = false }
         do {
             // Bot list now comes from `user_bot_contacts` (added bots only),
@@ -1369,11 +1370,17 @@ extension FriendsTabView: FeatureSurface {
     func detailColumn(selection: PendingPeer?) -> some View {
         Group {
             if let peer = selection {
-                ConversationView(
-                    conversation: pendingConversation(for: peer),
-                    bot: bot(for: peer),
-                    pendingPeer: peer
-                )
+                // 包一层 NavigationStack:`ConversationView` 用
+                // `.navigationDestination(isPresented:)` push 进机器人/会话设置,
+                // split-view 的 detail 列本身不是导航栈,缺了它 Mac/iPad 宽屏壳里
+                // 点齿轮设置完全没反应。与 `MeTabView.detailColumn` / 消息 tab 同款。
+                NavigationStack {
+                    ConversationView(
+                        conversation: pendingConversation(for: peer),
+                        bot: bot(for: peer),
+                        pendingPeer: peer
+                    )
+                }
                 .id(peer)
             } else {
                 EmptyDetailHint(systemImage: "person.2")

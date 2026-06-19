@@ -6,17 +6,25 @@ options:
     macOS: "14.0"
   createIntermediateGroups: true
 packages:
-  SwiftTerm:
-    url: https://github.com/migueldeicaza/SwiftTerm
-    from: 1.13.0
+  GoogleSignIn:
+    url: https://github.com/google/GoogleSignIn-iOS
+    minVersion: 8.0.0
+    maxVersion: 9.0.0
   MarkdownUI:
     url: https://github.com/gonzalezreal/swift-markdown-ui
     minVersion: 2.4.0
+    maxVersion: 3.0.0
+  Supabase:
+    url: https://github.com/supabase/supabase-swift
+    minVersion: 2.0.0
     maxVersion: 3.0.0
   SwiftMath:
     url: https://github.com/mgriebling/SwiftMath
     minVersion: 1.0.0
     maxVersion: 2.0.0
+  SwiftTerm:
+    url: https://github.com/migueldeicaza/SwiftTerm
+    from: 1.13.0
 settings:
   base:
     SWIFT_VERSION: "5.0"
@@ -45,9 +53,15 @@ targets:
         - PendingCrewTests
       gatherCoverageData: false
     dependencies:
-      - package: SwiftTerm
+      - package: GoogleSignIn
+        product: GoogleSignIn
       - package: MarkdownUI
+        product: MarkdownUI
+      - package: Supabase
+        product: Supabase
       - package: SwiftMath
+        product: SwiftMath
+      - package: SwiftTerm
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.pendingname.pendingcrew
@@ -80,6 +94,13 @@ targets:
       - path: Sources/Stores/LocalWhiteboardStore.swift
       # 待审批/待决策 store（ask 工具 + 权限 hook 用），同自包含。
       - path: Sources/Stores/LocalApprovalStore.swift
+      # crew-naming（2026-06-17）：控制通道 store（机长 rename_crew 写待改名）+
+      # LocalCrewStore（setTitle/地名兜底）+ PlaceNames（地名池）。均自包含 Foundation；
+      # PlaceNames 读 Bundle.main，测试 bundle 无 crewground_places.txt → 回落 ["Atlantis"]，
+      # 不崩，断言「非『未命名』」仍成立。
+      - path: Sources/Stores/LocalCrewControlStore.swift
+      - path: Sources/Stores/LocalCrewStore.swift
+      - path: Sources/Stores/PlaceNames.swift
       # 家族 SSO 凭据共享组存储（纯 Foundation+Security，自包含）。
       - path: Sources/Support/FamilyCredentialStore.swift
       # 机器分组纯函数（依赖 Models 里的 Machine / CrewSummary，已编进 bundle）。
@@ -107,6 +128,10 @@ targets:
       # staged 撤销对账 + reply 自动@推导(Phase 6)。纯 Foundation，自包含。
       - path: Sources/Chat/Adapter/CrewComposerMentions.swift
       - path: Sources/Mac/Views/Chat/CrewSenderResolver.swift
+      # CrewSenderNaming.swift：session/成员显示名兜底 + groupSender factory 收口
+      # （纯 Foundation，只依赖 CrewMember/GroupBubbleSender，均已在 bundle）。
+      # CrewComposerMentions / CrewSenderResolver 依赖它。
+      - path: Sources/Chat/Adapter/CrewSenderNaming.swift
       # CrewModels.swift：从 PendingCrewAPI.swift 提取的 whiteboard/crew 纯
       # Foundation 模型（CrewWhiteboardEntry / CrewMember / CrewAttachment 等），
       # 不含 PendingCrewAPI 类或 URLSession 依赖。
@@ -115,6 +140,16 @@ targets:
       # 跨平台）。原在 Sources/Mac/LocalRunner（随整目录编进 bundle），移到
       # Sources/Services 后需显式列出 —— CrewRealtimeClientTests 单测 codec。
       - path: Sources/Services/CrewRealtimeClient.swift
+      # InMemoryKeyValueStore.swift：纯内存 KV（无 Supabase import），供
+      # InMemoryAuthStorageTests 单测。CrewSupabaseStack.swift 有 import Supabase
+      # 不能进 test bundle。
+      - path: Sources/Services/InMemoryKeyValueStore.swift
+      # CrewLoginIdentity.swift：确认卡展示模型，从 FamilyCredential 派生（纯
+      # Foundation，自包含）。FamilyCredentialStore 已在 bundle。
+      - path: Sources/Services/CrewLoginIdentity.swift
+      # CrewLoginExchange.swift：临时 session → pfa_ → pdg_ 兑换编排（纯
+      # Foundation，不含 Supabase import）。teardown 在成败两路都 await。
+      - path: Sources/Services/CrewLoginExchange.swift
       # Sources/Models/（CrewDetail / CrewSummary / UserSubject / DeviceLogin /
       # ModelCatalogEntry）：LocalRunner 传递引用了这些类型。
       - path: Sources/Models

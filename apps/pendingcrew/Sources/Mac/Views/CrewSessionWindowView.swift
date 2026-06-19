@@ -323,7 +323,7 @@ struct CrewSessionWindowView: View {
                 }
                 return true
             }
-            .map { MemberRowItem(id: $0.id, sender: groupSenderFor($0), run: nil) }
+            .map { MemberRowItem(id: $0.id, sender: CrewSenderNaming.groupSender(for: $0, captainBotId: captainBotId), run: nil) }
         let runRows = memberSessionRuns.map {
             MemberRowItem(id: "run-\($0.sessionId)", sender: senderForRun($0), run: $0)
         }
@@ -420,32 +420,15 @@ struct CrewSessionWindowView: View {
         return run.status == .running ? "running" : "已退出"
     }
 
-    /// server 成员 → GroupBubbleSender（与 CrewRosterBar 同映射，头像一致）。从中栏搬来。
-    private func groupSenderFor(_ m: CrewMember) -> GroupBubbleSender {
-        let isCaptain = m.memberKind == "captain" || (m.botId != nil && m.botId == captainBotId)
-        let isSession = m.memberKind == "code_session"
-        let isHuman   = m.memberKind == "human"
-        let seed = m.botId ?? m.userId ?? m.codeSessionId ?? m.id
-        let name: String = {
-            if let n = m.displayName, !n.isEmpty { return n }
-            if isCaptain { return "Captain" }
-            if isHuman   { return "我" }
-            if isSession { return "session" }
-            return "bot"
-        }()
-        return GroupBubbleSender(
-            kind: isHuman ? .user : .bot, id: seed, displayName: name,
-            avatarPath: nil, avatarSeed: seed, isCaptain: isCaptain,
-            sessionStatus: m.sessionStatus, isSession: isSession)
-    }
-
     /// 本地 run → session 头像 sender（状态点 running=绿/退出=灰）。从中栏搬来。
     /// captain run 带星标（isCaptain）+ captainBotId 作头像 seed —— 与 server
     /// captain 成员头像视觉一致（去重后这条是唯一的机长行）。
     private func senderForRun(_ run: CrewSessionRun) -> GroupBubbleSender {
         let isCaptain = run.role == .captain
         return GroupBubbleSender(
-            kind: .bot, id: run.sessionId,
+            // captain 的 emoji/色种子对齐 server captain 成员(captainBotId),否则
+            // 同一 captain"在跑/没跑"会换脸;worker 仍用 sessionId。
+            kind: .bot, id: isCaptain ? (captainBotId ?? run.sessionId) : run.sessionId,
             displayName: run.displayName,
             avatarPath: nil,
             avatarSeed: isCaptain ? (captainBotId ?? run.sessionId) : run.sessionId,

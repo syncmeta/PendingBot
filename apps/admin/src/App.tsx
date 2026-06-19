@@ -18,6 +18,7 @@ import { ToolList, ToolEdit } from './pages/tools';
 import { McpServerList, McpServerCreate, McpServerEdit } from './pages/mcp-servers';
 import { ModelPresetList, ModelPresetCreate, ModelPresetEdit } from './pages/model-presets';
 import { FeatureFlagsPage } from './pages/feature-flags';
+import { ModelRolesPage } from './pages/model-roles';
 
 // No authProvider / login route: the board is served same-origin under /board
 // behind Cloudflare Access, which is the sole identity gate (the edge verifies
@@ -87,6 +88,11 @@ export default function App() {
                 list: '/feature-flags',
                 meta: { label: '功能开关' },
               },
+              {
+                name: 'model_roles',
+                list: '/model-roles',
+                meta: { label: '系统模型' },
+              },
             ]}
           >
             <ThemedLayout Title={() => <strong>PendingBot Board</strong>}>
@@ -113,6 +119,7 @@ export default function App() {
                 <Route path="/model-presets/create" element={<ModelPresetCreate />} />
                 <Route path="/model-presets/edit/:id" element={<ModelPresetEdit />} />
                 <Route path="/feature-flags" element={<FeatureFlagsPage />} />
+                <Route path="/model-roles" element={<ModelRolesPage />} />
                 <Route path="*" element={<NavigateToResource resource="preset_bots" />} />
               </Routes>
             </ThemedLayout>

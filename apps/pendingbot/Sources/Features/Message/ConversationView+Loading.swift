@@ -302,7 +302,14 @@ extension ConversationView {
     /// `bots` columns that map 1:1 onto the `Bot` model — so there's one
     /// select to keep in sync, no new endpoint.
     func resolveBotIfNeeded() async {
-        guard bot == nil, resolvedBot == nil else { return }
+        // `bot == nil` only — we deliberately no longer gate on
+        // `resolvedBot == nil`. The init now seeds `resolvedBot` synchronously
+        // from the local bots cache for an instant header paint; gating on nil
+        // would then skip this refresh entirely and pin the header to a
+        // possibly-stale cache. Run the refresh and assign only on a real
+        // change (below) so staleness self-corrects without re-rendering when
+        // the cache was already right.
+        guard bot == nil else { return }
         // Resolve the bot id: a materialized bot conv carries it on
         // `conversation.bot_id`; a not-yet-materialized one carries it on
         // the pending peer (only when the peer is a bot, not a human).
@@ -328,12 +335,15 @@ extension ConversationView {
                 .single()
                 .execute()
                 .value
-            self.resolvedBot = Bot(
+            let fetched = Bot(
                 id: row.id, display_name: row.display_name,
                 access_mode: nil, model: row.model_id,
                 visibility: row.visibility, creator_id: row.creator_id,
                 voice_call_enabled: row.voice_call_enabled
             )
+            // Assign only on a real change so the cache-seeded header doesn't
+            // re-render (flash) when the network just confirms the same bot.
+            if fetched != resolvedBot { self.resolvedBot = fetched }
         } catch {
             // Decoration-only — the conversation works fully without it,
             // so a miss just leaves the header suffix / settings entry off.

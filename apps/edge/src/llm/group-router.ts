@@ -8,6 +8,7 @@ import { serviceClient } from '../lib/supabase';
 import { estimateTokens } from './token-estimate';
 import { loadPrompt } from '../i18n/prompts';
 import { uuidv7 } from '../lib/ids';
+import { getModelRole } from '../lib/model-roles';
 import type { Env } from '../types';
 
 // Small-model classifier that decides which bots to wake on a group
@@ -23,7 +24,7 @@ import type { Env } from '../types';
 //
 // Model selection: a per-group override
 // (`conversation_group_meta.router_model_slug`) wins when set; otherwise
-// the FALLBACK_MODEL_SLUG baseline — a cheap small model that's plenty
+// the groupRouter model-role baseline — a cheap small model that's plenty
 // for the "pick from a list" classification.
 
 export interface GroupRouterInput {
@@ -49,7 +50,6 @@ export interface GroupRouterDecision {
 }
 
 const PROMPT_BUDGET_TOKENS = 2000;
-const FALLBACK_MODEL_SLUG = 'google/gemma-4-31b-it';
 
 export async function runGroupRouter(
   input: GroupRouterInput,
@@ -59,7 +59,7 @@ export async function runGroupRouter(
 
   // 1. Resolve the small-model slug. Order:
   //    a. conversation_group_meta.router_model_slug (per-group)
-  //    b. FALLBACK_MODEL_SLUG hardcoded baseline
+  //    b. model-roles 'groupRouter' default (board-configurable)
   let modelSlug: string | null = null;
 
   const { data: meta } = await supa
@@ -69,7 +69,7 @@ export async function runGroupRouter(
     .maybeSingle();
   if (meta?.router_model_slug) modelSlug = meta.router_model_slug;
 
-  if (!modelSlug) modelSlug = FALLBACK_MODEL_SLUG;
+  if (!modelSlug) modelSlug = await getModelRole(env, 'groupRouter');
 
   // 2. Pull bot members + per-group descriptions. Bots without a
   //    description (haven't introduced themselves yet — M5 fills this)

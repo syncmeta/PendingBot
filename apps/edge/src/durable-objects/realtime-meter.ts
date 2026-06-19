@@ -1,5 +1,6 @@
 import type { Env } from '../types';
 import { serviceClient } from '../lib/supabase';
+import { getModelRole } from '../lib/model-roles';
 import { computeVoiceCost, resolveRoute } from '../llm/router';
 import { wallet } from '../billing/wallet-client';
 import { usdToPncMicros } from '../billing/pnc';
@@ -41,10 +42,11 @@ import {
 // lib/realtime-sessions.ts.
 const MAX_CALL_MS = 30 * 60 * 1000;
 
-// Default voice model slug — fallback when the session carries no
-// picked model. Per-turn billing resolves the alias off the model the
-// call actually used (ctx.model), so a mini call is priced as mini.
-const DEFAULT_VOICE_MODEL_SLUG = 'gpt-realtime-2';
+// Voice fallback model — used when the session carries no picked model
+// (ctx.model). Resolved at runtime from the board's `voiceDefault` role
+// (lib/model-roles.ts) so ops can repoint it without a redeploy; the code
+// default there matches the old hardcoded slug. Per-turn billing still
+// prices off the model the call actually used, so a mini call prices as mini.
 
 type Transport = 'sideband' | 'proxy';
 
@@ -231,7 +233,7 @@ export class RealtimeMeterDO {
     if (!key) return new Response('openai key not configured', { status: 503 });
 
     let resp: Response;
-    const proxyReq = this.proxyUpstreamRequest(ctx.model ?? DEFAULT_VOICE_MODEL_SLUG, key);
+    const proxyReq = this.proxyUpstreamRequest(ctx.model ?? (await getModelRole(this.env, 'voiceDefault')), key);
     try {
       resp = await fetch(proxyReq.url, { headers: proxyReq.headers });
     } catch (err) {
@@ -425,7 +427,7 @@ export class RealtimeMeterDO {
       // Price the model the call actually used — no taskType, so a
       // task_routing_rule can't redirect billing away from what ran.
       route = await resolveRoute(supa, this.env, {
-        modelSlug: ctx.model ?? DEFAULT_VOICE_MODEL_SLUG,
+        modelSlug: ctx.model ?? (await getModelRole(this.env, 'voiceDefault')),
         preferProvider: 'openai',
         metadata: { userId: ctx.userId, conversationId: ctx.conversationId },
       });

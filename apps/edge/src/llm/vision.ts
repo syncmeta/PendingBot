@@ -5,7 +5,7 @@
 //  1. modelSupportsVision(slug) — does this model accept image input?
 //     Source of truth is OpenRouter's catalog (architecture.
 //     input_modalities). Unknown slugs return false → caller falls back
-//     to DEFAULT_VISION_MODEL.
+//     to the 'vision' model-role default.
 //
 //  2. summarizeAttachment(deps, attachmentId) — generate a 1-2 sentence
 //     summary + 3-5 short tags for an image and persist them onto the
@@ -20,7 +20,7 @@
 // (pickVisionModel) decides which model to actually call:
 //   - the bot's pinned vision model (bots.config.visionModel) if set
 //   - else the conversation's main model if it has vision
-//   - else DEFAULT_VISION_MODEL
+//   - else the 'vision' model-role default
 //
 // Image bytes ride to the LLM as base64 data URLs (image_url block, the
 // OpenAI/OpenRouter standard form). OpenRouter normalizes that to each
@@ -44,13 +44,13 @@ import {
 } from './router';
 import { modelSupportsVision } from './catalog';
 import { ensurePromptOverridesLoaded, getPrompt } from './prompt-loader';
+import { getModelRole } from '../lib/model-roles';
 
-/// When the conversation's main model lacks vision and no
-/// per-conversation override is set, fall back to this slug. Picked
-/// because kimi-latest is consistently vision-capable, supports tool use,
-/// is cheap (~$0.75/M in), and is comfortable with Chinese which is the
-/// app's primary language.
-export const DEFAULT_VISION_MODEL = 'moonshotai/kimi-latest';
+/// When the conversation's main model lacks vision and no per-conversation
+/// override is set, fall back to the 'vision' system model-role
+/// (lib/model-roles.ts; board-configurable). Code default = moonshotai/kimi-latest
+/// — consistently vision-capable, supports tool use, cheap (~$0.75/M in), and
+/// comfortable with Chinese (the app's primary language).
 
 /// Cap how big a base64 data URL we'll send to the model. Beyond this we
 /// risk hitting per-image limits at the various providers (Anthropic
@@ -117,7 +117,7 @@ export interface PickedVisionModel {
 /// Caller must pre-check whether the main model has vision (one query
 /// hit) and pass that in via `mainHasVision` to avoid double-querying.
 export function pickVisionModel(
-  input: PickVisionModelInput & { mainHasVision: boolean },
+  input: PickVisionModelInput & { mainHasVision: boolean; defaultSlug: string },
 ): PickedVisionModel {
   if (input.override && input.override.trim().length > 0) {
     return { slug: input.override.trim(), reason: 'override' };
@@ -125,7 +125,7 @@ export function pickVisionModel(
   if (input.mainHasVision) {
     return { slug: input.mainModelSlug, reason: 'main_has_vision' };
   }
-  return { slug: DEFAULT_VISION_MODEL, reason: 'default_fallback' };
+  return { slug: input.defaultSlug, reason: 'default_fallback' };
 }
 
 /// Read an attachment's bytes from R2 and produce an OpenAI-style
@@ -250,6 +250,7 @@ export async function summarizeAttachment(
     mainModelSlug: deps.mainModelSlug,
     override: deps.visionOverride,
     mainHasVision,
+    defaultSlug: await getModelRole(env, 'vision'),
   });
 
   const part = await loadAttachmentAsImagePart(env, att);
@@ -503,6 +504,7 @@ export async function readAttachmentForTool(
     mainModelSlug: deps.mainModelSlug,
     override: deps.visionOverride,
     mainHasVision,
+    defaultSlug: await getModelRole(env, 'vision'),
   });
 
   const userQuestion =

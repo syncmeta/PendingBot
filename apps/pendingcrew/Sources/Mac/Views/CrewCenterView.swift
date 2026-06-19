@@ -7,9 +7,6 @@ import SwiftUI
 /// (顶栏 ⓘ 打开)。session 终端不再常驻,收进按需 inspector（`CrewSessionWindowView`,
 /// 由 MacThreePaneView 挂在 .inspector），从 toolbar 终端开关弹出。
 struct CrewCenterView: View {
-    /// session inspector 呈现态（提升在 MacThreePaneView）。toolbar 终端开关翻它。
-    @Binding var inspectorPresented: Bool
-
     @EnvironmentObject private var crewStore: CrewStore
     @EnvironmentObject private var sessionRunner: CrewSessionRunner
     @State private var showingDetail = false
@@ -26,14 +23,13 @@ struct CrewCenterView: View {
                     crewId: detail.crew.id,
                     crewTitle: detail.crew.title,
                     onOpenSession: { runId in
+                        // 右栏常驻；点 session 头像只切到「终端」模式 + 选中该 run。
                         sessionRunner.select(runId)
                         sessionRunner.viewingTerminal = true
-                        inspectorPresented = true
                     },
                     onNewSession: {
                         sessionRunner.composeNew()
                         sessionRunner.viewingTerminal = true
-                        inspectorPresented = true
                     }
                 )
             } else if let id = crewStore.selectedCrewId, crewStore.loadingDetailIds.contains(id) {
@@ -77,13 +73,8 @@ struct CrewCenterView: View {
                         Label("刷新", systemImage: "arrow.clockwise")
                     }
                 }
-                ToolbarItem {
-                    Button { inspectorPresented.toggle() } label: {
-                        Label("Session 终端", systemImage: "sidebar.trailing")
-                    }
-                    .keyboardShortcut("s", modifiers: [.command, .option])
-                    .help("打开/收起 session 终端")
-                }
+                // 「Session 终端」开关已去掉 —— 右栏(成员/终端)在原生三栏里常驻;
+                // 成员列表 ↔ 终端 的切换由右栏内部(viewingTerminal / 点 session)管。
             }
         }
         .sheet(isPresented: $showingDetail) {

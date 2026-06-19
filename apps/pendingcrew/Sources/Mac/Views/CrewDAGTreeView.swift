@@ -148,6 +148,10 @@ private struct CrewDAGNode: View {
         )
         .contentShape(Rectangle())
         .onTapGesture { crewStore.selectCrew(crew.id) }
+        // 每个 crew 之间留一道竖向呼吸间距 —— 加在高亮 pill 之外(背景/点击区已闭合),
+        // 所以是 crew 之间的留白,不是把 pill 撑高;根 crew(独立 list row)与展开的
+        // 子 crew(同 VStack 内堆叠)都吃这道下边距,间距统一。
+        .padding(.bottom, 6)
     }
 
     /// 最近一条白板消息(本地 store);空则"还没有消息"。

@@ -71,7 +71,7 @@ func crewMentionCandidates(
     // Session members — each routes to that session's mailbox.
     for m in members where m.memberKind == "code_session" {
         guard let sid = m.codeSessionId else { continue }
-        let label = m.displayName ?? "session \(sid.prefix(6))"
+        let label = m.displayName ?? CrewSenderNaming.sessionFallback(sid)
         out.append(CrewMentionCandidate(
             id: "session:\(sid)", kind: .session, label: label,
             mention: .session(sid)))

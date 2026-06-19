@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import Combine
 
 /// Crew 列表 + detail 缓存。
 ///
@@ -35,6 +36,12 @@ final class CrewStore: ObservableObject {
 
     private unowned let appModel: AppModel
 
+    /// crew-naming：机长 `rename_crew` 经 `LocalCrewControlStore` 写的待改名，
+    /// 由 `LocalWhiteboardStore.directoryChanged`（跨进程目录监听）触发排空落地。
+    /// 仅 macOS（本地 crew 的家）；只起一次。
+    private var didStartRenameWatch = false
+    private var renameWatch: AnyCancellable?
+
     init(appModel: AppModel) {
         self.appModel = appModel
     }
@@ -64,6 +71,7 @@ final class CrewStore: ObservableObject {
     // MARK: - Refresh
 
     func refreshList() async {
+        startRenameWatchIfNeeded()   // crew-naming：首刷时挂上改名监听（仅 macOS，幂等）
         guard let backend = currentBackend() else { return }
         loadingList = true
         defer { loadingList = false }
@@ -92,14 +100,32 @@ final class CrewStore: ObservableObject {
     }
 
     func refreshSubjects() async {
-        guard let backend = currentBackend() else { return }
         loadingSubjects = true
         defer { loadingSubjects = false }
+        // 身份是**账号级**概念 —— 登录态一律走 edge `/v1/me/subjects` 拿真实主体
+        // (display_name / kind / userId)。**不能**经 `appModel.backend`:macOS 上
+        // 它恒为 `LocalBackend`(本地为家),其 `listMySubjects` 返回写死的假主体
+        // 「本机 (BYOK)」—— 于是登录后侧栏身份一直显示这个假名而非真实账号
+        // (本 fix 的病根)。与 `refreshMachines()` 同构:authed → edge,否则本地兜底。
+        if appModel.isAuthenticated {
+            // 登录态只认 edge 真实主体,**绝不**回落本地假主体(否则又显示
+            // 「本机 (BYOK)」)。拉取失败保留上次 subjects、只记 error,不挡 UI。
+            guard let api = try? appModel.loggedAPIClient() else { return }
+            do {
+                subjects = try await api.listMySubjects()
+                // 回填登录用户 id(群聊区分"自己的气泡")—— 真实主体带 userId。
+                appModel.setCurrentUserIdIfResolved(subjects.first?.userId)
+            } catch {
+                self.error = "加载身份失败：\(error.localizedDescription)"
+            }
+            return
+        }
+        // 未登录(Mac 本地态):LocalBackend 合成的「本机 (BYOK)」假主体,供
+        // CreateCrewSheet 拿 `subjects.first?.id` 当本地 crew 的 responsibleSubjectId。
+        // iOS 未登录无 backend → 留空(WelcomeView 时态)。
+        guard let backend = appModel.backend else { subjects = []; return }
         do {
             subjects = try await backend.listMySubjects()
-            // 回填登录用户 id(群聊区分"自己的气泡")。best-effort:仅在
-            // subject 带真实 userId 时更新(BYOK 假 subject 是 nil,忽略)。
-            appModel.setCurrentUserIdIfResolved(subjects.first?.userId)
         } catch {
             self.error = "加载 subject 列表失败：\(error.localizedDescription)"
         }
@@ -214,5 +240,32 @@ final class CrewStore: ObservableObject {
             return nil
         }
         return backend
+    }
+
+    // MARK: - crew-naming：机长改名落地（仅 macOS）
+
+    /// 挂上改名监听（幂等，仅 macOS）。机长 `rename_crew` 经离线 helper 把待改名
+    /// 写进共享 `--dir`（= 白板目录）→ app 的 `directoryChanged` 跨进程目录监听触发
+    /// → 排空落地到 `LocalCrewStore` + 刷新侧栏。启动先排空一次，兜住 app 没开时写入的改名。
+    /// `setTitle` 写的是 `local-crews.json`（另一目录），不触发白板目录监听 → 不成环。
+    private func startRenameWatchIfNeeded() {
+        #if os(macOS)
+        guard !didStartRenameWatch else { return }
+        didStartRenameWatch = true
+        LocalWhiteboardStore.shared.startWatching()
+        Task { await applyPendingRenames() }
+        renameWatch = LocalWhiteboardStore.shared.directoryChanged
+            .sink { [weak self] in
+                Task { @MainActor in await self?.applyPendingRenames() }
+            }
+        #endif
+    }
+
+    /// 排空 `LocalCrewControlStore` 的待改名，逐条落到 `LocalCrewStore`；有变更才刷新列表。
+    private func applyPendingRenames() async {
+        let renames = LocalCrewControlStore.shared.drainRenames()
+        guard !renames.isEmpty else { return }
+        for r in renames { LocalCrewStore.shared.setTitle(r.crewId, r.title) }
+        await refreshList()
     }
 }

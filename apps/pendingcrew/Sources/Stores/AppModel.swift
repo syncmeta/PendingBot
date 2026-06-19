@@ -100,7 +100,7 @@ final class AppModel: ObservableObject {
     // MARK: - 家族 SSO（登录 SSO B4）
 
     /// QR 登录 consume 时随 grant 下发的家族凭据（`pfa_*`）落到共享 keychain
-    /// 组，供家族 app（含本 app 重装后）静默 mint。LoginView poll 成功分支调。
+    /// 组，供家族 app（含本 app 重装后）静默 mint。CrewQRLoginView poll 成功分支调。
     func saveFamilyCredential(token: String, subjectId: String) {
         FamilyCredentialStore.set(FamilyCredential(token: token, subjectId: subjectId))
     }
@@ -118,7 +118,7 @@ final class AppModel: ObservableObject {
         guard let cred = FamilyCredentialStore.get() else { return false }
         guard let url = URL(string: apiBaseURL) else { return false }
         // mint 不需要本 app 的 grant —— 鉴权是家族凭据本身作 bearer，
-        // 所以跟 LoginView 的 device-login 一样用无 token 的 client。
+        // 所以跟 device-login（CrewQRLoginView）一样用无 token 的 client。
         let api = PendingCrewAPI(baseURL: url)
         do {
             let resp = try await api.mintGrant(

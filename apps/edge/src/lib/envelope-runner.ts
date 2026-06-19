@@ -73,10 +73,11 @@ export {
   type EnvelopeTurnInfo,
 } from './envelope-loop';
 
-// Defaults baked at trigger time so a config schema change doesn't
-// retroactively rewrite already-recorded runs.
-export const DEFAULT_EXPLORER_MODEL = '~google/gemini-flash-latest';
-export const DEFAULT_COLLABORATOR_MODEL = '~google/gemini-flash-latest';
+// Model defaults are board-configurable system model-roles (envelopeExplorer /
+// envelopeCollaborator, see lib/model-roles.ts). The caller resolves them and
+// passes the slugs into resolveEnvelopeSettings so they're baked at trigger time
+// (a later config change won't retroactively rewrite already-recorded runs).
+// Code default for both = ~google/gemini-flash-latest.
 export const DEFAULT_TURN_CAP = 15;
 // Cap on (history + framing prompts) as a fraction of the bot's main
 // model context window. 35% leaves the rest for the loop's research
@@ -109,6 +110,7 @@ export interface EnvelopeSettings {
 // `scrapeProvider` keys on persisted rows are ignored on read.
 export function resolveEnvelopeSettings(
   input: Partial<EnvelopeSettings> | null | undefined,
+  defaults: { explorerModel: string; collaboratorModel: string },
 ): EnvelopeSettings {
   const i = input ?? {};
   const turnCap = Math.max(
@@ -118,11 +120,11 @@ export function resolveEnvelopeSettings(
   const explorerModel =
     typeof i.explorerModel === 'string' && i.explorerModel.trim()
       ? i.explorerModel.trim()
-      : DEFAULT_EXPLORER_MODEL;
+      : defaults.explorerModel;
   const collaboratorModel =
     typeof i.collaboratorModel === 'string' && i.collaboratorModel.trim()
       ? i.collaboratorModel.trim()
-      : DEFAULT_COLLABORATOR_MODEL;
+      : defaults.collaboratorModel;
   // Clamp to (0, 100] so the slider can't disable history outright nor
   // pretend to have more context than the model actually offers.
   const rawPct = Number(i.historyTokenBudgetPct);

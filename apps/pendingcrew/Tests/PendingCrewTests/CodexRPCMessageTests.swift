@@ -1,5 +1,5 @@
 import XCTest
-@testable import PendingCrew
+
 
 final class CodexRPCMessageTests: XCTestCase {
     func testEncodeRequestOmitsJsonrpcAndIsSingleLine() throws {

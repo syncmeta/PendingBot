@@ -98,7 +98,8 @@ struct CreateBotSheet: View {
                 await loadPresets()
             }
         }
-        .macSheetMinSize()
+        // 「新建机器人」窗高压低一点(640→520);Form 内容超出照常滚动。
+        .macSheetMinSize(minHeight: 520)
     }
 
     // ── Sections ─────────────────────────────────────────────────────────
@@ -1280,9 +1281,10 @@ struct BotConfigView: View {
     /// 'openai' = the native Responses route. Set by the model picker.
     @State private var modelProvider: String?
     @State private var voiceEnabled: Bool = false
-    /// Realtime voice model slug. Always concrete — a bot with voice on
-    /// has a model; the default is gpt-realtime-2. Never empty.
-    @State private var voiceModel: String = "gpt-realtime-2"
+    /// Realtime voice model slug. Empty = "follow server": the worker
+    /// resolves the board's `voiceDefault` model-role. A non-empty slug
+    /// pins the model. The client no longer hardcodes a default.
+    @State private var voiceModel: String = ""
     /// Per-bot realtime call knobs (voice id, VAD mode + thresholds,
     /// auto-respond / interrupt flags). Lives under `bots.config.voice`.
     @State private var voiceSettings: BotVoiceSettings = .defaults
@@ -1503,6 +1505,7 @@ struct BotConfigView: View {
                 // names ("GPT Realtime 2" / "GPT Realtime Mini") are
                 // stable, short, and worth showing as-is.
                 Picker(selection: $voiceModel) {
+                    Text("默认(跟随系统)").tag("")
                     Text("GPT Realtime 2").tag("gpt-realtime-2")
                     Text("GPT Realtime Mini").tag("gpt-realtime-mini-2025-12-15")
                 } label: {
@@ -1772,10 +1775,14 @@ struct BotConfigView: View {
             // Raw PATCH so cleared model picks can send an explicit JSON
             // `null` (NSNull) — the worker schema treats null as "clear",
             // an absent key as "leave untouched".
+            // Empty explorer / nil collaborator = "follow server" → send JSON
+            // null so the worker resolves the envelopeExplorer / envelopeCollaborator
+            // model-role instead of pinning a slug.
+            let explorerVal: Any = envelope.explorerModel.isEmpty ? NSNull() : envelope.explorerModel
             let collabVal: Any = envelope.collaboratorModel ?? NSNull()
             let visionVal: Any = visionModel.isEmpty ? NSNull() : visionModel
             let envelopeCfg: [String: Any] = [
-                "explorerModel": envelope.explorerModel,
+                "explorerModel": explorerVal,
                 "collaboratorModel": collabVal,
                 "searchProvider": envelope.searchProvider.rawValue,
                 "scrapeProvider": envelope.scrapeProvider.rawValue,
@@ -1802,7 +1809,7 @@ struct BotConfigView: View {
                 "lookback": lookbackCfg,
                 "envelope": envelopeCfg,
                 "visionModel": visionVal,
-                "voiceModel": voiceModel,
+                "voiceModel": voiceModel.isEmpty ? NSNull() : voiceModel,
                 "voice": voiceSettings.toConfigDict(),
                 "webSearch": webSearch.toConfigDict(),
                 "modelPool": arenaVal,

@@ -103,9 +103,13 @@ enum EnvelopeScrapeProvider: String, Codable, CaseIterable, Hashable {
 }
 
 struct EnvelopeSettings: Codable, Hashable {
+    /// Empty string = "follow server": the worker resolves the board's
+    /// `envelopeExplorer` model-role. A non-empty slug pins the explorer.
     var explorerModel: String
-    /// nil = no collaborator (single-explorer mode); empty string is
-    /// treated the same on the wire to keep JSON shape stable.
+    /// nil = "follow server": the worker resolves the board's
+    /// `envelopeCollaborator` model-role. A non-empty slug pins it. (The
+    /// worker always runs a collaborator pass — there is no client-pinnable
+    /// "no collaborator" mode — so nil means default, not none.)
     var collaboratorModel: String?
     var searchProvider: EnvelopeSearchProvider
     var scrapeProvider: EnvelopeScrapeProvider
@@ -117,9 +121,14 @@ struct EnvelopeSettings: Codable, Hashable {
     /// research loop.
     var historyTokenBudgetPct: Int
 
+    // Model defaults are intentionally "follow server" (empty explorer /
+    // nil collaborator) — the bootstrap default lives in the board's
+    // model-roles, not hardcoded here. On save these go out as JSON null so
+    // the worker resolves the role (envelope-runner.resolveEnvelopeSettings),
+    // keeping the board the single source of truth.
     static let defaults = EnvelopeSettings(
-        explorerModel: "~google/gemini-flash-latest",
-        collaboratorModel: "~google/gemini-flash-latest",
+        explorerModel: "",
+        collaboratorModel: nil,
         searchProvider: .brave,
         scrapeProvider: .firecrawl,
         turnCap: 15,

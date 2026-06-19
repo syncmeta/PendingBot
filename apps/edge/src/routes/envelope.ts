@@ -5,6 +5,7 @@ import { serviceClient, userClient } from '../lib/supabase';
 import { runEnvelope, resolveEnvelopeSettings, HARD_CAP_TURNS } from '../lib/envelope-runner';
 import { gateConversation } from '../billing/usage-gate';
 import { jsonError } from '../lib/http-error';
+import { getModelRole } from '../lib/model-roles';
 import type { AppBindings } from '../types';
 import type { Json } from '../db/schema';
 
@@ -86,10 +87,16 @@ envelopeRoutes.post('/trigger', async (c) => {
 
   // Caller-supplied per-run settings win over the bot's defaults;
   // resolveEnvelopeSettings fills any remaining gaps with hard defaults.
-  const settings = resolveEnvelopeSettings({
-    ...(botEnvelopeDefaults ?? {}),
-    ...(parsed.settings ?? {}),
-  });
+  const settings = resolveEnvelopeSettings(
+    {
+      ...(botEnvelopeDefaults ?? {}),
+      ...(parsed.settings ?? {}),
+    },
+    {
+      explorerModel: await getModelRole(c.env, 'envelopeExplorer'),
+      collaboratorModel: await getModelRole(c.env, 'envelopeCollaborator'),
+    },
+  );
 
   // Billing gate. An envelope is multi-step LLM work (probably the most
   // expensive single trigger we have); reject up-front when balance is

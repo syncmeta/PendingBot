@@ -29,6 +29,7 @@ enum McpHelperMain {
             let captain = args.contains("--captain")
             let label = value("--label", args)
             let server = McpServer(store: store, approvals: LocalApprovalStore(directory: dir),
+                                   control: LocalCrewControlStore(directory: dir),
                                    crewId: crewId, sessionId: sessionId, isCaptain: captain,
                                    sessionLabel: label)
             while let line = readLine(strippingNewline: true) {

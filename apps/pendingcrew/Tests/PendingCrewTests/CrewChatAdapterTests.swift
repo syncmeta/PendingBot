@@ -183,5 +183,66 @@ final class CrewChatAdapterTests: XCTestCase {
         // when member is found it should be forwarded.
         XCTAssertEqual(s.sessionStatus, "running")
     }
+
+    // ── 6. 本地 session 消息(无 roster 成员)→ 退到 senderDisplayName 真名,不显「会话」 ──
+
+    func testLocalSessionMessage_fallsBackToSenderDisplayName() throws {
+        // 本地 session(机长/worker)经 post_to_crew 发的消息:senderSessionId 有值但
+        // 不在 roster(本地 session 不进 roster),senderDisplayName 带 label「机长」。
+        // 过去 resolver 只认 roster → 落兜底「会话」;现退到 senderDisplayName。
+        let entry = try makeEntry(
+            id: "e-localsess",
+            senderKind: "session",
+            senderSessionId: "captain-abc123",
+            senderDisplayName: "机长",
+            summary: "已报到"
+        )
+        let (_, sender) = CrewChatAdapter.adapt(
+            entry, members: [], captainBotId: nil, localUserId: "local-byok-user")
+        let s = try XCTUnwrap(sender)
+        XCTAssertTrue(s.isSession)
+        XCTAssertEqual(s.displayName, "机长", "本地 session 名退到 senderDisplayName,不显兜底「会话」")
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #3 — local own messages must render mine (right-aligned).
+//
+// The bug: LocalBackend.listCrewWhiteboard folded the local senderName ("我") into
+// the wire `senderDisplayName`, which trips CrewSenderResolver's relay guard
+// (senderDisplayName != nil ⇒ 远端他人) → own message rendered not-mine (left).
+// The fix lives in CrewSenderNaming.localWireDisplayName (the mapping decision);
+// these lock both that decision and the end-to-end mine flag through the resolver.
+// ─────────────────────────────────────────────────────────────────────────────
+
+final class CrewSenderNamingWireTests: XCTestCase {
+    func testOwnUserMessageDropsLocalName() {
+        // 本机人类自己发的消息不折 senderName("我") → senderDisplayName=nil（→ mine）。
+        XCTAssertNil(CrewSenderNaming.localWireDisplayName(
+            senderKind: "user", relayName: nil, localName: "我"))
+    }
+
+    func testRelayUserMessageKeepsRelayName() {
+        XCTAssertEqual(CrewSenderNaming.localWireDisplayName(
+            senderKind: "user", relayName: "Alice", localName: nil), "Alice")
+    }
+
+    func testSessionMessageFoldsLocalNameAsFallback() {
+        XCTAssertEqual(CrewSenderNaming.localWireDisplayName(
+            senderKind: "session", relayName: nil, localName: "机长"), "机长")
+        // relay 名优先于本地兜底名。
+        XCTAssertEqual(CrewSenderNaming.localWireDisplayName(
+            senderKind: "session", relayName: "远端会话", localName: "机长"), "远端会话")
+    }
+
+    func testLocalOwnMessageResolvesMineEndToEnd() throws {
+        // wire 名按上面的规则 = nil → resolver 把 uid==localUserId 判成 mine（右对齐）。
+        let entry = try makeEntry(
+            senderKind: "user", senderUserId: "local-byok-user", senderDisplayName: nil)
+        let (msg, sender) = CrewChatAdapter.adapt(
+            entry, members: [], captainBotId: nil, localUserId: "local-byok-user")
+        XCTAssertTrue(msg.mine, "自己的消息 mine=true → 右对齐(#3)")
+        XCTAssertNil(sender, "自己的消息无 groupSender(无头像/名字)")
+    }
 }
 #endif

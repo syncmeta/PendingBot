@@ -343,17 +343,19 @@ struct LetterSettingsView: View {
         Form {
             Section {
                 pickerRow(icon: "person.crop.square", title: "探索模型",
-                          value: shortSlug(envelope.explorerModel)) {
+                          value: envelope.explorerModel.isEmpty
+                              ? "默认(跟随系统)"
+                              : shortSlug(envelope.explorerModel)) {
                     pickerTarget = .explorer
                 }
                 pickerRow(icon: "person.2.crop.square.stack", title: "协作模型",
-                          value: envelope.collaboratorModel.map(shortSlug) ?? "无") {
+                          value: envelope.collaboratorModel.map(shortSlug) ?? "默认(跟随系统)") {
                     pickerTarget = .collaborator
                 }
             } header: {
                 Text("模型")
             } footer: {
-                Text("探索模型驱动来信的研究循环;协作模型在每个非研究轮做点评,可留空。")
+                Text("探索模型驱动来信的研究循环;协作模型在每个非研究轮做点评。「默认(跟随系统)」= 用后台配置的系统默认模型。")
             }
 
             Section {
@@ -437,15 +439,15 @@ struct LetterSettingsView: View {
             }()
             ModelPickerSheet(
                 initial: initialSlug,
-                allowsClear: target == .collaborator,
-                clearLabel: "无协作者",
+                allowsClear: true,
+                clearLabel: "跟随系统默认",
                 onPick: { picked in
                     switch target {
                     case .explorer:
-                        // No clear for explorer — fall back to default if
-                        // the picker somehow hands us nil.
-                        envelope.explorerModel = picked?.slug ?? EnvelopeSettings.defaults.explorerModel
+                        // Clear ("" ) = follow the server's envelopeExplorer role.
+                        envelope.explorerModel = picked?.slug ?? ""
                     case .collaborator:
+                        // Clear (nil) = follow the server's envelopeCollaborator role.
                         envelope.collaboratorModel = (picked?.slug).flatMap { $0.isEmpty ? nil : $0 }
                     }
                     pickerTarget = nil

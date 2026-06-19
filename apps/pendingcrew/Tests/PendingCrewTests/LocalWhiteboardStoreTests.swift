@@ -1,6 +1,6 @@
 import XCTest
 import Combine
-// 不 `@testable import PendingCrew` —— PendingCrewTests 是 standalone bundle
+// 不 `` —— PendingCrewTests 是 standalone bundle
 // （TEST_HOST=""），不链 app module；待测源码直接编进 bundle（见 project.yml
 // 把 Sources/Stores/LocalWhiteboardStore.swift 列进 test target sources）。
 

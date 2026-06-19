@@ -2,17 +2,19 @@
 import SwiftUI
 import AppKit
 
-/// Mac 主视图：两栏 + 按需 inspector。
+/// Mac 主视图：**原生三栏 `NavigationSplitView`**（crew 列表 | 群聊 | 成员/终端）。
 ///
-/// - 左栏 CrewSidebarView ── crew 列表 + 新建 / 刷新
-/// - 主栏 CrewCenterView   ── 选中 crew 的群聊会话页（白板 + 沟通渠道）
-/// - inspector CrewSessionWindowView ── session 终端（切换条 + 终端 + composer +
-///   审批卡片），**不再常驻**：点群聊里的 session 头像 / 「+」/ toolbar 开关才弹出。
+/// - 左栏 CrewSidebarView ── crew 列表 + 新建 / 刷新（原生 sidebar：圆角 + 材质 + 折叠开关）
+/// - 中栏 CrewCenterView   ── 选中 crew 的群聊会话页（白板 + 沟通渠道）
+/// - 右栏 CrewSessionWindowView ── 成员列表 / session 终端 + composer + 审批卡片，**常驻**
 ///
-/// Sidebar / Center / SessionWindow 都用 @EnvironmentObject 拿 CrewStore +
-/// AppModel；CrewSessionRunner 是 view-local（一个窗口一份，多 run 并存由它自己
-/// 管，见 chunk2 T1）。inspector 的呈现态 `inspectorPresented` 提升到这里，经
-/// binding 下传给中栏（roster 头像点击 / toolbar 开关从那里翻它）。
+/// 用原生三栏（而非「2 栏 + detail 内塞 HSplitView」）的两条理由：① 保留原生 sidebar 质感
+///（圆角 / 半透明材质 / 原生折叠开关）—— 自绘 HSplitView 给不了；② 列宽由系统协商，窗口
+/// 窄了自动收某列，不会像旧 hybrid 那样按 ideal 把窗口撑超屏、把 sidebar 推出屏幕外裁掉
+///（docs/tech-debt.md「inspector 被切」那条回归）。
+///
+/// Sidebar / Center / SessionWindow 都用 @EnvironmentObject 拿 CrewStore + AppModel；
+/// CrewSessionRunner 是 view-local（一个窗口一份，多 run 并存由它自己管，见 chunk2 T1）。
 struct MacThreePaneView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var crewStore: CrewStore
@@ -20,51 +22,25 @@ struct MacThreePaneView: View {
     /// edge 信箱同步代理（接合 v2 block 3）—— window 级常驻，登录态下对已
     /// 接入 PendingBot 的 crew 跑 5s 拉/推循环。
     @StateObject private var relayAgent = CrewRelayAgent()
-    /// session inspector 呈现态。中栏 roster 头像点击 / 「+」/ toolbar 开关翻它。
-    @State private var inspectorPresented = false
-    /// 侧栏可见性。inspector 关时 `.all`(左 sidebar + 中栏并存)；inspector 开时
-    /// 经 `onChange` 自动翻 `.detailOnly`(收起左 sidebar 腾宽)—— 否则
-    /// sidebar + 中栏 + 固定宽 inspector 三段总宽超屏，窗口挂到屏幕外。
+    /// 左 sidebar 可见性 —— 由原生 sidebar 折叠开关控制（默认 `.all`：三栏全开）。
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
+        // 原生三栏：列宽交系统协商。两侧 cap 住、中栏弹性吃 slack（免得右栏像旧版那样霸占
+        // 大半屏留白）；窗口窄了系统自动收某列，不会按 ideal 撑窗超屏裁掉 sidebar。
+        // detail（成员/终端）常驻 —— 切到某 session 时由 CrewSessionWindowView 自己在
+        // 「成员列表 ↔ 终端」间切（viewingTerminal），不再需要单独开关收/放一栏。
         NavigationSplitView(columnVisibility: $columnVisibility) {
             CrewSidebarView()
-                .navigationSplitViewColumnWidth(min: 240, ideal: 280)
-        } detail: {
-            CrewCenterView(inspectorPresented: $inspectorPresented)
+                .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 340)
+        } content: {
+            CrewCenterView()
                 .environmentObject(sessionRunner)
-                // **detail 必须完全无宽度约束** —— 诊断证明任何约束(navigationSplitView
-                // ColumnWidth ideal / .frame minWidth)都会让它在 inspector present 时不肯
-                // 让位、霸占整个容器宽,inspector 被挤到溢出(就是那三张被切的图)。无约束时
-                // 它当 NavigationSplitView 天然弹性填充栏,inspector 一开就自动让出空间。
-        }
-        .inspector(isPresented: $inspectorPresented) {
+                .navigationSplitViewColumnWidth(min: 360, ideal: 520)
+        } detail: {
             CrewSessionWindowView()
                 .environmentObject(sessionRunner)
-                // 可拖动（min/ideal/max）。SwiftUI 原生 .inspector 有个首帧 bug：
-                // 内容 hosting view 不会在 present 当帧同步到列宽，要等一次对 inspector
-                // divider 的 geometry 变化才复位（用户手动"拖一下"）。CrewSessionWindowView
-                // 在 onAppear 后做一次程序化 divider 同步兜这个 bug（见那里 resyncInspectorDivider）。
-                // 列宽：右栏内嵌的是 Claude/Codex 全屏 TUI，列数 = 栏宽 / 字宽。配 11pt
-                // 紧凑字体(见 AgentTerminalView)后 cell ~6.6pt：min 360≈54 列、ideal 480≈72、
-                // max 560≈84(≈TUI 设计宽度)。**max 不抬过 560** —— tech-debt 有记「inspector 拖到
-                // max 时聊天栏被挤破」,抬 max 会加剧那个已知未决问题;真正治乱靠字体不靠更宽。
-                .inspectorColumnWidth(min: 360, ideal: 480, max: 560)
-        }
-        // inspector 开 → 若 sidebar 还展开着就收起它（用户要的：开 inspector 自动让
-        // sidebar 收）。**关 inspector 不自动弹回 sidebar** —— sidebar 由用户手动控制。
-        .onChange(of: inspectorPresented) { _, open in
-            if open, columnVisibility != .detailOnly {
-                withAnimation { columnVisibility = .detailOnly }
-            }
-        }
-        // 用户手动展开 sidebar(翻回 .all) 且 inspector 还开着 → 收起 inspector（互斥）。
-        // inspector 自己开时只把 columnVisibility 设 .detailOnly，不会触发这里，无回环。
-        .onChange(of: columnVisibility) { _, vis in
-            if vis == .all && inspectorPresented {
-                withAnimation { inspectorPresented = false }
-            }
+                .navigationSplitViewColumnWidth(min: 320, ideal: 400, max: 560)
         }
         // 建 crew 后自动起机长（用户要的零摩擦：新建即启动 + 群里报到，无需手动点
         // 「启动 Captain」）。store 在 createCrew 完成后 set crewId；这里持有

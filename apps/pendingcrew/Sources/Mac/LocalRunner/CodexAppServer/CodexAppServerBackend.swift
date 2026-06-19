@@ -112,12 +112,32 @@ final class CodexAppServerBackend: ObservableObject, SessionBackend {
         if method == "turn/completed" { activeTurnId = nil; isWorking = false }
     }
 
+    /// EVERY server-request must be answered — codex blocks the turn waiting on our
+    /// reply, so silently dropping one = 「运行中…」转圈不结束 forever (the codex hang).
+    /// The old `guard hasSuffix("requestApproval") else { return }` dropped elicitations,
+    /// user-input requests, dynamic tool calls, token refreshes — any of which hung the turn.
     private func handleServerRequest(id: Int, method: String, params: [String: Any]) async {
-        guard method.hasSuffix("requestApproval") else { return }
-        let summary = (params["command"] as? String) ?? (params["reason"] as? String) ?? method
-        let decisions = (params["availableDecisions"] as? [String]) ?? ["accept", "decline"]
-        let decision = await approvalProvider(summary, decisions)
-        try? await connection.respond(serverId: id, result: ["decision": decision])
+        switch CodexProtocol.serverRequestKind(method: method) {
+        case .approval:
+            let summary = (params["command"] as? String) ?? (params["reason"] as? String) ?? method
+            let decisions = (params["availableDecisions"] as? [String]) ?? ["accept", "decline"]
+            let decision = await approvalProvider(summary, decisions)
+            try? await connection.respond(serverId: id, result: ["decision": decision])
+        case .elicitation:
+            // codex 0.137.0 delivers the MCP tool-call approval prompt AS an elicitation
+            // (`_meta.codex_approval_kind == "mcp_tool_call"`). Auto-approve those — the
+            // crew comms tools are the session's own trusted channel (mirrors claude
+            // excluding them from its PreToolUse gate); declining them rejected every
+            // crew tool call. Genuine input-form elicitations still decline (no v1 UI; a
+            // reply still lets the turn proceed instead of hanging). See elicitationResult.
+            try? await connection.respond(serverId: id, result: CodexProtocol.elicitationResult(params: params))
+        case .unsupported:
+            // Fail-safe for anything we don't model (item/tool/requestUserInput,
+            // item/tool/call, account/*, attestation/*): reply with an error so codex
+            // fails just that operation and continues the turn rather than blocking.
+            try? await connection.respondError(serverId: id, code: -32601,
+                                               message: "client does not handle \(method)")
+        }
     }
 }
 #endif
