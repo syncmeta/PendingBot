@@ -35,6 +35,16 @@ struct MacRootGate: View {
                 .background(MacWindowGrowAnchorRecorder())
             } else if store.current == nil {
                 MacWelcomeView()
+            } else if store.hasBootstrapped == false {
+                // 跟 iOS `RootView` 同一档:登录后若 profile 还没设过(随机名 +
+                // 随机头像 onboarding 没走完),先走这一屏。Mac 端原先漏了这步,
+                // 新用户登录直接落进主壳、永远没机会取名 —— 这正是「新用户没有
+                // 选名字的页面」的根因。`hasBootstrapped` 仍是 nil(刷新在途)
+                // 时按「已设」处理直接进主壳,避免给老用户闪一下 onboarding。
+                // ProfileBootstrapView 已跨平台(iOS/macOS 共用)。
+                ProfileBootstrapView()
+                    .environmentObject(store)
+                    .frame(minWidth: 770, minHeight: 560)
             } else {
                 // 登录后才声明主 app 尺寸 → 窗口从登录小窗长到紧凑的 IM 主窗。
                 // A8:登录后渲染跨平台三列 shell WideRootView(已取代旧的
