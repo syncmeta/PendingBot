@@ -63,6 +63,16 @@ Before merging into `main`, run typecheck on whatever was touched:
 
 If typecheck fails, fix on the branch and re-commit; don't merge red.
 
+## Deferred device QA — batch the human checks
+
+Do not make every small session wait for the user to run real-device QA. Split the gates:
+
+- **Merge gate**: run the strongest automated/local checks available for the touched surface (typecheck, unit tests, `xcodebuild`, simulator build). If those are green and the change is focused/conflict-free, commit and merge by the normal rules.
+- **Human QA gate**: flows that need a signed real device, OAuth provider UI, shared Keychain/App Group behavior, QR camera scanning, push/deep links, or visual/interaction judgment become an explicit "pending device QA" tail. Record the exact scenarios to verify instead of blocking the small branch on the user.
+- **Completion semantics**: implementation may be "merged, pending device QA", but the task/roadmap item is not `completed` until that human QA passes. Keep it open, annotate it, or record the tail in `docs/tech-debt.md` / `docs/progress.md` as appropriate.
+- **Batch validation**: after a batch of related branches lands, run one consolidated device QA pass from local `main` and close all covered tails together. Prefer one real-device build that exercises the integrated surface over many tiny builds for isolated fixes.
+- **Escalate only when needed**: if a change cannot be meaningfully protected by automated checks and could break login, billing, migrations, data loss, or app launch, call out the risk and wait for a deliberate QA/deploy decision.
+
 ## Pre-commit hook (lefthook)
 
 This repo ships a `lefthook.yml` with a `pre-commit` block that runs two checks in parallel:
