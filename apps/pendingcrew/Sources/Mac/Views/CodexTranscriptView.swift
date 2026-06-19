@@ -70,14 +70,12 @@ struct CodexTranscriptView: View {
 
     // MARK: - Conversation (the only full-strength voice)
 
-    /// Agent prose — full-strength, the way codex keeps the model's message the focus
-    /// and everything else a recessed annotation.
+    /// Agent prose — full-strength markdown, the way codex keeps the model's message
+    /// the focus (everything else a recessed annotation). `allowCodeRun:false`: a
+    /// transcript is read-only, no chat-style "run" toolbar on code blocks.
     @ViewBuilder
     private func agentRow(_ text: String) -> some View {
-        Text(text)
-            .font(Theme.Fonts.body)
-            .foregroundStyle(Theme.Palette.ink)
-            .textSelection(.enabled)
+        MarkdownText(text: text, allowCodeRun: false)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 2)
