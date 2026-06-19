@@ -1,6 +1,8 @@
 # PendingBot / PendingCrew 进度账本 (Progress Ledger)
 
-**最近对账：2026-06-17**（对照实际代码 / 迁移 / git，不是看 task 标记）
+**最近对账：2026-06-19**（对照实际代码 / 迁移 / git，不是看 task 标记）
+
+> **2026-06-19 model-presets 上线 prod（部署动作，闭合 #397 + 行 42 尾巴②/tech-debt#81）**：顺序敏感三步全过——① `bun --filter='@pendingbot/edge' run deploy`（worker version `0f7fb260`，`--containers-rollout=none` 跳容器只滚 worker → 认 `latest_in_series`）→ ② `supabase db push --linked` 应用 `20260616145720_model_presets_latest_in_series.sql`（DB 验证：top-flagship→`latest_in_series` lines=[anthropic claude-opus, openai gpt-5]、cn-flagship→`latest_in_series` 5 线）→ ③ 冒烟：`GET /v1/model-presets`=HTTP 401（需 session，端点健康非崩溃）+ `types:db` regen 零漂移（迁移只改 check 约束+UPDATE 数据，不动表结构）。**剩真验归 #394**：iOS 登录态拉端点确认两预设返回真旗舰 slug（opus-4.8/gpt-5.5/v4-pro/qwen3.7-max/kimi-k2.6/glm-5.1/minimax-m3）+ CF 日志冷/热耗时——需模拟器/真机登录态（headless 够不到）。**范围注**：`c065016f` 之后 main 无 edge 改动，本次仅 model-presets 迁移上线；iOS/Mac UI 一批改动（深色/Mac 三栏/crew 等）累积未发 TestFlight。
 
 > **2026-06-17 系统级 model slug 去硬编码 → 全收进 board（`feat/preset-content-realign`，15 commit，edge typecheck + 617 vitest + admin typecheck 全绿，**未合 main**）**：起因——用户问「预设机器人参数/模型是否对不上」，查出一批早期手塞的占位 slug；用户定调「治本、不兜底、直接迁」+「**model slug 千万别硬编码，不适合硬编码的都拿出来统一收进 board 配置**」。
 > - **产品向 spec**：`docs/superpowers/specs/2026-06-17-preset-content-realignment-design.md`——预设内容漂移现状用 **EU 实库**（`zafhoiwwpanpuashtnxy`）坐实，self-chat/ipsum 占位核实收口，留给产品的人定内容（`8260322b`）。
