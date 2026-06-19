@@ -13,17 +13,7 @@ struct CodexTranscriptView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 7) {
-                    ForEach(transcript.items) { item in
-                        row(item).id(item.id)
-                    }
-                    if transcript.turnActive {
-                        workingRow.id("__spinner__")
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
+                CodexTranscriptRows(transcript: transcript)
             }
             .onChange(of: transcript.items.count) { _, _ in
                 if transcript.turnActive {
@@ -32,6 +22,36 @@ struct CodexTranscriptView: View {
                     withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
                 }
             }
+        }
+    }
+}
+
+/// The row list, split out from the `ScrollView` shell so `ImageRenderer` snapshots
+/// work (a `ScrollView` renders blank off-screen; the VStack form renders). `lazy`
+/// is true on the live path (perf) and false for snapshots (eager render).
+struct CodexTranscriptRows: View {
+    @ObservedObject var transcript: CodexTranscript
+    var lazy: Bool = true
+
+    var body: some View {
+        Group {
+            if lazy {
+                LazyVStack(alignment: .leading, spacing: 7) { content }
+            } else {
+                VStack(alignment: .leading, spacing: 7) { content }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+    }
+
+    @ViewBuilder private var content: some View {
+        ForEach(transcript.items) { item in
+            row(item).id(item.id)
+        }
+        if transcript.turnActive {
+            workingRow.id("__spinner__")
         }
     }
 
