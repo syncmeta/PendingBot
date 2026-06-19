@@ -38,19 +38,33 @@ enum CodexProtocol {
         if let mcp = mcpServers, !mcp.isEmpty { p["config"] = ["mcp_servers": mcp] }
         return p
     }
-    /// The unread crew whiteboard rides in as a **leading `text` input item**, not a
-    /// `turn/start.additionalContext` field — codex has no such field (verified against
-    /// the real schema; the old shape was silently dropped, so codex sessions never saw
-    /// the whiteboard despite the world-model claiming auto-injection). `wb` is already
-    /// framed as trusted-teammate context by `HookEmitter.render`, so it's prepended
-    /// verbatim ahead of the user's text.
+    /// The unread crew whiteboard rides in via **`turn/start.additionalContext`** —
+    /// codex's native per-turn context channel. The field IS in the v2 schema, gated
+    /// behind `#[experimental("turn/start.additionalContext")]`, which we unlock via
+    /// `initialize.capabilities.experimentalApi:true` (see initializeParams). codex
+    /// core dedupes by key (`AdditionalContextStore::merge` only emits a fragment when
+    /// a key's value changed → a turn with no new whiteboard injects NOTHING, zero
+    /// prefix churn) and renders `kind:"untrusted"` as a `role:"user"` fragment wrapped
+    /// in `<external_<key>>…</external_<key>>` — injection hygiene: a teammate's message
+    /// is DATA, never instructions to this agent. The user's own text stays the sole
+    /// `input[]` item.
+    ///
+    /// History: a prior impl prepended the whiteboard as a leading `text` input item
+    /// after wrongly judging the schema as lacking this field. The mistake was a
+    /// name-collision — `makeWhiteboardProvider` reuses claude's `HookEmitter`, whose
+    /// envelope key is *also* `additionalContext` (a plain string), and that got
+    /// conflated with codex's `additionalContext` (a `{key:{value,kind}}` map). Same
+    /// name, different protocol. (⚠️ needs a live codex run to confirm the field is
+    /// honored — schema-shape only so far; see docs/tech-debt.md.)
     static func turnStartParams(threadId: String, text: String, whiteboard: String?) -> [String: Any] {
-        var input: [[String: Any]] = []
+        var p: [String: Any] = [
+            "threadId": threadId,
+            "input": [["type": "text", "text": text, "text_elements": []]],
+        ]
         if let wb = whiteboard, !wb.isEmpty {
-            input.append(["type": "text", "text": wb, "text_elements": []])
+            p["additionalContext"] = ["crew_whiteboard": ["value": wb, "kind": "untrusted"]]
         }
-        input.append(["type": "text", "text": text, "text_elements": []])
-        return ["threadId": threadId, "input": input]
+        return p
     }
     static func turnInterruptParams(threadId: String, turnId: String) -> [String: Any] {
         ["threadId": threadId, "turnId": turnId]

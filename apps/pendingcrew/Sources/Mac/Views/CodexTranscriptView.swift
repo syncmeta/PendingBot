@@ -1,43 +1,57 @@
 #if os(macOS)
 import SwiftUI
 
-/// Structured transcript for a codex app-server session.
-/// Renders one row per `CodexThreadItem` arm, auto-scrolls to newest item,
-/// and respects dark mode via `Theme.Palette` tokens.
-/// UX modeled on the codex desktop client: compact command cards,
-/// disclosure for reasoning, role labels flush-left.
+/// Structured transcript for a codex app-server session — modeled on codex's own TUI:
+/// the assistant's prose is the sole full-strength voice; every process signal
+/// (reasoning / command / tool call / file edit / search) recedes into a dim,
+/// bullet-prefixed one-liner. Long command output collapses to a head + "… +N 行"
+/// (click to expand). Unknown item kinds are dropped — codex's UI filters the
+/// protocol stream, it doesn't echo every item 1:1.
 struct CodexTranscriptView: View {
     @ObservedObject var transcript: CodexTranscript
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 8) {
-                    ForEach(transcript.items) { item in
-                        row(item).id(item.id)
-                    }
-                    if transcript.turnActive {
-                        HStack(spacing: 6) {
-                            ProgressView().controlSize(.small)
-                            Text("运行中…")
-                                .font(Theme.Fonts.caption)
-                                .foregroundStyle(Theme.Palette.inkMuted)
-                        }
-                        .padding(.vertical, 4)
-                        .id("__spinner__")
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(12)
+                CodexTranscriptRows(transcript: transcript)
             }
             .onChange(of: transcript.items.count) { _, _ in
-                let anchor: UnitPoint = .bottom
                 if transcript.turnActive {
-                    withAnimation { proxy.scrollTo("__spinner__", anchor: anchor) }
+                    withAnimation { proxy.scrollTo("__spinner__", anchor: .bottom) }
                 } else if let last = transcript.items.last {
-                    withAnimation { proxy.scrollTo(last.id, anchor: anchor) }
+                    withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
                 }
             }
+        }
+    }
+}
+
+/// The row list, split out from the `ScrollView` shell so `ImageRenderer` snapshots
+/// work (a `ScrollView` renders blank off-screen; the VStack form renders). `lazy`
+/// is true on the live path (perf) and false for snapshots (eager render).
+struct CodexTranscriptRows: View {
+    @ObservedObject var transcript: CodexTranscript
+    var lazy: Bool = true
+
+    var body: some View {
+        Group {
+            if lazy {
+                LazyVStack(alignment: .leading, spacing: 7) { content }
+            } else {
+                VStack(alignment: .leading, spacing: 7) { content }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+    }
+
+    @ViewBuilder private var content: some View {
+        ForEach(transcript.items) { item in
+            row(item).id(item.id)
+        }
+        if transcript.turnActive {
+            workingRow.id("__spinner__")
         }
     }
 
@@ -47,219 +61,175 @@ struct CodexTranscriptView: View {
     private func row(_ item: CodexThreadItem) -> some View {
         switch item.kind {
         case let .userMessage(text):
-            messageRow(role: "你", text: text, isUser: true)
-
-        case let .agentMessage(text, phase):
-            messageRow(role: phase.map { "Codex · \($0)" } ?? "Codex",
-                       text: text, isUser: false)
-
+            userRow(text)
+        case let .agentMessage(text, _):
+            agentRow(text)
         case let .reasoning(summary, content):
-            reasoningRow(summary: summary, content: content)
-
+            CodexReasoningRow(text: pick(summary, content))
         case let .plan(text):
-            labeled(icon: "list.bullet.clipboard", label: "计划", body: text)
-
+            signalRow(.accent, "计划", text)
         case let .commandExecution(c):
-            commandCard(c)
-
+            CodexCommandRow(command: c.command, output: c.aggregatedOutput,
+                            exitCode: c.exitCode, status: c.status)
         case let .fileChange(f):
-            labeled(icon: "doc.badge.gearshape",
-                    label: "文件改动",
-                    body: f.summary ?? f.status ?? "")
-
+            signalRow(.muted, "改动", f.summary ?? f.status ?? "")
         case let .toolCall(name, status):
-            labeled(icon: "function",
-                    label: "工具",
-                    body: name + (status.map { " · \($0)" } ?? ""))
-
+            signalRow(status == "failed" ? .bad : .muted, "调用", name)
         case let .webSearch(query):
-            labeled(icon: "magnifyingglass",
-                    label: "搜索",
-                    body: query ?? "")
-
-        case let .unknown(type):
-            labeled(icon: "questionmark.circle",
-                    label: "(\(type))",
-                    body: "")
+            signalRow(.muted, "搜索", query ?? "")
+        case .unknown:
+            EmptyView()   // codex drops internal/unknown signals; we don't echo them
         }
     }
 
-    // MARK: - Message row (user / agent)
+    private func pick(_ a: String?, _ b: String?) -> String {
+        if let a, !a.isEmpty { return a }
+        if let b, !b.isEmpty { return b }
+        return ""
+    }
 
+    // MARK: - Conversation (the only full-strength voice)
+
+    /// Agent prose — full-strength markdown, the way codex keeps the model's message
+    /// the focus (everything else a recessed annotation). `allowCodeRun:false`: a
+    /// transcript is read-only, no chat-style "run" toolbar on code blocks.
     @ViewBuilder
-    private func messageRow(role: String, text: String, isUser: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(role)
-                .font(Theme.Fonts.caption.weight(.semibold))
-                .foregroundStyle(isUser ? Theme.Palette.accent : Theme.Palette.inkMuted)
+    private func agentRow(_ text: String) -> some View {
+        MarkdownText(text: text, allowCodeRun: false)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 2)
+    }
+
+    /// Human input — full-strength, marked by a leading accent rule (codex's `▌`).
+    @ViewBuilder
+    private func userRow(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            RoundedRectangle(cornerRadius: 1)
+                .fill(Theme.Palette.accent)
+                .frame(width: 2.5)
             Text(text)
                 .font(Theme.Fonts.body)
                 .foregroundStyle(Theme.Palette.ink)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(isUser ? Theme.Palette.accentBg : Theme.Palette.surface)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
-        )
+        .padding(.vertical, 2)
     }
 
-    // MARK: - Reasoning disclosure
+    // MARK: - Process signals (recessed one-liners)
 
-    @ViewBuilder
-    private func reasoningRow(summary: String?, content: String?) -> some View {
-        let hasSummary = summary?.isEmpty == false
-        let hasContent = content?.isEmpty == false
-        // 思考正文:优先 content(原始推理);ChatGPT 鉴权下 content 空、可读推理在
-        // summary(由 summaryTextDelta 累积),回退到它。
-        let bodyText = hasContent ? (content ?? "") : (summary ?? "")
-        // 标题:summary 与 content 同时存在时 summary 作短标题;否则固定「思考过程」
-        // (避免把整段 summary 塞进单行标题)。
-        let labelText = (hasSummary && hasContent) ? (summary ?? "思考过程") : "思考过程"
-        DisclosureGroup {
-            Text(bodyText)
-                .font(Theme.Fonts.footnote)
-                .foregroundStyle(Theme.Palette.inkMuted)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 4)
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "brain")
-                    .font(Theme.Fonts.caption)
-                    .foregroundStyle(Theme.Palette.inkMuted)
-                Text(labelText)
-                    .font(Theme.Fonts.caption.weight(.medium))
-                    .foregroundStyle(Theme.Palette.inkMuted)
-                    .lineLimit(1)
-            }
+    enum Dot { case bad, muted, accent }
+
+    private func dotColor(_ d: Dot) -> Color {
+        switch d {
+        case .bad:    return Theme.Palette.danger
+        case .muted:  return Theme.Palette.inkMuted
+        case .accent: return Theme.Palette.accent
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Theme.Palette.surfaceMuted)
-        )
     }
 
-    // MARK: - Generic labeled row (plan / fileChange / toolCall / webSearch / unknown)
-
+    /// `• 动词 内容` — the dim one-liner codex uses for exec/tool/search: present but quiet.
     @ViewBuilder
-    private func labeled(icon: String, label: String, body: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: icon)
-                .font(Theme.Fonts.caption)
-                .foregroundStyle(Theme.Palette.inkMuted)
-                .frame(width: 16)
-                .padding(.top, 1)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(label)
-                    .font(Theme.Fonts.caption.weight(.semibold))
-                    .foregroundStyle(Theme.Palette.inkMuted)
-                if !body.isEmpty {
-                    Text(body)
-                        .font(Theme.Fonts.footnote)
-                        .foregroundStyle(Theme.Palette.ink)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
+    private func signalRow(_ dot: Dot, _ verb: String, _ body: String) -> some View {
+        HStack(alignment: .top, spacing: 7) {
+            Circle().fill(dotColor(dot)).frame(width: 5, height: 5).padding(.top, 5)
+            Text(verb + "  ").font(Theme.Fonts.caption.weight(.semibold)).foregroundColor(Theme.Palette.inkMuted) +
+                Text(body).font(Theme.Fonts.caption).foregroundColor(Theme.Palette.inkMuted)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Theme.Palette.surfaceMuted)
-        )
     }
 
-    // MARK: - Command card
-
     @ViewBuilder
-    private func commandCard(_ c: CodexThreadItem.CommandExec) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // Header: icon + "$ command" + optional cwd + exit badge
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "terminal")
-                    .font(Theme.Fonts.caption)
-                    .foregroundStyle(Theme.Palette.inkMuted)
-                    .padding(.top, 1)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(c.command)
-                        .font(Theme.Fonts.monoSmall.weight(.medium))
-                        .foregroundStyle(Theme.Palette.ink)
-                        .textSelection(.enabled)
+    private var workingRow: some View {
+        HStack(spacing: 7) {
+            ProgressView().controlSize(.small)
+            Text("运行中…")
+                .font(Theme.Fonts.caption.italic())
+                .foregroundStyle(Theme.Palette.inkMuted)
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+// MARK: - Reasoning (dim + italic, codex's quietest cell; collapses past ~6 lines)
+
+private struct CodexReasoningRow: View {
+    let text: String
+    @State private var expanded = false
+
+    var body: some View {
+        if text.isEmpty {
+            EmptyView()
+        } else {
+            HStack(alignment: .top, spacing: 7) {
+                Circle().fill(Theme.Palette.inkMuted.opacity(0.5)).frame(width: 5, height: 5)
+                    .padding(.top, 5)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(text)
+                        .font(Theme.Fonts.footnote.italic())
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                        .lineLimit(expanded ? nil : 6)
                         .fixedSize(horizontal: false, vertical: true)
-                    if let cwd = c.cwd, !cwd.isEmpty {
-                        Text(cwd)
-                            .font(Theme.Fonts.monoSmall)
-                            .foregroundStyle(Theme.Palette.inkMuted)
-                            .lineLimit(1)
+                        .textSelection(.enabled)
+                    if !expanded && text.count > 280 {
+                        Button("展开思考") { expanded = true }
+                            .buttonStyle(.plain)
+                            .font(Theme.Fonts.caption2)
+                            .foregroundStyle(Theme.Palette.accent)
                     }
                 }
-                Spacer(minLength: 4)
-                exitBadge(c.exitCode, status: c.status)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
 
-            // Output block
-            if let output = c.aggregatedOutput, !output.isEmpty {
-                Divider()
-                    .background(Theme.Palette.hairline)
-                ScrollView(.vertical, showsIndicators: false) {
-                    Text(output)
+// MARK: - Command execution (codex's `• 运行 <cmd>` with collapsed output)
+
+private struct CodexCommandRow: View {
+    let command: String
+    let output: String?
+    let exitCode: Int?
+    let status: String?
+    @State private var expanded = false
+    private let headLines = 6
+
+    private var dotColor: Color {
+        if let exitCode { return exitCode == 0 ? Theme.Palette.success : Theme.Palette.danger }
+        return Theme.Palette.inkMuted
+    }
+    private var verb: String {
+        if exitCode == nil && (status == nil || status == "inProgress") { return "运行中" }
+        return "运行"
+    }
+    private var lines: [Substring] { (output ?? "").split(separator: "\n", omittingEmptySubsequences: false) }
+    private var hiddenCount: Int { max(0, lines.count - headLines) }
+    private var hasOutput: Bool { !(output ?? "").isEmpty }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 7) {
+            Circle().fill(dotColor).frame(width: 5, height: 5).padding(.top, 5)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(verb + "  ").font(Theme.Fonts.caption.weight(.semibold)).foregroundColor(Theme.Palette.inkMuted) +
+                    Text(command).font(Theme.Fonts.monoSmall).foregroundColor(Theme.Palette.ink)
+                if hasOutput {
+                    Text((expanded ? lines : Array(lines.prefix(headLines))).joined(separator: "\n"))
                         .font(Theme.Fonts.monoSmall)
                         .foregroundStyle(Theme.Palette.inkMuted)
-                        .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                    if !expanded && hiddenCount > 0 {
+                        Button("… +\(hiddenCount) 行") { expanded = true }
+                            .buttonStyle(.plain)
+                            .font(Theme.Fonts.caption2)
+                            .foregroundStyle(Theme.Palette.accent)
+                    }
                 }
-                .frame(maxHeight: 220)   // ~12 lines at monoSmall
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Theme.Palette.surface)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
-        )
-    }
-
-    @ViewBuilder
-    private func exitBadge(_ code: Int?, status: String?) -> some View {
-        if let code {
-            let isSuccess = code == 0
-            let label = isSuccess ? "exit 0" : "exit \(code)"
-            let fg: Color = isSuccess ? Theme.Palette.success : Theme.Palette.danger
-            let bg: Color = isSuccess
-                ? Theme.Palette.success.opacity(0.12)
-                : Theme.Palette.dangerBg
-            Text(label)
-                .font(Theme.Fonts.caption2.weight(.semibold))
-                .foregroundStyle(fg)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(bg, in: Capsule())
-        } else if let status, !status.isEmpty {
-            Text(status)
-                .font(Theme.Fonts.caption2)
-                .foregroundStyle(Theme.Palette.inkMuted)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Theme.Palette.surfaceMuted, in: Capsule())
-        }
     }
 }
 #endif
