@@ -1,10 +1,12 @@
-#if os(iOS)
 import SwiftUI
 import PhotosUI
 
 /// Random-name + random-avatar onboarding step. Shown right after first
 /// sign-in (when the user hasn't set a profile yet) and re-openable from
-/// the profile sub-page.
+/// the profile sub-page. Cross-platform (iOS gate `RootView` + macOS gate
+/// `MacRootGate`) — platform-specific bits (`UIImage`/`NSImage`, sheet
+/// detents, nav-title display mode) go through the repo's platform shims
+/// (`PlatformImage`, `PlatformModifiers`) so one implementation serves both.
 ///
 /// Swiping is a real horizontal-paging ScrollView (iOS-home-screen feel)
 /// — each card is one entry in `pages`, and reaching the last card lazily
@@ -90,8 +92,11 @@ struct ProfileBootstrapView: View {
                         set: { pages[idx].customAttachmentId = $0 }
                     )
                 )
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
+                .platformDetents([.medium, .large])
+                .platformDragIndicator()
+                // macOS sheets size to content; give the customise sheet a
+                // sensible floor so its ScrollView isn't collapsed. No-op iOS.
+                .macSheetMinSize(minWidth: 460, minHeight: 560)
             }
         }
     }
@@ -245,8 +250,8 @@ struct ProfileBootstrapView: View {
                               customImage: Data?,
                               attachmentId: String?) -> some View {
         HStack(spacing: 28) {
-            if let data = customImage, let img = UIImage(data: data) {
-                Image(uiImage: img)
+            if let data = customImage, let img = PlatformImage.decode(data) {
+                Image(platformImage: img)
                     .resizable()
                     .scaledToFill()
                     .frame(width: 76, height: 76)
@@ -393,7 +398,7 @@ private struct CustomizeSheet: View {
                             TextField("起一个吧", text: $name)
                                 .font(Theme.Fonts.serif(size: 20, weight: .semibold))
                                 .foregroundStyle(Theme.Palette.ink)
-                                .textInputAutocapitalization(.never)
+                                .platformAutocapitalization()
                                 .autocorrectionDisabled(true)
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 12)
@@ -420,7 +425,7 @@ private struct CustomizeSheet: View {
                 }
             }
             .navigationTitle("自定义")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavTitle()
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("完成") { dismiss() }
@@ -435,8 +440,8 @@ private struct CustomizeSheet: View {
     @ViewBuilder
     private var avatarPreview: some View {
         Group {
-            if let data = customImageData, let img = UIImage(data: data) {
-                Image(uiImage: img)
+            if let data = customImageData, let img = PlatformImage.decode(data) {
+                Image(platformImage: img)
                     .resizable()
                     .scaledToFill()
                     .frame(width: 120, height: 120)
@@ -561,4 +566,3 @@ final class NameCorpus {
         names.randomElement() ?? "你"
     }
 }
-#endif
