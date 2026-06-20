@@ -1,0 +1,90 @@
+# 责任主体计费 / 统一计费
+
+**一句话:谁付钱永远看责任主体的钱包,模型推理统一走平台计费,用户不带自己的 key。** 这一篇立"计费归谁、钱怎么进系统"的产品规则;钱包本体与成本单位见 [`wallet-pnc`](./wallet-pnc.md),群里多人怎么分摊见 [`group-pledge`](./group-pledge.md),"责任主体"这个抽象本身见 [`subject`](./subject.md)。
+
+---
+
+## 逻辑 —— 计费的两条铁律
+
+**铁律一:谁付钱 = 责任主体(`responsible_subject_id`)的钱包。**
+
+每一笔会花钱的动作(一次 LLM 调用、一段语音、一次代码执行、一次群媒体)落账时,先解析这笔消费的**责任主体**,从它的钱包扣:
+
+- **1v1 / 系统级动作** → 扣**发起人的个人账号**钱包。
+- **群 / 临时群 / crew 会话** → 扣会话绑定的**群账号**钱包(那个 `responsible_subject_id`)。
+
+这个解析是**门禁(调用前判断够不够)和扣费(调用后真扣)共用的同一个口子**,所以"判断时算谁的余额"和"真扣时扣谁"永远不会错位——不存在"按 A 的余额放行、却从 B 扣钱"这种裂缝。
+
+**铁律二:模型推理统一走平台计费(unified billing),用户不带自己的 key。**
+
+用户用大绿豆,花的是自己钱包里的 PNC 额度;**底层模型 API 的钱由平台统一付**(经 Cloudflare AI Gateway 的 Unified Billing,OpenRouter 留 fallback)。用户**不需要、也不能**塞自己的 OpenAI / Anthropic key 进来抵扣——这就是"BYOK 已废"的含义(见下「注意」)。平台按真实供应商成本折算成 PNC,从用户钱包扣。
+
+---
+
+## 为什么
+
+- **责任主体计费**:大绿豆是人 + AI 协作的平台,"这批活儿属于一群人"是常态(旅游小队、家庭共用、项目组)。如果费用只能挂在某个 user 上,群协作就得到处打补丁。把"谁付钱"绑死在 `responsible_subject_id` 上,计费路径对"一个人"和"一群人"完全一致——这是 subject 抽象存在的根本理由之一(详见 [`subject`](./subject.md))。
+
+- **统一计费(不收 BYOK)**:让用户带自己的 key,表面省了平台垫付,实则把整个产品的体验和合规拖下水——余额、节流、群分摊、退款这套机制全建立在"平台掌握成本"之上;一旦额度来自用户自带 key,这套就散架了。党纲定调"关键基础设施外包、零 VPS":推理走 AI Gateway 统一计费,计费引擎外包 Polar + RevenueCat,平台只掌握"折算 + 门禁 + 群分摊"这层薄逻辑。
+
+- **上报的是供应商真实成本,不含平台 markup**:扣费按 vendor 成本算;平台的加价(markup)只体现在**卖充值包**时(包卖得比成本贵),不在每次扣费时层层加。这样成本可对账、不会因为加价口径漂移而算不清账。
+
+---
+
+## 用在哪·长什么样
+
+计费对用户基本是**隐形**的——它在每次模型调用 / 语音 / 代码执行的背后默默发生:
+
+- **调用前门禁**:余额耗尽(≤0 PNC)时,用户发起的对话会被挡下,走"余额不足"提示(模型根本不被调用),而不是先花钱再报错。系统级的自动动作(标题生成、主动复盘、群路由)**只扣费、不挡**——它们不该因为余额低就静默消失。
+- **群会话**:群里任何人触发的 AI 消费,都从**群钱包**出,不从触发者个人钱包出。
+- **充值入口**:web/Mac 走 Polar 收银台买 PNC 包;iOS 走 App 内购(Apple IAP)。两条路最后都汇进同一个责任主体的钱包(见 [`wallet-pnc`](./wallet-pnc.md))。
+
+---
+
+## 示例 —— 一次群里的 AI 调用
+
+群账号「五一川西」里,member 小李问 captain bot "帮我查一下康定的天气":
+
+1. 这条消息落到一个 `conversation_type='group'` 的会话,解析出 `responsible_subject_id` = 「五一川西」群账号;
+2. 调用前先看群钱包够不够(实缴池 + 各人认缴聚合,见 [`group-pledge`](./group-pledge.md))——够就放行;
+3. bot 调模型回答,底层模型 API 费用由平台经 AI Gateway 统一付;
+4. 调用完,把这次的供应商真实成本折算成 PNC,从**群钱包**扣——不碰小李的个人余额(除非他在群里认缴了,那是 group-pledge 的事)。
+
+小李全程只看到 bot 正常回答,没看到任何"钱"的细节。
+
+---
+
+## 边界 —— 明确不做
+
+- **不收用户自带 key(BYOK)抵扣模型费**——推理一律平台统一计费。
+- **不直连 Stripe** 自建收银——收款 + 代税走 Polar(MoR);iOS 走 Apple IAP + RevenueCat。(为什么见 [`wallet-pnc`](./wallet-pnc.md)。)
+- **不在每次扣费时加 markup**——加价只在卖充值包时体现。
+- **群账号没有 BYOK 概念**——群费用永远 unified billing。
+
+---
+
+## 注意 —— 容易踩的坑 & 已死的旧说法
+
+- **⚠️ "BYOK" 在大绿豆有两个完全不同的意思,别混。**
+  - **计费意义上的 BYOK(用户带自己的 provider key 付模型费)= 已彻底废弃**,只活在历史里。现在所有推理走平台 unified billing。
+  - **PendingCrew 本地模式里残留的 "BYOK" 字样 = 另一回事,也已正名为"本地模式"**:那是"未登录时,本机 CLI(claude / codex)用它自己已登录的订阅态跑",根本不注入任何 key,不是计费路径。代码里还有 `local-byok` 这类标识符是命名漂移(改名要数据迁移,已记 tech-debt),**不代表 BYOK 计费活着**。
+
+- **⚠️ 老 spec 里的计费引擎已两度退役,按现状理解。** billing-v1、billing-v2(自研 `settleUsage` / `packs` / `ledger_entries` 那套)**都已死**。现在的计费栈 = **Polar(钱包事实源 / MoR)+ RevenueCat(iOS 入账)+ WalletDO(边缘门禁缓存)+ PNC(成本单位)**。`ledger_entries` / `packs` / `refund_events` 表已 drop;`subject_wallets` 是 billing-v1 僵尸快照,早不被扣减。看到老文档讲"FIFO 多包燃尽 / pack ledger"那套,知道是历史就行。
+
+- **上报给计费平台的是计量元数据 + 金额,不是聊天内容。** 聊天真身只在 Supabase;Polar 拿到的只是"某 subject 花了多少 PNC、什么类别"。
+
+- **markup 只在卖包体现**——别在新增某类服务计费时顺手往扣费里加价,那会让成本对账算不清。
+
+---
+
+## 现状
+
+| 维度 | 标记 | 说明 |
+|---|---|---|
+| 责任主体解析(门禁 / 扣费共用单口子:群→`responsible_subject_id`,1v1/系统→发起人) | 🟨 | 代码已落(`usage-gate.ts` resolveBillingSubjectId + router 扣费同源),逻辑自洽;但整套计费 **pre-launch 未开、端到端未真验** |
+| 统一计费(推理走 AI Gateway Unified Billing + OpenRouter fallback) | ✅ | provider 路由已对齐 4-provider 统一计费主路 + OR fallback;无用户 BYOK(Gemini 经平台自存 key 是受控合法例外) |
+| BYOK 计费路径退役 | ✅ | 用户自带 key 抵扣模型费的路径已不存在;残留只是 PendingCrew 本地模式的命名漂移 |
+| 供应商真实成本 → PNC 折算、运行时不加 markup | ✅ | `pnc.ts`(27 PNC=1USD、整数 micros)+ 路由不加 markup;旧 credits/markup 框架已拆(v1 credits 列 + `getMarkup`/`usdToPnd` 已 drop) |
+| 计费总开关 | 🟨 | `BILLING_ENABLED` **默认 OFF**——关时门禁不挡、不扣费、不上报,pre-launch 测试者不被空钱包锁死;开之前 welcome bonus 防薅等洞需先堵(见 tech-debt) |
+
+> 现状证据:[`docs/progress.md`](../../../progress.md) §4b(Polar 引擎大转向 P0–P2 表)、[`docs/stale-model-audit-2026-06-15.md`](../../../stale-model-audit-2026-06-15.md)(provider 路由对齐 + BYOK 命名漂移)、[`docs/tech-debt.md`](../../../tech-debt.md)(welcome bonus 薅羊毛、旧 credits 框架拆除)。权威定义以本篇为准;实现/选型细节下指 [`specs/2026-06-01-billing-engine-design.md`](../../../superpowers/specs/2026-06-01-billing-engine-design.md)。
