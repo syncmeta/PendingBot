@@ -42,7 +42,7 @@
 - **日期**: 2026-06-01
 - **决策**: spec §6.3.1 从 3 种改为 **4 种**,补上代码已实装的 `spawned_by_captain`(父 crew 的 captain 主动创建子 crew → 子 crew captain 默认 = 父 captain)。
 - **背景**: spec 写 3 种,迁移 `20260527090000` + `create_child_crew_inheriting_responsibility_*` RPC 已实装第 4 种,spec 没同步(tech-debt 🟡 已记)。决策是对齐到代码(4 种),不是删代码。
-- **现状核实**: ✅ 代码已是 4 种;spec §6.3.1 已补(2026-06-01,feat/invite-model)。**已落地。**
+- **现状核实**: ⚠️ **已部分过时(2026-06-19 降级)** —— 当前活的建 crew RPC(`create_crew_with_captain`,迁移 `20260614123750`)只接受 **2 种** `captain_source`(`reuse_bot` / `system_generated`),客户端实际只用 `system_generated`;`spawned_by_captain` / `create_child_crew` 继承那套只在 legacy `/v1/crew`(单数)路由和旧迁移注释里残留。引用本决策前先核到这一层。权威现状见 handbook `pendingcrew/concepts/captain.md` + `shared/evolution/pivots.md` §4。
 
 ## D5 · PendingBot 三端 UI = 共享视觉组件层 + 大屏多列壳,iPhone 视觉不变
 - **日期**: 2026-06-01
