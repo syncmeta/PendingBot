@@ -4,7 +4,7 @@
 
 ## 逻辑
 
-PendingCrew 是一个**可以独立开源、自包含**的本地工作台,形态对标 Claude Code / Codex:本地 CLI/app + 可选云环境 + 移动端遥控。
+PendingCrew 是一个**可以独立开源、自包含**的本地工作台,形态参照 Claude Code / Codex(只为帮人理解长什么样,不是对标):本地 CLI/app + 可选云环境 + 移动端遥控。
 
 - **本地恒可用,不依赖 PendingBot 后端。** 在 Mac 上,crew + captain + session 全在本地跑(用户自己的 claude/codex 订阅 + 自己的机器)。不登录 PendingBot,核心工作流照样转:建 crew、起 session、群聊白板、captain triage、审批——全是本地的。
 - **登录 = 可选的三层能力叠加**,只在登录态启用,且**不改变本地是家**这件事:

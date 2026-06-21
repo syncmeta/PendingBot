@@ -6,13 +6,19 @@
 
 ## 逻辑 — 这是个什么产品
 
-**PendingCrew 是一个独立、准备开源、本地为家的 crew 编排专业工作台。** 对标 Claude Code Desktop / Codex Desktop 那一档——给「想用 AI 写代码 / 干事」的开发者用的桌面客户端。它编排的是一组 **crew**:一组群聊 + coding agent 的权限边界,由一个 **captain**(机长)把模糊意图拆成可执行的活、收成几件待你拍板的事(见 [crew](concepts/crew.md) · [captain](concepts/captain.md))。
+**PendingCrew 是一个独立、准备开源、本地为家的 crew 编排专业工作台。** 它和 Claude Code / Codex 不是「同档对手」——后者是**个体**(单个能干活的 coding agent),PendingCrew 是把这些个体**组织起来**的那一层。类比公司之于经济(科斯企业理论:企业存在,是因为把协调放进组织,比事事走市场更省协调成本):Claude Code / Codex 是会干活的「员工」,PendingCrew 是把他们拉起来、编成 crew、让他们**以组织形式参与价值创造**的「公司」。它编排的是一组 **crew**:一组群聊 + coding agent 的权限边界,由一个 **captain**(机长)把模糊意图拆成可执行的活、收成几件待你拍板的事(见 [crew](concepts/crew.md) · [captain](concepts/captain.md))。
 
 立场的核心是**本地为家**(权威定义见 [本地为家](concepts/local-first.md)):
 
 - **这台机器是 crew 的「家」,云端只是邮差。** 在 Mac 上,crew + captain + session 全在本地跑——用你自己的 claude / codex 订阅、你自己的机器。不登录任何账号,核心工作流照样转:建 crew、起 session、群聊白板、captain triage、审批,全是本地的。
 - **登录是可选的能力叠加,不改变本地是家。** 登录后叠加三层能力:fly 云端执行、移动端遥控(从 PendingBot 手机 / iPad 遥控 Mac 上的 crew)、PendingBot 的 bot / 人类账号经 edge 信箱入场参与(社交 + 钱包计费)。但 Mac 后端**恒为本地**,登录只翻开 `isAuthenticated` 这道能力门。
 - **登录走 scoped grant,不是全权 session。** 想登录时优先复用本机同发布者 app(PendingBot)的身份(扫码 / 同发布者确认),但 PendingCrew 只换到一个受限的 device-grant(控制 crew 这一小块能力),拿不到 PendingBot 的全权 Supabase session(见 [device grant](../shared/concepts/device-grant.md))。
+
+## 差异化 — 把各家模型 / agent 凑到一起干同一件事
+
+大绿豆(PendingBot + PendingCrew)的一大优势:**把异厂的模型 / agent 编排到一起,协作完成同一件事。** 在 PendingCrew 里,一个 crew 可以同时挂 Claude Code 和 Codex,各干一摊、在同一块白板上对齐——这是「组织个体」这层定位的直接红利:既然 Claude Code / Codex 是个体,把不同厂的个体编进同一支队伍就是顺理成章的事。PendingBot 侧同理,多模型在一个协作面里同台。
+
+**这条优势在「能把异厂个体编排到一起协作」,不在「任务路由」。** 明确**不做**任务路由(判断「这个任务该派给哪个模型 / agent」并自动分发):它又难、又是技术红海、又已经一堆人在做。PendingCrew 给的是组织协作的骨架(crew / captain / 白板 / 审批),让人(或 captain)把活分给合适的个体;它不替你猜哪个模型最优,也不在路由算法上较劲。
 
 ## 为什么 — 为什么本地为家、为什么准备开源
 
@@ -44,7 +50,7 @@
 
 ## 与 PendingBot 的边界
 
-**主 + 辅,一个母题两个入口。** 同一个「人与 AI 协作」的母题,普通人走 IM(PendingBot),开发者走 crew 编排(PendingCrew)。接缝是:PendingBot **看见** crew、做轻量遥控,PendingCrew **深度操作** crew。两者共享同一套[身份地基](../shared/concepts/subject.md)、计费和基础设施,功能不互相吞:PendingBot 不做 runner 控制 / DAG 索引 / machine 管理,PendingCrew 不做普通 IM。
+**像微信 / 企业微信:集成但隔离,各解各的问题,没有共享母题。** 两个产品同发布者、互相打通,但不是「一个母题的两个入口」——它们解的是不同问题:PendingBot 是普通人的 AI 社交 / IM,PendingCrew 是开发者组织 coding agent 的 crew 工作台。接缝是集成(打通)而非合一:PendingBot **看见** crew、做轻量遥控,PendingCrew **深度操作** crew。两者共享同一套[身份地基](../shared/concepts/subject.md)、计费和基础设施,但功能各管各、互不吞并:PendingBot 不做 runner 控制 / DAG 索引 / machine 管理,PendingCrew 不做普通 IM。
 
 ## 注意 — 已废的旧模型(别写回 / 别按它实现)
 
