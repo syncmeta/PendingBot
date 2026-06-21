@@ -24,6 +24,7 @@ docs/handbook/
 │
 ├── shared/              ── 基座:两产品共享 ──
 │   ├── charter.md       产品信条 + 红线(工程约定引用根 CLAUDE.md)
+│   ├── product-taste.md 风格与品味(总纲「先做减法,再说人话」+ 减法测试 + 分层)
 │   ├── concepts/        subject · group-accounts · group-permissions · device-grant · data-visibility-rls · avatar-visibility · conversation-types
 │   │                    models · billing-subject · wallet-pnc · group-pledge
 │   │                    config-as-cms · read-path
@@ -32,7 +33,7 @@ docs/handbook/
 │   │                    polar · revenuecat · openrouter · langfuse · posthog · sentry · grafana · fly · google
 │   └── evolution/       roadmap-and-status · pivots
 │
-├── pendingbot/          ── 大绿豆:主动 AI 朋友 ──
+├── pendingbot/          ── 大绿豆:知错的 AI 朋友 ──
 │   ├── vision.md        定位 + 产品信条 + 非目标
 │   ├── concepts/        bot-persona · bot-visibility · bot-social-graph · proactivity(次要特质) · delegation · todolist(⬜ 规划,与 cockpit 配对)
 │   └── features/        information-architecture · proactive-lookback · web-surf
