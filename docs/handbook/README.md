@@ -34,8 +34,8 @@ docs/handbook/
 │
 ├── pendingbot/          ── 大绿豆:主动 AI 朋友 ──
 │   ├── vision.md        定位 + 产品信条 + 非目标
-│   ├── concepts/        bot-persona · bot-visibility · bot-social-graph · proactivity · delegation
-│   └── features/        information-architecture · proactive-lookback · web-surf · group-bot-discussion
+│   ├── concepts/        bot-persona · bot-visibility · bot-social-graph · proactivity(次要特质) · delegation · todolist(⬜ 规划,与 cockpit 配对)
+│   └── features/        information-architecture · proactive-lookback · web-surf
 │                        envelope-inbox · add-friend · bot-invites · group-invites · voice · model-blindbox · create-bot-presets · tri-platform-ui
 │
 └── pendingcrew/         ── 编排工作台 ──
