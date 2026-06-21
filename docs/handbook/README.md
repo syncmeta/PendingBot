@@ -40,8 +40,8 @@ docs/handbook/
 │
 └── pendingcrew/         ── 编排工作台 ──
     ├── vision.md        定位 + 产品信条 + 开源边界 + 非目标
-    ├── concepts/        crew · captain · dag-and-responsibility · runtime-location-and-machine
-    │                    local-first · session-and-world-model · human-in-the-loop · subprocess-safety
+    ├── concepts/        crew · captain · governance(组织哲学) · dag-and-responsibility · runtime-location-and-machine
+    │                    local-first · session-and-world-model · human-in-the-loop · async-delegation · subprocess-safety
     │                    whiteboard · cockpit(⬜ 规划,见 task #439)
     └── features/        three-pane-ui · create-crew-and-session · runner-backends
                          session-crew-comms · cross-device-control
