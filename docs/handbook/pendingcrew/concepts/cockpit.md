@@ -1,6 +1,6 @@
 # 驾驶舱(cockpit)
 
-> ⬜ 规划概念(task #439)。**每个 crew 都有一个驾驶舱(它的 dashboard)**,聚合「这个 crew + DAG 里它以下整个子树」的 文档 / task / 进度 / tech-debt / 责任地图,**既是看板也是控制面**:你在文档上编辑,改动以 chip 的形式冒出来,一键派给子树里的 crew 去把代码对齐。本质 = 把规范驱动开发(SDD)做成多 agent 的递归项目协作台。相关:[Crew 与 Captain](crew.md) · [DAG 与责任比例](dag-and-responsibility.md) · [人在回路](human-in-the-loop.md)。
+> ⬜ 规划概念(task #439)。**每个 crew 都有一个驾驶舱(它的 dashboard)**,聚合「这个 crew + DAG 里它以下整个子树」的 文档 / task / 进度 / tech-debt / roadmap / 责任地图,**既是看板也是控制面**:你在文档上编辑,改动以 chip 的形式冒出来,一键派给子树里的 crew 去把代码对齐。本质 = 把规范驱动开发(SDD)做成多 agent 的递归项目协作台。相关:[Crew 与 Captain](crew.md) · [DAG 与责任比例](dag-and-responsibility.md) · [人在回路](human-in-the-loop.md)。
 
 ## 逻辑
 
@@ -11,7 +11,7 @@
 
 所以"项目"(= 一个连通分量,见 [DAG](dag-and-responsibility.md))不需要一个独立实体——你通过某个 crew 的驾驶舱往下看,看到的就是那一坨。
 
-**crew = 账本所有者。** 每个 crew 持有自己那一份:文档子树 + task + 进度 + tech-debt(结构化、住在 crew 的工作目录里)。驾驶舱**只聚合呈现**子树里各 crew 的账本,自己不另存——所以连边 / 断边(改 DAG)无损,内容永远挂在最小单位 crew 上。
+**crew = 账本所有者。** 每个 crew 持有自己那一份:文档子树 + task + 进度 + tech-debt + roadmap(计划 / 顺序 / 依赖)(结构化、住在 crew 的工作目录里)。驾驶舱**只聚合呈现**子树里各 crew 的账本,自己不另存——所以连边 / 断边(改 DAG)无损,内容永远挂在最小单位 crew 上。
 
 **既是看板,也是控制面(两者一体)。** 同一个面里:
 - **看板半边**:文档树、task 看板、进度 rollup、tech-debt 列表、crew 责任地图(沿 DAG)——一眼看清这个子树到哪了、谁负责什么、有哪些债;
@@ -34,7 +34,7 @@
 ## 用在哪 · 长什么样(规划)
 
 - **入口**:任意 crew 的详情 / 侧栏有个「驾驶舱」视图,进去就是这个 crew + 它子树的聚合面。
-- **看板**:文档树(可点开各 crew 的 spec)、汇总 task 看板(按 crew / 状态)、进度 rollup、tech-debt 列表、DAG 责任地图。
+- **看板**:文档树(可点开各 crew 的 spec)、汇总 task 看板(按 crew / 状态)、进度 rollup、tech-debt 列表、**roadmap 面板**(计划 / 顺序 / 依赖)、DAG 责任地图。
 - **drift chip 区**:一串待办 chip,每张写清"要把哪块对齐 / 该做什么 + 派给谁",一键派活或忽略。
 - **编辑即驱动**:在文档上改一笔 → 对应 chip 冒出来 → 一键 → 子树里那个 crew 起 session 干 → 干完状态回绿、chip 消。
 
@@ -51,7 +51,7 @@
 
 ## 注意
 
-- ⚠️ **当前账本是「仓库级一份」,不是「一 crew 一份」。** `docs/tech-debt.md` / `docs/progress.md` / task 系统现在整个仓库共用一份;「一 crew 一份」是本概念(#439)落地时才切的。格式**计划**往「一债一文件 + frontmatter」对齐(为可渲染做准备),但这步也还没落地。
+- ⚠️ **当前账本是「仓库级一份」,不是「一 crew 一份」。** `docs/tech-debt.md` / `docs/progress.md` / roadmap / task 系统现在整个仓库共用一份;「一 crew 一份」是本概念(#439)落地时才切的。格式**计划**往「一债一文件 + frontmatter」对齐(为可渲染做准备),但这步也还没落地。
 - ⚠️ **"项目 / 驾驶舱"当前都还没实现** —— crew 的父子 DAG 已经有(见 [DAG](dag-and-responsibility.md)),但"把子树聚合成驾驶舱 + drift chip 派活"整个是规划。别把 DAG 已实现当成驾驶舱已实现。
 - **drift 检测的难点留到实装**:"文档意图 vs 代码现状有没有差"本身不好判;MVP 先用 文档状态标记 + 手动「标记待对齐」+ git 改动当 drift 信号,自动判 drift(让 agent 比对意图与代码)是后话。
 
