@@ -94,13 +94,12 @@
 **当前状态**：
 - `apps/ios/PendingBot.xcodeproj` — iOS 完整
 - `apps/macos/PendingBot/` — Mac 占位 SwiftPM 包（4/5 tab 是 placeholder）
-- `apps/shared/PendingBotShared/` — 共享一小段
 
 **具体动作**：
 - 新建 `apps/pendingbot/PendingBot.xcodeproj`，三 destination 配置
-- 把 `apps/ios/PendingBot/` 全部 source 迁过来，文件夹结构按 `Source/{Shared,iOS-only,Mac-only,iPad-only}` 整理
+- 把 `apps/ios/PendingBot/` 全部 source 迁过来，整理进当前 `Sources/{Components,Features,Mac,Models,Networking,Storage,Stores}` 结构
 - iOS/Mac-only 文件用 `#if os(iOS)/macOS` 隔离，**避免 destination 二分支用 if-else 思维**
-- 把 `apps/shared/PendingBotShared/` 内容合并到 `apps/pendingbot/`
+- 把老共享 SPM 内容合并到 `apps/pendingbot/`
 - 砍 `apps/macos/PendingBot/`（占位包，没保留价值）
 - 砍 `apps/ios/PendingBot.xcodeproj`（迁移完成后）
 - 更新所有 build script / deploy 脚本 / CI
@@ -560,10 +559,10 @@
 | `2026-05-24-subject-foundation.md` | 仍用，补群账号扫码登录细节 | T1.3 时一并改 |
 | `2026-05-24-runner-host-schema.md` | 仍用 | — |
 | `2026-05-24-crew-dispatch-schema.md` | 仍用 | — |
-| `2026-05-27-pendingbot-multiplatform-shell.md` | 重写 → 被 T0.1 取代 | T0.1 完成后删 |
+| `2026-05-27-pendingbot-multiplatform-shell.md` | ✅ 已删 → 被 T0.1 取代 | 已完成 |
 | `2026-05-27-pendingcrew-session-workbench.md` | 重写 → 被 T0.2 + Phase 3 取代 | Phase 3 完成后删 |
 | `2026-05-27-local-crew-captain-foundation.md` | 重写 → 被 T2.2 + T3.x 取代 | Phase 3 完成后删 |
-| `2026-05-27-pendingbot-crew-real-data.md` | 删（被本 roadmap 取代） | 立刻可删 |
+| `2026-05-27-pendingbot-crew-real-data.md` | ✅ 已删（被本 roadmap 取代） | 已完成 |
 
 ---
 

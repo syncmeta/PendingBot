@@ -90,13 +90,12 @@ PendingBot 和 PendingCrew **各一个 SwiftUI multiplatform 工程**：
 - `apps/ios/` — iOS xcodeproj
 - `apps/macos/PendingBot/` — 独立 SwiftPM 包（占位）
 - `apps/macos/PendingCrew/` — 独立 SwiftPM 包
-- `apps/shared/PendingBotShared/` — 共享一小段
 
 目标代码：
 
 - `apps/pendingbot/` — 单 xcodeproj，三 destination
 - `apps/pendingcrew/` — 单 xcodeproj，双 destination
-- 共享 model / 协议放 SwiftPM 包，UI 直接共享
+- 共享 model / 协议随各 app 的 multiplatform target 直接共享；跨 app 身份基础设施放 `packages/identity`
 
 **v1.0 第一步就是这个重构**。先把架子打对，再写新功能 —— 不然每加一个功能都要在两套工程里重复。
 
@@ -778,10 +777,10 @@ pendingcrew://machine/<machine-id>
 
 ### 15.4 必须重写
 
-- `docs/superpowers/plans/2026-05-27-pendingbot-multiplatform-shell.md` —— 改成 SwiftUI Multiplatform 单工程重构方案
+- `docs/superpowers/plans/2026-05-27-pendingbot-multiplatform-shell.md` —— 已删，被 roadmap T0.1 取代
 - `docs/superpowers/plans/2026-05-27-pendingcrew-session-workbench.md` —— 改成 Mac + iPad 双端方案
 - `docs/superpowers/plans/2026-05-27-local-crew-captain-foundation.md` —— captain 三种来源细化
-- `docs/superpowers/plans/2026-05-27-pendingbot-crew-real-data.md` —— 删，被本 spec 的端到端规划取代
+- `docs/superpowers/plans/2026-05-27-pendingbot-crew-real-data.md` —— 已删，被本 spec 的端到端规划取代
 
 ---
 

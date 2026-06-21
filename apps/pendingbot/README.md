@@ -24,16 +24,17 @@ apps/pendingbot/
 └── Sources/
     ├── PendingBotApp.swift         # @main，#if os(iOS) 和 #if os(macOS) 分支
     ├── Log.swift                   # 跨平台
-    ├── Shared/                     # 跨平台 model + big-screen shell view
-    ├── Components/                 # iOS UI 组件（整体 #if os(iOS) 包住）
-    ├── Features/                   # iOS feature views（整体 #if os(iOS) 包住）
-    ├── Models/                     # iOS-only API models（#if os(iOS) 包住）
-    ├── Networking/                 # 网络层（#if os(iOS) 包住 —— 引用 UIKit/Supabase 流程）
-    ├── Storage/                    # 本地存储（#if os(iOS) 包住）
+    ├── Components/                 # 复用 UI 组件，平台差异用 #if 隔离
+    ├── Features/                   # 业务 feature views
+    ├── Mac/                        # macOS-only 入口与视图
+    ├── Models/                     # API / 本地 model
+    ├── Networking/                 # API、缓存、实时与登录服务
+    ├── Storage/                    # 本地存储、Keychain、账号状态
+    ├── Stores/                     # 小型状态/字典 store
     └── Resources -> ../Resources   # Assets.xcassets / xcstrings / xcprivacy
 ```
 
-T0.1 的目标是**工程结构对齐 spec v2 的三端 multiplatform 方案**，把代码从老的 `apps/ios/` + `apps/macos/PendingBot/`（占位）+ `apps/shared/PendingBotShared/`（共享一小段）合到一个单 xcodeproj。
+T0.1 已把代码从老的 `apps/ios/` + `apps/macos/PendingBot/`（占位）+ 老共享 SPM 合到一个单 xcodeproj。
 
 iOS 完整 code base 整体 `#if os(iOS)` 隔离，不在 scaffold 阶段重写跨平台。Mac 端 UI 在 Phase 2+ 实装（看 spec §3 「跨设备 SwiftUI」+ §12 三栏布局）。
 
@@ -62,7 +63,7 @@ xcodebuild -project PendingBot.xcodeproj -scheme PendingBot \
 - `apps/ios/PendingBot/` —— 老 iOS source（整体迁过来了）
 - `apps/ios/PendingBotTests/` —— 老 iOS 测试（scaffold 阶段砍掉,后续按需重建）
 - `apps/macos/PendingBot/` —— 老 Mac 占位 SPM 包
-- `apps/shared/PendingBotShared/` —— 老共享 SPM（已并入 `Sources/Shared/`）
+- 老共享 SPM —— 已并入当前单工程并删除
 
 ## 当前进度
 

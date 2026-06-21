@@ -626,7 +626,7 @@
 - **位置**: `apps/pendingbot/project.yml`(EXCLUDED 配置)、`apps/pendingbot/Sources/{Components,Features,Models,Networking,Storage}/`(被排除的 iOS-only 子树)
 - **问题**: T0.1 commit message 声称 "iOS code 全部用 `#if os(iOS)` 整体包住,Mac 端 build 能跑";实际**没有逐文件加** `#if os(iOS)`,Mac build "成功" 只是因为 swift 编译器在前面 2 个 module-resolution error 就 abort,后面 100+ 个 `import UIKit` 文件根本没参与 Mac 编译。T1.4 sub-agent 发现后改走 `EXCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]` 在 xcodegen 层把整个 iOS-only 子树从 Mac build 排除,实现等价(Mac 不编译这些文件),但代价是**这些文件在 Mac 端完全不可见**。
 - **影响**: Phase 2+ 渐进做 Mac 端业务接入(IM 列表、消息流、Crew Tab 等)时,要逐文件决定是 unwrap 成跨平台还是保持 Mac-excluded。**没有任何 build 验证能告诉你哪些文件还在 iOS-only 子树里**(它们对 Mac build 隐身);容易在做 Mac UI 时反复 surprise:某个想用的 model / service 其实在 excluded 子树里,引用就编译不通。
-- **建议**: Phase 2 起,每加一个跨平台 view 要主动检查依赖链 —— 跨平台需要的 model / service / helper 从 excluded 子树挪到 `Sources/Shared/`,或加 `#if os(iOS)` 让平台特定部分隔离,逐步收缩 EXCLUDED 范围。**T0.1 的"整体 #if 包"承诺要么真做(逐文件加),要么把 EXCLUDED 当作长期方案显式记入 spec/roadmap,不能两头吊**。
+- **建议**: Phase 2 起,每加一个跨平台 view 要主动检查依赖链 —— 跨平台需要的 model / service / helper 放到可被双端编译的 `Sources` 位置,或加 `#if os(iOS)` 让平台特定部分隔离,逐步收缩 EXCLUDED 范围。**T0.1 的"整体 #if 包"承诺要么真做(逐文件加),要么把 EXCLUDED 当作长期方案显式记入 spec/roadmap,不能两头吊**。
 - **状态**: 待办(Phase 2 起渐进消化)
 
 ### 🟡 Supabase advisor 噪音没有 allowlist / ownership 分层
@@ -956,9 +956,8 @@
   **安全区暂留(review,价值低/需判断,未删)**:`models.ts` 4 个 LMArena* 过度 export + `crews.ts:accessibleSubjectIds` 过度 export(去 `export` 关键字即可,低价值,crews.ts 属 crew session territory 故未动);`identity/jwt.ts:ALLOWED_JWT_ALGS` 过度 export;`sandbox.ts:deleteSandbox`(0 调用但注释称"会话拆除时调"——**误导注释**,可能是未接的 future teardown,建议要么接上要么删注释);`supabase` 的 `v_audit_daily`/`v_audit_monthly` 视图(edge 0 引用,可能留给 BI,删需迁移);`createPolarClient`/`PNC_EVENT_NAME` 是**假阳**(被同文件 polarFromEnv 内部用,勿删)。
   **✅ 已查清(非 bug,已删)**:`persona-cache.ts` 的 `deleteCachedChatMemo`/`deleteCachedBotNote` 当时疑似"缓存从不失效"。追查确认**不是 bug**:chatMemo/botNote 只由 `memory.ts` 的 `refreshChatMemo`(:496)/`refreshBotNote`(:344)写,且这俩 refresher 改完 DB 后**立即 write-through**(`putCachedChatMemo`/`putCachedBotNote`)——缓存始终新鲜,无需 delete 式失效。这俩 delete helper 是当初连着 put/get 顺手写的多余件,已删除。
 
-- 🟡 **iOS/macOS/crew Swift 死代码清单(22 项)— 交接给 pendingbot / pendingcrew session(本 lane 不动)** — 同一次扫描的 Swift 区。Swift 无廉价 unused 检测,以下均 rg 证据(符号全仓仅定义),**删前 owner session 必须 xcodebuild 验证**(可能有 storyboard/动态引用)。多数像被取代的旧面:
+- 🟡 **iOS/macOS/crew Swift 死代码清单(21 项)— 交接给 pendingbot / pendingcrew session(本 lane 不动)** — 同一次扫描的 Swift 区。Swift 无廉价 unused 检测,以下均 rg 证据(符号全仓仅定义),**删前 owner session 必须 xcodebuild 验证**(可能有 storyboard/动态引用)。多数像被取代的旧面:
   - **旧 billing-v1 iOS 钱包面(疑被 WalletV2View 取代)**:`Features/Me/WalletView.swift:WalletView`、`Networking/BillingService.swift`(fetchBalance/fetchLog/redeem/fetchSummary/applySilentUpdate + Balance/LogEntry/LogPage/Summary/RedeemResponse 等嵌套类型)——若 UI 已切到 WalletV2View/GroupWalletView,整个 BillingService + WalletView 可能整体死。**高价值核查**。
-  - **BigScreen 实验面**:`Shared/PendingBotBigScreenApp.swift`(PendingBotBigScreenAppView / PendingBotCrewWorkspaceView)+ `Shared/PendingBotSharedModels.swift` 一大批 `PendingBotCrew*` / `PendingBotBigScreenTab` 类型(疑 BigScreen 原型残留)。
   - **其它 0 引用**:`Features/Me/AccountsView.swift:AccountsView`、`Components/TabTitle.swift:TabTitle`、`Mac/Views/MacEnvelopeView.swift:MacEnvelopeDetail`、`Models/APIModels.swift` 的 `MeProfile`/`AiPick`、`pendingcrew .../LocalRunnerPlaceholder.swift:LocalRunnerModule`。
   - **过时常量**:`Features/Me/WalletV2View.swift` 的 `channelLabel` 还留 `iap_ios`/`iap_macos`/`lemon_squeezy` 分支(渠道已转 Polar/RevenueCat)。
   - **构建产物入库**:`apps/ios/build/**`(.xcarchive/.ipa)疑被 git 跟踪——应 gitignore + 移除。
