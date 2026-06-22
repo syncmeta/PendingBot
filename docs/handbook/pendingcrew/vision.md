@@ -1,12 +1,16 @@
 # PendingCrew 定位
 
-> 大绿豆里**给开发者**的那一半:一个准备开源、本地为家的 crew 编排工作台,用来编排跑在自己机器上的 coding agent(Claude Code / Codex)。本篇只立**这个产品是什么、为什么是这个形状、开源边界与非目标**——crew / captain / DAG 怎么运作,各自在 `concepts/` / `features/` 里成篇。心智源头在 [党纲](../shared/charter.md);另一半产品见 [PendingBot 定位](../pendingbot/vision.md)。
+> 大绿豆里**给开发者**的那一半:一个准备开源、本地为家的**声明式自然语言创作平台**——你用自然语言声明要什么,系统对照现状、把差交给人审、生 session 去补(权威机制见 [声明式对账](concepts/reconciliation.md));结构上落成一个编排跑在自己机器上的 coding agent(Claude Code / Codex)的 crew 工作台。本篇只立**这个产品是什么、为什么是这个形状、开源边界与非目标**——crew / captain / DAG 怎么运作,各自在 `concepts/` / `features/` 里成篇。心智源头在 [党纲](../shared/charter.md);另一半产品见 [PendingBot 定位](../pendingbot/vision.md)。
 >
 > ⚠️ 这块有一段「双轨已死」的历史,务必按现状理解,别被旧 spec / 旧 roadmap 的「BYOK 双轨」措辞带跑(见文末「注意」)。
 
 ## 逻辑 — 这是个什么产品
 
-**PendingCrew 是一个独立、准备开源、本地为家的 crew 编排专业工作台。** 它和 Claude Code / Codex 不是「同档对手」——后者是**个体**(单个能干活的 coding agent),PendingCrew 是把这些个体**组织起来**的那一层。类比公司之于经济(科斯企业理论:企业存在,是因为把协调放进组织,比事事走市场更省协调成本):Claude Code / Codex 是会干活的「员工」,PendingCrew 是把他们拉起来、编成 crew、让他们**以组织形式参与价值创造**的「公司」。它编排的是一组 **crew**:一组群聊 + coding agent 的权限边界,由一个 **captain**(机长)把模糊意图拆成可执行的活、收成几件待你拍板的事(见 [crew](concepts/crew.md) · [captain](concepts/captain.md))。
+**PendingCrew 是一个声明式自然语言创作平台。** 北极星一句话:**你用自然语言「声明」要什么(期望),系统对照现状、把差交给人审、生 session 去补。** 这是给「创作」的 Terraform —— 只是 spec 是人话、执行者是 AI agent,而不是 HCL + 云 API。改期望就冒出差、人审、生 session 去补、刷现状,整个产品就转在这个环上(权威机制见 [声明式对账](concepts/reconciliation.md))。
+
+**「组织 Claude Code / Codex 个体的公司」是这个北极星「结构上怎么实现」,不是定位本身。** 要把「声明 → 对照 → 补差」落到能干活的执行者上,就需要一层把个体组织起来的结构。PendingCrew 和 Claude Code / Codex 不是「同档对手」——后者是**个体**(单个能干活的 coding agent),PendingCrew 是把这些个体**组织起来**的那一层。类比公司之于经济(科斯企业理论:企业存在,是因为把协调放进组织,比事事走市场更省协调成本):Claude Code / Codex 是会干活的「员工」,PendingCrew 是把他们拉起来、编成 crew、让他们**以组织形式参与价值创造**的「公司」。它编排的是一组 **crew**:一组群聊 + coding agent 的权限边界,由一个 **captain**(机长)把模糊意图拆成可执行的活、收成几件待你拍板的事(见 [crew](concepts/crew.md) · [captain](concepts/captain.md))。换句话说:**声明式对账是交互范式 / 引擎,公司是协调个体的结构;北极星立在前者。**
+
+**递归自指:大绿豆自己就是用这套方法建的。** 这本 handbook 就是被对账的第一个对象 —— 期望(意图)领先、现状强制刷、差交给人审、生 session 去补,此刻就在用它建大绿豆本身。PendingCrew 不过是把这套已经在自己身上跑通的方法**产品化**。
 
 立场的核心是**本地为家**(权威定义见 [本地为家](concepts/local-first.md)):
 
