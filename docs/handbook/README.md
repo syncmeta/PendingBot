@@ -39,11 +39,11 @@ docs/handbook/
 │   └── features/        information-architecture · proactive-lookback · web-surf
 │                        envelope-inbox · add-friend · bot-invites · group-invites · voice · model-blindbox · create-bot-presets · tri-platform-ui
 │
-└── pendingcrew/         ── 编排工作台 ──
+└── pendingcrew/         ── 声明式自然语言创作平台 ──
     ├── vision.md        定位 + 产品信条 + 开源边界 + 非目标
     ├── concepts/        crew · captain · governance(组织哲学) · dag-and-responsibility · runtime-location-and-machine
     │                    local-first · session-and-world-model · human-in-the-loop · async-delegation · subprocess-safety
-    │                    whiteboard · cockpit(⬜ 规划,见 task #439)
+    │                    whiteboard · reconciliation(声明式对账 · ⬜) · cockpit(⬜ 规划,见 task #439)
     └── features/        three-pane-ui · create-crew-and-session · runner-backends
                          session-crew-comms · cross-device-control
 ```
