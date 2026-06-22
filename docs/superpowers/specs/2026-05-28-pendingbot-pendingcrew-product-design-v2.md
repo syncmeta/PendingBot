@@ -1,3 +1,5 @@
+> ⚠️ 已废弃 — 阶段性历史文档,权威源见 [docs/handbook/](../../handbook/README.md)。本文仅留作历史,可能与现状冲突。
+
 # PendingBot 与 PendingCrew 产品落地设计 v2
 
 日期：2026-05-28

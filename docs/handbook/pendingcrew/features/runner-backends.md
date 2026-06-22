@@ -21,14 +21,14 @@
 ## 为什么
 
 - **Claude 留在终端,是因为它的交互式 TUI 是订阅计费的必经形态。** Claude Code 没有等价的「结构化协议后端」;要用上订阅(而不是按 API key 计费),就得跑它那个交互式终端本体。所以 claude 老老实实接一个真终端(SwiftTerm),字节级托管,看到的就是 claude TUI 原貌。
-- **Codex 搬到 app-server,是因为它**有**一个结构化协议、且终端形态喂不饱产品。** `codex app-server` 是 codex 官方的本地协议后端(stdio JSON-RPC),能拿到分门别类的结构化事件(消息 / 推理 / 命令执行 + 退出码 / 文件 diff / 工具调用),还能读到订阅计费的 token 用量 tick。把这些渲染成结构化 transcript,比一个裸终端可读得多——所以 codex 做成「对标 codex desktop 的原生结构化客户端」,而不是又一个终端。
+- **Codex 搬到 app-server,是因为它**有**一个结构化协议、且终端形态喂不饱产品。** `codex app-server` 是 codex 官方的本地协议后端(stdio JSON-RPC),能拿到分门别类的结构化事件(消息 / 推理 / 命令执行 + 退出码 / 文件 diff / 工具调用),还能读到订阅计费的 token 用量 tick。把这些渲染成结构化 transcript,比一个裸终端可读得多——所以 codex 做成「原生结构化客户端」(形态像 codex desktop,只为帮人理解、非对标),而不是又一个终端。
 - **「只有 codex 搬,claude 不动」是刻意的不对称。** 两个 agent 的最佳后端形态本就不同:claude 必须终端、codex 适合协议。强行统一只会牺牲一边。共用的只是那层薄控制协议(让 runner / UI 不分叉),窗口视图该分就分。
 - **不管凭证、复用本地登录,是 local-first 的直接结果。** PendingCrew 不做登录流、不注入 key(尤其 codex:导出 `OPENAI_API_KEY` 会把订阅悄悄翻成按量付费,所以 child 环境刻意不带它)。它只是个「在你机器上、你的目录里、用你的登录」拉起 agent 的外壳。
 
 ## 用在哪 · 长什么样
 
 - **右栏 = 选中 session 的窗口**(见 [三栏布局](three-pane-ui.md))。claude session → 内嵌终端;codex session → 结构化 transcript。窗口下方都是同一个 composer(把输入注入这个 session)+ 就地的待决策 / 待审批答复卡片。
-- **codex transcript 的渲染对标 codex desktop**:每一轮的消息、推理(可折叠)、命令执行(命令 + 输出 + 退出码一张卡)、文件 diff、工具调用各有自己的行样式;遇到没见过的新事件类型,落「未知」原样渲染、不崩。
+- **codex transcript 的渲染参照 codex desktop**(像它,不是对标它):每一轮的消息、推理(可折叠)、命令执行(命令 + 输出 + 退出码一张卡)、文件 diff、工具调用各有自己的行样式;遇到没见过的新事件类型,落「未知」原样渲染、不崩。
 - **世界观注入按 runner 走不同通道**(同一份内容,见 [Session 与世界观](../concepts/session-and-world-model.md)):claude 经 `--append-system-prompt-file` 追加文件;codex 经 `thread/start.developerInstructions` 传字符串。每轮的白板未读:claude 走 hook 注入;codex 走 `turn/start` 的 additionalContext。
 - **审批**(危险命令 / 改文件)两边都接进同一套[人在回路](../concepts/human-in-the-loop.md)的待审批 UI:claude 经 PreToolUse hook 拦截、codex 经 app-server 的审批 server-request——人答了再放行。crew 自家工具(`post_to_crew` / `read_whiteboard` / `ask`)是可信通道,不进审批门。
 
