@@ -1,30 +1,31 @@
+---
+status: planned
+---
+
 # Todolist(给人看的清单)
 
-> ⬜ 规划概念。PendingBot 在移动端充当 PendingCrew 的 crew 与人之间桥梁时,配套的一份**随意的、git 跟踪的、给人看的** todo list。它和 PendingCrew 给 crew / agent 看的 [cockpit 驾驶舱](../../pendingcrew/concepts/cockpit.md) **配对**——cockpit 是机器视角的递归驾驶舱,todolist 是人视角的轻量清单。相关:[PendingBot 定位](../vision.md) · [驾驶舱(cockpit)](../../pendingcrew/concepts/cockpit.md)。
+> handbook / 仓库里一类 **per-crew 的 todo markdown 文件**:本地、git 跟踪、session 直接读文件。一份**随意的、给人看的**轻清单——crew 跑到哪了、有什么该你拍板、有什么该你亲自去做。它**跟着 crew 层级走,就是 handbook 的一部分**,和 [声明式对账](../../pendingcrew/concepts/reconciliation.md) / [cockpit](../../pendingcrew/concepts/cockpit.md) 同属「文件即账本」这套账本观。相关:[PendingBot 定位](../vision.md)。
 
-## 逻辑
+**逻辑**
 
-- **一份给人看的清单,不是给 agent 看的看板。** todolist 是一串**人**要知道 / 要拍板的事:crew 跑到哪了、有什么在等你点头、有什么该你亲自去做。它服务于「人在移动端怎么跟一坨在跑的 crew 打交道」这个场景,落在 PendingBot 这个移动端主战场上。
-- **随意、轻。** 不是正式的 task 系统(那是 [cockpit](../../pendingcrew/concepts/cockpit.md) 聚合的、crew 持有的结构化账本)。todolist 故意做得随意:随手记、随手勾、不强求结构,像便签而不像项目管理工具。
-- **git 跟踪。** 这份清单随仓库走、有版本历史——它落在文件里、跟着 git 一起改,而不是某个不可见的服务端状态。这让「人看的清单」和「代码 / crew 的真实进展」长在同一棵树上,改动有迹可循。
+- **它是 repo 里的文件,不是云功能。** todolist 就是 handbook / 仓库里一个(或几个)markdown 文件,落盘、随 git 走、session 打开就能读。没有服务端状态、没有不可见的远端账本——它和代码、和 crew 的真实进展长在同一棵树上,改动有迹可循。
+- **per-crew,跟着 crew 层级。** 一份 todolist 属于某个 crew / 某个子树,放在它对应的目录里。这呼应 [声明式对账](../../pendingcrew/concepts/reconciliation.md) 的心智:账本存仓库级、**per-crew 只是沿层级切出来的过滤视图**。todolist 是这套观念在「给人看的轻清单」上的一个具体落点——它本身就是 handbook 的内容,不是另起一摊。
+- **给人看,很随意。** 它是一串**人**要知道 / 要拍板的事,不是给 agent 看的结构化看板。故意做得随意:随手记、随手勾、不强求结构,像便签而不像项目管理工具。
 
-## 为什么
+**为什么**
 
-- **机器视角和人视角要分开两份。** cockpit 给 crew / agent 看:递归聚合整个子树的 文档 / task / 进度 / tech-debt / drift chip,是机器要消费、要派活的结构化面。人不需要、也不该被那一整套灌进脑子。todolist 把**人真正要操心的那一小撮**抽出来,做成人读得舒服的轻量清单——两者是同一件协作的两个视角,**配对**而非重复。
-- **桥梁要落在人随身的设备上。** crew 在电脑 / 云端跑,但需要人拍板的时刻,人未必坐在电脑前。把「该你看 / 该你定」的事做成一份移动端的轻清单,人在手机上就能跟进、就能拍板——这正是 PendingBot 当 crew↔人 桥梁的具体抓手。
-- **「随意 + git 跟踪」是刻意的取舍。** 随意保证人愿意用(不被项目管理工具的仪式感劝退);git 跟踪保证它和代码不漂移(清单是仓库的一部分,不是另一个要单独维护、会和现实脱节的看板)。
+- **「是 repo 文件、不是云」正好化解 local-first 冲突。** 大绿豆的清单本来面临一个张力:要 git 跟踪(和代码不漂移)、又想随时随地加。把它**定义成仓库里的文件**就一刀切干净了——它不是云、是 repo 的一部分,所以不需要双主 sync、不需要自研同步层,也就没有 local-first 那套一致性难题要解。
+- **随意保人愿意用,git 跟踪保不漂移。** 随意,人才愿意随手记(不被项目管理工具的仪式感劝退);git 跟踪,清单才和代码不脱节(它是仓库的一部分,不是另一个要单独维护、会和现实脱节的看板)。这两条是刻意的取舍,缺一不可。
+- **轻清单就该只做轻清单。** 结构化的递归聚合、派活、drift 视图是 [cockpit](../../pendingcrew/concepts/cockpit.md) / [对账](../../pendingcrew/concepts/reconciliation.md) 的活;人真正要操心的那一小撮,抽出来做成读着舒服的轻清单就够了。两件事共用一套账本观,但各做各的,不互相吞。
 
-## 用在哪 · 长什么样(规划)
+**用在哪·长什么样**
 
-- **入口**:PendingBot 移动端(主战场),在 crew↔人 桥梁的语境里——大致挨着 Crew Tab 那条接缝,把「该人知道 / 该人定」的事汇成一份清单给人看。
-- **形态**:一份轻量、可勾选的清单;条目可能来自 crew 的进展、等待人拍板的请求,也可能是人随手记给自己的。底层是 git 跟踪的文件。
-- **与 cockpit 的关系**:同一坨协作,cockpit 是机器侧的全量驾驶舱(在 PendingCrew),todolist 是人侧的提要(在 PendingBot)。
+- **形态**:handbook / 仓库里一个 per-crew 的 markdown 文件,一份轻量、可勾选的清单。条目可能来自 crew 的进展、等你拍板的请求,也可能是你随手记给自己的。底层就是 git 跟踪的文件,session 直接读写。
+- **跟 crew 走**:放在对应 crew / 子树的目录下,沿层级派生出「这个 crew 此刻该人操心的事」。
 
-## 边界
+**边界**
 
-- **不是 task 系统 / 不是 cockpit。** 不做递归子树聚合、不做 drift chip 一键派活、不做结构化 task 看板——那些是 [cockpit](../../pendingcrew/concepts/cockpit.md)(PendingCrew)的活。todolist 只做「给人看的轻清单」这一件事。
-- **不抢 crew 编排。** 它是桥梁的人侧界面,不在里面做深度的 crew 操作;深度操作仍跳 PendingCrew。
-
-## 现状
-
-⬜ **规划。** 概念已定(人视角轻清单 + git 跟踪 + 与 cockpit 配对,落在 PendingBot 移动端的 crew↔人 桥梁里)。具体形态 / 入口 / 与 git 的落盘方式 / 与 cockpit 的数据接缝**均未实现**——和 [cockpit](../../pendingcrew/concepts/cockpit.md)、移动端桥梁一起属规划区。
+- **不单独造云功能。** 它就是 repo 文件,不起一套服务端、不做远端账本——这是它能避开 local-first 冲突的前提,别又把它做成云。
+- **不和 cockpit 自动衔接、不做双主 sync。** 不和 [cockpit](../../pendingcrew/concepts/cockpit.md) 配成「机器视角 vs 人视角」的自动配对,不在两边之间同步状态。它只是和 cockpit / 对账**同属一套账本观**(文件即账本),引用到此为止,不做数据接缝。
+- **想要移动端随时加 / 跨设备同步?用现成的,不造轮子。** 这类需求交给 **Apple 提醒事项 / Microsoft To Do** 这种成熟工具,不自研同步 / 不自建移动端清单。todolist 守住「repo 里给人看的轻清单」这一件事。
+- **不抢 crew 编排。** 不做递归子树聚合、不做 drift chip 一键派活、不做结构化 task 看板——那些是 [cockpit](../../pendingcrew/concepts/cockpit.md) / [对账](../../pendingcrew/concepts/reconciliation.md) 的活;深度 crew 操作仍跳 PendingCrew。
