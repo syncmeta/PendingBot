@@ -11,6 +11,7 @@ struct CrewCenterView: View {
     @EnvironmentObject private var sessionRunner: CrewSessionRunner
     @State private var showingDetail = false
     @State private var showingRemoteSessions = false
+    @State private var showingCockpit = false
     /// chunk2 T5（captain 唤醒=app 注入）：已通知过 captain 的 decision id ——
     /// 防止重复注入同一条。**放在常驻中栏**（而非按需 inspector），captain 编排
     /// 不能依赖 session 终端面板是否打开。
@@ -63,6 +64,12 @@ struct CrewCenterView: View {
                     .disabled(crewStore.selectedDetail == nil)
                 }
                 ToolbarItem {
+                    Button { showingCockpit = true } label: {
+                        Label("驾驶舱", systemImage: "speedometer")
+                    }
+                    .disabled(crewStore.selectedDetail == nil)
+                }
+                ToolbarItem {
                     Button { showingRemoteSessions = true } label: {
                         Label("服务端 session", systemImage: "rectangle.on.rectangle.angled")
                     }
@@ -86,6 +93,11 @@ struct CrewCenterView: View {
         .sheet(isPresented: $showingRemoteSessions) {
             if let detail = crewStore.selectedDetail {
                 RemoteSessionsView(crewId: detail.crew.id, crewTitle: detail.crew.title)
+            }
+        }
+        .sheet(isPresented: $showingCockpit) {
+            if let detail = crewStore.selectedDetail {
+                CockpitView(detail: detail)
             }
         }
         // chunk2 T5：captain 唤醒 = app 注入。常驻中栏**事件驱动**订阅待决策（去 2s
