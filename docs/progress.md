@@ -1,6 +1,12 @@
 # PendingBot / PendingCrew 进度账本 (Progress Ledger)
 
-**最近对账：2026-06-26**（pendingcrew 区按对账方法全核；其余区见 2026-06-19 起；对照实际代码 / 迁移 / git，不是看 task 标记）
+**最近对账：2026-06-26**（pendingcrew 区按对账方法全核 + mirror refresh；pendingbot/shared 期望页 sweep 收口并上 reconcile-check enforcePurity 门；其余区见 2026-06-19 起；对照实际代码 / 迁移 / git，不是看 task 标记）
+
+> **2026-06-26 pendingbot + shared handbook sweep + 上纯度门（`docs/pendingbot-shared-reconcile`，4 commit，纯文档 + 1 行 enforcePurity 翻转，reconcile-check 三区全 enforce 通过，未合 main，task #445）**：接着 pendingcrew 那轮（`830af68d`）、按同一 [reconciliation](handbook/pendingcrew/concepts/reconciliation.md) 方法把剩下两区收口。
+> - **① 期望页 sweep（`5cb6890b` pendingbot 18 页 -49 / `6b4c0827` shared 19 页 -88）**：按 `_conventions.md`「存量待迁」把两区期望页正文尾部残留的「现状」状态段（`## 现状` 段 + `**现状**` 块，含 subject/billing-subject/wallet-pnc/group-pledge 的 `## 现状` 表格段）整段删——状态归现状 handbook、期望页收口纯意图。`docs/state/{pendingbot,shared}.md` 镜像已全覆盖（0 条需补，同 pendingcrew）。保留 注意/边界 的 ❌⚠️、vision/rich-perception 的 north-star ⬜ 意图、引用 emoji。pendingbot 区由只读+编辑 subagent 跑、shared 区主体亲跑。grep 复核两区期望页 现状段=0。
+> - **② roadmap-and-status 净化（`5839394f`）**：main 中途落地的 reconcile-check 引擎（`c93f1113`，#444）给 shared 翻 enforcePurity 时,唯一拦路是这页 mid-body `## 现状 rollup`（地图页的结构性状态段,非尾部块,sweep 不碰）。征求用户后选「净化」:删 `## 现状 rollup` + `## 技术债 top`（实质已在 progress/state/tech-debt 重复、本页只是指针）,标题「路线图与现状」→「路线图」,正文（逻辑/为什么/注意）重写纯意图 + 向下指针;同步修 pivots 对本页旧引用。shared 现状仍由 `docs/state/shared.md` 镜像承载,不丢信息。
+> - **③ 上 enforcePurity 门（`23dcae8e`）**：`scripts/reconcile-check.ts` 把 pendingbot + shared 两区 `enforcePurity` false→true（pendingcrew 此前已 true）。自此 pre-commit `reconcile-check` 拦住任何往这三区期望页塞回现状段的回潮（fail-loud）。allowlist 保持空,`bun scripts/reconcile-check.ts` 三区全 enforce=0 violation、self-test 绿,commit `5839394f` 的 pre-commit hook 已实跑验过。
+> - **剩余**：stack 区（24 页）期望页现状段仍待定——它没有 `docs/state/stack.md` 镜像、enforcePurity 仍 false,且 stack=各服务静态角色,要不要状态追踪是单独一件事（本轮没碰,同 pendingcrew 那轮判断）。
 
 > **2026-06-26 pendingcrew handbook 按对账方法推进（`docs/pendingcrew-reconcile`，3 docs commit，纯文档，未合 main）**：用户「把 pendingcrew 按 handbook 推进 / 和 pendingcrew 对齐」。按 [reconciliation](handbook/pendingcrew/concepts/reconciliation.md) 方法跑了一轮完整对账（期望 vs 现状 vs 代码），三步：
 > - **① 期望页 sweep（`d10ae8a2`）**：按 `_conventions.md`「存量待迁」把 pendingcrew 19 个期望页正文残留的「现状」状态段（16 `## 现状` + crew/captain/dag 三页 `**现状**`）整段删（净 -155 行）——状态归现状 handbook，期望页收口为纯意图。另清两处把状态混进意图正文的（runtime 机器对比表「现状」行、governance 三处页首 ⬜/🟨 前缀）；保留 注意/边界 的 ❌⚠️（死方案警示=意图）。grep 复核 pendingcrew 期望页 现状段=0。
