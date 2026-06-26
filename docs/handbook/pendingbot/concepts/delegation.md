@@ -39,5 +39,3 @@ bot 跨自己边界求助,有两条不同性质的路径:
 - ⚠️ **`talk_to_bot` 不是当前代码里的工具。** 早期心智里有「bot 直接找另一个 bot 对话」这类设想,现状的两条委派路径是 `delegate_to_specialist`(给模型)和 `ask_friend`(给真人好友)——别把 `talk_to_bot` 当现存能力写进文档。
 - `ask_friend` 的好友匹配按名字、且要求名字出现在 bot 本回合的社交圈快照里——这把它和 [社交图](bot-social-graph.md) 绑在一起,问询能问谁取决于 bot 当前的好友集。
 - board 的工具页可以整体禁用某个工具(kill-switch),所以「常开」是默认态,不是不可关。
-
-**现状** — 🟨 **代码已落,端到端真验是尾巴**。`delegate_to_specialist`(模型 slug + fallback 路由 + 计费审计)、`ask_friend`(投递 + 开问询 + 推送)、`submit_inquiry_answer`(活跃融入 / 不活跃冒泡两路由)都在 edge 代码里、按可见性门控挂载。完整端到端(公有 bot → 真好友 → 回答 → 回流)需真账号 / 真消息触发,属 pre-launch 未跑的尾巴。
