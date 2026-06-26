@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "reviewed_at": "2026-06-26",
+  "_doc": "Grandfathered reconcile-check violations. Each: {key: '<code>:<area>:<detail>', reason, expires_on?}. Keep empty; prefer fixing the books or flipping an area's enforcePurity in scripts/reconcile-check.ts as its sweep lands. See docs/handbook/pendingcrew/concepts/reconciliation.md.",
+  "allowed": []
+}
