@@ -29,19 +29,74 @@ struct CockpitTask: Identifiable, Equatable {
     let id: String
     let title: String
     let status: String      // todo / doing / pending-qa / done / dropped
+    let owner: String
+    let crew: String        // 归属 crew(驾驶舱沿 DAG 子树过滤);~ = 无
     let expects: [String]
     let state: [String]
     let deps: [String]
+    let updated: String     // 时间戳(dashboard 排「最近」用)
+}
+
+/// handbook 目录树节点(期望页以目录形式浏览)。
+struct HandbookNode: Identifiable, Equatable {
+    let id: String          // 相对 docs/handbook 的路径,如 "pendingcrew/concepts" / "pendingcrew/concepts/crew"
+    let name: String        // 显示名(文件夹名 / 页末段)
+    let isPage: Bool        // true = .md 页;false = 文件夹
+    var children: [HandbookNode]
+    var pageRelpath: String? { isPage ? id : nil }   // 渲染:docs/handbook/<id>.md
+    /// OutlineGroup 用:叶子返 nil(才不画展开箭头),文件夹返非空。
+    var childrenOrNil: [HandbookNode]? { children.isEmpty ? nil : children }
+}
+
+/// dashboard 统计(纯展示 rollup)。
+struct CockpitStats: Equatable {
+    let topicCount: Int
+    let taskCount: Int
+    let topicStatus: [StatusCount]   // 现状条按桶
+    let taskStatus: [StatusCount]    // task 按桶
+    let recentTasks: [CockpitTask]   // 按 updated 倒序
+
+    struct StatusCount: Equatable, Identifiable { let bucket: String; let count: Int; var id: String { bucket } }
+
+    static func from(_ data: CockpitData) -> CockpitStats {
+        func tally(_ statuses: [String]) -> [StatusCount] {
+            var m: [String: Int] = [:]
+            for s in statuses { m[cockpitStatusBucket(s), default: 0] += 1 }
+            return ["planned", "partial", "pending-qa", "done", "dropped", "other"]
+                .compactMap { k in m[k].map { StatusCount(bucket: k, count: $0) } }
+        }
+        let recent = data.tasks.sorted { $0.updated > $1.updated }.prefix(8)
+        return CockpitStats(
+            topicCount: data.topics.count,
+            taskCount: data.tasks.count,
+            topicStatus: tally(data.topics.map(\.status)),
+            taskStatus: tally(data.tasks.map(\.status)),
+            recentTasks: Array(recent))
+    }
+}
+
+/// status → 桶(纯展示分组,**不判 drift**)。现状 planned/partial/done(+pending-qa);task todo/doing/…
+func cockpitStatusBucket(_ raw: String) -> String {
+    let s = raw.lowercased()
+    if s.contains("pending-qa") { return "pending-qa" }
+    if s.hasPrefix("done") { return "done" }
+    if s.hasPrefix("partial") || s == "doing" { return "partial" }
+    if s.hasPrefix("planned") || s == "todo" { return "planned" }
+    if s == "dropped" { return "dropped" }
+    return "other"
 }
 
 /// 一次加载出的三本账数据。
 struct CockpitData {
     var topics: [CockpitTopic]
     var tasks: [CockpitTask]
+    /// 期望 handbook 目录树(期望页以目录形式浏览)。
+    var handbookTree: [HandbookNode]
     /// docs/handbook 绝对目录,用于详情页按需读期望页 markdown。
     var handbookDir: URL
 
     func task(_ id: String) -> CockpitTask? { tasks.first { $0.id == id } }
+    var stats: CockpitStats { CockpitStats.from(self) }
 }
 
 // MARK: - Pure parsing (Foundation only — swiftc 可单测)
@@ -83,9 +138,12 @@ enum CockpitParser {
             id: id,
             title: fmScalar(fm, "title"),
             status: fmScalar(fm, "status"),
+            owner: fmScalar(fm, "owner"),
+            crew: fmScalar(fm, "crew"),
             expects: fmList(fm, "expects"),
             state: fmList(fm, "state"),
-            deps: fmList(fm, "deps"))
+            deps: fmList(fm, "deps"),
+            updated: fmScalar(fm, "updated"))
     }
 
     /// 从现状条 task: 行抽新账本 id(yyyymmdd-xx);#NNN / Tx.y 忽略。
@@ -189,12 +247,49 @@ enum CockpitLoader {
             }
         }
 
-        return CockpitData(topics: topics, tasks: tasks, handbookDir: handbookDir)
+        return CockpitData(
+            topics: topics, tasks: tasks,
+            handbookTree: handbookTree(handbookDir: handbookDir),
+            handbookDir: handbookDir)
     }
 
     /// 读期望页 markdown(详情页用)。relpath 形如 "pendingcrew/concepts/cockpit"。
     static func readExpectation(handbookDir: URL, relpath: String) -> String? {
         readString(handbookDir.appendingPathComponent("\(relpath).md"))
+    }
+
+    /// 期望 handbook 目录树 —— 文件夹/页递归。文件夹在前、页在后,各按名排。
+    /// 仓库级一份;per-crew 沿 DAG 切片是显示层的事(cockpit.md:派生无损、零额外存储)。
+    static func handbookTree(handbookDir: URL) -> [HandbookNode] {
+        buildNodes(dir: handbookDir, prefix: "")
+    }
+
+    private static func buildNodes(dir: URL, prefix: String) -> [HandbookNode] {
+        let fm = FileManager.default
+        guard let items = try? fm.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])
+        else { return [] }
+        var folders: [HandbookNode] = []
+        var pages: [HandbookNode] = []
+        for url in items {
+            let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            if isDir {
+                let name = url.lastPathComponent
+                let rel = prefix.isEmpty ? name : "\(prefix)/\(name)"
+                let kids = buildNodes(dir: url, prefix: rel)
+                if !kids.isEmpty {
+                    folders.append(HandbookNode(id: rel, name: name, isPage: false, children: kids))
+                }
+            } else if url.pathExtension == "md" {
+                let base = url.deletingPathExtension().lastPathComponent
+                if base == "README" { continue }
+                let rel = prefix.isEmpty ? base : "\(prefix)/\(base)"
+                pages.append(HandbookNode(id: rel, name: base, isPage: true, children: []))
+            }
+        }
+        folders.sort { $0.name < $1.name }
+        pages.sort { $0.name < $1.name }
+        return folders + pages
     }
 
     private static func markdownFiles(in dir: URL) -> [URL] {
