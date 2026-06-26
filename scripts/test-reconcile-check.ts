@@ -4,9 +4,13 @@ import {
   pageHasStatusSection,
   isValidStatus,
   evaluateReconcile,
+  collectViolations,
   violationKey,
+  parseTaskFile,
+  extractTaskIds,
   type Area,
   type StateEntry,
+  type Task,
 } from './reconcile-check';
 
 // ---- parseStateEntries ---------------------------------------------------
@@ -142,5 +146,77 @@ const expired = evaluateReconcile(
   new Date('2026-06-26T00:00:00Z'),
 );
 assert.equal(expired.blocked.length, 1, 'expired allowlist entry no longer suppresses');
+
+// ---- parseTaskFile -------------------------------------------------------
+
+const taskMd = `---
+id: 20260626-rc
+title: reconcile-check
+status: done
+owner: claude-session
+crew: ~
+expects: [pendingcrew/concepts/reconciliation]
+state: [pendingcrew/concepts/reconciliation, pendingcrew/concepts/cockpit]
+deps: [20260626-tl]
+created: 2026-06-26
+updated: 2026-06-26
+---
+
+body text
+`;
+const tf = parseTaskFile(taskMd);
+assert.equal(tf.id, '20260626-rc');
+assert.equal(tf.status, 'done');
+assert.deepEqual(tf.expects, ['pendingcrew/concepts/reconciliation']);
+assert.deepEqual(tf.state, ['pendingcrew/concepts/reconciliation', 'pendingcrew/concepts/cockpit']);
+assert.deepEqual(tf.deps, ['20260626-tl']);
+assert.deepEqual(parseTaskFile('---\nid: x\nstatus: todo\nexpects: []\nstate: []\ndeps: []\n---\n').deps, [], 'empty list → []');
+
+// ---- extractTaskIds (only new-ledger id form) ----------------------------
+
+assert.deepEqual(extractTaskIds('20260626-qa(Mac/真机 GUI QA 批次)'), ['20260626-qa']);
+assert.deepEqual(extractTaskIds('20260626-rc / 20260626-tl / 20260626-cp(对账引擎)'), ['20260626-rc', '20260626-tl', '20260626-cp']);
+assert.deepEqual(extractTaskIds('#443(Mac/真机 GUI QA 批次)'), [], 'Claude #id is not a new task id');
+assert.deepEqual(extractTaskIds('T2.3 / T2.4 / T1.2(roadmap)'), [], 'roadmap id is not a new task id');
+assert.deepEqual(extractTaskIds('—'), []);
+
+// ---- cross-ledger checks via collectViolations ---------------------------
+
+function taskArea(over: Partial<Area> = {}): Area {
+  return {
+    name: 'pendingcrew',
+    handbookRelpaths: ['concepts/cockpit'],
+    pagesWithStatusSection: [],
+    stateEntries: [entry('concepts/cockpit')],
+    enforcePurity: false,
+    stackCoarse: false,
+    ...over,
+  };
+}
+function task(over: Partial<Task> = {}): Task {
+  return { id: '20260626-aa', status: 'todo', expects: ['pendingcrew/concepts/cockpit'], state: ['pendingcrew/concepts/cockpit'], deps: [], ...over };
+}
+function seWithTask(taskRef: string): StateEntry {
+  return { key: 'concepts/cockpit', status: 'partial', fields: new Set(['status', '现状', '证据', 'task']), task: taskRef };
+}
+
+assert.equal(collectViolations([taskArea()], [task()]).length, 0, 'clean area + task passes');
+
+assert.equal(collectViolations([taskArea()], [task({ expects: ['pendingcrew/concepts/ghost'] })])[0]?.code, 'task-expects-missing');
+assert.equal(collectViolations([taskArea()], [task({ state: ['pendingcrew/concepts/ghost'] })])[0]?.code, 'task-state-missing');
+assert.equal(collectViolations([taskArea()], [task({ deps: ['20260626-zz'] })])[0]?.code, 'task-dep-missing');
+assert.equal(collectViolations([taskArea()], [task({ id: '20260626-a1' }), task({ id: '20260626-a2', deps: ['20260626-a1'] })]).length, 0, 'resolvable dep passes');
+assert.equal(collectViolations([taskArea()], [task({ status: 'wip' })])[0]?.code, 'bad-task-status');
+
+// reverse: 现状条 task: 引用新 id 必须解析到 task 文件;#NNN/roadmap 豁免
+assert.equal(collectViolations([taskArea({ stateEntries: [seWithTask('20260626-zz(gone)')] })], [task()])[0]?.code, 'state-task-missing');
+assert.equal(collectViolations([taskArea({ stateEntries: [seWithTask('20260626-aa(ok)')] })], [task()]).length, 0, 'existing task ref passes');
+assert.equal(collectViolations([taskArea({ stateEntries: [seWithTask('#443(claude id)')] })], [task()]).length, 0, 'Claude #id ref is exempt');
+
+// tasks flow through evaluateReconcile + allowlist
+const taskViol = { code: 'task-expects-missing', area: 'tasks', detail: '20260626-aa → pendingcrew/concepts/ghost' };
+const taskAllowed = evaluateReconcile([taskArea()], [{ key: violationKey(taskViol), reason: 'pending page' }], new Date(), [task({ expects: ['pendingcrew/concepts/ghost'] })]);
+assert.equal(taskAllowed.blocked.length, 0, 'allowlisted task violation does not block');
+assert.equal(taskAllowed.allowed.length, 1);
 
 console.log('reconcile-check fixture tests passed.');

@@ -40,5 +40,5 @@ pre-commit:
     # areas. Reports only; never edits. See reconcile-check.ts +
     # docs/handbook/pendingcrew/concepts/reconciliation.md.
     - name: reconcile-check
-      glob: "{docs/handbook/**/*.md,docs/state/*.md}"
+      glob: "{docs/handbook/**/*.md,docs/state/*.md,docs/tasks/**/*.md}"
       run: bun scripts/reconcile-check.ts
