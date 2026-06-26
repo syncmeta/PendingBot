@@ -74,8 +74,8 @@ task: —
 
 ## concepts/reconciliation
 status: partial
-现状: 两本账已 bootstrap——期望(docs/handbook)+ 现状(docs/state 三区镜像)可并排对照、现状条带 status/证据/task;引擎其余(对齐渲染 / 生 session 补差 / fail-loud 断言)随驾驶舱未落,期望页旧「现状」段 + emoji 待 sweep。
-证据: docs/state/ 三区已建(705694cd);递归自指——大绿豆 handbook 自身即首个对账对象
+现状: 两本账已 bootstrap——期望(docs/handbook)+ 现状(docs/state 三区镜像)可并排对照、现状条带 status/证据/task;引擎其余(对齐渲染 / 生 session 补差 / fail-loud 断言)随驾驶舱未落。期望页残留「现状」段 sweep 进行中:pendingcrew 区已收口为纯意图(19 篇 0 残留),pendingbot(18 篇)+ shared(19 篇)+ stack(24 篇)期望页仍带旧「现状」段 + emoji 待 sweep(stack 区现状镜像 docs/state/stack.md 尚未建)。
+证据: docs/state/ 三区已建(705694cd);pendingcrew sweep 已落(d10ae8a2,grep 期望页 现状段=0);递归自指——大绿豆 handbook 自身即首个对账对象
 task: #439
 
 ## concepts/cockpit
@@ -110,6 +110,6 @@ task: —(尾巴记 tech-debt)
 
 ## features/cross-device-control
 status: partial, pending-qa
-现状: 遥控地基已落且 viewer 旁观链已端到端真机验——按 session 绑定中转点(Durable Object)+ WS 协议 + 路由 + 离线队列 + 鉴权 + 单测;runner 实时推状态「WS 替轮询」= DONE;viewer 旁观链真机 E2E 验(Mac 起 claude session 状态机 + iOS PendingBot viewer 真机看到远端渲染);远端"下指令真注入运行中 session"卡在本地 ↔ edge 绑定尾巴(worker 部署被权限层拦待用户手动部署);fly 云遥控 + 终端字节级跨端隧道未做(v1.1 / 另一条线)。
-证据: 中转地基 P0 + 单测;viewer 旁观链真机端到端验(iOS PendingBot viewer 真机验通)
-task: —
+现状: 遥控地基 + PendingCrew 侧 viewer 实时层已落——按 session 绑定中转点 SessionProxyDO(viewer/runner 角色 + 离线队列 500 上限 + 持久信箱权威源 + 路由侧角色鉴权)+ WS 协议 + 单测;runner 边跑边推 `session.state`「WS 替轮询」= DONE。注意(2026-06-26 refresh 校正):原 iOS PendingBot 那套 crew/viewer 已于 095dfc2b(2026-06-15)整体删除(待重做),当前 viewer 链只在 PendingCrew(Mac/iPad)端;真机只验过早期 3s HTTP 轮询只读 viewer(2026-06-02),带真 device-grant 的完整 WS 往返(runner 连上→DO 推 state→viewer 实时看到→viewer 发命令)尚未真机验(T5.3 两设备 E2E 尾巴),仅验过 prod 路由活性(wss 401)。远端"下指令真注入运行中 session"卡在本地↔edge 绑定尾巴(worker 部署被权限层拦待用户手动部署);fly 云遥控 + 终端字节级跨端隧道未做(v1.1 / 另一条线)。
+证据: SessionProxyDO apps/edge/src/durable-objects/session-proxy.ts + protocol + 单测 apps/edge/tests/session-proxy.test.ts(c7b2cd2d);PendingCrew viewer apps/pendingcrew/Sources/Mac/LocalRunner/SessionProxyClient.swift + Services/CrewRealtimeClient.swift;iOS PendingBot viewer 已删(095dfc2b);完整 WS E2E 未真机验(tech-debt T4.5 / progress T5.3)
+task: —(T5.3 两设备 E2E + 远端注入尾巴记 tech-debt)
