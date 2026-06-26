@@ -20,7 +20,7 @@
 ```
 docs/handbook/
 ├── README.md            本文件
-├── _conventions.md      每篇怎么写(模板 + 现状标记 ✅/🟨/⬜)
+├── _conventions.md      每篇怎么写(模板 + 现状记在 docs/state/)
 │
 ├── shared/              ── 基座:两产品共享 ──
 │   ├── charter.md       产品信条 + 红线(工程约定引用根 CLAUDE.md)
@@ -51,6 +51,7 @@ docs/handbook/
 ---
 
 **配套的账本层**(手册之外,结构化、可被未来的 PendingCrew 项目驾驶舱渲染):
+- [`docs/state/`](../state/) — **现状 handbook**:镜像本手册结构的另一棵树,记每个概念/功能的实际状态(`status` / 现状 / 证据 / task)。手册写**期望**、它写**现状**,对齐 = 同路径并排(见 [声明式对账](pendingcrew/concepts/reconciliation.md))。
 - [`docs/tech-debt.md`](../tech-debt.md) — 结构风险登记册(**计划**重构成一债一文件 + frontmatter)
 - `docs/decisions.md` — 内容升华并入各 `concepts`,不再单列
 - `docs/progress.md` — 编年 rollup,保持单文件

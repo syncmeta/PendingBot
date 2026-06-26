@@ -73,10 +73,10 @@ status: partial, pending-qa
 task: —
 
 ## concepts/reconciliation
-status: planned
-现状: 设计——声明式对账(期望/现状/代码三层 + 对齐/补差两段式)模型已拍定,但零落地;现有四账本(roadmap / tech-debt / progress / task)是雏形,散、期望与现状混在一起,状态仍 emoji 未迁 frontmatter;此现状 handbook 本身就是「递归自指」第一个被对账对象。
-证据: 无落地证据 —
-task: —
+status: partial
+现状: 两本账已 bootstrap——期望(docs/handbook)+ 现状(docs/state 三区镜像)可并排对照、现状条带 status/证据/task;引擎其余(对齐渲染 / 生 session 补差 / fail-loud 断言)随驾驶舱未落,期望页旧「现状」段 + emoji 待 sweep。
+证据: docs/state/ 三区已建(705694cd);递归自指——大绿豆 handbook 自身即首个对账对象
+task: #439
 
 ## concepts/cockpit
 status: planned
