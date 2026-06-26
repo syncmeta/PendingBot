@@ -2,6 +2,11 @@
 
 **最近对账：2026-06-26**（pendingcrew 区按对账方法全核 + mirror refresh；pendingbot/shared 期望页 sweep 收口纯意图（曾上的 reconcile-check 门已按 handbook 边界撤回，见下）；其余区见 2026-06-19 起；对照实际代码 / 迁移 / git，不是看 task 标记）
 
+> **2026-06-26 驾驶舱看板 MVP — PendingCrew SwiftUI 渲三本账（`feat/cockpit-board` `f5cd6a42`，合 main，task #447 / 20260626-cp，macOS build 绿、GUI 真机验待）**：用户「开建」。落 [cockpit.md](handbook/pendingcrew/concepts/cockpit.md) 的看板半边 read-only MVP——**纯渲染器**（差靠人扫两栏读，零 violation / 检查，正合刚撤回的 reconcile-check 那条边界）。
+> - **`CockpitView`（Mac，`#if os(macOS)`）**：读选中 crew 的 `workingDirectory` 三本账（期望 docs/handbook / 现状 docs/state / task docs/tasks），HSplitView 左栏 topic 列表（按 area 分组 + status 色块[planned 灰 / partial 琥珀 / pending-qa 金 / done 绿] + 现状一句话 + task chips，按 status 分段筛），点开右栏看 期望页 markdown（vendored `MarkdownText` `.article`）| 现状（status/证据）| task 卡。`CrewCenterView` toolbar「驾驶舱」入口开 sheet。
+> - **`CockpitModel`（Foundation only）**：轻解析 `parseStateFile`/`parseTaskFile`/`extractTaskIds`——只抽 status/现状/证据/task，正文交 MarkdownText 原样渲（**不解析成 AST，守边界**）。swiftc 单测过（11 检查）。
+> - **验证**：xcodegen + macOS `xcodebuild` = BUILD SUCCEEDED。**尾巴**：① 控制半边（从某 topic 看差一步生 session，接现有 session launch）② per-crew 沿 DAG 子树过滤 ③ GUI 真机活验（需登录态 / 本地 crew 指向带三本账的 repo;递归自指=渲大绿豆自己）。
+
 > **2026-06-26 撤回 reconcile-check 自动断言（违 handbook 不-drift 边界）（`chore/drop-reconcile-check`）**：用户「不要这个东西——不需要保持现状和期望的强一致和监控漂移」。核 handbook 坐实:reconciliation.md **边界**白纸黑字「**不自动检测 drift——差靠人读两本**」、cockpit.md「驾驶舱不替人判 drift、不重解析文档」。我同日(`c93f1113`)建的 reconcile-check 自动断言 + lefthook 门正是自动检测 + 强一致,**违背此定调,撤回**。
 > - **删**:`scripts/reconcile-check.ts` + test + `docs/reconcile-allowlist.json` + lefthook `reconcile-check` 门 + package.json `reconcile:check` 脚本;reconciliation.md 自相矛盾的「fail-loud 断言」bullet;task `20260626-rc`(只为建它而立)。
 > - **留**:三本账(期望/现状/task)+ 互链(task→期望/现状、现状→task)——链只为**导航 / 驾驶舱渲染可点穿**,不做机器校验。task 账本(#446)本身保留,只去其断言部分。
