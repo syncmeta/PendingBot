@@ -26,5 +26,3 @@
 - **不在中国大陆上架** — 中文只是开发语言,评估时别把中国 App Store 限制当约束。
 - **关键基础设施外包,零 VPS** — 模型走 Cloudflare AI Gateway 统一计费(OpenRouter 留 fallback);计费引擎 Polar(MoR)+ RevenueCat,门禁走 WalletDO,不直连 Stripe;观测用 Grafana / PostHog / Langfuse / Sentry。
 - **域名 `pendingname.com`** — 邮件 / Site URL / Universal Link 都基于它;对外品牌站在另一个仓库。
-
-**现状** — ✅ 当前信条(随重大转向更新,变更史见 `shared/evolution/pivots`)。

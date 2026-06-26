@@ -24,7 +24,3 @@
 **注意**
 - 群邀请预览端点也走**限流**(同 handle 查找桶),挡枚举。
 - 加入是"进群"还是"递申请",取决于群本身的加入策略,不取决于邀请码本身。
-
-**现状** — 🟨 后端已落、iOS 核心已编译验证,有已知尾巴。
-- **后端 ✅**(D2,迁移 `20260601082502`,push live + typecheck 绿):per-inviter token 表 + 成员 / 申请行的 `invited_by` + create/list/revoke/resolve/redeem 全套,批准时把 `invited_by` 落到成员行,RLS 不放宽(`group-invites.ts`)。
-- **iOS 🟨**(D2,2026-06-01,BUILD SUCCEEDED):扫码 → 预览「由 X 邀请」→ 加入 / 记 `invited_by` 已编译验证;成员可签发 per-inviter 群邀请链接 + 二维码。**残留**:① `/g/` universal-link 的深链点击 presenter 接线未接(**扫码路径已通**,点链接路径未接);② 模拟器视觉验证未单独做(结构同已端到端验证的 bot 邀请,低风险)。

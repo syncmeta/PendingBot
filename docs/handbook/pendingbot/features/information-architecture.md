@@ -34,5 +34,3 @@ PendingBot 是一个三端(iPhone / iPad / Mac)IM。主导航固定**五个 tab*
 
 - **Crew tab 的定位易被旧 spec 带偏**。早期产品设计里 Crew tab 一度被想成更重的面板;现状是**纯查看 + 遥控入口**,编排能力一律归 PendingCrew。写任何 Crew tab 相关的东西,先认准这条边界。
 - **iPad/Mac 三列壳曾长期跑不通**(`FeatureSurface` 列在视图图外求值导致首启崩溃 / @State 不灌注),已修复(2026-06-10)。所以"五 tab 全部共享 surface"这件事是**最近才真正成立**的,别参照更早的 Mac 平行 UI 描述。
-
-**现状** — 🟨 五个 tab 的代码全部落地、三端共享 `FeatureSurface` 渲染(`feat/tri-platform-ui` 已合 main),Mac 首屏崩溃已修、本机 GUI 实测过消息 / 好友 / 来信三个 tab 渲染真账号数据。**尾巴**:iPad / iPhone 真机的登录态可视回归(尤其 iPad 三列布局 / 深链切 tab)尚未逐一留证,并入三端真机 QA。

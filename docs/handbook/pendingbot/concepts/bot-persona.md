@@ -37,5 +37,3 @@
 - **vanity slug 已彻底退役。** 早期 bot 有个 `slug` 当公开身份 / 加入路径,现已**不再是产品概念**:bot = 显示名 + 自动 id。⚠️ DB 层 `bots.slug` 列**仍然存在且 NOT NULL**(历史列,预设 bot 还在用),但产品上没有任何地方把它当「可搜的 @名 / 加入路径」——别在文档或新功能里把 slug 当 bot 的对外身份(详见 [bot 可见性](bot-visibility.md) 与 [bot 邀请](../features/bot-invites.md))。
 - **`config` 可由 iOS 直接经 RLS 写**(不只走 `/v1/bots` 端点),所以消费 config 的代码不能盲信形状——这是已知的「双写入口」,读取侧都做防御解析。
 - 配置里有 `modelPool`(新)和 `arena`(旧客户端写的同义键)两个键并存;新代码读 `modelPool`,`arena` 是兼容尾巴。
-
-**现状** — 🟨 **核心已落,部分未端到端验**。模型池 + 预设解析(对话时展开 + KV 缓存)+ 盲盒抽取 + config 旋钮 + KV 缓存失效都在代码里跑;model-roles(识图/语音/来信等角色默认)已收口进 board 可配并部署。盲盒/换模型的端到端真机冒烟仍是尾巴(需登录态 GUI 构建,见 progress #297)。

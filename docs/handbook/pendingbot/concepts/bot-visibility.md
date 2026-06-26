@@ -33,5 +33,3 @@
 - ❌ **`public_open`(陌生人可加入档)** —— 已整档删除(迁移 `20260527091508`),只剩 `private` / `public_invite` 两档。旧迁移 `0002_bot_visibility.sql` / `0022` / `0023` 里大量 `public_open` 分支是**历史代码**,别当现状。
 - ❌ **slug-as-public-identity(按 slug 直查 bot 并加)** —— 已彻底返工成 invite-token 模型(D1)。`bots.slug` 列在 DB 里**还在**(NOT NULL,预设 bot 还挂着),但产品上 slug 已不是任何概念,**别据此实现新功能**。
 - 反向核实:已 drop 的 `public_open` 在 edge / iOS / schema 里只剩注释,无会 500 的活引用(见 `stale-model-audit-2026-06-15.md` 反向核实 #2)。
-
-**现状** — ✅ **两档模型已落地并在跑**。`public_open` 删除迁移已 push live;RLS(`bots_visible_read` / `is_bot_invitee`)、单向公开触发器、`open_user_bot_conv` 的两档分支都已按现状实现。配套的邀请链路端到端验证见 [bot 邀请](../features/bot-invites.md)(D1,✅ 2026-06-01)。

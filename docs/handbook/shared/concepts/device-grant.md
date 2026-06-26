@@ -36,5 +36,3 @@ PendingCrew(Mac/iPad 编排工作台)不做独立的应用内全权登录,登录
 - **🟨 `devicePublicKey` 还是占位字符串,grant 没和物理设备做密码学绑定。** PendingCrew 客户端传的是 `"scaffold-placeholder-key-…"`(`PendingCrewAPI.swift`)。这意味着设备公钥还没真正参与签发,grant 与具体物理设备的密码学绑定尚未闭合 —— Phase 4 跨端遥控前置必做,已记 tech-debt。别把这条当已验证。
 - **"登录页搬 PendingBot + 确认卡"是 2026-06-17 的演进,不是新模型。** 它只换了登录**入口 UI**(镜像 PendingBot 登录页 + 同发布者确认卡),服务端 device-login / mint / 家族 SSO 语义不变。安全立场("只持 scoped grant、不共享全权 session")完全沿用 2026-06-08 SSO spec。
 - **appKind 枚举没有 iPad 变体** —— iPad 上 PendingCrew 复用 `pendingcrew_macos`(命名漂移,不影响逻辑,`appGrantCompatible` 只认 `pendingcrew` 前缀族)。已记 tech-debt。
-
-**现状** — 🟨 服务端三条路径的端点都已落 + 部署(device-login challenge / `/device-grant/mint` / `/me/family-credential`,家族凭据签发 + 级联撤销 + scope 夹逼);客户端 P1(确认卡 + 家族 SSO mint)+ P2(直接登录栈)已落代码。**真机尾巴多且必做**:共享 keychain 跨 app 真读、OAuth 全链路、扫码端到端,只能真签名 app + Xcode GUI 验(headless ad-hoc 构建必失败);且 `devicePublicKey` 占位未闭合。证据见 [`docs/progress.md`](../../../progress.md) T1.3 + 2026-06-17 登录搬迁行;细节下指 [`2026-06-08 SSO spec`](../../../superpowers/specs/2026-06-08-pendingcrew-login-sso-design.md) 与 [`2026-06-17 登录港 spec`](../../../superpowers/specs/2026-06-17-pendingcrew-login-port-design.md)。

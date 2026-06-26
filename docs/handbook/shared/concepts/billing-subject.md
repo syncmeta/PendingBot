@@ -74,17 +74,3 @@
 - **上报给计费平台的是计量元数据 + 金额,不是聊天内容。** 聊天真身只在 Supabase;Polar 拿到的只是"某 subject 花了多少 PNC、什么类别"。
 
 - **markup 只在卖包体现**——别在新增某类服务计费时顺手往扣费里加价,那会让成本对账算不清。
-
----
-
-## 现状
-
-| 维度 | 标记 | 说明 |
-|---|---|---|
-| 责任主体解析(门禁 / 扣费共用单口子:群→`responsible_subject_id`,1v1/系统→发起人) | 🟨 | 代码已落(`usage-gate.ts` resolveBillingSubjectId + router 扣费同源),逻辑自洽;但整套计费 **pre-launch 未开、端到端未真验** |
-| 统一计费(推理走 AI Gateway Unified Billing + OpenRouter fallback) | ✅ | provider 路由已对齐 4-provider 统一计费主路 + OR fallback;无用户 BYOK(Gemini 经平台自存 key 是受控合法例外) |
-| BYOK 计费路径退役 | ✅ | 用户自带 key 抵扣模型费的路径已不存在;残留只是 PendingCrew 本地模式的命名漂移 |
-| 供应商真实成本 → PNC 折算、运行时不加 markup | ✅ | `pnc.ts`(27 PNC=1USD、整数 micros)+ 路由不加 markup;旧 credits/markup 框架已拆(v1 credits 列 + `getMarkup`/`usdToPnd` 已 drop) |
-| 计费总开关 | 🟨 | `BILLING_ENABLED` **默认 OFF**——关时门禁不挡、不扣费、不上报,pre-launch 测试者不被空钱包锁死;开之前 welcome bonus 防薅等洞需先堵(见 tech-debt) |
-
-> 现状证据:[`docs/progress.md`](../../../progress.md) §4b(Polar 引擎大转向 P0–P2 表)、[`docs/stale-model-audit-2026-06-15.md`](../../../stale-model-audit-2026-06-15.md)(provider 路由对齐 + BYOK 命名漂移)、[`docs/tech-debt.md`](../../../tech-debt.md)(welcome bonus 薅羊毛、旧 credits 框架拆除)。权威定义以本篇为准;实现/选型细节下指 [`specs/2026-06-01-billing-engine-design.md`](../../../superpowers/specs/2026-06-01-billing-engine-design.md)。

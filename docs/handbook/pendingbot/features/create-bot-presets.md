@@ -40,5 +40,3 @@
 - **默认私有**(从早期某版的默认公有改回)——规避「公有永久不可逆」的坑。配套放宽:公有 bot 若**只有创建者一人是好友**(无其他采用者)仍可删。
 - **数据源实测纠偏**(写实现时务必照现状):OpenRouter 稳定版 `/api/v1/models` 的 `order=` 排序参数**实测完全无效**(前端专用),前端 / rankings 端点全 404,edge 里也没有 OpenRouter key。所以「速度快」改走 per-model endpoints 实测吞吐,「最热门」改用 LMArena 评分代理(= 评测质量榜,**不是真实使用量榜**,已接受)。
 - **「最贵」旗舰策略已弃用**:`most_expensive` 实测会选到旧款(混合成本估算把旧高价款排前),已改默认 `latest_in_series`。
-
-**现状** — 🟨 已合 main、DB 迁移已 db push prod + 部署。`latest_in_series` 旗舰策略 + 列表性能修复也已上线,端点侧真验通过(返回真旗舰)。标 🟨:iOS 登录态拉端点确认两预设返回真旗舰 slug + 一页式建 bot 流程的真机 / 模拟器视觉验证需登录态 GUI(headless 够不到),未单独留痕;且部署中踩过「db push 不失效 KV 缓存」的坑(已补 runbook),app 内视觉确认仍待。
