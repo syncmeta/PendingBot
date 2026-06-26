@@ -226,12 +226,12 @@ interface AreaConfig {
 
 /**
  * enforcePurity flips to true once an area's 现状-section sweep has landed.
- * pendingcrew: swept 2026-06-26. pendingbot/shared: sweep pending (separate task).
+ * All three areas swept 2026-06-26 (pendingcrew first, then pendingbot + shared).
  */
 const AREAS: AreaConfig[] = [
-  { name: 'pendingbot', handbookDir: 'docs/handbook/pendingbot', stateFile: 'docs/state/pendingbot.md', enforcePurity: false, stackCoarse: false },
+  { name: 'pendingbot', handbookDir: 'docs/handbook/pendingbot', stateFile: 'docs/state/pendingbot.md', enforcePurity: true, stackCoarse: false },
   { name: 'pendingcrew', handbookDir: 'docs/handbook/pendingcrew', stateFile: 'docs/state/pendingcrew.md', enforcePurity: true, stackCoarse: false },
-  { name: 'shared', handbookDir: 'docs/handbook/shared', stateFile: 'docs/state/shared.md', enforcePurity: false, stackCoarse: true },
+  { name: 'shared', handbookDir: 'docs/handbook/shared', stateFile: 'docs/state/shared.md', enforcePurity: true, stackCoarse: true },
 ];
 
 function handbookRelpaths(dir: string): string[] {

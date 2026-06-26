@@ -32,5 +32,3 @@
 - **已废弃的旧类型别写回** —— 历史上有过 `discuss` / `surf` / `portrait`(早期"复盘 / 冲浪 / 群议"曾各占一种会话类型)、以及一度用来标群账号雏形的旧值,均已废。当前 schema 的 `conversation_type` 允许集只有:`user_bot` / `user_user` / `group` / `self` / `subagent` / `temporary_group` / `crew`。
 - **"crew 是一种会话"容易被误解成"crew 另有一套对话系统"** —— 不是。它就是会话表里 `conversation_type='crew'` 的一行,加一组 crew 元数据。看到老 spec 把 crew 描述成独立子系统时,以"它是一种 conversation_type"为准。
 - **临时群和 crew 共用一张元数据表** —— `temporary_group_meta` 用 `temporary_kind ∈ {bot_temporary_group, crew}` 再细分(crew 必须是人类发起)。这是实现层的事,产品上记住"crew = 人类建的、临时群 = bot 拉起的"即可。
-
-**现状** — 🟨 会话类型本身的 schema(含 crew / temporary_group / subagent)已落 + db push;1:1 / 群 / 子会话(委托)是当前已验证可用的主路径(✅);crew / 临时群作为 PendingCrew 编排底座代码已落,但端到端依赖 PendingCrew 登录 + runner 链路,整体 pre-launch 未全验。crew 现状以 pendingcrew 册各篇为准。

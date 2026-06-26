@@ -28,5 +28,3 @@ bot 是**纯邀请制**,没有"陌生人可加入"这档。核心权威 = 决策
 - ❌ **slug-as-public-identity / 陌生人按 slug 直查** —— 已彻底返工成 invite-token 模型(D1)。
 - ❌ **`public_open` 公开可加入档** —— 已删,只剩 private / public_invite。
 - ❌ **vanity slug 作为加入路径** —— slug 已**彻底退役**:bot 现在是"显示名 + 自动生成 id"(对齐人类账号的形态,见 [建 bot 与预设](create-bot-presets.md))。早期"slug 保留当展示 @名"的说法也已随这次退役一并取消——**slug 不再是产品里的概念**。
-
-**现状** — ✅ **已端到端验证**(D1,2026-06-01):DB + Edge(已部署 prod worker)+ iOS 全返工,收件人真机走通完整链(universal link → 预览「由 X 邀请」→ 添加 → redeem → 进聊天,DB 确认 `invited_by` 留痕,无效 token 正确报错)。残留(低风险):签发侧"管理邀请链接"页未单独像素验。

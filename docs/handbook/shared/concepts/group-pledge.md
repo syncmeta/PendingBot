@@ -78,17 +78,3 @@
 - **群池漂移报警**:群池余额(公平性镜像)与 Polar 群余额应一致,偏差超 1 PNC 报警(只报警不自动改写,避免与份额失配)。
 
 - **诚实小角**:流式回合的最终成本要等回合结束才精确,若有人正好流式中途取走,极端下池子在末笔扣款落地时可能短一点点——overdraft 缓冲兜着、新回合本就过门禁,pre-launch 可忽略(已记 tech-debt)。
-
----
-
-## 现状
-
-| 维度 | 标记 | 说明 |
-|---|---|---|
-| 实缴池 + 份额衰减 + 注资 / 退群退款 / 解散 / 消费衰减 + 端点 + 余额读 | 🟨 | 代码 + 单测落地(`group-wallet.ts` contribute/refund/dissolve + 原子 RPC + `/topup`·`/leave`·`/dissolve`);整套计费 pre-launch **端到端未真验** |
-| 认缴(pledge)模型:`group_pledges` + 动态份额 `min(pledge,余额)` + 消费按份额拆(池衰减 + 认缴个人直扣)+ 欠费自动隔离 + 超额多群 | 🟨 | 代码 + 单测落地(`settleGroupSpend` / `resolveGroupStakes` + `/pledge` 端点);未真验 |
-| 部分取出 `/withdraw`(实缴,随时、可部分)+ 全额取出=退群 | 🟨 | 代码 + 端点落地(原子 `apply_partial_withdraw`);未真验 |
-| 门禁聚合(全群可用 = 实缴池 + Σ认缴成员有效认缴) | 🟨 | `gateConversation` / `availableForSubject` 群路径走 service client 读全群 pledge + 各成员余额;未真验 |
-| 链式退款冲群(clawbackFromGroups)/ 群池漂移报警 / `/leave` 一步退群 | 🟨 | 代码 + 单测落地("尾巴"全做完);未真验 |
-
-> 所有项都是 🟨(代码 + 单测落地、但整套计费引擎 pre-launch 未端到端真验、`BILLING_ENABLED` 默认 OFF),没有 ✅——别把"代码写了 + 单测绿"当"验证可用"。证据:[`docs/progress.md`](../../../progress.md) §4b(群成本分摊重挂 #208 / 认缴模型 #213 / 群分摊尾巴 #210)。设计细节下指 [`specs/2026-06-02-group-billing-pledge-model-design.md`](../../../superpowers/specs/2026-06-02-group-billing-pledge-model-design.md)。
