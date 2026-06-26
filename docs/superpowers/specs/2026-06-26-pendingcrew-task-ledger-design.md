@@ -19,7 +19,7 @@
 
 **为什么不是单文件**:这仓库多 worktree 并行 session 是常态,单文件加任务会抢同一文件(合并冲突)——正是迁移系统当年从顺序号改时间戳前缀要躲的坑。一任务一文件零冲突、可扩展,且对齐 `docs/tech-debt/` 「一债一文件」的方向。
 
-**id 方案**(防并发碰撞,不用纯顺序号):`<yyyymmdd>-<2 位 base36 随机>`,如 `20260626-a3`。两个 session 同日各建,撞号概率极低且文件名即隔离。
+**id 方案**(防并发碰撞,不用纯顺序号):`<yyyymmdd>-<2 位短后缀>`,后缀随机或助记(如 `20260626-a3` / `20260626-cp`)。两个 session 同日各建,撞号概率极低且文件名即隔离。
 
 ## 3. task 文件格式
 
@@ -30,8 +30,8 @@ title: <短标题>
 status: todo            # todo | doing | pending-qa | done | dropped
 owner: <crew / session / 人>      # 单一,不 co-own;要多人 = 拆小
 crew: <crew-id 或 ~>              # 归属 crew(驾驶舱沿 DAG 子树过滤);无归属用 ~
-expects: [pendingcrew/concepts/cockpit]   # 链期望(handbook relpath,无扩展名),可多
-state:   [concepts/cockpit]               # 链现状(docs/state 的 ## key),可多;与现状条 task: 互为反链
+expects: [pendingcrew/concepts/cockpit]   # 链期望(区前缀 handbook relpath,无扩展名),可多
+state:   [pendingcrew/concepts/cockpit]   # 链现状(区前缀 + 现状 ## key),可多;与现状条 task: 互为反链
 deps:    [20260626-a1]                     # blockedBy 的 task id,DAG;不做 urgency/优先级数字
 created: 2026-06-26
 updated: 2026-06-26
