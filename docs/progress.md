@@ -2,7 +2,13 @@
 
 **最近对账：2026-06-26**（pendingcrew 区按对账方法全核 + mirror refresh；pendingbot/shared 期望页 sweep 收口纯意图（曾上的 reconcile-check 门已按 handbook 边界撤回，见下）；其余区见 2026-06-19 起；对照实际代码 / 迁移 / git，不是看 task 标记）
 
-> **2026-06-26 驾驶舱看板 MVP — PendingCrew SwiftUI 渲三本账（`feat/cockpit-board` `f5cd6a42`，合 main，task #447 / 20260626-cp，macOS build 绿、GUI 真机验待）**：用户「开建」。落 [cockpit.md](handbook/pendingcrew/concepts/cockpit.md) 的看板半边 read-only MVP——**纯渲染器**（差靠人扫两栏读，零 violation / 检查，正合刚撤回的 reconcile-check 那条边界）。
+> **2026-06-26 驾驶舱 v2 — 进主窗口 + 期望目录树 + 四块分段（`feat/cockpit-v2` `a693b0fc`+`8f5438e5`，macOS build 绿、GUI 真机验待，task #447 / 20260626-cp 续）**：用户看完 v1 MVP 后定调「**驾驶舱诶！不是信息面板！**」——要进主窗口（非临时 sheet）、handbook 以目录形式浏览（看自己 crew 以下层级 + 跟着 crew 层级那套，handbook 早提过）、期望/现状/任务分开、加个总 dashboard（最近任务/模块/状态/统计）。整片重做：
+> - **主窗口模式**（非 sheet）：`CrewSessionRunner.showingCockpit` 翻 true 时 `MacThreePaneView` 整片从「三栏群聊」切到「侧栏 | 驾驶舱」两栏——驾驶舱铺满 content+detail，侧栏留作**沿 DAG 选 crew 的范围选择器**（切 crew 即切范围）。中栏 toolbar「驾驶舱」入口翻 true，驾驶舱头部「退出」翻 false。
+> - **四块分段**（范围 = 选中 crew + DAG 子树）：①**总览** dashboard——统计卡（现状/任务/期望计数 + status 分布条）、最近任务（按 updated）、模块（按 area rollup）、DAG 责任地图（上游/本 crew/子 crew，读 `CrewDetail.parents/children`）；②**期望**——handbook 以 `OutlineGroup` **目录树**浏览（左树右页 markdown），页头并排同 relpath 的现状状态（对账一眼读）；③**现状**——area 分组 + 色块 + 详情（沿用 v1 master-detail）；④**任务**——task 看板按状态分列 + 详情，expects/state/deps 可点**跨账跳转**（→期望页/现状条/依赖 task）。
+> - **模型层**（`CockpitModel`，Foundation，swiftc 单测 26 项过含真 handbook 树遍历）：补 `HandbookNode`+`CockpitLoader.handbookTree`（文件夹/页递归）、`CockpitStats`（计数 + status 桶分布 + 最近任务）、task `crew/updated` 字段、`cockpitStatusBucket` 提到 Foundation 层。
+> - **守边界**：全程 read-only，差靠人扫两栏读——不判 drift、不重解析文档（cockpit.md 边界）。**尾巴**：控制半边（看差一步生 session）+ DAG 子树深递归（现仅自己+直接子）+ task `crew:` 标注（数据未 populated，过滤默认全部）+ GUI 真机活验（→ #443）。app 已 `open` 起本地 build 给用户看。
+
+> **2026-06-26 驾驶舱看板 MVP — PendingCrew SwiftUI 渲三本账（`feat/cockpit-board` `f5cd6a42`，合 main，task #447 / 20260626-cp，macOS build 绿、GUI 真机验待）**：用户「开建」。落 [cockpit.md](handbook/pendingcrew/concepts/cockpit.md) 的看板半边 read-only MVP——**纯渲染器**（差靠人扫两栏读，零 violation / 检查，正合刚撤回的 reconcile-check 那条边界）。**↑ 已被上方 v2 重做取代（主窗口 + 目录树 + 四分段）。**
 > - **`CockpitView`（Mac，`#if os(macOS)`）**：读选中 crew 的 `workingDirectory` 三本账（期望 docs/handbook / 现状 docs/state / task docs/tasks），HSplitView 左栏 topic 列表（按 area 分组 + status 色块[planned 灰 / partial 琥珀 / pending-qa 金 / done 绿] + 现状一句话 + task chips，按 status 分段筛），点开右栏看 期望页 markdown（vendored `MarkdownText` `.article`）| 现状（status/证据）| task 卡。`CrewCenterView` toolbar「驾驶舱」入口开 sheet。
 > - **`CockpitModel`（Foundation only）**：轻解析 `parseStateFile`/`parseTaskFile`/`extractTaskIds`——只抽 status/现状/证据/task，正文交 MarkdownText 原样渲（**不解析成 AST，守边界**）。swiftc 单测过（11 检查）。
 > - **验证**：xcodegen + macOS `xcodebuild` = BUILD SUCCEEDED。**尾巴**：① 控制半边（从某 topic 看差一步生 session，接现有 session launch）② per-crew 沿 DAG 子树过滤 ③ GUI 真机活验（需登录态 / 本地 crew 指向带三本账的 repo;递归自指=渲大绿豆自己）。
