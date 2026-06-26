@@ -26,21 +26,36 @@ struct MacThreePaneView: View {
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
-        // 原生三栏：列宽交系统协商。两侧 cap 住、中栏弹性吃 slack（免得右栏像旧版那样霸占
-        // 大半屏留白）；窗口窄了系统自动收某列，不会按 ideal 撑窗超屏裁掉 sidebar。
-        // detail（成员/终端）常驻 —— 切到某 session 时由 CrewSessionWindowView 自己在
-        // 「成员列表 ↔ 终端」间切（viewingTerminal），不再需要单独开关收/放一栏。
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            CrewSidebarView()
-                .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 340)
-        } content: {
-            CrewCenterView()
-                .environmentObject(sessionRunner)
-                .navigationSplitViewColumnWidth(min: 360, ideal: 520)
-        } detail: {
-            CrewSessionWindowView()
-                .environmentObject(sessionRunner)
-                .navigationSplitViewColumnWidth(min: 320, ideal: 400, max: 560)
+        Group {
+            if sessionRunner.showingCockpit {
+                // 驾驶舱模式（cockpit.md）：整片切到「侧栏 | 驾驶舱」两栏 —— 驾驶舱铺满
+                // content+detail 的位置（非临时小窗口）。侧栏仍在,作为沿 DAG 选 crew 的
+                // 范围选择器(切 crew 即切驾驶舱范围)。退出在驾驶舱头部。
+                NavigationSplitView(columnVisibility: $columnVisibility) {
+                    CrewSidebarView()
+                        .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 340)
+                } detail: {
+                    CockpitView(runner: sessionRunner)
+                        .environmentObject(crewStore)
+                }
+            } else {
+                // 原生三栏：列宽交系统协商。两侧 cap 住、中栏弹性吃 slack（免得右栏像旧版那样霸占
+                // 大半屏留白）；窗口窄了系统自动收某列，不会按 ideal 撑窗超屏裁掉 sidebar。
+                // detail（成员/终端）常驻 —— 切到某 session 时由 CrewSessionWindowView 自己在
+                // 「成员列表 ↔ 终端」间切（viewingTerminal），不再需要单独开关收/放一栏。
+                NavigationSplitView(columnVisibility: $columnVisibility) {
+                    CrewSidebarView()
+                        .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 340)
+                } content: {
+                    CrewCenterView()
+                        .environmentObject(sessionRunner)
+                        .navigationSplitViewColumnWidth(min: 360, ideal: 520)
+                } detail: {
+                    CrewSessionWindowView()
+                        .environmentObject(sessionRunner)
+                        .navigationSplitViewColumnWidth(min: 320, ideal: 400, max: 560)
+                }
+            }
         }
         // 建 crew 后自动起机长（用户要的零摩擦：新建即启动 + 群里报到，无需手动点
         // 「启动 Captain」）。store 在 createCrew 完成后 set crewId；这里持有

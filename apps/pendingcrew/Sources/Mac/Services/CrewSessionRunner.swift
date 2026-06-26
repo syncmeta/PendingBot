@@ -67,6 +67,12 @@ final class CrewSessionRunner: ObservableObject {
     /// 开关只翻 inspector 呈现态，不强制 true —— 让用户先落在成员列表。
     @Published var viewingTerminal = false
 
+    /// 驾驶舱模式（cockpit.md）：`true` 时主窗口从「三栏群聊」整片切到「侧栏 | 驾驶舱」
+    /// 两栏——驾驶舱铺满 content+detail（不是临时小窗口/info 面板）。侧栏仍在,作为
+    /// **沿 DAG 选 crew 的范围选择器**。中栏 toolbar「驾驶舱」按钮翻 true,驾驶舱头部
+    /// 「退出」翻 false。放 runner 上让 MacThreePaneView（决定布局）与中栏（入口）共享。
+    @Published var showingCockpit = false
+
     /// 最近一次「启动 Captain」失败的人类可读原因（手动按钮 + 建 crew 自动起共用）。
     /// 错误从前台终端模式（composer 里渲染 `localError`）和成员列表模式（按钮所在
     /// 那屏）两处都看不到会让人误以为「点了没反应」—— 所以放在 runner 上，让按钮所在
