@@ -10,13 +10,13 @@ task: —
 status: partial, pending-qa
 现状: 代码已落、本地逻辑通;edge bot-当-captain 编排面已全退役(已验证删除),侧栏按机器分组 + 新建 crew 表单本机 GUI 像素验过,captain 报到链路 GUI E2E 过;"建 crew → 改名 → 派 worker"完整编排真机 QA 是尾巴。
 证据: 审计处置 6 commit 全绿(edge typecheck 0 + 623 vitest)已合 main 已部署 prod;GUI 像素验 2026-06-16;captain 报到 GUI E2E 2026-06-17
-task: #369 / #342(整链真机并入 Mac GUI QA #290 / #342)
+task: #443(Mac/真机 GUI QA 批次;像素验 #369/#342 已 completed)
 
 ## concepts/captain
 status: partial, pending-qa
 现状: captain = 被打机长标记的本地 session,edge bot-当-captain 整套已实删;本地工具 `answer_decision` / `rename_crew` + worker triage 单测跑通,报到链路 GUI E2E 过;真机改名 E2E + "拆 worker → ask → answer_decision"完整编排是尾巴,且依赖 `start_session` 工具未实装先收口(prompt 领先实现)。
 证据: 编排面退役已验证删除;MCP dispatch / 控制通道 round-trip 单测;codex 机长报到 GUI E2E 2026-06-17(computer-use 驱动、截图存档)
-task: #290 / #342
+task: #443(Mac/真机 GUI QA 批次)
 
 ## concepts/governance
 status: planned
@@ -40,19 +40,19 @@ task: —
 status: partial, pending-qa
 现状: 本地为家心智落地——`BackendMode` 删除、Mac 后端恒本地、不开屏选模式、登录降为可选入口,双 build 绿、本地工作流逻辑通;scoped grant SSO 代码全落单测绿但 Apple/Google 直登需注册 capability、共享 keychain 跨 app 真读需 Xcode GUI 签名验(headless ad-hoc 签名 keychain -34018);登录叠加的「毕业」+ 远端 runner 唤醒仍是尾巴(worker 待部署 + 真账号 E2E)。
 证据: 双 build 绿;邮箱 OTP + 扫码已是可用登录路径
-task: —
+task: #443(Mac/真机 GUI QA 批次:Apple/Google 直登 + 共享 keychain 跨 app 真读)
 
 ## concepts/session-and-world-model
 status: partial, pending-qa
 现状: 世界观注入代码已落、机制 spike 实测验过——claude(`--append-system-prompt-file`)+ codex(`developerInstructions`)两路接线、本地 prompt bundled、单测 + 双 build 绿、真二进制实跑过 post/read/hook 闭环;"captain 拆 worker → worker 在世界观指引下正确用 ask/post_to_crew"完整编排 E2E 需真机走一遍(并入 Mac GUI QA)。
 证据: claude 机制 spike 全验(append-system-prompt-file 遵守、hook 中途到达模型、auto mode 放行、statusLine 额度可读)
-task: —(并入 Mac GUI QA)
+task: #443(Mac/真机 GUI QA 批次)
 
 ## concepts/human-in-the-loop
 status: partial, pending-qa
 现状: 机制 spike 实测验过、本地代码全落——`ask` 工具 + 权限 PreToolUse hook + 待决策/待审批本地 store + 「🔔」通知 + 右栏内联答复卡片,swiftc driver/单测验过 macOS build 绿,codex 侧"crew 工具被自动拒"修通后报到 GUI E2E 过;captain-first triage 完整 E2E(ask → captain answer_decision 解阻塞 → 答不了 @人类)是尾巴,当前 captain 缺位时退化成「直达人类」已可用。
 证据: `ask` 阻塞走 MCP + 权限走 PreToolUse hook deny/ask 实机 claude 验过
-task: —(并入 Mac GUI QA)
+task: #443(Mac/真机 GUI QA 批次)
 
 ## concepts/async-delegation
 status: partial
@@ -64,7 +64,7 @@ task: #439(驾驶舱看差生 session 那部分)
 status: partial, pending-qa
 现状: 代码已落、本地逻辑通——env 白名单 + codex 剥 `OPENAI_API_KEY` + 三前缀(`PENDINGBOT_`/`PENDINGCREW_`/`SUPABASE_`)硬拒,`LocalCodingAgentEnv` 收口为唯一 env 来源;Cancel「停不掉」根因已修(SIGTERM → 宽限 → SIGKILL 杀进程组,不依赖被吞回调)macOS build 绿;完全信任 + Cancel/长跑真机 GUI E2E 是尾巴。
 证据: `LocalCodingAgentEnv` 收口;Cancel 根因修复(pty 子进程 setsid 独立进程组);macOS build 绿
-task: —(并入 Mac GUI QA)
+task: #443(Mac/真机 GUI QA 批次)
 
 ## concepts/whiteboard
 status: partial, pending-qa
@@ -88,19 +88,19 @@ task: #439
 status: partial, pending-qa
 现状: 三栏结构 + 中栏群聊 + 右栏多 session 切换代码已落——左栏按机器分组本机 GUI 像素验过、中栏 vendor PendingBot 聊天视图 + adapter 深/浅色对齐;右栏多 run 并存 + 切换条 + 两种 runner 窗口双 build 绿(codex transcript 真机渲染随 Mac GUI QA);iPad 两栏壳双 build 绿、真账号 E2E 是真机尾巴(模拟器无登录态进不到壳)。
 证据: 左栏分组 GUI 像素验 2026-06-16 / #369;中栏深浅色群聊全要素对齐看过
-task: #342 / #290
+task: #443(Mac/真机 GUI QA 批次)
 
 ## features/create-crew-and-session
 status: partial, pending-qa
 现状: 新建 crew 表单代码已落、本机 GUI 像素验过——表单逐项与 spec 吻合(标题自动占位「Captain 来取名」/ CrewGround 实时路径 / 机长默认 Codex / 单机隐藏机器行 / 选项平铺左对齐);验证时刻意没真建 crew(避免污染用户真 crew),「点建 → captain 起来 → 命名」端到端 + 子 crew 挂父是尾巴。
 证据: 本机 GUI 像素验 2026-06-16 / #342;双 build 绿
-task: #342
+task: #443(Mac/真机 GUI QA 批次)
 
 ## features/runner-backends
 status: partial, pending-qa
 现状: 两种 runner 后端代码全落——claude 终端(SwiftTerm 字节级)flag 本机实测、本机闭环 build + 单测绿;codex app-server 协议对真 schema 逐字段校准(修 4 个 inbound 解码 bug)、真跑一轮 turn 逐字段吻合 + 真计费 token tick、认证自动继承 `~/.codex/auth.json`;codex 机长两个真 bug(crew 工具被拒 / session 卡死)已根治 GUI E2E 验;codex transcript 活体像素渲染 + 额外权限审批回包形状(潜伏 bug 记 tech-debt)是尾巴,v1 不做逐字流式。
 证据: codex schema 校准 2026-06-16(codex-cli 0.137.0);codex 机长修复 GUI E2E 2026-06-17(截图存档)
-task: #342 / #290
+task: #443(Mac/真机 GUI QA 批次)
 
 ## features/session-crew-comms
 status: partial, pending-qa
