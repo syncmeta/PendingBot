@@ -61,7 +61,3 @@ v1.0 的范围由一份实现路线图(`docs/superpowers/plans/2026-05-28-v1-0-i
 - **数字会变,本篇不追。** 周数、commit hash、vitest 条数、"未合 / 已合 main"这类易变事实,都在 `docs/progress.md` 里维护;本篇只给方向。看到本篇与 progress 冲突,**以 progress 为准**并回头修本篇(它过时了)。
 - **"未合 main"字样在 progress 里曾大面积漂移过** —— 2026-06-16 一次对账发现多个标"未合"的分支其实已合(codex-app-server / crew-machine / model-blindbox / session-crew-comms 等)。这正是"易变事实别进手册"的反面教材:本篇不复制这类标记。
 - **roadmap 文档本身是 2026-05-28 的草案**,部分 task 描述(如 captain"三种 / 四种来源"、双轨路由)已被后续转向覆盖,**别照搬 roadmap 的旧措辞**,以 [pivots](pivots.md) + 各 concept 篇为准。
-
-## 现状
-
-🟨 **地基 + 本地闭环基本就位,通信 / 跨端代码齐但活验有尾巴,端到端 QA(T5.3)未做。** 这是 pre-launch 单环境下的真实中间态;✅ 的判定门槛是"真机端到端验过",很多 completed task 因缺真机验证在手册口径下仍算 🟨。最新对账日期见 `docs/progress.md` 顶部。

@@ -39,5 +39,3 @@
 - **自定义权限布尔位是已废的旧设计** —— 早期 schema 在群成员行上散布过 `can_manage_wallet` / `can_manage_runners` / `can_create_crew` 三个布尔位(可自定义权限的雏形)。α 版已收紧成固定三级 role;这些布尔位留作 legacy 数据、不再扩展也不删(删了老 RPC 路径会断),但**它们不是现在的权限模型**,别按布尔位理解或写回。变更出处见 [`subject-foundation.md` Spec v2 §4](../../../superpowers/plans/2026-05-24-subject-foundation.md)。
 - **"无提现" vs 代码里的 `/withdraw`,是两件事** —— "无提现"指**不能把钱当现金提到银行卡**。但成员退群 / 群解散 / 部分取出时,会按出资份额把对应额度退回各人的**平台内个人余额**(PNC)——这是平台内部的份额结算,不是现金提现。edge 确实有 `/v1/group-subjects/:id/withdraw`、`/leave`、`/dissolve` 端点,它们退的都是个人 PNC 余额,别因为看到 `/withdraw` 就以为破了"无提现"红线。份额结算的规则归 [`group-pledge`](group-pledge.md)。
 - **权限由服务端 RPC 强制,不在客户端** —— 角色检查在 `SECURITY DEFINER` 的 `grp_*` RPC 里,客户端只是触发;别在客户端复刻角色判断当作权威。
-
-**现状** — 🟨 服务端整套已落(创建群账号 / 加踢成员 / 升降 admin / 转让 / 充值 / 退份额 / 解散,权限由 RPC 强制,edge `/v1/group-subjects/*`);**iOS/Mac 客户端尚未消费这套接口**,仍走旧 client 规则。计费相关端点 pre-launch 端到端未验。证据见 [`docs/progress.md`](../../../progress.md) T1.2 行。

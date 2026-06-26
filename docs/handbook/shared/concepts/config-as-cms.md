@@ -36,5 +36,3 @@
 - 早期 spec 把 board 当"运营仪表盘"(还列了模型目录 / pricing / i18n / place_names 等一堆要进 board 的源表)——已**大幅作废**:实测真走 KV config 通道的只有 tools 和 mcp_servers,其余要么表不存在、要么是冷参考数据。别照老 spec 的清单理解 board 范围。
 - 早期 spec 还说预设来信要"新建 preset_letters 表 + 改 signup 函数"——也作废:表和函数早就在,P2 实际零迁移、只补 CRUD 面。
 - **直接改源表(迁移 / db push)不会自动失效 KV 缓存**——model_presets 上线时实际踩到:db push 改了表但 KV 还缓存旧解析结果,读端点返回旧值。board 自己的 CRUD 路径会主动 bust,但绕过 board 的直改要手动清 KV。这是一条已知缺陷,部署 runbook 已补 bust 步(见 tech-debt)。
-
-**现状** — ✅ **board CMS 七页(P0–P4)全部完成并部署**;功能开关 / 工具 / MCP / 预设各页线上可用,KV 下发与审计 before/after 在跑。模型角色页、模型预设页也已上线。🟨 **尾巴**:① board 七 + 两页的浏览器端到端点验(过 Access 后逐页 CRUD round-trip)未逐一做(Access 后 SPA headless 进不去);② 直改源表不 bust KV 的缺陷待根治(现靠手动 bust + cron 兜底)。

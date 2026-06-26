@@ -33,5 +33,3 @@
 
 - 历史上有一批 prompt 内联在 `.ts` 里(const 字符串),已陆续迁到 prompt-loader + Langfuse。审计还点出过个别漏迁的(如 lookback 指令一度内联),修迁后才算齐——遇到代码里残留的内联 prompt,是债不是范例,别照抄。
 - 旧的"crew captain 整套编排注入"在 bot-reply 里是**已废残留**(edge-bot 当 captain 的旧心智),已退役;session 世界观注入是活路径,别混。
-
-**现状** — ✅ **prompt-loader + Langfuse + KV webhook 分发已落地**(main),fail-loud 无兜底副本,session 世界观注入活路径在跑。🟨 **尾巴**:个别历史内联 prompt 迁 Langfuse 后,"getPrompt 真去 Langfuse 拉到"的端到端真验要等真消息 / 通话触发;更新后的 prompt 重新 seed 到 Langfuse 是运营动作。

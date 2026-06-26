@@ -34,5 +34,3 @@ bot 能做的事——查长记忆、搜历史、读图、跑代码、上网搜�
 
 - 老的 `pendingbot.tools` 表(来自最初的 init)从没接进 edge 运行时(无代码读它),已被**删掉重建**成现在这张过滤 + 元数据表,别把那张旧表当回事。
 - 模型盲盒引入的 `prompt_model_guess` 也是一条 native 工具行(`kind=native`,`scopes=[chat]`),走同一套注册表 kill-switch——说明"让 bot 主动弹个猜模型卡"也是一条可在 board 关掉的工具。
-
-**现状** — ✅ **注册表 + scope 过滤 + model_description 热改已落地并部署**(board 工具管理页 P3 上线,只读 + 改不建不删)。MCP 服务器 CRUD 页(P4)也已上线。注册表读路径走 60s isolate 缓存 + KV 读穿(见配置即 CMS)。

@@ -29,5 +29,3 @@
 **注意**
 - **"必须绑群聊"是已死的旧设计** —— 早期设计曾要求群账号必须绑定一个群聊(schema 里 `group_conversation_id` 一度非空)。现已按轻量化定位放宽:群账号可独立创建,`group_conversation_id` 允许为空,创建路径是 `grp_create_group_subject(display_name)`,不强求绑 conversation。老 plan 里"必须先有 group conversation"的说法别写回。变更出处见 [`subject-foundation.md` Spec v2 修订节](../../../superpowers/plans/2026-05-24-subject-foundation.md)。
 - **"群账号 = 群聊"是设计里最常被混淆的一点** —— 看到"群钱包入口该放哪"这类问题时,记住要从 group_account subject 起,不是从某个群聊起。
-
-**现状** — 🟨 群账号创建 / 加踢成员 / 充值 / 退份额 / 解散的服务端整套已落(edge `/v1/group-subjects/*` + `grp_*` RPC);**iOS/Mac 客户端尚未消费这套接口**,也尚无真实群账号数据 + 计费未开,端到端未验。证据见 [`docs/progress.md`](../../../progress.md) T1.2 行。

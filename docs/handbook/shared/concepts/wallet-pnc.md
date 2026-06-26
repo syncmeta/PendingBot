@@ -71,18 +71,3 @@
 - **符号约定别记反。** 内部全事件模型:**充值 = 负值事件、用量 / 退款 = 正值事件**,Polar 余额(此模型下)正数 = 可用。不挂 Polar 的 Credits Benefit(它走另一套相反约定,混用不自洽)。
 
 - **`pnc_ledger` 曾经 RLS 没开、对世界可读可改**——已修(开 RLS + subject 维度 policy + 收紧 grant)。同类风险:任何敏感表给了 anon/authenticated grant 又忘开 RLS,就是同样的洞。
-
----
-
-## 现状
-
-| 维度 | 标记 | 说明 |
-|---|---|---|
-| Polar 引擎 + PNC 单位 + 客户端封装 | ✅ | **真 sandbox spike 验过**:收 / 扣 / 退 / 读余额 / 幂等(同 dedupeId 重复不翻倍)全打通,余额整数精确无浮点漂移,刷新 ~10–12s |
-| WalletDO(余额缓存 + pending outbox + alarm flush + 稀疏对账 + 群池漂移报警) | 🟨 | 代码 + 单测落地;`gate`/`debit`/`credit`/`apply-absolute` RPC 在,回环对齐 / 幂等都实现了,但**端到端未真验**(pre-launch) |
-| 充值入账(web/Mac Polar checkout + iOS RevenueCat → Polar,幂等 + 双落影子账) | 🟨 | 入账通道 `recordCreditIn` 幂等 + grant 已落;送(welcome 35 PNC)/ 兑换码都改走 Polar;`ensureCustomer` 409(已存在客户)分支待 sandbox spike 实测 |
-| Apple IAP 收据 JWS 验签 | 🟨 | 零依赖手写 DER/ASN.1 链验证已实现 + 14 单测绿;**无真实 Apple sandbox 交易,端到端未跑**,首次接 iOS IAP 需 sandbox 回归 |
-| 4 档阈值(充足 / 提醒 / 节流 / 硬停)+ −0.5 PNC overdraft buffer | 🟨 | 阈值判定 + 硬停在 WalletDO;`low` 提醒 / `throttle` 降级未完整落地(throttle 经 OpenRouter 文档核实不适用 passthrough,已记 tech-debt) |
-| 计费总开关 | 🟨 | `BILLING_ENABLED` 默认 OFF,门禁 / 扣费 / 上报全休眠;pre-launch 不锁测试者 |
-
-> 现状证据:[`docs/progress.md`](../../../progress.md) §4b(P0–P2 状态表)、[`docs/tech-debt.md`](../../../tech-debt.md)(Apple JWS 真机回归、sandbox 真实单价、pnc_ledger RLS、welcome bonus)。设计 / 选型细节下指 [`specs/2026-06-01-billing-engine-design.md`](../../../superpowers/specs/2026-06-01-billing-engine-design.md) 与 [`specs/2026-06-02-billing-p2-architecture-fork.md`](../../../superpowers/specs/2026-06-02-billing-p2-architecture-fork.md)。
