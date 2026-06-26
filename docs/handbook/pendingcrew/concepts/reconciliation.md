@@ -38,7 +38,3 @@
 - **不自动 converge / 不做 chip 队列** —— captain 看差直接生 session,最小工程。
 - **不重解析文档** —— 既然不自动判 drift,cockpit 只渲染两本 + 人读差,不必把文档解析成 AST。
 - **不从代码自动重生文档** —— 意图永远领先代码;living-docs 那套会侵蚀"期望是源"。
-
-## 现状
-
-🟨 **两本账已立,引擎未落。** 期望(`docs/handbook/`)+ 现状(`docs/state/`,三区镜像)两本已 bootstrap、可并排对照,现状条带 `status` / 证据 / task;对齐渲染 / 生 session 补差 / fail-loud 断言随 [驾驶舱](cockpit.md)(task #439)。存量尾巴:期望页里旧的「现状」段 + emoji 待 sweep 进现状 handbook。**递归自指**:大绿豆自己这本 handbook 就是第一个被对账的对象 —— 此刻就在用这套方法建它。

@@ -45,12 +45,3 @@ PendingCrew 的 Mac 壳是经典三栏(`NavigationSplitView` 形态),三栏对�
 
 - ⚠️ **中栏群聊视觉是「vendor 一份 PendingBot 的聊天视图」做出来的**,不是共享代码。两个 app 保持独立(PendingCrew 要独立开源),所以把 PendingBot 的跨平台聊天视图逐字拷进 PendingCrew + 写 adapter,以后「再对齐」= 重拷。这条是实现接缝,产品上只需知道「中栏长得跟 PendingBot 聊天一致、含深色模式」。
 - ⚠️ **左栏的「其它机器组」当前在 Mac 上看不到内容**——本地为家、无 edge 镜像,跨机器查看要走遥控投影(尾巴,见 [跨端遥控](cross-device-control.md))。单机用户只有本机一组。
-
-## 现状
-
-🟨 **三栏结构 + 中栏群聊 + 右栏多 session 切换代码已落,本机 GUI 部分像素验过,完整真机 QA 是尾巴。**
-
-- ✅ **左栏按机器分组**:本机 GUI 像素验过(2026-06-16,#369)——组头 + 组内 crew + 本机「+」、单机时正确隐藏机器选择。
-- ✅ **中栏群聊对齐 PendingBot(含深色)**:vendor + adapter 落地,macOS GUI 装进去看过深 / 浅色群聊全要素对齐。
-- 🟨 **右栏多 session 切换 + 两种 runner 窗口**:多 run 并存、切换条 + 未读角标、claude 终端 / codex transcript 两视图代码全落、双 build 绿;codex transcript 真机渲染随 Mac GUI QA(#342 / #290)。
-- 🟨 **iPad 两栏壳**:authenticatedRoot 换成 split view(crew 列表 → 群聊)、删占位页、双 build 绿;iPad 真账号端到端(扫码登录 → 见 crew → 进群聊 → 发消息)是真机尾巴(模拟器无登录态进不到壳)。

@@ -60,7 +60,3 @@
 - ⚠️ **当前账本是「仓库级一份」,本就该这样——per-crew 是过滤视图不是存储切分。** `docs/tech-debt/` / `docs/progress.md` / task 现在整个仓库共用一份;"一 crew 一份"指的是**显示层沿 DAG 切片**(#439 落地时才切),**不是**把账本拆成多份存。别把"per-crew"理解成"每 crew 一个独立仓库 / 一套独立账本"。
 - ⚠️ **格式正从 emoji 状态迁向 frontmatter** —— 驾驶舱靠读 frontmatter(`status:`)渲染状态色块,所以现状那本的状态得先从 emoji 迁成 frontmatter(见 [对账](reconciliation.md))。这步与驾驶舱本身都还没落地。
 - ⚠️ **"项目 / 驾驶舱"当前都还没实现** —— crew 的父子 DAG 已经有(见 [DAG](dag-and-responsibility.md)),但"沿子树聚合成驾驶舱 + 看板渲染两本 + 控制半边生 session"整个是规划。别把 DAG 已实现当成驾驶舱已实现。
-
-## 现状
-
-⬜ **规划(task #439)。** 模型已拍定:驾驶舱 = [声明式对账](reconciliation.md) 的呈现 + 控制面(看板半边渲染 期望 / 现状两本 + task,控制半边 captain 看差直接生 session 补)+ per-crew 是沿 DAG 子树的过滤视图(存储仓库级、派生无损)+ 状态走 frontmatter、不重解析文档。**MVP 设想**:每个 crew 一块驾驶舱,看板半边把子树的 期望 / 现状 / task / DAG-map 摆出来给人读差,控制半边让人 / captain 一步生 session 补差(不做自动 drift 检测、不做 chip 队列)。dashboard / 渲染 / per-crew 过滤切片 / 控制半边生 session 编排**均未实现**。

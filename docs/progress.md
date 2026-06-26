@@ -1,6 +1,12 @@
 # PendingBot / PendingCrew 进度账本 (Progress Ledger)
 
-**最近对账：2026-06-19**（对照实际代码 / 迁移 / git，不是看 task 标记）
+**最近对账：2026-06-26**（pendingcrew 区按对账方法全核；其余区见 2026-06-19 起；对照实际代码 / 迁移 / git，不是看 task 标记）
+
+> **2026-06-26 pendingcrew handbook 按对账方法推进（`docs/pendingcrew-reconcile`，3 docs commit，纯文档，未合 main）**：用户「把 pendingcrew 按 handbook 推进 / 和 pendingcrew 对齐」。按 [reconciliation](handbook/pendingcrew/concepts/reconciliation.md) 方法跑了一轮完整对账（期望 vs 现状 vs 代码），三步：
+> - **① 期望页 sweep（`d10ae8a2`）**：按 `_conventions.md`「存量待迁」把 pendingcrew 19 个期望页正文残留的「现状」状态段（16 `## 现状` + crew/captain/dag 三页 `**现状**`）整段删（净 -155 行）——状态归现状 handbook，期望页收口为纯意图。另清两处把状态混进意图正文的（runtime 机器对比表「现状」行、governance 三处页首 ⬜/🟨 前缀）；保留 注意/边界 的 ❌⚠️（死方案警示=意图）。grep 复核 pendingcrew 期望页 现状段=0。
+> - **② 现状 mirror refresh（`b5692c2b`）**：5 路并行只读 subagent 把 `docs/state/pendingcrew.md` 19 条对照真实 code/git/migrations 核一遍——**17 准 / 2 漂移已修**。①`features/cross-device-control` 既引用已删代码（`095dfc2b` 删 `apps/pendingbot/Sources/Features/Crew/` 整目录含 RemoteSessionsView，待重做）又夸大验证（真机只验过早期 3s HTTP 轮询只读 viewer，SessionProxyDO 的 WS 往返尚未真机验=T5.3 尾巴），证据重指存活的 PendingCrew 侧 viewer；②`concepts/reconciliation` sweep 尾巴翻新。
+> - **③ pending-qa 尾巴汇总（`12e1ca5f` + task #443）**：9 条 partial,pending-qa 的真机活验尾巴此前散指向已 completed 的 #290/#342 或「—」、无 live 追踪（违背 completed=已验证）。建 **#443「PendingCrew Mac/真机 GUI QA 批次」** 当唯一 live 追踪点，re-point crew/captain/local-first/session-world-model/human-in-loop/subprocess/three-pane/create-crew/runner-backends → #443。
+> - **剩余**（不属 pendingcrew 对齐、本轮没碰）：pendingbot(18)/shared(19)/stack(24) 期望页 现状段待 sweep（stack 区现状镜像 `docs/state/stack.md` 尚未建）；驾驶舱 / governance / reconciliation 引擎仍是 planned 前沿（#439）。
 
 > **2026-06-19 model-presets 上线 prod（部署动作，闭合 #397 + 行 42 尾巴②/tech-debt#81）**：顺序敏感三步全过——① `bun --filter='@pendingbot/edge' run deploy`（worker version `0f7fb260`，`--containers-rollout=none` 跳容器只滚 worker → 认 `latest_in_series`）→ ② `supabase db push --linked` 应用 `20260616145720_model_presets_latest_in_series.sql`（DB 验证：top-flagship→`latest_in_series` lines=[anthropic claude-opus, openai gpt-5]、cn-flagship→`latest_in_series` 5 线）→ ③ 冒烟：`GET /v1/model-presets`=HTTP 401（需 session，端点健康非崩溃）+ `types:db` regen 零漂移（迁移只改 check 约束+UPDATE 数据，不动表结构）。**剩真验归 #394**：iOS 登录态拉端点确认两预设返回真旗舰 slug（opus-4.8/gpt-5.5/v4-pro/qwen3.7-max/kimi-k2.6/glm-5.1/minimax-m3）+ CF 日志冷/热耗时——需模拟器/真机登录态（headless 够不到）。**范围注**：`c065016f` 之后 main 无 edge 改动，本次仅 model-presets 迁移上线；iOS/Mac UI 一批改动（深色/Mac 三栏/crew 等）累积未发 TestFlight。
 
