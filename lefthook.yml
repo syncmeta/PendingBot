@@ -33,12 +33,3 @@ pre-commit:
     - name: typecheck-edge
       glob: "{apps/edge/src/**/*.ts,packages/identity/src/**/*.ts}"
       run: bun --filter='@pendingbot/edge' run typecheck
-
-    # Declarative-reconciliation fail-loud assertion. When any handbook
-    # (期望) or state (现状) doc is staged, assert the books stay in sync:
-    # 1:1 mirror, well-formed 现状 entries, and 期望-page purity for swept
-    # areas. Reports only; never edits. See reconcile-check.ts +
-    # docs/handbook/pendingcrew/concepts/reconciliation.md.
-    - name: reconcile-check
-      glob: "{docs/handbook/**/*.md,docs/state/*.md,docs/tasks/**/*.md}"
-      run: bun scripts/reconcile-check.ts

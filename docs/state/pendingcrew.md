@@ -74,9 +74,9 @@ task: —
 
 ## concepts/reconciliation
 status: partial
-现状: 两本账已 bootstrap——期望(docs/handbook)+ 现状(docs/state 三区镜像)可并排对照、现状条带 status/证据/task;引擎其余(对齐渲染 / 生 session 补差 / fail-loud 断言)随驾驶舱未落。期望页残留「现状」段 sweep 进行中:pendingcrew 区已收口为纯意图(19 篇 0 残留),pendingbot(18 篇)+ shared(19 篇)+ stack(24 篇)期望页仍带旧「现状」段 + emoji 待 sweep(stack 区现状镜像 docs/state/stack.md 尚未建)。
-证据: docs/state/ 三区已建(705694cd);pendingcrew sweep 已落(d10ae8a2,grep 期望页 现状段=0);递归自指——大绿豆 handbook 自身即首个对账对象
-task: 20260626-rc / 20260626-tl / 20260626-cp(对账引擎:断言 + task 账本已落,驾驶舱待建)
+现状: 三本账已立——期望(docs/handbook,纯意图)+ 现状(docs/state 三区镜像)+ task(docs/tasks 第三本账)可并排对照、互链(链只为导航)。期望页 sweep 三区(pendingcrew/pendingbot/shared)已收口纯意图;stack 区(24 篇)待定(无 docs/state/stack.md 镜像)。引擎其余 = 驾驶舱渲染 + 看差生 session,随驾驶舱未落。**对齐靠人读两本、不自动检测 drift / 不做一致性断言(见边界)**——曾建的 reconcile-check 自动断言已按此定调撤回。
+证据: docs/state/ 三区已建(705694cd);三区 sweep 已落(pendingcrew d10ae8a2 + pendingbot/shared);task 账本 docs/tasks/ 已立;递归自指——大绿豆 handbook 自身即首个对账对象
+task: 20260626-tl(task 账本已落) / 20260626-cp(驾驶舱待建)
 
 ## concepts/cockpit
 status: planned

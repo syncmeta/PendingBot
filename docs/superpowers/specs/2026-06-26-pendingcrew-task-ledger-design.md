@@ -4,6 +4,8 @@
 > 三本账并立:**期望** `docs/handbook/`(纯意图)· **现状** `docs/state/`(状态镜像)· **task** `docs/tasks/`(本设计)。三者互链,供[驾驶舱](../../handbook/pendingcrew/concepts/cockpit.md)渲染、供 `reconcile-check` 断言。
 >
 > 2026-06-26。存储结构经用户拍板:**一任务一文件**。**PendingCrew 自有,不接 Claude Code TaskList**。
+>
+> **[2026-06-26 更正]** 本 spec 原含 reconcile-check 自动跨账断言(§1 末、§4、§7 步③),已**撤回**——与 handbook 边界「不自动检测 drift、对齐靠人读两本」冲突。**保留**:三本账 + 互链(链为导航 / 驾驶舱渲染)+ task 账本本身;**撤回**:任何机器校验 / 一致性断言 / lefthook 门。下文凡涉断言处以此为准失效。
 
 ## 1. 定位 — 为什么要第三本账
 

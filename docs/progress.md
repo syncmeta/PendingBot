@@ -1,6 +1,12 @@
 # PendingBot / PendingCrew 进度账本 (Progress Ledger)
 
-**最近对账：2026-06-26**（pendingcrew 区按对账方法全核 + mirror refresh；pendingbot/shared 期望页 sweep 收口并上 reconcile-check enforcePurity 门；其余区见 2026-06-19 起；对照实际代码 / 迁移 / git，不是看 task 标记）
+**最近对账：2026-06-26**（pendingcrew 区按对账方法全核 + mirror refresh；pendingbot/shared 期望页 sweep 收口纯意图（曾上的 reconcile-check 门已按 handbook 边界撤回，见下）；其余区见 2026-06-19 起；对照实际代码 / 迁移 / git，不是看 task 标记）
+
+> **2026-06-26 撤回 reconcile-check 自动断言（违 handbook 不-drift 边界）（`chore/drop-reconcile-check`）**：用户「不要这个东西——不需要保持现状和期望的强一致和监控漂移」。核 handbook 坐实:reconciliation.md **边界**白纸黑字「**不自动检测 drift——差靠人读两本**」、cockpit.md「驾驶舱不替人判 drift、不重解析文档」。我同日(`c93f1113`)建的 reconcile-check 自动断言 + lefthook 门正是自动检测 + 强一致,**违背此定调,撤回**。
+> - **删**:`scripts/reconcile-check.ts` + test + `docs/reconcile-allowlist.json` + lefthook `reconcile-check` 门 + package.json `reconcile:check` 脚本;reconciliation.md 自相矛盾的「fail-loud 断言」bullet;task `20260626-rc`(只为建它而立)。
+> - **留**:三本账(期望/现状/task)+ 互链(task→期望/现状、现状→task)——链只为**导航 / 驾驶舱渲染可点穿**,不做机器校验。task 账本(#446)本身保留,只去其断言部分。
+> - **驾驶舱随之简化**(`20260626-cp`):纯渲染器——读三本账渲染、差靠人扫两栏读,零 violation / 一致性检查;不需要 `--json` 喂校验器,直接读 markdown。
+> - 账本同步:state reconciliation 条、cp/tl task、spec(顶部更正注)、README、本页 + 顶 最近对账 行均已去 reconcile-check 表述。下方同日「reconciliation 引擎落地」entry 的 ① fail-loud 断言部分以此为准失效(② task 账本仍有效)。
 
 > **2026-06-26 reconciliation 引擎落地 + PendingCrew task 账本（第三本账）（`feat/reconcile-engine` `c93f1113` + `feat/task-ledger` `19b43b34`，均合 main，TDD，task #444/#446）**：用户「照着 handbook 的设计推进、设计已在 handbook 里体现」——按 [cockpit.md](handbook/pendingcrew/concepts/cockpit.md) 自排顺序（「先理顺数据形状，驾驶舱再渲染」）落 [对账](handbook/pendingcrew/concepts/reconciliation.md)引擎的**数据层**，不碰还没定 UI/schema 的驾驶舱。
 > - **① fail-loud 对账断言（#444，`c93f1113`）**：`scripts/reconcile-check.ts`（纯函数 + allowlist，仿 supabase-advisor-gate，TDD 真 RED→GREEN）断言 期望↔现状——镜像 1:1、现状条 well-formed（status/现状/证据/task + 枚举不带 emoji）、期望页纯意图（按区 enforcePurity）。进 lefthook pre-commit。这是 reconciliation.md 明定的「轻校验、只报错不自动改账」，把手工抓的漂移变自动门。teeth 实证（purity 对未 sweep 区会 fire）。

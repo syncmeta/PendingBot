@@ -16,4 +16,4 @@
 | `deps` | blockedBy 的 task id(依赖 DAG,**不做 urgency / 优先级数字**) |
 | `created` / `updated` | 时间戳,状态绑事件那一刻翻、不攒 |
 
-**互链 + 校验**:`task → 期望`(expects)、`task ↔ 现状`(state ↔ 现状条 task:)、`期望 ↔ 期望`(markdown 互链)。`bun scripts/reconcile-check.ts` 断言每条跨账链闭合(链到不存在的篇/条/id → 红灯),进 lefthook pre-commit。详见 [spec §4](../superpowers/specs/2026-06-26-pendingcrew-task-ledger-design.md)。
+**互链(导航)**:`task → 期望`(expects)、`task ↔ 现状`(state ↔ 现状条 task:)、`期望 ↔ 期望`(markdown 互链)——链只为**导航 / 驾驶舱渲染时可点穿**,**不做机器校验**(handbook 边界:对齐靠人读两本、不自动检测 drift)。
