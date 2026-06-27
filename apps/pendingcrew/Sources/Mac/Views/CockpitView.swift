@@ -97,9 +97,9 @@ struct CockpitView: View {
                              scopeOnly: $taskScopeOnly, scopeName: scopeName, nav: handleNav)
             }
         } else {
-            emptyState(crewStore.selectedDetail == nil
-                ? "选一个 crew 看它的驾驶舱"
-                : "此 crew 没有本地工作目录 —— 驾驶舱只渲染本地 crew 的三本账")
+            // 读不到真三本账(没选带 docs/handbook|state|tasks 的本地 crew)→ 落到布局原型,
+            // 自带样例 + 区域标注,保证点开驾驶舱总能看到完整结构、不空屏。
+            CockpitPrototypeView(segment: segment)
         }
     }
 
@@ -135,11 +135,6 @@ struct CockpitView: View {
             data = nil; return
         }
         data = CockpitLoader.load(crewRoot: URL(fileURLWithPath: workdir))
-    }
-
-    private func emptyState(_ text: String) -> some View {
-        VStack { Spacer(); Text(text).foregroundStyle(Theme.Palette.inkMuted); Spacer() }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
