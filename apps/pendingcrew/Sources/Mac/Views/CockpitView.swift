@@ -358,7 +358,7 @@ private struct CockpitExpectation: View {
     let nav: (CockpitNav) -> Void
 
     var body: some View {
-        HSplitView {
+        CockpitSplit(leftWidth: 280) {
             List(selection: $selectedNodeID) {
                 OutlineGroup(data.handbookTree, children: \.childrenOrNil) { node in
                     Label(node.name, systemImage: node.isPage ? "doc.text" : "folder.fill")
@@ -367,9 +367,8 @@ private struct CockpitExpectation: View {
                 }
             }
             .listStyle(.sidebar)
-            .frame(minWidth: 230, idealWidth: 290)
-
-            pageDetail.frame(minWidth: 360)
+        } right: {
+            pageDetail
         }
     }
 
@@ -431,9 +430,10 @@ private struct CockpitState: View {
     let onSpawnBrief: (CockpitTopic) -> Void   // 控制半边:看着这条差,真起 session 去补
 
     var body: some View {
-        HSplitView {
-            topicList.frame(minWidth: 300, idealWidth: 360)
-            topicDetail.frame(minWidth: 360)
+        CockpitSplit(leftWidth: 330) {
+            topicList
+        } right: {
+            topicDetail
         }
     }
 
@@ -559,7 +559,7 @@ private struct CockpitTasks: View {
     private let columns = ["todo", "doing", "pending-qa", "done", "dropped"]
 
     var body: some View {
-        HSplitView {
+        CockpitSplit(rightWidth: 320) {
             VStack(spacing: 0) {
                 scopeBar
                 Divider()
@@ -574,8 +574,8 @@ private struct CockpitTasks: View {
                     .padding(14)
                 }
             }
-            .frame(minWidth: 420)
-            taskDetail.frame(minWidth: 300, idealWidth: 340)
+        } right: {
+            taskDetail
         }
     }
 
@@ -704,6 +704,42 @@ private struct CockpitTasks: View {
 }
 
 // MARK: - 共享小件
+
+/// 驾驶舱内的左右分栏 —— 用 GeometryReader 按**可用宽度**切。内容无 min 宽需求,所以永远
+/// 等于可用宽、绝不向 NavigationSplitView detail 列要更多宽把 sidebar 顶出去(HSplitView 两侧
+/// minWidth 相加会顶 sidebar/toolbar 出屏,见 tech-debt「inspector 被切」、memory「detail ideal 太贪」)。
+private struct CockpitSplit<L: View, R: View>: View {
+    var leftWidth: CGFloat? = nil    // 固定左宽(右弹性);期望/现状用
+    var rightWidth: CGFloat? = nil   // 固定右宽(左弹性);任务看板用
+    @ViewBuilder var left: () -> L
+    @ViewBuilder var right: () -> R
+
+    var body: some View {
+        GeometryReader { geo in
+            let total = geo.size.width
+            let (lw, rw) = split(total)
+            HStack(spacing: 0) {
+                left().frame(width: lw)
+                Divider()
+                right().frame(width: rw)
+            }
+        }
+    }
+
+    /// 左 + 右 + divider 恒等于 total —— 永不外溢。
+    private func split(_ total: CGFloat) -> (CGFloat, CGFloat) {
+        let d: CGFloat = 1
+        if let l = leftWidth {
+            let lw = max(160, min(l, total - 220))   // 左固定,但至少给右 220
+            return (lw, max(0, total - lw - d))
+        }
+        if let r = rightWidth {
+            let rw = max(160, min(r, total - 260))   // 右固定,但至少给左 260
+            return (max(0, total - rw - d), rw)
+        }
+        return ((total - d) / 2, (total - d) / 2)
+    }
+}
 
 /// status 色块徽章。
 struct StatusBadge: View {
