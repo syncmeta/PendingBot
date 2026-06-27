@@ -459,6 +459,13 @@ struct CrewSessionWindowView: View {
             if Task.isCancelled { return }
             await refreshRoster()
             badgeTick &+= 1
+            // Auto-wake captain: human sent a message and no captain is running → start one.
+            if let senderId = entries.last?.senderMemberId,
+               members.contains(where: { $0.id == senderId && $0.memberKind == "human" }),
+               !hasRunningCaptain,
+               let detail = crewStore.selectedDetail {
+                Task { try? await sessionRunner.startCaptain(detail: detail, backend: appModel.backend) }
+            }
         }
     }
 
