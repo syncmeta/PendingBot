@@ -340,6 +340,8 @@ final class CrewSessionRunner: ObservableObject {
         guard !runs.contains(where: {
             $0.crewId == crewId && $0.role == .captain && $0.status == .running
         }) else { return }
+        // Keep single captain slot: remove any finished captain runs before starting fresh.
+        runs.removeAll { $0.crewId == crewId && $0.role == .captain }
         guard let wd = detail.crew.workingDirectory, !wd.isEmpty else {
             throw RunnerError.captainNoWorkingDirectory
         }
