@@ -1,6 +1,11 @@
 # PendingBot / PendingCrew 进度账本 (Progress Ledger)
 
-**最近对账：2026-06-26**（pendingcrew 区按对账方法全核 + mirror refresh；pendingbot/shared 期望页 sweep 收口纯意图（曾上的 reconcile-check 门已按 handbook 边界撤回，见下）；其余区见 2026-06-19 起；对照实际代码 / 迁移 / git，不是看 task 标记）
+**最近对账：2026-06-27**（驾驶舱控制半边真建 + 删演示壳；pendingcrew 区按对账方法全核 + mirror refresh；pendingbot/shared 期望页 sweep 收口纯意图（曾上的 reconcile-check 门已按 handbook 边界撤回，见下）；其余区见 2026-06-19 起；对照实际代码 / 迁移 / git，不是看 task 标记）
+
+> **2026-06-27 驾驶舱控制半边真建 + 删样例演示（`feat/cockpit-v2` `2a37d1ce`，macOS build 绿、真 crew spawn 验待，task #447 / 20260626-cp 续）**：用户先要「UI 演示/原型」、我搭了 `CockpitPrototypeView`（自带样例 + 区域标注），用户随后定调「**不要演示了 直接真搭建**」。两件事落地：
+> - **删演示壳**：`git rm CockpitPrototypeView.swift`，`CockpitView` 空态从「落到样例原型」回退成**诚实提示**（"此 crew 工作目录没三本账；指向带 docs/handbook|state|tasks 的仓库（大绿豆自己）就渲染真数据"）。驾驶舱只走真数据，不再拿样例糊弄。
+> - **真建控制半边**（[cockpit.md](handbook/pendingcrew/concepts/cockpit.md) 的另一半，此前只在演示里画过占位卡）：`CrewSessionRunner.startForBrief(detail:backend:brief:)` **镜像已验过的 `startCaptain`** 整套世界观 / crew 工具 plumbing（claude 走 appendSystemPromptFile + settings/mcp；codex 走 developerInstructions + mcpServers），差别只有 role=worker、不追加 captain persona、helper `captain:false`、initialPrompt=brief。现状条详情加「⚡ 生 session 补差」按钮：把该条**期望页内容 + 当前现状**当 brief，真起一个 worker session 去对齐；派完 `viewingTerminal=true` + 退出驾驶舱，在三栏看它跑。不排队、不冒 chip（边界：terraform apply、人审不自动）。
+> - **尾巴**：spawn 真链路（claude PTY / codex app-server 起真 agent）需带三本账的真 crew 实跑验证 —— 镜像的是已验过的 startCaptain 路径，但 brief 这条 call site 本身未真机过（→ #443 GUI QA 批次）。DAG 子树仍只到自己+直接子；task `crew:` 字段数据未 populated（过滤默认全部）。
 
 > **2026-06-26 驾驶舱 v2 — 进主窗口 + 期望目录树 + 四块分段（`feat/cockpit-v2` `a693b0fc`+`8f5438e5`，macOS build 绿、GUI 真机验待，task #447 / 20260626-cp 续）**：用户看完 v1 MVP 后定调「**驾驶舱诶！不是信息面板！**」——要进主窗口（非临时 sheet）、handbook 以目录形式浏览（看自己 crew 以下层级 + 跟着 crew 层级那套，handbook 早提过）、期望/现状/任务分开、加个总 dashboard（最近任务/模块/状态/统计）。整片重做：
 > - **主窗口模式**（非 sheet）：`CrewSessionRunner.showingCockpit` 翻 true 时 `MacThreePaneView` 整片从「三栏群聊」切到「侧栏 | 驾驶舱」两栏——驾驶舱铺满 content+detail，侧栏留作**沿 DAG 选 crew 的范围选择器**（切 crew 即切范围）。中栏 toolbar「驾驶舱」入口翻 true，驾驶舱头部「退出」翻 false。
