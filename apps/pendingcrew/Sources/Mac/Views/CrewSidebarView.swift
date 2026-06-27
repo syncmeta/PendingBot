@@ -18,6 +18,7 @@ struct CrewSidebarView: View {
     /// 登录账号头像 seed —— 在 footer `.task` 里从家族凭据(共享 keychain)解析一次,
     /// 不在 render 路径上碰 keychain。见 `identityFooter`。
     @State private var identityAvatarSeed: String?
+    @StateObject private var usageMonitor = LocalAgentUsageMonitor()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -85,6 +86,7 @@ struct CrewSidebarView: View {
                 .environmentObject(model)
                 .frame(minWidth: 420, minHeight: 480)
         }
+        .onAppear { usageMonitor.start() }
     }
 
     // MARK: - 机器分组
@@ -214,6 +216,7 @@ struct CrewSidebarView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
+                        agentUsageLine
                     }
                     Spacer(minLength: 4)
                     Menu {
@@ -261,6 +264,32 @@ struct CrewSidebarView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+    }
+
+    /// 今日 CC / Codex token 用量小字行（两项都 nil 时隐藏）。
+    @ViewBuilder
+    private var agentUsageLine: some View {
+        let cc = usageMonitor.claudeTodayTokens
+        let cx = usageMonitor.codexTodayTokens
+        if cc != nil || cx != nil {
+            HStack(spacing: 6) {
+                if let n = cc {
+                    HStack(spacing: 2) {
+                        Image(systemName: "c.circle.fill").imageScale(.small)
+                        Text(LocalAgentUsageMonitor.formatTokens(n))
+                    }
+                }
+                if cc != nil, cx != nil { Text("·") }
+                if let n = cx {
+                    HStack(spacing: 2) {
+                        Image(systemName: "sparkles").imageScale(.small)
+                        Text(LocalAgentUsageMonitor.formatTokens(n))
+                    }
+                }
+            }
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+        }
     }
 
     // identity 三件套只在已登录 footer 渲染(未登录 footer 是登录菜单,
