@@ -392,6 +392,51 @@ final class CrewSessionRunner: ObservableObject {
             role: .captain
         )
     }
+
+    /// 驾驶舱控制半边(cockpit.md):把一段期望当 brief,真起一个 **worker** session 去补差。
+    /// 复用 `startCaptain` 同一套世界观 / crew 工具 plumbing,差别只有:role=worker、不追加
+    /// captain persona、helper 不带 `--captain`(captain:false,不解锁 answer_decision)、
+    /// `initialPrompt` = 这段 brief。不排队、不冒 chip —— 一个动作直接派下去(handbook 边界)。
+    func startForBrief(detail: CrewDetail, backend: PendingCrewBackend?, brief: String) async throws {
+        let crewId = detail.crew.id
+        guard let wd = detail.crew.workingDirectory, !wd.isEmpty else {
+            throw RunnerError.captainNoWorkingDirectory
+        }
+        let workdir = URL(fileURLWithPath: (wd as NSString).expandingTildeInPath)
+        let localSessionId = "brief-" + String(UUID().uuidString.lowercased().prefix(8))
+        let members = (try? await backend?.listCrewMembers(crewId: crewId))?.members ?? []
+        // worker 用建 crew 时选定的 coding agent（与 captain 同默认:没记 → Codex）。
+        let kind = LocalCodingAgentKind.captainDefault(detail.crew.captainAgentKind)
+        var cfg = SessionConfig(kind: kind, initialPrompt: brief)
+        var developerInstructions: String? = nil
+        var codexMcpServers: [String: Any]? = nil
+        switch kind {
+        case .claudeCode:
+            cfg.appendSystemPromptFile = LocalSessionLaunch.renderWorldModelFile(
+                detail: detail, members: members, taskBrief: brief, workdir: workdir,
+                sessionId: localSessionId, runnerKind: kind, appendPersona: nil)
+            let comms = LocalSessionLaunch.prepareLocalCommsConfig(
+                crewId: crewId, sessionId: localSessionId, captain: false, label: "补差")
+            cfg.settingsFile = comms.settings
+            cfg.mcpConfigFile = comms.mcp
+        case .codex:
+            developerInstructions = LocalSessionLaunch.renderWorldModelString(
+                detail: detail, members: members, taskBrief: brief, workdir: workdir,
+                sessionId: localSessionId, appendPersona: nil)
+            codexMcpServers = LocalSessionLaunch.codexMcpServers(
+                crewId: crewId, sessionId: localSessionId, captain: false, label: "补差")
+        }
+        try await start(
+            crewId: crewId,
+            sessionId: localSessionId,
+            config: cfg,
+            workingDirectory: workdir,
+            taskBrief: brief,
+            developerInstructions: developerInstructions,
+            codexMcpServers: codexMcpServers,
+            role: .worker
+        )
+    }
 }
 
 /// 单次 session 的 UI 视图模型。

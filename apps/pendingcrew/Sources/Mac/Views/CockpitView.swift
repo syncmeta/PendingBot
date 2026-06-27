@@ -17,6 +17,7 @@ import SwiftUI
 struct CockpitView: View {
     @ObservedObject var runner: CrewSessionRunner
     @EnvironmentObject private var crewStore: CrewStore
+    @EnvironmentObject private var model: AppModel   // 控制半边:拿 backend 渲世界观
 
     @State private var data: CockpitData?
     @State private var segment: Segment = .dashboard
@@ -24,6 +25,7 @@ struct CockpitView: View {
     @State private var selectedTopicID: String?   // 现状:选中的 topic id
     @State private var selectedTaskID: String?    // 任务:选中的 task id
     @State private var taskScopeOnly = false      // 任务:只看本 crew 子树
+    @State private var spawnNotice: String?       // 控制半边:派 session 的反馈(成功/失败)
 
     enum Segment: String, CaseIterable, Identifiable {
         case dashboard = "总览", expectation = "期望", state = "现状", tasks = "任务"
@@ -42,6 +44,17 @@ struct CockpitView: View {
         VStack(spacing: 0) {
             header
             Divider()
+            if let spawnNotice {
+                HStack(spacing: 8) {
+                    Image(systemName: "bolt.fill").foregroundStyle(Theme.Palette.accent)
+                    Text(spawnNotice).font(.caption)
+                    Spacer(minLength: 0)
+                    Button { self.spawnNotice = nil } label: { Image(systemName: "xmark") }
+                        .buttonStyle(.borderless)
+                }
+                .padding(.horizontal, 16).padding(.vertical, 8)
+                .background(Theme.Palette.accentBg)
+            }
             content
         }
         .background(Theme.Palette.canvas)
@@ -90,16 +103,17 @@ struct CockpitView: View {
             case .expectation:
                 CockpitExpectation(data: data, selectedNodeID: $selectedNodeID, nav: handleNav)
             case .state:
-                CockpitState(data: data, selectedTopicID: $selectedTopicID, nav: handleNav)
+                CockpitState(data: data, selectedTopicID: $selectedTopicID, nav: handleNav,
+                             onSpawnBrief: spawnBrief)
             case .tasks:
                 CockpitTasks(data: data, selectedTaskID: $selectedTaskID,
                              scopeCrewIds: taskScopeOnly ? scopeCrewIds : nil,
                              scopeOnly: $taskScopeOnly, scopeName: scopeName, nav: handleNav)
             }
         } else {
-            // 读不到真三本账(没选带 docs/handbook|state|tasks 的本地 crew)→ 落到布局原型,
-            // 自带样例 + 区域标注,保证点开驾驶舱总能看到完整结构、不空屏。
-            CockpitPrototypeView(segment: segment)
+            emptyState(crewStore.selectedDetail == nil
+                ? "选一个 crew 看它的驾驶舱"
+                : "此 crew 的工作目录里没有三本账(docs/handbook · state · tasks)。\n让某个 crew 的工作目录指向带这三本账的仓库(比如大绿豆自己),驾驶舱就渲染真数据。")
         }
     }
 
@@ -135,6 +149,49 @@ struct CockpitView: View {
             data = nil; return
         }
         data = CockpitLoader.load(crewRoot: URL(fileURLWithPath: workdir))
+    }
+
+    // MARK: 控制半边 —— 看着差,直接生一个 session 去补(cockpit.md:terraform apply,人审不自动)
+
+    /// 把某条现状的「期望 + 当前现状」当 brief,真起一个 worker session 去对齐。
+    /// 不排队、不冒 chip —— 一个动作直接派下去(handbook 边界)。派完退出驾驶舱,
+    /// 在三栏里看新 session 跑。
+    private func spawnBrief(for topic: CockpitTopic) {
+        guard let data, let detail = crewStore.selectedDetail else { return }
+        let expectation = CockpitLoader.readExpectation(
+            handbookDir: data.handbookDir, relpath: topic.expectationRelpath) ?? "(期望页缺失)"
+        let brief = """
+        对齐期望与现状的差(驾驶舱控制半边派单)。
+
+        主题:\(topic.key)
+        当前现状:\(topic.summary)(status: \(topic.status))
+
+        期望(docs/handbook/\(topic.expectationRelpath).md):
+        \(expectation)
+
+        请把代码 / 产物对齐到上面这段期望;完成后刷新现状那本(docs/state/\(topic.area).md 里对应条目)让差消失。
+        """
+        Task {
+            do {
+                try await runner.startForBrief(detail: detail, backend: model.backend, brief: brief)
+                runner.viewingTerminal = true
+                runner.showingCockpit = false      // 退出驾驶舱,去三栏看 session 跑
+            } catch {
+                spawnNotice = "派 session 失败:\(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func emptyState(_ text: String) -> some View {
+        VStack {
+            Spacer()
+            Text(text)
+                .foregroundStyle(Theme.Palette.inkMuted)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 420)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -371,6 +428,7 @@ private struct CockpitState: View {
     let data: CockpitData
     @Binding var selectedTopicID: String?
     let nav: (CockpitNav) -> Void
+    let onSpawnBrief: (CockpitTopic) -> Void   // 控制半边:看着这条差,真起 session 去补
 
     var body: some View {
         HSplitView {
@@ -438,6 +496,13 @@ private struct CockpitState: View {
                             Text("证据:\(topic.evidence)").font(.caption).foregroundStyle(Theme.Palette.inkMuted)
                         }
                     }
+                    // 控制半边:读出差 → 一步生 session 去补(cockpit.md:terraform apply,人审不自动)
+                    Button { onSpawnBrief(topic) } label: {
+                        Label("生 session 补差", systemImage: "bolt.fill").font(.callout.weight(.medium))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Theme.Palette.accent)
+                    .help("把这条期望当 brief,真起一个 session 去对齐(不排队、不冒 chip)")
                     let tasks = topic.taskIds.compactMap { data.task($0) }
                     if !tasks.isEmpty {
                         VStack(alignment: .leading, spacing: 6) {
