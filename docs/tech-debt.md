@@ -64,7 +64,7 @@
 - **问题**: prompt 教机长用 `start_session` 把明确编码任务排队，但本地 MCP server **没这个工具**——机长调不到。起 worker session 的真实通路（手动 `CrewSessionWindowView` / relay `task_request`）不经此工具。prompt 与实装漂移（spec 概念先行、工具没补）。
 - **影响**: 机长可能调一个不存在的工具 → 收到「未知工具」。本次 crew-naming 只在同文件加命名条、未碰这条，单独记。
 - **建议**: 要么在 McpServer 实装 `start_session`（captain-only，写 task_request 进控制/白板通道、app 起 session），要么把 prompt 改成现有真实通路的说法。
-- **状态**: 待办（与 crew-naming 无耦合）。
+- **状态**: ✅ 已解决（2026-07-03 · `feat/captain-spawn`）——`McpServer.swift` 已实装 `start_session(brief, runner?, isolation?)` 与 `create_child_crew(brief, title?)`，经 `LocalCrewControlStore` 命令通道（`enqueueStartSession`）落地起 worker session / 建子 crew；prompt 已同步更新为实际参数，漂移消除。
 
 ### 🟡 PendingCrewTests 的 `@testable import PendingCrew` 无构建序边 → 干净 `xcodebuild test` 编不过
 - **发现**: 2026-06-17 · `feat/crew-naming`（跑新单测时撞上）
