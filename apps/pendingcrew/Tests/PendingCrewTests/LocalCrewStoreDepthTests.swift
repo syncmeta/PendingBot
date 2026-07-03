@@ -36,4 +36,50 @@ final class LocalCrewStoreDepthTests: XCTestCase {
     func testUnknownCrewDepthZero() {
         XCTAssertEqual(freshStore().depth(of: "local-nope"), 0)
     }
+
+    /// `attachParent` 是禁环的（见 LocalCrewStore.attachParent 文档），所以没法
+    /// 经公开 API 挂出一个环。这里改从持久化文件这条真实缝隙注入脏数据：
+    /// 直接写一份 a/b 互为父边的 `local-crews.json` 到 baseDirectory,再用公开
+    /// 的 `LocalCrewStore(baseDirectory:)` 加载它 —— 复现"脏数据成环"这个
+    /// `depth(of:)` 的 visited 守卫本来要防的场景。
+    /// 断言只关心「会返回」（不挂/不崩），深度数值本身在环上没有语义,不强行
+    /// 断言具体值。
+    func testCyclicDataTerminates() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("crewdepth-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        let now = ISO8601DateFormatter().string(from: Date())
+        let json = """
+        {
+          "version": 1,
+          "crews": [
+            {
+              "id": "local-a",
+              "title": "a",
+              "responsibleSubjectId": "local-byok",
+              "runtimeLocation": "local_host",
+              "createdAt": "\(now)",
+              "updatedAt": "\(now)",
+              "parentCrewIds": ["local-b"]
+            },
+            {
+              "id": "local-b",
+              "title": "b",
+              "responsibleSubjectId": "local-byok",
+              "runtimeLocation": "local_host",
+              "createdAt": "\(now)",
+              "updatedAt": "\(now)",
+              "parentCrewIds": ["local-a"]
+            }
+          ]
+        }
+        """
+        try json.write(to: dir.appendingPathComponent("local-crews.json"), atomically: true, encoding: .utf8)
+
+        let s = LocalCrewStore(baseDirectory: dir)
+        // 主张：在 a↔b 互为父边的脏数据上,depth(of:) 会返回而不是无限递归/挂死。
+        // 环上深度本身没有稳定语义,只做非负性弱断言。
+        XCTAssertGreaterThanOrEqual(s.depth(of: "local-a"), 0)
+        XCTAssertGreaterThanOrEqual(s.depth(of: "local-b"), 0)
+    }
 }
