@@ -60,7 +60,52 @@ final class LocalCrewControlStore: @unchecked Sendable {
         return out
     }
 
+    // MARK: - Command queue（helper 侧：start_session / create_child_crew）
+    //
+    // rename 是 last-write-wins 单文件；起 session / 建子 crew 可重复，用队列：
+    // 每条一个独立文件 <crewId>.<uuid>.crewcmd.json，drain 时全读+删。
+
+    /// 机长起 worker session：brief 必填（空则忽略）；runner/isolation 可选。
+    func enqueueStartSession(crewId: String, brief: String, runner: String?, isolation: Bool?) {
+        enqueue(CrewCommand(
+            id: UUID().uuidString.lowercased(), crewId: crewId, kind: "start_session",
+            brief: brief, runner: runner, isolation: isolation, title: nil,
+            ts: ISO8601DateFormatter().string(from: Date())))
+    }
+
+    /// 机长以当前 crew 为父建子 crew：brief 必填；title 可选（不给 → app 侧地名占位）。
+    func enqueueCreateChildCrew(crewId: String, brief: String, title: String?) {
+        enqueue(CrewCommand(
+            id: UUID().uuidString.lowercased(), crewId: crewId, kind: "create_child_crew",
+            brief: brief, runner: nil, isolation: nil, title: title,
+            ts: ISO8601DateFormatter().string(from: Date())))
+    }
+
+    private func enqueue(_ cmd: CrewCommand) {
+        guard !cmd.brief.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard let data = try? JSONEncoder().encode(cmd) else { return }
+        let url = directory.appendingPathComponent("\(cmd.crewId).\(cmd.id)\(Self.cmdSuffix)")
+        try? data.write(to: url, options: .atomic)
+    }
+
+    /// 排空全部待执行命令（目录监听 tick 调）：返回列表并删除对应文件。
+    /// 执行由调用方做（CrewStore）。跨 crew 一并返回，调用方按 crewId 分派。
+    func drainCommands() -> [CrewCommand] {
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: nil) else { return [] }
+        var out: [CrewCommand] = []
+        for url in files where url.lastPathComponent.hasSuffix(Self.cmdSuffix) {
+            guard let data = try? Data(contentsOf: url),
+                  let cmd = try? JSONDecoder().decode(CrewCommand.self, from: data) else { continue }
+            out.append(cmd)
+            try? FileManager.default.removeItem(at: url)
+        }
+        return out.sorted { $0.ts < $1.ts }
+    }
+
     // MARK: - Persistence
+
+    private static let cmdSuffix = ".crewcmd.json"
 
     private static let suffix = ".crewmeta.json"
 
@@ -78,5 +123,17 @@ final class LocalCrewControlStore: @unchecked Sendable {
 /// 一条待落地的 crew 元数据变更（目前只有改名）。`ts` = 写入时间（ISO8601），调试用。
 struct CrewMetaChange: Codable, Equatable {
     let title: String
+    let ts: String
+}
+
+/// 一条待执行的机长命令（起 session / 建子 crew）。`ts` 用于 drain 后按写入序执行。
+struct CrewCommand: Codable, Equatable {
+    let id: String
+    let crewId: String
+    let kind: String        // "start_session" | "create_child_crew"
+    let brief: String
+    let runner: String?     // start_session：nil=随 crew captainAgentKind；"claude"/"codex" 覆盖
+    let isolation: Bool?    // start_session：nil/false=共享 crew 目录；true=独立 worktree
+    let title: String?      // create_child_crew：nil=地名占位
     let ts: String
 }
