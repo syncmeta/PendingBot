@@ -105,6 +105,9 @@ targets:
       - path: Sources/Support/FamilyCredentialStore.swift
       # 机器分组纯函数（依赖 Models 里的 Machine / CrewSummary，已编进 bundle）。
       - path: Sources/Support/MachineGrouping.swift
+      # 子 crew 深度 cap 纯判定（create_child_crew 机长命令）。CrewStore 依赖
+      # AppModel（未编进 bundle），逻辑摘到这个自包含文件供单测直接编译。
+      - path: Sources/Support/CrewChildDepthPolicy.swift
       # 本地 prompts：PromptTemplate（纯 {{var}}）+ LocalPromptLoader（bundle 读）
       # 自包含，编进 bundle 单测；Resources/Prompts 作为 test bundle 资源，从
       # test bundle 加载验证 bundling + lookup 端到端。
