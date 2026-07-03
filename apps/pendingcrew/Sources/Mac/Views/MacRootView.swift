@@ -75,6 +75,29 @@ struct MacThreePaneView: View {
                 crewStore.captainAutostartRequest = nil
             }
         }
+        // 机长 `start_session` 命令排空后的待起 worker session 队列（chunk2 §2）。
+        // **数组**：同一 tick 里连续多条命令落地时,单值 `@Published` 在 SwiftUI 合并
+        // 同步赋值会丢掉中间几条 —— 见 `CrewStore.sessionSpawnRequests` 注释。这里立刻
+        // 捕获 + 清空,避免同一批命令被 `.onChange` 重复触发处理。
+        .onChange(of: crewStore.sessionSpawnRequests) { _, reqs in
+            guard !reqs.isEmpty else { return }
+            crewStore.sessionSpawnRequests = []
+            Task {
+                for req in reqs {
+                    guard let detail = crewStore.details[req.crewId] else { continue }
+                    let kind: LocalCodingAgentKind? = req.runner.flatMap {
+                        $0 == "claude" ? .claudeCode : ($0 == "codex" ? .codex : nil)
+                    }
+                    do {
+                        try await sessionRunner.startForBrief(
+                            detail: detail, backend: model.backend, brief: req.brief,
+                            runnerOverride: kind, isolation: req.isolation)
+                    } catch {
+                        sessionRunner.lastStartError = error.localizedDescription
+                    }
+                }
+            }
+        }
         // 去掉 toolbar 底部那条灰色分隔线（详见 WindowSeparatorRemover）。tick 传
         // selectedCrewId —— 切 crew 时借 updateNSView 重设，抢在 SwiftUI 把它重置回去之后。
         .background(WindowSeparatorRemover(tick: crewStore.selectedCrewId ?? ""))

@@ -14,8 +14,8 @@ task: 20260626-qa(Mac/真机 GUI QA 批次;像素验 #369/#342 已 completed)
 
 ## concepts/captain
 status: partial, pending-qa
-现状: captain = 被打机长标记的本地 session,edge bot-当-captain 整套已实删;本地工具 `answer_decision` / `rename_crew` + worker triage 单测跑通,报到链路 GUI E2E 过;真机改名 E2E + "拆 worker → ask → answer_decision"完整编排是尾巴,且依赖 `start_session` 工具未实装先收口(prompt 领先实现)。
-证据: 编排面退役已验证删除;MCP dispatch / 控制通道 round-trip 单测;codex 机长报到 GUI E2E 2026-06-17(computer-use 驱动、截图存档)
+现状: captain = 被打机长标记的本地 session,edge bot-当-captain 整套已实删;本地工具 `answer_decision` / `rename_crew` + **`start_session` / `create_child_crew`**（2026-07-03 `feat/captain-spawn` 落地：机长可自主起 worker session、以当前 crew 为父建子 crew，子 crew 自动起子机长；命令走 `LocalCrewControlStore` 离线文件队列、depth cap=3）+ worker triage 单测跑通,报到链路 GUI E2E 过;真机改名 E2E + "拆 worker → ask → answer_decision"完整编排 + 机长自主 spawn 真机 E2E 是尾巴（归 #443）。start_session prompt/实装漂移已消除（tech-debt:61 收口）。
+证据: 编排面退役已验证删除;MCP dispatch / 控制通道 round-trip 单测（含 spawn 命令队列 + depth cap，xcodebuild test 绿）;codex 机长报到 GUI E2E 2026-06-17(computer-use 驱动、截图存档)
 task: 20260626-qa(Mac/真机 GUI QA 批次)
 
 ## concepts/governance
@@ -56,7 +56,7 @@ task: 20260626-qa(Mac/真机 GUI QA 批次)
 
 ## concepts/async-delegation
 status: partial
-现状: 部分机制已落——session 后台异步跑不阻塞、`ask` 异步、推送无轮询代码全落(本地单机真跑通);「驾驶舱看差生 session 补差」随驾驶舱(#439)落地、当前规划;「人始终在高层、执行全异步」作为贯穿全局的统一原则已拍为北极星但尚未整体成形。
+现状: 部分机制已落——session 后台异步跑不阻塞、`ask` 异步、推送无轮询代码全落(本地单机真跑通);「驾驶舱看差生 session 补差」看板 MVP + 控制半边已落（cockpit-v2 合 main），机长自主 `start_session`/`create_child_crew`（2026-07-03 `feat/captain-spawn`）也让「机长判断→异步派活/拆组」端到端可跑;「人始终在高层、执行全异步」作为贯穿全局的统一原则已拍为北极星但尚未整体成形。
 证据: session 后台跑 / `ask` 异步 / 去轮询改推送 均代码全落(远端活体推送真机是尾巴)
 task: 20260626-cp(驾驶舱看差生 session 那部分)
 

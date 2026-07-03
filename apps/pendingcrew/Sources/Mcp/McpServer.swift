@@ -125,6 +125,31 @@ final class McpServer {
                         "required": ["name"],
                     ],
                 ])
+                tools.append([
+                    "name": "start_session",
+                    "description": "（机长专用）在当前 crew 里起一个 worker session 去干一件明确的编码任务。brief 写清要干什么。runner 默认随本 crew（不填即可），可填 \"claude\"/\"codex\" 覆盖。isolation 默认 false（与你共享 crew 目录）；只有当这件事会大改文件、想隔离到独立 worktree 时才传 true。起完 worker 会自己报到，你在群聊看得到。",
+                    "inputSchema": [
+                        "type": "object",
+                        "properties": [
+                            "brief": ["type": "string", "description": "要这个 session 干的明确任务。"],
+                            "runner": ["type": "string", "enum": ["claude", "codex"]],
+                            "isolation": ["type": "boolean"],
+                        ],
+                        "required": ["brief"],
+                    ],
+                ])
+                tools.append([
+                    "name": "create_child_crew",
+                    "description": "（机长专用）以当前 crew 为父，建一个子 crew。**只在一块事大到该独立成组、要有自己的机长和群聊时才拆，别滥拆。**子 crew 继承本 crew 的工作目录与机长类型，会自动起自己的机长，brief 作为它的开场任务。title 可不填（自动取个地名，子机长之后自己改名）。有子 crew 深度上限，太深会被拒。",
+                    "inputSchema": [
+                        "type": "object",
+                        "properties": [
+                            "brief": ["type": "string", "description": "这个子 crew 要干的事（子机长的开场任务）。"],
+                            "title": ["type": "string", "description": "可选：短标签名。不填自动取地名。"],
+                        ],
+                        "required": ["brief"],
+                    ],
+                ])
             }
             return result(id: id, ["tools": tools])
         case "tools/call":
@@ -208,6 +233,22 @@ final class McpServer {
             }
             control.requestRename(crewId: crewId, name: name)
             return toolResult(id: id, text: "已把 crew 改名为「\(name)」。")
+        case "start_session":
+            guard isCaptain else { return toolResult(id: id, text: "ERROR: 仅机长可用") }
+            let brief = ((args["brief"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !brief.isEmpty else { return toolResult(id: id, text: "ERROR: brief 不能为空") }
+            let runner = (args["runner"] as? String).flatMap { ["claude", "codex"].contains($0) ? $0 : nil }
+            let isolation = args["isolation"] as? Bool
+            control.enqueueStartSession(crewId: crewId, brief: brief, runner: runner, isolation: isolation)
+            return toolResult(id: id, text: "已安排起 session：\(brief)。它起来后会在群聊报到。")
+        case "create_child_crew":
+            guard isCaptain else { return toolResult(id: id, text: "ERROR: 仅机长可用") }
+            let brief = ((args["brief"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !brief.isEmpty else { return toolResult(id: id, text: "ERROR: brief 不能为空") }
+            let rawTitle = (args["title"] as? String) ?? ""
+            let title = rawTitle.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            control.enqueueCreateChildCrew(crewId: crewId, brief: brief, title: title.isEmpty ? nil : title)
+            return toolResult(id: id, text: "已安排建子 crew。它起来后子机长会报到。")
         default:
             return toolResult(id: id, text: "ERROR: 未知工具 \(name ?? "nil")")
         }

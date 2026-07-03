@@ -179,6 +179,20 @@ final class LocalCrewStore {
         return result
     }
 
+    /// 沿父边算深度：无父 = 0，否则 1 + max(父深度)。带 visited 防脏数据成环无限递归。
+    /// 用于 create_child_crew 前的深度 cap 检查（根 depth 0）。
+    ///
+    /// **成环时的保证**：`attachParent` 正常路径禁环，但脏数据(如手改 JSON)
+    /// 仍可能出现环。visited 守卫只保证*会返回*，不保证返回值有意义 ——
+    /// 环上算出来的是有限整数，但不是真实深度,调用方（深度 cap 检查）只能
+    /// 依赖"会终止"这一条,不能依赖"数值正确"。
+    func depth(of crewId: String, visited: Set<String> = []) -> Int {
+        guard let crew = crews[crewId], !crew.parentCrewIds.isEmpty else { return 0 }
+        guard !visited.contains(crewId) else { return 0 } // 环自保
+        let next = visited.union([crewId])
+        return 1 + (crew.parentCrewIds.map { depth(of: $0, visited: next) }.max() ?? 0)
+    }
+
     // MARK: - Relay 绑定（接合 v2 block 3：edge 信箱）
 
     /// 把本地 crew 绑到 edge 侧 relay crew conversation（「接入 PendingBot」

@@ -64,7 +64,7 @@
 - **问题**: prompt 教机长用 `start_session` 把明确编码任务排队，但本地 MCP server **没这个工具**——机长调不到。起 worker session 的真实通路（手动 `CrewSessionWindowView` / relay `task_request`）不经此工具。prompt 与实装漂移（spec 概念先行、工具没补）。
 - **影响**: 机长可能调一个不存在的工具 → 收到「未知工具」。本次 crew-naming 只在同文件加命名条、未碰这条，单独记。
 - **建议**: 要么在 McpServer 实装 `start_session`（captain-only，写 task_request 进控制/白板通道、app 起 session），要么把 prompt 改成现有真实通路的说法。
-- **状态**: 待办（与 crew-naming 无耦合）。
+- **状态**: ✅ 已解决（2026-07-03 · `feat/captain-spawn`）——`McpServer.swift` 已实装 `start_session(brief, runner?, isolation?)` 与 `create_child_crew(brief, title?)`，经 `LocalCrewControlStore` 命令通道（`enqueueStartSession`）落地起 worker session / 建子 crew；prompt 已同步更新为实际参数，漂移消除。
 
 ### 🟡 PendingCrewTests 的 `@testable import PendingCrew` 无构建序边 → 干净 `xcodebuild test` 编不过
 - **发现**: 2026-06-17 · `feat/crew-naming`（跑新单测时撞上）
@@ -1060,3 +1060,8 @@
 - ✅ ~~**board SPA 模块加载期抛错 = 静默全屏白屏、服务端零信号**~~ **(本例已修 2026-06-19,`fix/board-blank-env` `3d610d3d`、prod worker `765023f3`)** — 用户报「board 打开空白页」。根因:`apps/admin/src/env.ts` 旧逻辑**构建期硬要求** `VITE_EDGE_API_URL`,缺失则模块加载即 `throw` → SPA 在 `createRoot().render()` 前中断 → 白屏。而 prod 构建链(`apps/edge` `run deploy` 先 `bun --filter=@pendingbot/admin run build`)**不带 `.env`**(`.env` gitignored,两 worktree 都没有),Vite 把 `import.meta.env.VITE_EDGE_API_URL` 内联成 `undefined`,每次部署都把白屏 bundle 发上 prod。board 早期在 CF Pages(dashboard 配过构建期 env)能用;`53c320b2` 改同源 worker-assets 后构建挪到本地 `vite build`、没人接这个变量,最近 model-presets 部署(`9b360f71`)重打包就把白屏发上线。**修法**:env.ts 改默认 `window.location.origin`(board 与 edge 同源,该变量在 prod 本就冗余),`VITE_EDGE_API_URL` 降级为本地开发可选 override;构建产物核对旧 throw 消失。
   - 🟡 **遗留结构缺口(类,非本例)**:① board 经 worker `ASSETS` binding 同源 serve,**任何**模块加载期抛错都静默白屏,而 worker 本身照常 200/302、`/health` 绿、Access 门正常 → **监控完全看不到**,只能人肉发现。无 board 启动冒烟(哪怕部署后 headless 打开 `/board/` 验 `#root` 非空的一步)。② board 产物(`apps/admin/dist`)gitignored 且**每次 `wrangler deploy` 现场重打包**、无版本固化 —— 任何带旧 admin 源码或坏构建环境的 worktree 部署都可能再发坏 bundle。③ pre-launch 内部控制台、优先级不高,但这次零信号停服值得记。
   - **关联**:board 同源服务 `53c320b2`;门禁 `apps/edge/wrangler.jsonc` Access app `pendingbot-board`;部署链 `apps/edge/package.json` `deploy` script。
+
+## 2026-07-03 captain 自主 spawn — 两条 Minor 尾巴（`feat/captain-spawn`）
+
+- 🟡 **`create_child_crew` 部分失败回执措辞误导**:`CrewStore.executeCreateChildCrew` 里 `createCrew` 成功但 `attachParent` 抛错时走同一个 `catch`，往父白板贴的是「建子 crew 失败」——但子 crew 其实已建成、子机长会自动起，只是没挂上父 DAG 边（孤立子 crew）。现实触发概率低（新建 crew 的 `descendants` 为空 → cycle-guard 不会 fire，主要剩 `notAuthenticated`/瞬时刷新错），且用户能在侧栏看到那个 crew。**根治**：拆开回执，post-create 的 attach 失败改读「子 crew 已建但未挂到父下」。final review（opus）判为可接受、不阻塞合并，记此备忘。
+- 🟢 **`LocalCrewControlStoreMain.swift`（swiftc harness `@main`）被 xcodegen 注册进 PendingCrewTests bundle**:Task 1 为 headless 校验建的 standalone harness 落在 `Tests/PendingCrewTests/` 下，被 glob 收进测试 target。XCTest runner 自己驱动执行、不会调这个 `main()`，263 单测确认无劫持/冲突——只是测试 target 里多一个无引用 harness 文件的轻度杂音。**清理**：把 harness 挪出测试目录或删（swiftc 校验已被 `xcodebuild test` 覆盖，harness 冗余）。

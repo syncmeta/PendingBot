@@ -34,6 +34,16 @@ final class CrewStore: ObservableObject {
     /// sessionRunner —— 信号经 store 冒泡给常驻的 three-pane 才能可靠落地。
     @Published var captainAutostartRequest: String?
 
+    /// `start_session` 命令排空后的待起会话队列 —— `MacRootView`（持
+    /// `CrewSessionRunner`）观察它,逐条调 `runner.startForBrief`,起完清空。
+    ///
+    /// **数组而非单值**:单个 `@Published` 槽位在同一次目录监听 tick 里连续
+    /// 两条 `start_session` 落地时会丢命令 —— SwiftUI 对同步的 `@Published`
+    /// 赋值做合并,`.onChange` 只看得到最后一次赋值。数组 append 不丢、
+    /// 消费方读完整体后清空,同 `captainAutostartRequest` 的"一次性信号"
+    /// 模式但扛得住同 tick 多条。
+    @Published var sessionSpawnRequests: [SessionSpawnRequest] = []
+
     private unowned let appModel: AppModel
 
     /// crew-naming：机长 `rename_crew` 经 `LocalCrewControlStore` 写的待改名，
@@ -253,10 +263,16 @@ final class CrewStore: ObservableObject {
         guard !didStartRenameWatch else { return }
         didStartRenameWatch = true
         LocalWhiteboardStore.shared.startWatching()
-        Task { await applyPendingRenames() }
+        Task {
+            await applyPendingRenames()
+            await drainPendingCommands()
+        }
         renameWatch = LocalWhiteboardStore.shared.directoryChanged
             .sink { [weak self] in
-                Task { @MainActor in await self?.applyPendingRenames() }
+                Task { @MainActor in
+                    await self?.applyPendingRenames()
+                    await self?.drainPendingCommands()
+                }
             }
         #endif
     }
@@ -268,4 +284,99 @@ final class CrewStore: ObservableObject {
         for r in renames { LocalCrewStore.shared.setTitle(r.crewId, r.title) }
         await refreshList()
     }
+
+    // MARK: - crew-comms：机长命令排空（start_session / create_child_crew）
+
+    /// 排空机长命令通道，逐条执行。`start_session` → 追加到
+    /// `sessionSpawnRequests`（`MacRootView` 观察数组、逐条起、清空）；
+    /// `create_child_crew` → 深度 cap 检查 → 通过既有 `createCrew` +
+    /// `attachParent` 建子 crew（自动带出 `captainAutostartRequest`）+
+    /// 父白板回执一行。与 `applyPendingRenames` 同一 tick 触发
+    /// （`directoryChanged` 跨进程目录监听）。
+    func drainPendingCommands() async {
+        let cmds = LocalCrewControlStore.shared.drainCommands()
+        guard !cmds.isEmpty else { return }
+        for cmd in cmds {
+            switch cmd.kind {
+            case "start_session":
+                sessionSpawnRequests.append(SessionSpawnRequest(
+                    crewId: cmd.crewId, brief: cmd.brief,
+                    runner: cmd.runner, isolation: cmd.isolation ?? false))
+            case "create_child_crew":
+                await executeCreateChildCrew(cmd)
+            default:
+                break
+            }
+        }
+    }
+
+    /// 子 crew 深度 cap 判定的薄包装 —— 真逻辑在 `CrewChildDepthPolicy`
+    /// （自包含文件，供 `CrewStoreChildDepthTests` 单测；`CrewStore` 依赖
+    /// `AppModel`，未编进 PendingCrewTests bundle，没法直接测这个类型上的静态方法）。
+    static func shouldRejectChild(depthOfParent d: Int, cap: Int = 3) -> Bool {
+        CrewChildDepthPolicy.shouldReject(depthOfParent: d, cap: cap)
+    }
+
+    /// 执行一条 `create_child_crew` 命令：深度 cap → 继承父
+    /// `workingDirectory`/`captainAgentKind`/`machineId`/`responsibleSubjectId`
+    /// 建子 crew → 挂父边 → 父白板回执一行。全部失败路径都落一行回执，
+    /// 不静默吞（机长看不到 app 里的错误提示，只能靠白板知道命令没成）。
+    private func executeCreateChildCrew(_ cmd: CrewCommand) async {
+        let parentId = cmd.crewId
+        let parentDepth = LocalCrewStore.shared.depth(of: parentId)
+        if Self.shouldRejectChild(depthOfParent: parentDepth) {
+            postSystemNotice(crewId: parentId, text: "⚠️ 建子 crew 被拒：已达子 crew 深度上限（3 层）。")
+            return
+        }
+        // 父 crew 的 workingDirectory 只在 detail（CrewBody）里,summary 没有这个字段 ——
+        // 需要时才 fetch,不常驻占内存。取不到 detail 就现拉一次再读。
+        if details[parentId] == nil {
+            await refreshDetail(parentId)
+        }
+        guard let parentSummary = crews.first(where: { $0.id == parentId }),
+              let parentDetail = details[parentId] else {
+            postSystemNotice(crewId: parentId, text: "⚠️ 建子 crew 被拒：找不到父 crew 信息。")
+            return
+        }
+        guard let wd = parentDetail.crew.workingDirectory, !wd.isEmpty else {
+            postSystemNotice(crewId: parentId, text: "⚠️ 建子 crew 被拒：父 crew 无可继承的工作目录。")
+            return
+        }
+        do {
+            let request = CreateCrewRequest.make(
+                responsibleSubjectId: parentSummary.responsibleSubjectId,
+                title: cmd.title,
+                machineId: parentSummary.machineId,
+                workingDirectory: wd,
+                captainAgentKind: parentSummary.captainAgentKind,
+                captain: .systemGenerated(templateName: nil))
+            let resp = try await createCrew(request) // 既有：内部会置 captainAutostartRequest
+            try await attachParent(crewId: resp.crewId, parentCrewId: parentId)
+            postSystemNotice(
+                crewId: parentId,
+                text: "已建子 crew「\(cmd.title ?? resp.crewId)」，子机长将自动报到。")
+        } catch {
+            postSystemNotice(crewId: parentId, text: "⚠️ 建子 crew 失败：\(error.localizedDescription)")
+        }
+    }
+
+    /// 往 crew 白板发一行系统回执。`LocalWhiteboardStore` 没有单独的
+    /// "系统消息" API —— 复用 `appendSessionMessage`（senderKind "session"），
+    /// `senderName` 标成「系统」区分于真实 session/机长发言，`sessionId` 用固定
+    /// 哨兵值（不对应任何真实 session，纯展示用）。
+    private func postSystemNotice(crewId: String, text: String) {
+        LocalWhiteboardStore.shared.appendSessionMessage(
+            crewId: crewId, sessionId: "system", text: text, senderName: "系统")
+    }
+}
+
+/// `start_session` 命令排空后的一次待起会话请求。`MacRootView` 观察
+/// `CrewStore.sessionSpawnRequests` 数组，逐条调 `runner.startForBrief`。
+struct SessionSpawnRequest: Equatable {
+    let crewId: String
+    let brief: String
+    /// nil = 随 crew `captainAgentKind`；"claude"/"codex" 覆盖。
+    let runner: String?
+    /// true = 独立 worktree；false/nil = 共享 crew 目录。
+    let isolation: Bool
 }
