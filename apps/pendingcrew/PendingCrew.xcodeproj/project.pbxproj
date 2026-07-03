@@ -143,6 +143,7 @@
 		A4E148969B130D4DA1A5646E /* ColorHex.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85701E0A44CE34A85B831771 /* ColorHex.swift */; };
 		A67C0B2B38BE0BFB0B06E905 /* McpServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E5A7C63B37740B3B978DBBA /* McpServer.swift */; };
 		A6C181710F6679AE01C571B2 /* CrewLoginExchange.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79A72EA93DFADA5C2FFF1954 /* CrewLoginExchange.swift */; };
+		A6C206B20B537A256C9C42A2 /* LocalAgentUsageMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 483CACFDBC40DE9D8B588BF3 /* LocalAgentUsageMonitor.swift */; };
 		A6C63EE4421E535FE0CC6182 /* CodexRPCMessageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F58735ECC1D2FD177BFB792 /* CodexRPCMessageTests.swift */; };
 		A6CB5E9580950D91CF149907 /* LocalCrewStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBB438AE76CF441D4A9A071F /* LocalCrewStore.swift */; };
 		A6CFC4E8A3B7D3BCA0A4BA25 /* LocalApprovalStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37325956B9504E5FFA86D188 /* LocalApprovalStoreTests.swift */; };
@@ -291,6 +292,7 @@
 		45ABD06213BDA13CBF1C79EC /* BlinkingCursor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlinkingCursor.swift; sourceTree = "<group>"; };
 		46681CA2C4390D6C45E3101C /* ColorHash.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorHash.swift; sourceTree = "<group>"; };
 		476A276CBDA4640936A8B817 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		483CACFDBC40DE9D8B588BF3 /* LocalAgentUsageMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalAgentUsageMonitor.swift; sourceTree = "<group>"; };
 		486ABCF7EEB8DF24CA6EDF11 /* CrewStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewStore.swift; sourceTree = "<group>"; };
 		48B9D9CAD7BB70350DE579B3 /* CodexAppServerBackend.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexAppServerBackend.swift; sourceTree = "<group>"; };
 		4AB79A50FE00814FF10A7AB1 /* ThemeCrewExtras.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeCrewExtras.swift; sourceTree = "<group>"; };
@@ -512,6 +514,7 @@
 				2D28D0DC0130419B8FD88E95 /* CrewMailboxWaker.swift */,
 				64939E9C459FD69C7E2993FA /* CrewRelayAgent.swift */,
 				C19AB68BF7E4D689CEAF0A0F /* CrewSessionRunner.swift */,
+				483CACFDBC40DE9D8B588BF3 /* LocalAgentUsageMonitor.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -1044,6 +1047,7 @@
 				CFFCCE0BBDE3D119D2140C41 /* ImageViewer.swift in Sources */,
 				14230CE584BE71D2DA12EFF9 /* InMemoryKeyValueStore.swift in Sources */,
 				6FC755AFB9D2D4ADD5EA6744 /* KeychainStore.swift in Sources */,
+				A6C206B20B537A256C9C42A2 /* LocalAgentUsageMonitor.swift in Sources */,
 				0C31AC70A7AF296381A05716 /* LocalApprovalStore.swift in Sources */,
 				A4E099C910B5400D8A645F0C /* LocalCodingAgentExecutable.swift in Sources */,
 				99B5BB04A0E197AE03535A86 /* LocalCodingAgentKind.swift in Sources */,
