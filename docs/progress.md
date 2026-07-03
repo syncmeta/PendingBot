@@ -1,6 +1,12 @@
 # PendingBot / PendingCrew 进度账本 (Progress Ledger)
 
-**最近对账：2026-06-27**（驾驶舱控制半边真建 + 删演示壳；pendingcrew 区按对账方法全核 + mirror refresh；pendingbot/shared 期望页 sweep 收口纯意图（曾上的 reconcile-check 门已按 handbook 边界撤回，见下）；其余区见 2026-06-19 起；对照实际代码 / 迁移 / git，不是看 task 标记）
+**最近对账：2026-07-03**（captain 自主 spawn 落地；其余见 2026-06-27 起；对照实际代码 / 迁移 / git，不是看 task 标记）
+
+> **2026-07-03 Captain 自主 `start_session` / `create_child_crew`（本地模式）（`feat/captain-spawn`，subagent-driven 7-task TDD，spec 2026-06-19-captain-spawn-session-crew-design，PendingCrewTests 263 绿 + macOS build 绿）**：机长（本地 coding-agent session）此前只能 `post_to_crew`/`read_whiteboard`/`ask`/`answer_decision`/`rename_crew`；补两个机长专用工具让它**无需人类逐次确认**就能在当前 crew 起 worker session、或以当前 crew 为父建子 crew（子 crew 自动起子机长）。照搬 `rename_crew` 的**离线文件控制通道**（helper 是碰不到 app、不联网的离线子进程）。
+> - **命令通道**（`LocalCrewControlStore` 扩展）：`rename` 是 last-write-wins 单文件；spawn 可重复→**每命令一文件队列** `<crewId>.<uuid>.crewcmd.json`，`drainCommands()` 读全部+删文件（**删在任何 await 前 → 再入安全、不双执行/不丢**，opus 复核确认）。`McpServer` 在 `isCaptain` 分支注册两工具 + `tools/call` 再守卫；非机长/空 brief 拒绝不入队。
+> - **执行**（`CrewStore` 目录监听 tick 排空）：`create_child_crew` → 深度 cap（`LocalCrewStore.depth(of:)` 沿父边最长链，根=0，cap=3）+ 复用既有 `createCrew`（经 `captainAutostartRequest` 自动起子机长）+ `attachParent` + 往父白板回执；`start_session` → append 到 `sessionSpawnRequests`（**数组非单槽**，避免 @Published 同 tick coalescing 丢命令）→ `MacRootView` drain 数组、逐条 `CrewSessionRunner.startForBrief(runnerOverride/isolation)`（isolation 经 `SessionWorkspace.resolve` 开独立 worktree）。
+> - **合并调和**：本分支从 cockpit-v2 合 main 前分叉，`startForBrief` 与 cockpit 版冲突——合 main 后保留本分支 5-arg superset（cockpit 3-arg 调用点用默认参解析），comms 调用取 cockpit 的 `label:"补差"`。**263 单测 0 失败 + macOS build 绿**。
+> - **尾巴（归 #443 / `20260626-qa`）**：真起 claude/codex worker 看报到、`create_child_crew` 真建子 crew 看子机长自动报到、isolation 真开 worktree、depth cap 真机验——需签名真机 GUI。tech-debt:61（start_session prompt/实装漂移）已收口。
 
 > **2026-06-27 驾驶舱控制半边真建 + 删样例演示（`feat/cockpit-v2` `2a37d1ce`，macOS build 绿、真 crew spawn 验待，task #447 / 20260626-cp 续）**：用户先要「UI 演示/原型」、我搭了 `CockpitPrototypeView`（自带样例 + 区域标注），用户随后定调「**不要演示了 直接真搭建**」。两件事落地：
 > - **删演示壳**：`git rm CockpitPrototypeView.swift`，`CockpitView` 空态从「落到样例原型」回退成**诚实提示**（"此 crew 工作目录没三本账；指向带 docs/handbook|state|tasks 的仓库（大绿豆自己）就渲染真数据"）。驾驶舱只走真数据，不再拿样例糊弄。
