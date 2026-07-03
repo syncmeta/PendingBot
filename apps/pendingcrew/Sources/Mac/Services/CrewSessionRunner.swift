@@ -388,6 +388,58 @@ final class CrewSessionRunner: ObservableObject {
             role: .captain
         )
     }
+
+    /// 起一个 worker session 执行机长派发的 brief（chunk2 §2 `start_session` 工具）。
+    /// 复用 captain 同一套世界观 + comms 接线，区别：无 persona 追加、`role: .worker`，
+    /// 且 kind / workdir 可被机长的命令参数覆盖：
+    /// - `runnerOverride` 非 nil → 强制用它（机长命令里的 `runner: "claude"/"codex"`），
+    ///   否则跟 crew 的 `captainAgentKind` 默认一致（`captainDefault`）。
+    /// - `isolation` → 经 `SessionWorkspace.resolve` 决定共享 crew 目录还是开独立 worktree
+    ///   （worker 改代码可能要隔离，机长调度不改代码所以 `startCaptain` 恒不隔离）。
+    func startForBrief(
+        detail: CrewDetail, backend: PendingCrewBackend?, brief: String,
+        runnerOverride: LocalCodingAgentKind? = nil, isolation: Bool = false
+    ) async throws {
+        let crewId = detail.crew.id
+        guard let wd = detail.crew.workingDirectory, !wd.isEmpty else {
+            throw RunnerError.captainNoWorkingDirectory
+        }
+        let baseDir = URL(fileURLWithPath: (wd as NSString).expandingTildeInPath)
+        let workdir = SessionWorkspace.resolve(crewDirectory: baseDir, isolation: isolation, hint: brief)
+        let localSessionId = "worker-" + String(UUID().uuidString.lowercased().prefix(8))
+        let kind = runnerOverride ?? LocalCodingAgentKind.captainDefault(detail.crew.captainAgentKind)
+        // members best-effort：加载失败不挡启动（只是少世界观里的成员名单，与 startCaptain 同策略）。
+        let members = (try? await backend?.listCrewMembers(crewId: crewId))?.members ?? []
+        var cfg = SessionConfig(kind: kind, initialPrompt: brief)
+        var developerInstructions: String? = nil
+        var codexMcpServers: [String: Any]? = nil
+        switch kind {
+        case .claudeCode:
+            cfg.appendSystemPromptFile = LocalSessionLaunch.renderWorldModelFile(
+                detail: detail, members: members, taskBrief: brief, workdir: workdir,
+                sessionId: localSessionId, runnerKind: kind)
+            let comms = LocalSessionLaunch.prepareLocalCommsConfig(
+                crewId: crewId, sessionId: localSessionId, captain: false)
+            cfg.settingsFile = comms.settings
+            cfg.mcpConfigFile = comms.mcp
+        case .codex:
+            developerInstructions = LocalSessionLaunch.renderWorldModelString(
+                detail: detail, members: members, taskBrief: brief, workdir: workdir,
+                sessionId: localSessionId)
+            codexMcpServers = LocalSessionLaunch.codexMcpServers(
+                crewId: crewId, sessionId: localSessionId, captain: false)
+        }
+        try await start(
+            crewId: crewId,
+            sessionId: localSessionId,
+            config: cfg,
+            workingDirectory: workdir,
+            taskBrief: brief,
+            developerInstructions: developerInstructions,
+            codexMcpServers: codexMcpServers,
+            role: .worker
+        )
+    }
 }
 
 /// 单次 session 的 UI 视图模型。
