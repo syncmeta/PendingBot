@@ -19,6 +19,8 @@ import { McpServerList, McpServerCreate, McpServerEdit } from './pages/mcp-serve
 import { ModelPresetList, ModelPresetCreate, ModelPresetEdit } from './pages/model-presets';
 import { FeatureFlagsPage } from './pages/feature-flags';
 import { ModelRolesPage } from './pages/model-roles';
+import { BillingPacksPage } from './pages/billing-packs';
+import { BillingWalletPage } from './pages/billing-wallet';
 
 // No authProvider / login route: the board is served same-origin under /board
 // behind Cloudflare Access, which is the sole identity gate (the edge verifies
@@ -93,6 +95,16 @@ export default function App() {
                 list: '/model-roles',
                 meta: { label: '系统模型' },
               },
+              {
+                name: 'billing_packs',
+                list: '/billing-packs',
+                meta: { label: '计费套餐' },
+              },
+              {
+                name: 'billing_wallet',
+                list: '/billing-wallet',
+                meta: { label: '钱包 / 发放' },
+              },
             ]}
           >
             <ThemedLayout Title={() => <strong>PendingBot Board</strong>}>
@@ -120,6 +132,8 @@ export default function App() {
                 <Route path="/model-presets/edit/:id" element={<ModelPresetEdit />} />
                 <Route path="/feature-flags" element={<FeatureFlagsPage />} />
                 <Route path="/model-roles" element={<ModelRolesPage />} />
+                <Route path="/billing-packs" element={<BillingPacksPage />} />
+                <Route path="/billing-wallet" element={<BillingWalletPage />} />
                 <Route path="*" element={<NavigateToResource resource="preset_bots" />} />
               </Routes>
             </ThemedLayout>

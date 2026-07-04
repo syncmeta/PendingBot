@@ -7,10 +7,12 @@ struct WalletV2View: View {
     @State private var wallet: BillingService.WalletV2?
     @State private var loading = false
     @State private var loadError: String?
+    @State private var showPurchase = false
 
     var body: some View {
         List {
             balanceSection
+            rechargeSection
             if let w = wallet, !w.packs.isEmpty {
                 packsSection(w.packs)
             }
@@ -25,6 +27,29 @@ struct WalletV2View: View {
         .inlineNavTitle()
         .refreshable { await reload() }
         .task { await reload() }
+        .sheet(isPresented: $showPurchase) {
+            // 购买成功后刷新余额(webhook 到账有几秒延迟,故成功回调 + 关闭时都刷)。
+            PurchaseSheet(onPurchased: { Task { await reload() } })
+        }
+        .onChange(of: showPurchase) { _, isShown in
+            if !isShown { Task { await reload() } }
+        }
+    }
+
+    // MARK: - Recharge
+
+    @ViewBuilder
+    private var rechargeSection: some View {
+        Section {
+            Button {
+                showPurchase = true
+            } label: {
+                Label("充值 PNC", systemImage: "plus.circle.fill")
+                    .font(Theme.Fonts.body)
+                    .foregroundStyle(Theme.Palette.accent)
+            }
+            .listRowBackground(Theme.Palette.surface)
+        }
     }
 
     // MARK: - Balance

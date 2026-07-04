@@ -90,6 +90,10 @@ struct ConversationView: View {
     /// and on history load — see bubbleMessage.
     @State var attachmentMetaById: [String: Attachment] = [:]
     @State var error: String?
+    /// 余额不足(402 insufficient_balance)专属提示。与普通 error alert 分开:
+    /// 弹一张带"去充值"的卡片,点击直接开 PurchaseSheet(而不是干巴巴的 alert)。
+    @State private var showInsufficientBalance = false
+    @State private var showRechargeSheet = false
     @State private var pending = false              // server is generating (bot_typing active)
     /// Outstanding tool calls this turn. Incremented on each `tool_call`,
     /// decremented on its `tool_result`. When > 0 we suppress the typing
@@ -996,6 +1000,27 @@ struct ConversationView: View {
         .alert("出错", isPresented: .constant(error != nil)) {
             Button("好") { error = nil }
         } message: { Text(error ?? "") }
+        .alert("余额不足", isPresented: $showInsufficientBalance) {
+            Button("去充值") { showRechargeSheet = true }
+            Button("好", role: .cancel) {}
+        } message: {
+            Text("你的 PNC 余额不足以完成这次对话，充值后即可继续。")
+        }
+        .sheet(isPresented: $showRechargeSheet) {
+            PurchaseSheet()
+        }
+    }
+
+    /// 把一次发送/回复失败落到合适的 UI 上:若是 402 insufficient_balance
+    /// (后端返回体含该 code),弹"去充值"卡片;否则走普通 error alert。
+    /// `rawText` 可传原始错误串或响应体 —— 只做子串检测,对两条发送路径(群 raw
+    /// URLRequest / 私聊 SSE)都成立。
+    func presentSendFailure(_ rawText: String) {
+        if rawText.contains("insufficient_balance") {
+            showInsufficientBalance = true
+        } else {
+            self.error = rawText
+        }
     }
 
     #if os(iOS)
@@ -1966,7 +1991,9 @@ struct ConversationView: View {
             // any bot replies the GroupRouterDO wakes.
             markUserMessageSent(localId)
         } catch {
-            self.error = "发送失败: \(error.localizedDescription)"
+            presentSendFailure(error.localizedDescription.contains("insufficient_balance")
+                ? "insufficient_balance"
+                : "发送失败: \(error.localizedDescription)")
             markUserMessageFailed(localId)
         }
     }
@@ -2232,7 +2259,7 @@ struct ConversationView: View {
                         if startBotId != nil && conversation.id.isEmpty,
                            let userMsgId {
                             markUserMessageFailed(userMsgId)
-                            self.error = msg.isEmpty ? "发送失败" : msg
+                            presentSendFailure(msg.isEmpty ? "发送失败" : msg)
                         }
                     case .unknown:
                         break
@@ -2245,7 +2272,9 @@ struct ConversationView: View {
             } catch {
                 // Cancellation = user-initiated interrupt; not an error UI.
                 if !(error is CancellationError) {
-                    self.error = "发送失败: \(error.localizedDescription)"
+                    presentSendFailure(error.localizedDescription.contains("insufficient_balance")
+                        ? "insufficient_balance"
+                        : "发送失败: \(error.localizedDescription)")
                     Haptics.error()
                     // Mid-turn failure: paint the user's message red so the
                     // failure attaches to a concrete bubble, not just a

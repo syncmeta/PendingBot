@@ -34,6 +34,7 @@
 		1481E58931D21F6266451474 /* QRCode.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAB62FF4BF464AC11A6F2FD1 /* QRCode.swift */; };
 		164BF63BF723B258C2BFD37B /* RealtimeSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 538B09D7D56B20AA7BCE1E50 /* RealtimeSocket.swift */; };
 		1816ED8661FB6122D66EA671 /* AppCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D43D52E887A812E6C48AA8F /* AppCommands.swift */; };
+		189B75A5DB021DE8CFDBDE67 /* GroupSubjectService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10E10E7CA7131F0595A1051C /* GroupSubjectService.swift */; };
 		198D6B25434CE200E4FD044A /* ProfileDataSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 134ADF0FFA224BE794083B54 /* ProfileDataSource.swift */; };
 		1BA6A36C5DBAB5340DE35AF5 /* Account.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7389F31567A5B0D72BC29CC1 /* Account.swift */; };
 		1D67444A38A55B99E0E21F76 /* EnvelopeTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AA1FB293BD301008D3819AD /* EnvelopeTabView.swift */; };
@@ -114,6 +115,7 @@
 		914D5EAC7D1675C8770C5658 /* DataProtectionKeychainStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BE4B8362D82ACBB36C1084D /* DataProtectionKeychainStorage.swift */; };
 		93195F559ABAEBD132E64F17 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 11A77E911EA1D815E90E7BFD /* GRDB */; };
 		95771EBFA9FE35E196DBAB95 /* MacWelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 954AA26D0420171081DFA5EA /* MacWelcomeView.swift */; };
+		9615CCF813D7AFB01CE73A85 /* PurchaseSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82612D5EA35AB9966B6F62B0 /* PurchaseSheet.swift */; };
 		96EE73E3BB865D1BD001659A /* SwiftMath in Frameworks */ = {isa = PBXBuildFile; productRef = 6F86D21C91A9BC3B4CA176D0 /* SwiftMath */; };
 		9C2D3AD0DFC095E62EEFD731 /* TopTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9262605631A1A0281E9C3768 /* TopTab.swift */; };
 		9CFC1AD9B491F3CD69777FF6 /* RealtimeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6EFB784DC12029E53EB12A5C /* RealtimeManager.swift */; };
@@ -176,6 +178,7 @@
 		EB466D1F40BA6D52461B9FE5 /* ConversationView+Recall.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BD4BD3319B91CCFCAFEE846 /* ConversationView+Recall.swift */; };
 		EE863961CB326031C1287703 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E0533AC3090836219CA2A47 /* SettingsView.swift */; };
 		EF535E70029F6A3734F9E56F /* BotCapabilitiesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59B8BCA71B08958950585241 /* BotCapabilitiesView.swift */; };
+		F45015AEEA5611EEA5F4F298 /* WalletBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7E53EA45F72D3B3BD900745 /* WalletBanner.swift */; };
 		F4F2334554E8032CCDB0C025 /* EnvelopeFetch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E4D5D35B59A08A4E8E6B167 /* EnvelopeFetch.swift */; };
 		F7AE57D22B8A151AF452E63F /* BotAvatar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90F4AA849A0395AE40EE6817 /* BotAvatar.swift */; };
 		F9BBC0C73F84A357B5B0A8C4 /* TypingDots.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5131104F9620195C8AF448E /* TypingDots.swift */; };
@@ -204,6 +207,7 @@
 		0F21A15DD9477AC940984A06 /* RelativeMessageTime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RelativeMessageTime.swift; sourceTree = "<group>"; };
 		0F7C3B5C578F1BE2095D0B00 /* WelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeView.swift; sourceTree = "<group>"; };
 		106E121F92077F781DEEB6BF /* AccountsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountsView.swift; sourceTree = "<group>"; };
+		10E10E7CA7131F0595A1051C /* GroupSubjectService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupSubjectService.swift; sourceTree = "<group>"; };
 		110CCF2B2682152B4FEFC605 /* CrewListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewListView.swift; sourceTree = "<group>"; };
 		125E5FD0E43ECEEB291F2BC2 /* ContactsFetch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactsFetch.swift; sourceTree = "<group>"; };
 		134ADF0FFA224BE794083B54 /* ProfileDataSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileDataSource.swift; sourceTree = "<group>"; };
@@ -282,6 +286,7 @@
 		7FA08FADEA9A413F05BD5BF4 /* VoiceCallAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceCallAPI.swift; sourceTree = "<group>"; };
 		80A31D4A5547023C2B42E7DD /* PermissionRequestPayload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionRequestPayload.swift; sourceTree = "<group>"; };
 		80CEE0BDF9CFBB93A9BC081F /* CrewSessionDetailStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewSessionDetailStore.swift; sourceTree = "<group>"; };
+		82612D5EA35AB9966B6F62B0 /* PurchaseSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PurchaseSheet.swift; sourceTree = "<group>"; };
 		828A5E5AA58120672BA2A035 /* SessionProxyClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionProxyClient.swift; sourceTree = "<group>"; };
 		82DB1C86825A36B3C6B2555B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		83F41539F59462EA04C55F6F /* ConversationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationView.swift; sourceTree = "<group>"; };
@@ -310,6 +315,7 @@
 		ADEFF9B985A092B6174979F7 /* SkillsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkillsView.swift; sourceTree = "<group>"; };
 		B1A7B2A2C127FA6D633617EC /* FeatureSurface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeatureSurface.swift; sourceTree = "<group>"; };
 		B1B90FD90F3F7E7B37967E43 /* ModelPresetsAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelPresetsAPI.swift; sourceTree = "<group>"; };
+		B7E53EA45F72D3B3BD900745 /* WalletBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletBanner.swift; sourceTree = "<group>"; };
 		B7E8B55D4DE8ED09E4B54C14 /* CallCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallCenter.swift; sourceTree = "<group>"; };
 		B856606A50216D8F41125BFC /* ProtectedURLCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtectedURLCache.swift; sourceTree = "<group>"; };
 		B864C55A6D09538AA4E09FAD /* UnreadStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnreadStore.swift; sourceTree = "<group>"; };
@@ -418,6 +424,7 @@
 				C82D486B7EBB27D5882B5844 /* FriendsDataSource.swift */,
 				1F14048DCB73276C7D252616 /* GoogleSignIn.swift */,
 				6007B7AC7A2508EA9C7C04C9 /* GroupInviteAPI.swift */,
+				10E10E7CA7131F0595A1051C /* GroupSubjectService.swift */,
 				0DBBEAE928AB77BE9DBD5029 /* GroupWalletService.swift */,
 				7EEDB9DF3C6B9D1EC67C769F /* HostedConfig.swift */,
 				CDF32066E5F831C3B474EBB7 /* MessagesFetch.swift */,
@@ -608,7 +615,9 @@
 				106E121F92077F781DEEB6BF /* AccountsView.swift */,
 				E4E8F2C116FE4E4C091C20C5 /* AddMeMethodsView.swift */,
 				3E5FAF02329124FA16CFC943 /* MeTabView.swift */,
+				82612D5EA35AB9966B6F62B0 /* PurchaseSheet.swift */,
 				1E0533AC3090836219CA2A47 /* SettingsView.swift */,
+				B7E53EA45F72D3B3BD900745 /* WalletBanner.swift */,
 				199916D33039F4F07FC95D7D /* WalletV2Format.swift */,
 				67959B4A15D5CFF20CADAAA6 /* WalletV2View.swift */,
 			);
@@ -905,6 +914,7 @@
 				B652E5852C42C437A6849CA3 /* GroupJoinView.swift in Sources */,
 				C47DDDD2BAD3AD2DA4EC51A0 /* GroupQRCard.swift in Sources */,
 				A22D46B0B364248079A08775 /* GroupSettingsView.swift in Sources */,
+				189B75A5DB021DE8CFDBDE67 /* GroupSubjectService.swift in Sources */,
 				5A482C1B8A6167FDA5CB3C16 /* GroupWalletService.swift in Sources */,
 				FCD54979BEFA6D687994FF09 /* GroupWalletShared.swift in Sources */,
 				FB00D4A903E342738907E282 /* GroupWalletView.swift in Sources */,
@@ -943,6 +953,7 @@
 				32FAAF4A0D4EC4DEAC048497 /* ProfileBootstrapView.swift in Sources */,
 				198D6B25434CE200E4FD044A /* ProfileDataSource.swift in Sources */,
 				433F3178E73B28AAA4D05AA9 /* ProtectedURLCache.swift in Sources */,
+				9615CCF813D7AFB01CE73A85 /* PurchaseSheet.swift in Sources */,
 				D6974FC7B55E1BC31FFBB131 /* PushService.swift in Sources */,
 				1481E58931D21F6266451474 /* QRCode.swift in Sources */,
 				366C2519D09D1C6CDFEA2562 /* QRScannerView.swift in Sources */,
@@ -977,6 +988,7 @@
 				A7ADFAD7B076861A93C987D1 /* UserAvatar.swift in Sources */,
 				2A83FD0E0DB5D7BEAB180B85 /* UserUserPeer.swift in Sources */,
 				709467D9E6B366E16CAE1B43 /* VoiceCallAPI.swift in Sources */,
+				F45015AEEA5611EEA5F4F298 /* WalletBanner.swift in Sources */,
 				AD4913CC001344F2013796AB /* WalletV2Format.swift in Sources */,
 				598A32DFDD15BC85C9A1E90A /* WalletV2View.swift in Sources */,
 				4D643B36DC9C4F4911A4B845 /* WelcomeView.swift in Sources */,
