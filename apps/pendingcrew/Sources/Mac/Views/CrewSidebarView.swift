@@ -19,6 +19,7 @@ struct CrewSidebarView: View {
     /// 不在 render 路径上碰 keychain。见 `identityFooter`。
     @State private var identityAvatarSeed: String?
     @StateObject private var usageMonitor = LocalAgentUsageMonitor()
+    @ObservedObject private var quota = QuotaCenter.shared
 
     var body: some View {
         VStack(spacing: 0) {
@@ -32,12 +33,16 @@ struct CrewSidebarView: View {
                 }
             }
             .listStyle(.sidebar)
+            // 订阅额度（claude/codex 已用百分比 + 重置时刻）—— 不分登录态：
+            // 本机 runner 的额度跟 edge 登录无关，本机模式同样要看得见。
+            quotaFooterLine
             // 当前身份 + 切换/登出。device grant 是 subject-scoped(spec v2 §4.4),
             // 想换 subject 必须撤掉这台机器的 grant 重新登录 —— 所以"切换身份"
             // 路径就是签出后再去直接登录页登一遍。这里集中放在 sidebar 底部,
             // 让 user 始终能看见"我现在以谁的身份在花钱"。
             identityFooter
         }
+        .task { quota.start() }
         // 完全不设 navigationTitle —— 一旦设了（哪怕空串），SwiftUI 会不停把窗口
         // titleVisibility 设回 .visible，把我们在 WindowChromeConfigurator 里藏标题的
         // 设置顶掉，于是 App 名 "PendingCrew" 又冒回标题栏。不设它，标题由
@@ -264,6 +269,33 @@ struct CrewSidebarView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+    }
+
+    /// 订阅额度行（两家都拿不到时隐藏）：`C 80%·23% · X 9%·16%`，hover 出
+    /// 完整窗名与重置时刻。90%+ 的窗把整行染橙提醒。
+    @ViewBuilder
+    private var quotaFooterLine: some View {
+        let snaps = [quota.claude, quota.codex].compactMap { $0 }
+        if !snaps.isEmpty {
+            HStack(spacing: 6) {
+                Image(systemName: "gauge.with.needle").imageScale(.small)
+                ForEach(snaps, id: \.agent) { s in
+                    Text((s.agent == "claude" ? "Claude " : "Codex ") + s.summary)
+                }
+            }
+            .font(.caption2)
+            .foregroundStyle(snaps.flatMap(\.windows).contains { $0.usedPercent >= 90 }
+                             ? AnyShapeStyle(.orange) : AnyShapeStyle(.tertiary))
+            .lineLimit(1)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
+            .help(snaps.map { s in
+                "\(s.agent == "claude" ? "Claude Code" : "Codex")：" + s.windows.map { w in
+                    "\(w.label) \(w.usedPercent)%" + (w.resetsAt.map { "（\($0) 重置）" } ?? "")
+                }.joined(separator: "；")
+            }.joined(separator: "\n"))
+        }
     }
 
     /// 今日 CC / Codex token 用量小字行（两项都 nil 时隐藏）。
