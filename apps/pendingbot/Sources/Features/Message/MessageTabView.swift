@@ -853,11 +853,12 @@ struct MessageTabView: View {
                 )
             }
             self.userPeers = peers
-            // Capture the cached last_activity_at *before* overwriting the
-            // conversations cache below, so the staleness diff compares
-            // against last-known state, not the value we're about to write.
+            // Capture the last-known last_activity_at (the init-seeded
+            // in-memory list) *before* overwriting the conversations cache
+            // below, so the staleness diff compares against last-known state,
+            // not the value we're about to write.
             let prevActivity = Dictionary(
-                cached.map { ($0.id, $0.last_activity_at) },
+                conversations.map { ($0.id, $0.last_activity_at) },
                 uniquingKeysWith: { first, _ in first }
             )
             ChatDataSource.mergeConversations(fresh.map { c in
