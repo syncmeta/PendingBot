@@ -9,6 +9,7 @@ import { boardResource } from '../lib/board-resource';
 import { bustModelPresetCaches } from '../lib/model-presets';
 import { boardFeatureFlagsRoutes } from './board-feature-flags';
 import { boardModelRolesRoutes } from './board-model-roles';
+import { boardBillingRoutes } from './board-billing';
 import type { AppBindings } from '../types';
 
 export const boardRoutes = new Hono<AppBindings>();
@@ -215,3 +216,5 @@ boardRoutes.route(
 boardRoutes.route('/feature-flags', boardFeatureFlagsRoutes);
 // ── 系统模型角色(单例 KV blob:title/group-router/vision/voice 等的默认 slug) ──
 boardRoutes.route('/model-roles', boardModelRolesRoutes);
+// ── 计费管理(套餐映射 KV + 钱包查询 + grant/claw-back) ──
+boardRoutes.route('/billing', boardBillingRoutes);
