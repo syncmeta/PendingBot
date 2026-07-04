@@ -160,7 +160,7 @@ private struct HandlesSection: View {
 
     private func revoke(_ id: String) async {
         do {
-            try await SupabaseStack.shared
+            try await SupabaseStack.authedClient()
                 .from("user_handles")
                 .update(["is_active": false])
                 .eq("id", value: id)
@@ -318,7 +318,7 @@ private struct MintHandleSheet: View {
             let kind: String
         }
         do {
-            try await SupabaseStack.shared
+            try await SupabaseStack.authedClient()
                 .from("user_handles")
                 .insert(Insert(user_id: userId, value: value,
                                label: trimmedLabel.isEmpty ? nil : trimmedLabel,
