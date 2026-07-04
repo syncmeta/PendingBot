@@ -446,6 +446,57 @@ crewRoutes.get('/:id/members', requireSubjectAuth(['crew:read']), async (c) => {
   return c.json({ items: data ?? [] });
 });
 
+// GET /v1/crew/sessions — 跨 crew 聚合的 session 列表(机组 tab 列表页主数据)。
+// user JWT 走 userClient,RLS(can_view_crew_session)圈出可见范围;
+// device_grant 按 responsible_subject_id 过滤。按 updated_at 倒序。
+crewRoutes.get('/sessions', requireSubjectAuth(['crew:read']), async (c) => {
+  const supa = c.var.authKind === 'device_grant' ? serviceClient(c.env) : userClient(c.env, c.var.userJwt!);
+  let query = supa
+    .from('crew_sessions')
+    .select('id, crew_conversation_id, responsible_subject_id, runner_kind, status, task_brief, progress_summary, created_at, updated_at, started_at, finished_at')
+    .order('updated_at', { ascending: false });
+  if (c.var.authKind === 'device_grant') {
+    const deviceGrant = c.var.deviceGrant;
+    if (!deviceGrant) return jsonError(c, 401, 'unauthorized');
+    query = query.eq('responsible_subject_id', deviceGrant.subjectId);
+  }
+  const { data, error } = await query.limit(100);
+  if (error) {
+    return jsonError(c, 500, 'database_error', { detail: error.message });
+  }
+  return c.json({ items: data ?? [] });
+});
+
+// GET /v1/crew/sessions/:sessionId/permission-requests — 单 session 的权限
+// 请求列表(机组 tab 详情页权限卡)。user JWT 走 RLS;device_grant 校验
+// session 归属后走 service client。倒序,limit 50。
+crewRoutes.get('/sessions/:sessionId/permission-requests', requireSubjectAuth(['crew:read']), async (c) => {
+  const sessionId = c.req.param('sessionId');
+  const supa = c.var.authKind === 'device_grant' ? serviceClient(c.env) : userClient(c.env, c.var.userJwt!);
+  if (c.var.authKind === 'device_grant') {
+    const deviceGrant = c.var.deviceGrant;
+    if (!deviceGrant) return jsonError(c, 401, 'unauthorized');
+    const { data: session, error: sessionErr } = await supa
+      .from('crew_sessions')
+      .select('id, responsible_subject_id')
+      .eq('id', sessionId)
+      .eq('responsible_subject_id', deviceGrant.subjectId)
+      .maybeSingle();
+    if (sessionErr) return jsonError(c, 500, 'database_error', { detail: sessionErr.message });
+    if (!session) return jsonError(c, 404, 'not_found');
+  }
+  const { data, error } = await supa
+    .from('permission_requests')
+    .select('id, crew_session_id, requested_action, request_kind, risk_level, detail, status, reply_text, requested_at, decided_by_user_id, decided_at')
+    .eq('crew_session_id', sessionId)
+    .order('requested_at', { ascending: false })
+    .limit(50);
+  if (error) {
+    return jsonError(c, 500, 'database_error', { detail: error.message });
+  }
+  return c.json({ items: data ?? [] });
+});
+
 crewRoutes.get('/sessions/:sessionId/events', requireSubjectAuth(['crew:read']), async (c) => {
   const sessionId = c.req.param('sessionId');
   const supa = c.var.authKind === 'device_grant' ? serviceClient(c.env) : userClient(c.env, c.var.userJwt!);
