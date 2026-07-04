@@ -270,7 +270,7 @@ struct MyQRBusinessCard: View {
         do {
             // Revoke ALL active QR-kind handles so only the freshly
             // minted one stays valid afterwards.
-            try await SupabaseStack.shared
+            try await SupabaseStack.authedClient()
                 .from("user_handles")
                 .update(["is_active": false])
                 .eq("kind", value: "qr")
@@ -293,7 +293,7 @@ struct MyQRBusinessCard: View {
             let kind: String
             let label: String?
         }
-        try await SupabaseStack.shared
+        try await SupabaseStack.authedClient()
             .from("user_handles")
             .insert(Insert(user_id: userId, value: token, kind: "qr", label: "QR"))
             .execute()

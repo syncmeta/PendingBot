@@ -410,7 +410,7 @@ struct CreateBotSheet: View {
             }
             let finalSlug = "u_" + UUID().uuidString
                 .replacingOccurrences(of: "-", with: "").prefix(16).description
-            let row: BotOut = try await SupabaseStack.shared
+            let row: BotOut = try await SupabaseStack.authedClient()
                 .from("bots")
                 .insert(BotInsert(
                     creator_id: userId,
@@ -436,7 +436,7 @@ struct CreateBotSheet: View {
                 let bot_id: String
                 let added_via: String
             }
-            try await SupabaseStack.shared
+            try await SupabaseStack.authedClient()
                 .from("user_bot_contacts")
                 .insert(ContactInsert(user_id: userId, bot_id: row.id, added_via: "manual"))
                 .execute()
@@ -855,7 +855,7 @@ struct ManageBotSheet: View {
                 voice_call_enabled: voiceCallEnabled,
                 tz: visibility == "private" ? nil : tz
             )
-            try await SupabaseStack.shared
+            try await SupabaseStack.authedClient()
                 .from("bots")
                 .update(payload)
                 .eq("id", value: initial.id)
@@ -882,7 +882,7 @@ struct ManageBotSheet: View {
     private func delete() async {
         deleting = true; defer { deleting = false }
         do {
-            try await SupabaseStack.shared
+            try await SupabaseStack.authedClient()
                 .from("bots")
                 .delete()
                 .eq("id", value: initial.id)
@@ -1087,7 +1087,7 @@ struct InviteListEditor: View {
                 let p_bot_id: String
                 let p_handle: String
             }
-            let _: UUID = try await SupabaseStack.shared
+            let _: UUID = try await SupabaseStack.authedClient()
                 .rpc("bot_invites_add", params: Args(p_bot_id: botId, p_handle: handle))
                 .execute()
                 .value
@@ -1103,7 +1103,7 @@ struct InviteListEditor: View {
 
     private func remove(_ row: InviteRow) async {
         do {
-            try await SupabaseStack.shared
+            try await SupabaseStack.authedClient()
                 .from("bot_invites")
                 .delete()
                 .eq("bot_id", value: botId)
@@ -1242,7 +1242,7 @@ struct InviteContactPickerSheet: View {
             // bot_invites rows. ON CONFLICT DO NOTHING is implicit
             // because the PK is (bot_id, user_id) and we filter
             // already-invited above; if it raced, postgres just errors.
-            try await SupabaseStack.shared
+            try await SupabaseStack.authedClient()
                 .from("bot_invites")
                 .insert(InviteInsert(bot_id: botId, user_id: row.user_id))
                 .execute()

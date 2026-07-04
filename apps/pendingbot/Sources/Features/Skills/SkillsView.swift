@@ -223,12 +223,12 @@ struct SkillsView: View {
                     let skill_id: String
                     let conversation_id: String? = nil
                 }
-                try await SupabaseStack.shared
+                try await SupabaseStack.authedClient()
                     .from("skill_subscriptions")
                     .insert(SubInsert(user_id: userId, skill_id: skill.id))
                     .execute()
             } else {
-                try await SupabaseStack.shared
+                try await SupabaseStack.authedClient()
                     .from("skill_subscriptions")
                     .delete()
                     .eq("user_id", value: userId)
@@ -303,7 +303,7 @@ struct SkillsView: View {
 
     private func delete(_ skill: SkillSummary) async {
         do {
-            try await SupabaseStack.shared
+            try await SupabaseStack.authedClient()
                 .from("skills")
                 .delete()
                 .eq("id", value: skill.id)
@@ -559,7 +559,7 @@ struct SkillEditorSheet: View {
                     let forked_from: String?
                 }
                 struct InsertedId: Decodable { let id: String }
-                let inserted: InsertedId = try await SupabaseStack.shared
+                let inserted: InsertedId = try await SupabaseStack.authedClient()
                     .from("skills")
                     .insert(Insert(
                         owner_id: userId,
@@ -578,7 +578,7 @@ struct SkillEditorSheet: View {
                         let skill_id: String
                         let conversation_id: String? = nil
                     }
-                    try await SupabaseStack.shared
+                    try await SupabaseStack.authedClient()
                         .from("skill_subscriptions")
                         .insert(SubInsert(user_id: userId, skill_id: inserted.id))
                         .execute()
@@ -588,7 +588,7 @@ struct SkillEditorSheet: View {
                     let frontmatter: Frontmatter
                     let body_md: String
                 }
-                try await SupabaseStack.shared
+                try await SupabaseStack.authedClient()
                     .from("skills")
                     .update(Patch(frontmatter: fm, body_md: skillBody))
                     .eq("id", value: detail.id)
@@ -600,12 +600,12 @@ struct SkillEditorSheet: View {
                         let skill_id: String
                         let conversation_id: String? = nil
                     }
-                    _ = try? await SupabaseStack.shared
+                    _ = try? await SupabaseStack.authedClient()
                         .from("skill_subscriptions")
                         .insert(SubInsert(user_id: userId, skill_id: detail.id))
                         .execute()
                 } else if !enabled && detail.enabled {
-                    _ = try? await SupabaseStack.shared
+                    _ = try? await SupabaseStack.authedClient()
                         .from("skill_subscriptions")
                         .delete()
                         .eq("user_id", value: userId)

@@ -998,7 +998,7 @@ struct MessageTabView: View {
 
     private func delete(_ conv: Conversation) async {
         do {
-            try await SupabaseStack.shared
+            try await SupabaseStack.authedClient()
                 .from("conversations")
                 .delete()
                 .eq("id", value: conv.id)

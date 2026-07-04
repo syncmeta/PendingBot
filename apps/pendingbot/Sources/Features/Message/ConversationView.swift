@@ -1479,7 +1479,7 @@ struct ConversationView: View {
                 // Atomic conv + participants insert via security-definer RPC
                 // (migration 0011). Avoids the iOS-side RLS class entirely.
                 struct RpcArgs: Encodable { let p_bot_id: String }
-                let newId: UUID = try await SupabaseStack.shared
+                let newId: UUID = try await SupabaseStack.authedClient()
                     .rpc("open_user_bot_conv",
                          params: RpcArgs(p_bot_id: peer.peerId))
                     .execute()
@@ -1529,7 +1529,7 @@ struct ConversationView: View {
                 // Singleton self-chat conv. RPC is find-or-create so
                 // re-tapping the friends-tab self row reuses the same
                 // conv (and its history) instead of stacking.
-                let newId: UUID = try await SupabaseStack.shared
+                let newId: UUID = try await SupabaseStack.authedClient()
                     .rpc("open_self_conv")
                     .execute()
                     .value
@@ -1912,7 +1912,7 @@ struct ConversationView: View {
             let attachments: AttachmentIds?
         }
         do {
-            try await SupabaseStack.shared
+            try await SupabaseStack.authedClient()
                 .from("messages")
                 .insert(Insert(
                     client_message_id: clientMessageId,
