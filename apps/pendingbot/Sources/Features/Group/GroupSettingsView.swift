@@ -212,13 +212,23 @@ struct GroupSettingsView: View {
                         roleActionTarget = nil
                     }
                 }
-                if target.role == "admin" {
-                    Button("取消管理员", role: .destructive) {
-                        Task { await setRole(target, role: "member") }
+                // 权限矩阵(spec v2 §4.3):升降管理员仅 owner;加/踢 member
+                // owner+admin 都可,但不能踢 admin(owner 需先降级)。这里只做
+                // UX 显隐,服务端 RPC 是最终裁决。
+                if myRole == "owner" {
+                    if target.role == "admin" {
+                        Button("取消管理员", role: .destructive) {
+                            Task { await setRole(target, role: "member") }
+                        }
+                    } else {
+                        Button("设为管理员") {
+                            Task { await setRole(target, role: "admin") }
+                        }
                     }
-                } else {
-                    Button("设为管理员") {
-                        Task { await setRole(target, role: "admin") }
+                }
+                if canRemove(target) {
+                    Button("移出群聊", role: .destructive) {
+                        Task { await removeMember(target) }
                     }
                 }
             }
@@ -377,7 +387,9 @@ struct GroupSettingsView: View {
 
     private func handleMemberTap(_ m: Member) {
         guard !m.isBot, let uid = m.userId, uid != myUserId else { return }
-        if myRole == "owner" && !m.isOwner {
+        // 管理动作菜单:owner 对任何非 owner 成员可开(升降/移出);admin 对
+        // 可移出的普通成员可开。member 无管理菜单,直接落到聊天/加好友。
+        if !m.isOwner && (myRole == "owner" || (myRole == "admin" && canRemove(m))) {
             roleActionTarget = m
             Haptics.tap()
             return
@@ -690,6 +702,29 @@ struct GroupSettingsView: View {
                     isOwner: m.isOwner,
                 )
             }
+            Haptics.success()
+        }
+    }
+
+    /// 权限矩阵(spec v2 §4.3)客户端预检:owner/admin 才能踢人,且不能踢
+    /// owner;不能踢 admin(owner 需先降级)。服务端 group_remove_member 是
+    /// 最终裁决 —— 这里只用于菜单显隐,避免摆出注定被拒的按钮。
+    private func canRemove(_ m: Member) -> Bool {
+        guard let uid = m.userId, uid != myUserId else { return false }
+        guard myRole == "owner" || myRole == "admin" else { return false }
+        if m.isOwner { return false }
+        if m.role == "admin" { return false }
+        return true
+    }
+
+    private func removeMember(_ member: Member) async {
+        guard let uid = member.userId else { return }
+        struct Body: Encodable { let userId: String }
+        await postVoid(path: "v1/groups/\(conversationId)/remove-user",
+                       body: Body(userId: uid))
+        roleActionTarget = nil
+        if error == nil {
+            members.removeAll { $0.userId == uid }
             Haptics.success()
         }
     }
