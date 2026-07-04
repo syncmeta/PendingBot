@@ -1093,7 +1093,7 @@ struct FriendsTabView: View {
                         inviterName: row.inviter.display_name.isEmpty ? "群成员" : row.inviter.display_name,
                         inviterAvatarSeed: row.inviter.avatar_seed ?? row.conversation_id,
                         inviterAvatarPath: row.inviter.avatar_path,
-                        billingText: row.billing_snapshot?.text ?? "加入后，机器人 Token 由群钱包统一结算。"
+                        billingText: row.billing_snapshot?.text ?? "加入后，机器人消耗由群池实缴与成员认缴按份额分摊。"
                     )
                 }
         } catch {
