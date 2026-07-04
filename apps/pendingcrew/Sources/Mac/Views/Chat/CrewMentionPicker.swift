@@ -21,10 +21,22 @@ struct CrewMentionPicker: View {
                     onPick(cand)
                 } label: {
                     HStack(spacing: 8) {
-                        Image(systemName: glyph(cand.kind))
-                            .font(Theme.Fonts.glyph(size: 13))
-                            .foregroundStyle(tint(cand.kind))
-                            .frame(width: 18)
+                        // 成员候选用真头像（与成员列表/气泡同 seed 同脸）；
+                        // broadcast 没有头像概念,保留 megaphone glyph。
+                        if let seed = cand.avatarSeed {
+                            CrewAvatarBadges(sender: GroupBubbleSender(
+                                kind: cand.kind == .human ? .user : .bot,
+                                id: seed, displayName: cand.label,
+                                avatarPath: nil, avatarSeed: seed,
+                                isCaptain: cand.kind == .captain,
+                                sessionStatus: nil,
+                                isSession: cand.kind == .session), size: 20)
+                        } else {
+                            Image(systemName: glyph(cand.kind))
+                                .font(Theme.Fonts.glyph(size: 13))
+                                .foregroundStyle(tint(cand.kind))
+                                .frame(width: 20)
+                        }
                         Text(cand.label)
                             .font(Theme.Fonts.footnote)
                             .foregroundStyle(Theme.Palette.ink)

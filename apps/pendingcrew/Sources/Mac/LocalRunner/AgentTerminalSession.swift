@@ -77,8 +77,18 @@ final class AgentTerminalSession: ObservableObject, SessionBackend {
 
     deinit { busyTimer?.invalidate() }
 
-    /// 程序化发文本(prompt / steer)：写文本 + 回车。
-    func send(_ text: String) { inject(Array((text + "\r").utf8)) }
+    /// 程序化发文本(prompt / steer)：先写正文，隔一拍再单发回车。
+    /// claude TUI 按字节到达时序区分「粘贴 vs 敲键」——正文+回车一笔写入会被
+    /// 整段判成粘贴，回车被吞进输入框文本 → 不提交（用户得手动按 Enter）。
+    /// 回车必须作为独立的一次按键、在粘贴判定窗口之外到达才触发提交。
+    func send(_ text: String) {
+        inject(Array(text.utf8))
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            guard let self, self.status == .running else { return }
+            self.inject([0x0d])
+        }
+    }
     /// 打断进行中的回合(Esc)。
     func interrupt() { inject([0x1b]) }
 

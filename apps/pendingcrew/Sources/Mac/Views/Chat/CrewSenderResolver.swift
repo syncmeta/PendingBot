@@ -58,7 +58,7 @@ enum CrewSenderResolver {
             let isCaptain = (bid != nil && bid == captainBotId) || m?.memberKind == "captain"
             return CrewSender(
                 kind: .bot,
-                displayName: entry.senderDisplayName ?? m?.displayName ?? (isCaptain ? "Captain" : "bot"),
+                displayName: entry.senderDisplayName ?? m?.displayName ?? (isCaptain ? "机长" : "bot"),
                 avatarSeed: bid ?? captainBotId ?? "bot",
                 isCaptain: isCaptain, sessionStatus: nil, isMine: false
             )

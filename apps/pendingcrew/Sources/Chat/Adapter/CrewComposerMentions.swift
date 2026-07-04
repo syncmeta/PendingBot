@@ -32,6 +32,9 @@ struct CrewMentionCandidate: Identifiable, Equatable {
     let label: String
     /// The `CrewMention` staged when this candidate is picked.
     let mention: CrewMention
+    /// 头像 seed(captain=captainBotId、session=sessionId、human=userId)——
+    /// picker 行用真头像与成员列表/气泡一致;nil(broadcast)退回 glyph 图标。
+    var avatarSeed: String? = nil
 
     /// Readable token inserted into the draft for this candidate. Always
     /// `@<label>` — the trailing space is added by the parser at insert time.
@@ -63,9 +66,10 @@ func crewMentionCandidates(
         id: "broadcast", kind: .broadcast, label: broadcastLabel, mention: .broadcast))
 
     // Captain — only if the crew has one.
-    if captainBotId != nil {
+    if let capId = captainBotId {
         out.append(CrewMentionCandidate(
-            id: "captain", kind: .captain, label: captainLabel, mention: .captain))
+            id: "captain", kind: .captain, label: captainLabel, mention: .captain,
+            avatarSeed: capId))
     }
 
     // Session members — each routes to that session's mailbox.
@@ -74,7 +78,7 @@ func crewMentionCandidates(
         let label = m.displayName ?? CrewSenderNaming.sessionFallback(sid)
         out.append(CrewMentionCandidate(
             id: "session:\(sid)", kind: .session, label: label,
-            mention: .session(sid)))
+            mention: .session(sid), avatarSeed: sid))
     }
 
     // Human members — `{kind:"human", target_id:userId}`. Skip self.
@@ -84,7 +88,7 @@ func crewMentionCandidates(
         let label = m.displayName ?? "成员"
         out.append(CrewMentionCandidate(
             id: "human:\(uid)", kind: .human, label: label,
-            mention: CrewMention(kind: "human", targetId: uid)))
+            mention: CrewMention(kind: "human", targetId: uid), avatarSeed: uid))
     }
 
     let needle = prefix.trimmingCharacters(in: .whitespaces)
