@@ -497,7 +497,7 @@ enum ChatDataSource {
             let content: String
             let attachments: AttachmentIds?
         }
-        try await SupabaseStack.shared
+        try await SupabaseStack.authedClient()
             .from("messages")
             .insert(Insert(
                 client_message_id: UUID().uuidString,

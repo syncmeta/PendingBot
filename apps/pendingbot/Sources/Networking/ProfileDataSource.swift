@@ -51,7 +51,7 @@ enum ProfileDataSource {
             "bootstrapped": "1",
         ]
         let aid = (attachmentId?.isEmpty == false) ? attachmentId : nil
-        try await SupabaseStack.shared
+        try await SupabaseStack.authedClient()
             .from("users")
             .update(Patch(display_name: displayName,
                           avatar_path: aid,

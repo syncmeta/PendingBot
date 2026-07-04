@@ -36,4 +36,51 @@ enum SupabaseStack {
             )
         )
     }()
+
+    // ─────────────────────────────────────────────────────────────────
+    // MARK: - Fail-loud write gate
+    //
+    // supabase-swift's `SupabaseClient.adapt(request:)` fetches the auth
+    // session with `try?` — if the session can't be resolved (keychain
+    // miss, refresh failure, signed out) it silently falls back to the
+    // anon key and sends the request anyway. For login-required writes
+    // that surfaces as an RLS "permission denied for table X", which has
+    // twice been misdiagnosed as a backend bug (see docs/tech-debt.md).
+    //
+    // INVARIANT: every login-required `.from(...).insert/update/delete/
+    // upsert` and write-semantic `.rpc(...)` in this app goes through
+    // `authedClient()` instead of touching `shared` directly. The gate
+    // resolves the session explicitly (`auth.session` refreshes an
+    // expired token) and throws `SupabaseAuthUnavailableError` when it
+    // can't — a write request is NEVER sent bearing only the anon key.
+    // Read paths may keep using `shared`; anon reads fail visibly as
+    // empty results, not as corrupt-looking permission errors.
+    //
+    // Enforcement is by code review: new write call sites must use
+    // `try await SupabaseStack.authedClient()`. The library's `adapt`
+    // remains `try?` upstream — we deliberately do not fork it.
+    // ─────────────────────────────────────────────────────────────────
+
+    /// Returns the shared client only after proving a usable auth session
+    /// exists (triggering a token refresh if needed). Throws
+    /// `SupabaseAuthUnavailableError` otherwise — never lets a
+    /// login-required write degrade to an anon-key request.
+    static func authedClient() async throws -> SupabaseClient {
+        do {
+            _ = try await shared.auth.session
+        } catch {
+            throw SupabaseAuthUnavailableError(underlying: error)
+        }
+        return shared
+    }
+}
+
+/// 登录态不可用（会话丢失 / 刷新失败 / 已登出）时写门抛出的错误。
+/// 用户可见文案固定为中文提示；底层错误保留在 `underlying` 供日志排查。
+struct SupabaseAuthUnavailableError: LocalizedError {
+    let underlying: Error?
+
+    var errorDescription: String? {
+        "登录态不可用，请重新登录后再试"
+    }
 }
