@@ -157,6 +157,10 @@ struct TabRoot: View {
                 .tabItem { tabItem(TopTab.friends) }
                 .tag(TopTab.friends)
 
+            CrewTabView()
+                .tabItem { tabItem(TopTab.crew) }
+                .tag(TopTab.crew)
+
             EnvelopeTabView()
                 .tabItem { tabItem(TopTab.envelope) }
                 // System tab badge doesn't have a dot-only variant — a

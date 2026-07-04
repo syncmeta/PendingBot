@@ -23,6 +23,7 @@ enum AppSymbol: Hashable {
 enum TopTab: String, Hashable, CaseIterable, Identifiable {
     case message
     case friends
+    case crew
     case envelope
     case me
 
@@ -32,6 +33,7 @@ enum TopTab: String, Hashable, CaseIterable, Identifiable {
         switch self {
         case .message:  return "消息"
         case .friends:  return "好友"
+        case .crew:     return "机组"
         case .envelope: return "来信"
         case .me:       return "我"
         }
@@ -41,6 +43,7 @@ enum TopTab: String, Hashable, CaseIterable, Identifiable {
         switch self {
         case .message:  return .system("bubble.left")
         case .friends:  return .system("person.2")
+        case .crew:     return .system("person.3.sequence")
         case .envelope: return .system("envelope.open")
         case .me:       return .system("person.crop.circle")
         }

@@ -45,6 +45,10 @@ struct WideRootView: View {
     /// 壳把同一个 binding 喂给中间列表列(写)和右栏详情(读);右栏按
     /// section 渲染对应详情(钱包/加好友方式/能力扩展/设置)。
     @State private var meSelection: MeSection? = nil
+    /// 机组 tab 的选中项 —— 共享 `CrewTabView` 的 `Selection`(`crew_sessions.id`
+    /// 字符串)。壳把同一个 binding 喂给列表列(写)和详情列(读);详情列的
+    /// `CrewSessionDetailView` 按 id 自取数据。
+    @State private var crewSelection: String? = nil
 
     /// 统一 tab 选择来源:外部注入(iPad,跟 `TabRoot.selected`)优先,否则
     /// 用内部 `@State`(macOS @main)。侧栏 List 与 中/右栏 switch 全部读它,
@@ -175,6 +179,10 @@ struct WideRootView: View {
             // 来信 tab 中列 = 共享 `EnvelopeTabView` 的 feed 列;选中一封来信
             // (envelope_runs.id)后右栏是正文 detail。
             EnvelopeTabView().listColumn(selection: $envelopeSelection)
+        case .crew:
+            // 机组 tab 中列 = 共享 `CrewTabView` 的 session 卡片流;选中一个
+            // session(crew_sessions.id)后右栏是遥控台 detail。
+            CrewTabView().listColumn(selection: $crewSelection)
         case .me:
             // 「我」tab 中列 = 共享 `MeTabView` 的列表列(账号头部 + 设置菜单);
             // 选中一个 `MeSection`(钱包/加好友方式/能力扩展/设置)后右栏出详情。
@@ -206,6 +214,11 @@ struct WideRootView: View {
             // (envelope_runs.id)解析;`EnvelopeArticleView` 按 id 自取行 +
             // 订阅 Realtime,与中列是不同 `EnvelopeTabView()` 实例也无妨。
             EnvelopeTabView().detailColumn(selection: envelopeSelection)
+        case .crew:
+            // 机组 detail = 共享 surface 的 detail 列,按选中的 session id 渲染
+            // 遥控台(live banner + transcript + 权限卡 + composer);
+            // `CrewSessionDetailView` 按 id 自取数据 + 连 viewer WS。
+            CrewTabView().detailColumn(selection: crewSelection)
         }
     }
 }
