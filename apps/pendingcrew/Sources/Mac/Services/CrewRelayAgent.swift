@@ -265,7 +265,8 @@ final class CrewRelayAgent: ObservableObject {
         switch m.senderKind {
         case "user": return "我 (Mac)"
         case "session": return CrewSenderNaming.sessionFallback(m.senderSessionId)
-        case "captain": return captainName ?? "Captain"
+        // 旧 JSON 默认名存过英文 "Captain" —— 与本地展示同规则归一成「机长」。
+        case "captain": return (captainName == "Captain" ? nil : captainName) ?? "机长"
         default: return m.senderKind
         }
     }

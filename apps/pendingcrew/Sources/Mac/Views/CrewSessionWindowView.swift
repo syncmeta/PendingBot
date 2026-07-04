@@ -954,9 +954,10 @@ private struct SessionRunContentView: View {
                   : (run.kind == .claudeCode ? "sparkles" : "wand.and.stars"))
                 .foregroundStyle(.tint)
             VStack(alignment: .leading, spacing: 2) {
-                // captain 的标题就是 Captain;副标题给 agent 类型(看得出底层是 codex/claude)。
-                // worker:标题 agent 类型,副标题首条指令(taskBrief)。
-                Text(run.role == .captain ? "Captain" : run.kind.displayName)
+                // captain 的标题就是「机长」(与群聊/成员列表统一);副标题给 agent
+                // 类型(看得出底层是 codex/claude)。worker:标题 agent 类型,副标题
+                // 首条指令(taskBrief)。
+                Text(run.role == .captain ? "机长" : run.kind.displayName)
                     .font(.callout.weight(.semibold))
                 let subtitle = run.role == .captain ? run.kind.displayName : run.taskBrief
                 if !subtitle.isEmpty {

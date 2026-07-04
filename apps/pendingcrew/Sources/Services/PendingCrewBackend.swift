@@ -338,7 +338,7 @@ final class LocalBackend: PendingCrewBackend {
     }
 
     func listCrewMembers(crewId: String) async throws -> CrewRoster {
-        // 从本地 crew 派生:captain(若有)+ 本机人类。本地 session 成员留 chunk 4。
+        // 从本地 crew 派生:captain(若有)+ 本机人类 + 持久 session 成员。
         guard let detail = store.getCrew(crewId) else {
             return CrewRoster(captainBotId: nil, members: [])
         }
@@ -354,6 +354,15 @@ final class LocalBackend: PendingCrewBackend {
             userId: LocalWhiteboardStore.localUserId, botId: nil, codeSessionId: nil,
             displayName: "我 (本机)", role: nil, status: "active",
             representsCrewId: nil, sessionStatus: nil))
+        // 持久 session 成员（chunk 4 补口）：session 拉起时经
+        // `LocalCrewStore.recordSessionMember` 登记,退出/重启后仍是成员。
+        // live 运行状态由视图层 merge 在跑的 run 补上,这里不掺。
+        for s in store.sessionMembers(crewId: crewId) {
+            members.append(CrewMember(
+                id: s.sessionId, memberKind: "code_session", userId: nil, botId: nil,
+                codeSessionId: s.sessionId, displayName: s.displayName, role: nil,
+                status: "active", representsCrewId: nil, sessionStatus: nil))
+        }
         return CrewRoster(captainBotId: detail.captain?.botId, members: members)
     }
 

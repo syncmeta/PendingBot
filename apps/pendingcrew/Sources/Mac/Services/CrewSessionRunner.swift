@@ -240,6 +240,13 @@ final class CrewSessionRunner: ObservableObject {
         runs.append(run)
         selectedRunId = run.runID
         isComposingNew = false
+        // 本地 crew:把 worker session 登记成持久成员（成员列表/@ 名单退出后不丢）。
+        // captain 已作为 captain 成员在 roster 里,不重复登记;登录态 crew 的
+        // membership 归 edge(H1 迁移),store 里查无此 crew → no-op。
+        if role != .captain {
+            LocalCrewStore.shared.recordSessionMember(
+                crewId: crewId, sessionId: sessionId, displayName: run.displayName)
+        }
     }
 
     // MARK: - codex backend providers
@@ -487,9 +494,10 @@ final class CrewSessionRun: ObservableObject, Identifiable {
     let role: Role
     let startedAt = Date()
 
-    /// 切换条上的短名：captain 直接叫 "Captain"，worker 用 agent 名 + session id 前缀。
+    /// 切换条上的短名：captain 直接叫「机长」（与群聊/成员列表统一），worker 用
+    /// agent 名 + session id 前缀。
     var displayName: String {
-        role == .captain ? "Captain" : kind.displayName + " · " + String(sessionId.prefix(6))
+        role == .captain ? "机长" : kind.displayName + " · " + String(sessionId.prefix(6))
     }
 
     /// 后端实现（claude = AgentTerminalSession；codex = app-server，按 kind 分流）。

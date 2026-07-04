@@ -38,7 +38,7 @@ enum CrewSenderNaming {
         let seed = m.botId ?? m.userId ?? m.codeSessionId ?? m.id
         let name: String = {
             if let n = m.displayName, !n.isEmpty { return n }
-            if isCaptain { return "Captain" }
+            if isCaptain { return "机长" }
             if isHuman   { return "我" }
             if isSession { return sessionFallback(m.codeSessionId) }
             return "bot"

@@ -94,7 +94,7 @@ final class LocalCrewStore {
         let captainName: String
         switch request.captain {
         case .systemGenerated(let templateName):
-            captainName = templateName?.isEmpty == false ? templateName! : "Captain"
+            captainName = templateName?.isEmpty == false ? templateName! : "机长"
         case .reuseBot(let botId):
             // BYOK 本地 store 不支持 reuse_bot 路径(没有 bot 列表)。
             // 走兜底:把传进来的 botId 当 captainBotId 直接用,name 留空
@@ -261,6 +261,31 @@ final class LocalCrewStore {
         crews.keys.compactMap { relayBinding(for: $0) }
     }
 
+    // MARK: - Session 成员（chunk 4 补口）
+
+    /// 把一个 session 登记成 crew 的持久成员。session 一经拉起就算入伙,
+    /// 退出/重启 app 后仍留在成员列表(与 IM「成员离线仍是成员」同语义)——
+    /// 此前成员列表只含 captain + 本机人类,本地 session 全靠各视图临时合成
+    /// 在跑的 run,退出即消失(用户点名的「新建 session 不出现在成员列表」)。
+    /// crew 不存在(如登录态 edge crew,membership 归 edge 管)或已登记 → 忽略。
+    func recordSessionMember(crewId: String, sessionId: String, displayName: String) {
+        guard var crew = crews[crewId] else { return }
+        var sessions = crew.sessionMembers ?? []
+        guard !sessions.contains(where: { $0.sessionId == sessionId }) else { return }
+        sessions.append(LocalSessionMember(
+            sessionId: sessionId,
+            displayName: displayName,
+            createdAt: ISO8601DateFormatter().string(from: Date())))
+        crew.sessionMembers = sessions
+        crews[crewId] = crew
+        persistToDisk()
+    }
+
+    /// crew 的持久 session 成员列表（按登记顺序）。
+    func sessionMembers(crewId: String) -> [LocalSessionMember] {
+        crews[crewId]?.sessionMembers ?? []
+    }
+
     /// 删除一条 crew。
     func deleteCrew(_ id: String) {
         guard crews.removeValue(forKey: id) != nil else { return }
@@ -342,6 +367,8 @@ private struct LocalCrew: Codable, Equatable {
     var relayPushedThroughId: String? = nil
     /// 已处理过的 task_request 远端消息 id（#242 遥控 v1，FIFO 裁剪留 200）。
     var processedTaskRequestIds: [String]? = nil
+    /// 持久 session 成员（chunk 4 补口）。optional → 旧 JSON 缺键向后兼容。
+    var sessionMembers: [LocalSessionMember]? = nil
 
     /// memberwise init —— `createCrew` 等内部构造点用。父边默认空(新建 = 根)。
     init(
@@ -400,6 +427,7 @@ private struct LocalCrew: Codable, Equatable {
         relayCursor = try c.decodeIfPresent(String.self, forKey: .relayCursor)
         relayPushedThroughId = try c.decodeIfPresent(String.self, forKey: .relayPushedThroughId)
         processedTaskRequestIds = try c.decodeIfPresent([String].self, forKey: .processedTaskRequestIds)
+        sessionMembers = try c.decodeIfPresent([LocalSessionMember].self, forKey: .sessionMembers)
     }
 
     var summary: CrewSummary {
@@ -447,10 +475,23 @@ private struct LocalCrew: Codable, Equatable {
                 )
             ],
             captain: captainBotId.map {
-                CrewDetail.Captain(botId: $0, displayName: captainName ?? "Captain")
+                // 旧 JSON 里默认名存的是英文 "Captain" —— 归一成「机长」，
+                // 与群聊 @ 候选 / 气泡 / 成员列表的显示名统一（用户点名的
+                // 「成员列表叫 Captain、群聊叫机长」分裂就来自这里）。
+                CrewDetail.Captain(
+                    botId: $0,
+                    displayName: (captainName == "Captain" ? nil : captainName) ?? "机长")
             }
         )
     }
+}
+
+/// 本地 crew 的一个持久 session 成员。session 拉起时登记,退出后仍保留
+/// (成员资格 ≠ 存活状态;live 状态由各视图 merge 在跑的 run 补上)。
+struct LocalSessionMember: Codable, Equatable {
+    let sessionId: String
+    let displayName: String
+    let createdAt: String
 }
 
 /// relay 绑定快照 —— `LocalCrew` 私有,把同步代理需要的字段抠出来给
