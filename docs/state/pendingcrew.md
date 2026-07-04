@@ -108,6 +108,12 @@ status: partial, pending-qa
 证据: edge 600+ vitest;双端 build/test 绿;本地单机真跑通
 task: —(尾巴记 tech-debt)
 
+## features/session-health
+status: partial, pending-qa
+现状: v1 代码全落（2026-07-05 `feat/session-health`）——claude PTY 去 ANSI 文案扫描（`SessionHealthScanner`,短语表从本机 claude CLI 2.1.201 二进制 strings 实测核出,每 Kind 只报一次）+ codex `account/*` server-request 单列翻健康位（原 unsupported 静默丢）;浮出三处:成员状态点红(error 档)、成员列表副行显故障详情、白板 fail-loud 一条(category=error)。SessionBackend 协议加 health/healthPublisher,CrewSessionRun 镜像+去重播报。活体验证（真把 claude 登出/额度打满看三处浮出）需真机 GUI,归 #443。
+证据: SessionHealth.swift + SessionHealthTests 9 项(去 ANSI/跨 chunk/去重/codex 分类)绿;PendingCrewTests 276 全绿;macOS test + iOS Sim build 绿
+task: 20260626-qa(Mac/真机 GUI QA 批次)
+
 ## features/cross-device-control
 status: partial, pending-qa
 现状: 遥控地基 + PendingCrew 侧 viewer 实时层已落——按 session 绑定中转点 SessionProxyDO(viewer/runner 角色 + 离线队列 500 上限 + 持久信箱权威源 + 路由侧角色鉴权)+ WS 协议 + 单测;runner 边跑边推 `session.state`「WS 替轮询」= DONE。注意(2026-06-26 refresh 校正):原 iOS PendingBot 那套 crew/viewer 已于 095dfc2b(2026-06-15)整体删除(待重做),当前 viewer 链只在 PendingCrew(Mac/iPad)端;真机只验过早期 3s HTTP 轮询只读 viewer(2026-06-02),带真 device-grant 的完整 WS 往返(runner 连上→DO 推 state→viewer 实时看到→viewer 发命令)尚未真机验(T5.3 两设备 E2E 尾巴),仅验过 prod 路由活性(wss 401)。远端"下指令真注入运行中 session"卡在本地↔edge 绑定尾巴(worker 部署被权限层拦待用户手动部署);fly 云遥控 + 终端字节级跨端隧道未做(v1.1 / 另一条线)。
