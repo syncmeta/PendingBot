@@ -94,6 +94,14 @@ struct PendingBotApp: App {
                 }
                 #endif
                 .onChange(of: accountStore.current) { old, new in
+                    // 换号守卫:新旧 user id 均非 nil 且不同 = 会话被原地换成
+                    // 另一个账号(没经过 signOut,本地缓存还是上一个账号的)。
+                    // 触发与登出同级的本地清库(见 handleAccountSwitch)。
+                    // 正常 token 刷新是同 id(Account 含 jwt,Equatable 变化
+                    // 也会进 onChange),id 相等即跳过,不会误清。
+                    if let oldId = old?.id, let newId = new?.id, oldId != newId {
+                        accountStore.handleAccountSwitch()
+                    }
                     unreadStore.bind(account: new)
                     // Keep telemetry / billing-identity SDKs in sync with the
                     // active session: identify on sign-in, reset on sign-out.
