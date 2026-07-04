@@ -11,9 +11,13 @@ import SwiftTerm
 final class ActivityTerminalView: LocalProcessTerminalView {
     /// 最近一次收到子进程输出的时刻；busy 判定 = now - lastOutputAt < 阈值。
     var lastOutputAt = Date.distantPast
+    /// PTY 输出旁路（健康扫描用）——`dataReceived` 在主线程 UI feed 路径上调,
+    /// 回调必须够便宜（SessionHealthScanner 是字节循环 + 尾窗子串查,满足）。
+    var onData: ((ArraySlice<UInt8>) -> Void)?
     override func dataReceived(slice: ArraySlice<UInt8>) {
         super.dataReceived(slice: slice)
         lastOutputAt = Date()
+        onData?(slice)
     }
 }
 
@@ -30,6 +34,11 @@ final class AgentTerminalSession: ObservableObject, SessionBackend {
     /// 安静=空闲。0.6s 轮询 `terminalView.lastOutputAt` 重算；status 非 running 时恒 false。
     @Published private(set) var isWorking = false
     var isWorkingPublisher: Published<Bool>.Publisher { $isWorking }
+    /// PTY 输出健康扫描（未登录/额度到顶）—— 每 Kind 只翻一次;`health` 保留
+    /// 最近一条(auth 优先级高于 quota 的覆盖顺序由到达先后决定,展示层不细分)。
+    @Published private(set) var health: CrewSessionHealth?
+    var healthPublisher: Published<CrewSessionHealth?>.Publisher { $health }
+    private let healthScanner = SessionHealthScanner()
     private var busyTimer: Timer?
 
     private final class Delegate: NSObject, LocalProcessTerminalViewDelegate {
@@ -47,6 +56,16 @@ final class AgentTerminalSession: ObservableObject, SessionBackend {
         self.kind = config.kind
         self.terminalView = ActivityTerminalView(frame: .zero)
         self.terminalView.processDelegate = delegate
+        // 健康扫描旁路：PTY 输出喂 SessionHealthScanner,命中(每 Kind 一次)翻 health。
+        // dataReceived 在主线程,init 也是 @MainActor —— assumeIsolated 安全。
+        self.terminalView.onData = { [weak self] slice in
+            guard let self else { return }
+            MainActor.assumeIsolated {
+                // 逐条赋值(而非只取一条)——同一 chunk 罕见地同时命中 auth+quota 时,
+                // 两次 @Published 变更都要发出去,下游(run 的白板 fail-loud)按 kind 去重。
+                for hit in self.healthScanner.feed(slice) { self.health = hit }
+            }
+        }
         delegate.onExit = { [weak self] code in
             Task { @MainActor in
                 self?.status = .exited(code)
