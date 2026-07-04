@@ -149,3 +149,14 @@ requireSubjectAuth 模式):
   结构化 events(终端是事实源),此类 session 的 transcript 可能很稀疏
   —— 详情页以事件流现状渲染,不造假数据。
 - 真机 QA(登录态 WS、权限批准全链路、iPad 三列壳)归统一 QA 批次。
+
+## 实现落地时的两点与 spec 偏差(已在代码内注明)
+
+- **权限卡放在 transcript 顶部 pinned 区**,不是 §详情页 3 描述的「在事件流
+  内锚点内联」。理由:pending 审批是最需要人处理的东西,置顶比埋在时间线里
+  更符合遥控台的注意力模型。permission_requested / permission_resolved 事件
+  在 transcript 里隐藏(卡单独渲染),与 spec 的「不重复渲染」一致。
+- **新任务 sheet 的 runner 在线标注**按 crew.responsible_subject_id ↔
+  runner_host.responsible_subject_id 匹配(status=online 且 last_seen 3 分钟
+  内)。`GET /v1/crew` 已返回 responsible_subject_id,匹配是精确的;不是最初
+  设想的「任意 host 在线即标全部在线」的粗略降级。
