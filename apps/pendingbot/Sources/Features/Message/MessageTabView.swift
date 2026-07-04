@@ -503,6 +503,8 @@ struct MessageTabView: View {
             if !renderAsMacListColumn {
                 TabHeaderBar(title: "消息", trailing: { messageHeaderActions })
             }
+            // 余额低/极低时的顶部细 banner(可关、每状态每天最多一次)。
+            WalletBanner()
             Group {
                 if loading && conversations.isEmpty {
                     ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
