@@ -75,6 +75,7 @@ struct CrewAvatarBadges: View {
         switch s {
         case "working", "running": return .green   // 干活中
         case "idle", "queued":     return .yellow  // 空闲/排队中
+        case "error":              return .red     // 健康异常(未登录/额度到顶),进程还活着
         default:                   return .gray     // 已退出/停止
         }
     }
