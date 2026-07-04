@@ -22,9 +22,19 @@ import Supabase
 ///       `conversation_participants` changes. Opened when a conv view
 ///       appears, closed when it disappears.
 @MainActor
-final class RealtimeManager {
+final class RealtimeManager: ObservableObject {
     static let shared = RealtimeManager()
     private init() {}
+
+    // MARK: - Connection diagnostics
+
+    /// Lifecycle of the resident user-level socket. `.retrying` carries the
+    /// consecutive-failure count + last error, so UI / diagnostics can show
+    /// "realtime down" instead of silently degrading to poll-on-open.
+    @Published private(set) var userChannelState: RealtimeConnectionState = .idle
+    /// Per-conversation socket lifecycle, keyed by conversation id. Entries
+    /// exist only while a conv channel is open.
+    @Published private(set) var convChannelStates: [String: RealtimeConnectionState] = [:]
 
     // MARK: - User-level channel
 
@@ -43,6 +53,9 @@ final class RealtimeManager {
             guard change.table == "user_unread_counts" else { return }
             onUnreadEvent(UnreadEvent(record: change.record))
         }
+        socket.onStateChange = { [weak self] state in
+            self?.userChannelState = state
+        }
         socket.start()
         userSocket = socket
     }
@@ -50,6 +63,7 @@ final class RealtimeManager {
     func stopUserChannel() async {
         userSocket?.stop()
         userSocket = nil
+        userChannelState = .idle
     }
 
     // MARK: - Conv-level channels
@@ -105,6 +119,9 @@ final class RealtimeManager {
             }
         }
         handle.socket = socket
+        socket.onStateChange = { [weak self] state in
+            self?.convChannelStates[conversationId] = state
+        }
         socket.start()
         convChannels[conversationId] = handle
         return token
@@ -149,6 +166,7 @@ final class RealtimeManager {
         if handle.observers.isEmpty {
             handle.socket?.stop()
             convChannels.removeValue(forKey: token.conversationId)
+            convChannelStates.removeValue(forKey: token.conversationId)
         }
     }
 
@@ -159,6 +177,7 @@ final class RealtimeManager {
             handle.socket?.stop()
         }
         convChannels.removeAll()
+        convChannelStates.removeAll()
     }
 }
 
