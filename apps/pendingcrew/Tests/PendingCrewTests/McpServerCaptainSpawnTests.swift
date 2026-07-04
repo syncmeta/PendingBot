@@ -36,6 +36,41 @@ final class McpServerCaptainSpawnTests: XCTestCase {
         XCTAssertEqual(cmds[0].isolation, true)
     }
 
+    func testStartSessionCarriesModelAndEffort() {
+        let dir = tmp()
+        let s = makeServer(isCaptain: true, dir: dir)
+        _ = call(s, "start_session", ["brief": "重构鉴权", "model": "haiku", "effort": "LOW"])
+        let cmds = LocalCrewControlStore(directory: dir).drainCommands()
+        XCTAssertEqual(cmds.count, 1)
+        XCTAssertEqual(cmds[0].model, "haiku")
+        XCTAssertEqual(cmds[0].effort, "low")   // effort 归一小写
+    }
+
+    func testStartSessionSanitizesInvalidModelEffort() {
+        let dir = tmp()
+        let s = makeServer(isCaptain: true, dir: dir)
+        // 带空格的 model（像一句话）与空 effort → 双双丢弃为 nil，不进 argv。
+        _ = call(s, "start_session", ["brief": "干活", "model": "use the best model", "effort": "  "])
+        let cmds = LocalCrewControlStore(directory: dir).drainCommands()
+        XCTAssertEqual(cmds.count, 1)
+        XCTAssertNil(cmds[0].model)
+        XCTAssertNil(cmds[0].effort)
+    }
+
+    func testOldQueueFileWithoutModelEffortStillDecodes() {
+        // 旧版排队文件（无 model/effort 键）必须照常 decode —— 升级兼容。
+        let dir = tmp()
+        let json = """
+        {"id":"i1","crewId":"local-x","kind":"start_session","brief":"旧命令","ts":"2026-07-01T00:00:00Z"}
+        """
+        try! json.data(using: .utf8)!.write(to: dir.appendingPathComponent("local-x.i1.crewcmd.json"))
+        let cmds = LocalCrewControlStore(directory: dir).drainCommands()
+        XCTAssertEqual(cmds.count, 1)
+        XCTAssertEqual(cmds[0].brief, "旧命令")
+        XCTAssertNil(cmds[0].model)
+        XCTAssertNil(cmds[0].effort)
+    }
+
     func testCreateChildCrewEnqueues() {
         let dir = tmp()
         _ = call(makeServer(isCaptain: true, dir: dir), "create_child_crew", ["brief": "做支付", "title": "支付"])

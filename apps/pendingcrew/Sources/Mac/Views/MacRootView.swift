@@ -91,7 +91,8 @@ struct MacThreePaneView: View {
                     do {
                         try await sessionRunner.startForBrief(
                             detail: detail, backend: model.backend, brief: req.brief,
-                            runnerOverride: kind, isolation: req.isolation)
+                            runnerOverride: kind, isolation: req.isolation,
+                            model: req.model, effort: req.effort)
                     } catch {
                         sessionRunner.lastStartError = error.localizedDescription
                     }

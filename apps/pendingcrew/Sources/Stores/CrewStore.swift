@@ -301,7 +301,8 @@ final class CrewStore: ObservableObject {
             case "start_session":
                 sessionSpawnRequests.append(SessionSpawnRequest(
                     crewId: cmd.crewId, brief: cmd.brief,
-                    runner: cmd.runner, isolation: cmd.isolation ?? false))
+                    runner: cmd.runner, isolation: cmd.isolation ?? false,
+                    model: cmd.model, effort: cmd.effort))
             case "create_child_crew":
                 await executeCreateChildCrew(cmd)
             default:
@@ -379,4 +380,8 @@ struct SessionSpawnRequest: Equatable {
     let runner: String?
     /// true = 独立 worktree；false/nil = 共享 crew 目录。
     let isolation: Bool
+    /// 模型别名/slug；nil = 对应 CLI 默认。
+    var model: String? = nil
+    /// thinking effort；nil = CLI 默认。
+    var effort: String? = nil
 }

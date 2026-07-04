@@ -412,7 +412,8 @@ final class CrewSessionRunner: ObservableObject {
     ///   （worker 改代码可能要隔离，机长调度不改代码所以 `startCaptain` 恒不隔离）。
     func startForBrief(
         detail: CrewDetail, backend: PendingCrewBackend?, brief: String,
-        runnerOverride: LocalCodingAgentKind? = nil, isolation: Bool = false
+        runnerOverride: LocalCodingAgentKind? = nil, isolation: Bool = false,
+        model: String? = nil, effort: String? = nil
     ) async throws {
         let crewId = detail.crew.id
         guard let wd = detail.crew.workingDirectory, !wd.isEmpty else {
@@ -424,7 +425,7 @@ final class CrewSessionRunner: ObservableObject {
         let kind = runnerOverride ?? LocalCodingAgentKind.captainDefault(detail.crew.captainAgentKind)
         // members best-effort：加载失败不挡启动（只是少世界观里的成员名单，与 startCaptain 同策略）。
         let members = (try? await backend?.listCrewMembers(crewId: crewId))?.members ?? []
-        var cfg = SessionConfig(kind: kind, initialPrompt: brief)
+        var cfg = SessionConfig(kind: kind, model: model, effort: effort, initialPrompt: brief)
         var developerInstructions: String? = nil
         var codexMcpServers: [String: Any]? = nil
         switch kind {

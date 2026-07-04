@@ -127,13 +127,15 @@ final class McpServer {
                 ])
                 tools.append([
                     "name": "start_session",
-                    "description": "（机长专用）在当前 crew 里起一个 worker session 去干一件明确的编码任务。brief 写清要干什么。runner 默认随本 crew（不填即可），可填 \"claude\"/\"codex\" 覆盖。isolation 默认 false（与你共享 crew 目录）；只有当这件事会大改文件、想隔离到独立 worktree 时才传 true。起完 worker 会自己报到，你在群聊看得到。",
+                    "description": "（机长专用）在当前 crew 里起一个 worker session 去干一件明确的编码任务。brief 写清要干什么。runner 默认随本 crew（不填即可），可填 \"claude\"/\"codex\" 覆盖。isolation 默认 false（与你共享 crew 目录）；只有当这件事会大改文件、想隔离到独立 worktree 时才传 true。model/effort 可选：按任务难度配置——简单机械活给低 effort/轻模型省额度，难活给高 effort；不填用该 CLI 默认。起完 worker 会自己报到，你在群聊看得到。",
                     "inputSchema": [
                         "type": "object",
                         "properties": [
                             "brief": ["type": "string", "description": "要这个 session 干的明确任务。"],
                             "runner": ["type": "string", "enum": ["claude", "codex"]],
                             "isolation": ["type": "boolean"],
+                            "model": ["type": "string", "description": "可选：模型别名/slug。claude 常用 \"opus\"/\"sonnet\"/\"haiku\"；codex 如 \"gpt-5-codex\"。不填=CLI 默认。"],
+                            "effort": ["type": "string", "description": "可选：thinking effort。claude: low/medium/high/xhigh/max；codex: minimal/low/medium/high。不填=CLI 默认。"],
                         ],
                         "required": ["brief"],
                     ],
@@ -239,7 +241,16 @@ final class McpServer {
             guard !brief.isEmpty else { return toolResult(id: id, text: "ERROR: brief 不能为空") }
             let runner = (args["runner"] as? String).flatMap { ["claude", "codex"].contains($0) ? $0 : nil }
             let isolation = args["isolation"] as? Bool
-            control.enqueueStartSession(crewId: crewId, brief: brief, runner: runner, isolation: isolation)
+            // model/effort 透传字符串：有效值归 CLI 管（起不来会经 lastStartError 浮出），
+            // 这里只做「单 token、非空」的卫生（防把整句话塞进 argv）。
+            let model = (args["model"] as? String)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .flatMap { $0.isEmpty || $0.contains(" ") ? nil : $0 }
+            let effort = (args["effort"] as? String)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+                .flatMap { $0.isEmpty || $0.contains(" ") ? nil : $0 }
+            control.enqueueStartSession(crewId: crewId, brief: brief, runner: runner,
+                                        isolation: isolation, model: model, effort: effort)
             return toolResult(id: id, text: "已安排起 session：\(brief)。它起来后会在群聊报到。")
         case "create_child_crew":
             guard isCaptain else { return toolResult(id: id, text: "ERROR: 仅机长可用") }
