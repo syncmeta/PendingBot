@@ -1,6 +1,8 @@
 # PendingBot / PendingCrew 进度账本 (Progress Ledger)
 
-**最近对账：2026-07-03**（captain 自主 spawn 落地；其余见 2026-06-27 起；对照实际代码 / 迁移 / git，不是看 task 标记）
+**最近对账：2026-07-04**（crew 协作体验分诊 + 批 A 四修；其余见 2026-07-03 起；对照实际代码 / 迁移 / git，不是看 task 标记）
+
+> **2026-07-04 crew 协作体验分诊（7 点）+ 批 A 四修（`fix/crew-collab-polish`，task #448-452，PendingCrewTests 263 绿 + macOS test + iOS Sim build 绿）**：用户反馈 pendingcrew 机长/成员协作不顺,7 点全部定位到代码根因,分三批处置。**批 A（本轮已修,2 commit）**：① @ 消息只输入不提交（要手动回车）— `AgentTerminalSession.send()` 把正文+\r 一笔写 PTY 被 claude TUI 判成粘贴,改正文/回车分两笔隔 200ms（`9c7cee7c`,真机活验归 #443）；② 新建 session 不进成员列表 — `LocalBackend.listCrewMembers` 的「本地 session 留 chunk 4」缺口补上：runner `start()` 时 `LocalCrewStore.recordSessionMember` 持久登记,roster/@ 名单同源、退出/重启不丢；③ 名字分裂（成员列表 Captain / 群聊 机长）— captain 兜底名 6 处统一「机长」+ 旧 JSON "Captain" 读取归一；④ @ 弹出列表 glyph 图标 → `CrewAvatarBadges` 真头像（同 seed 同脸,机长星标）（②③④ 同 commit `3e72864c`）。**批 B（待做）**：右键头像 @（PendingBot IM 侧也没有,是新交互,两端可一起加）+ 终端侧 UI 残余对齐盘点（composer/气泡/头像算法已 vendor 同源,差在 picker/选择框样式细节）。**批 C（设计未写,tech-debt 🔴 已记）**：runner 状态感知空白——登录态/额度/运行错误零检测,claude 报错只在 PTY 字节流滚过、codex `account/*` 事件被丢；需先写 handbook 期望页再实现,独立 session 做。**「协作不起来」总判**：@ 唤醒断在提交一步 + 成员注册缺 + 状态零感知三根叠加,批 A 修通前两根。
 
 > **2026-07-03 Captain 自主 `start_session` / `create_child_crew`（本地模式）（`feat/captain-spawn`，subagent-driven 7-task TDD，spec 2026-06-19-captain-spawn-session-crew-design，PendingCrewTests 263 绿 + macOS build 绿）**：机长（本地 coding-agent session）此前只能 `post_to_crew`/`read_whiteboard`/`ask`/`answer_decision`/`rename_crew`；补两个机长专用工具让它**无需人类逐次确认**就能在当前 crew 起 worker session、或以当前 crew 为父建子 crew（子 crew 自动起子机长）。照搬 `rename_crew` 的**离线文件控制通道**（helper 是碰不到 app、不联网的离线子进程）。
 > - **命令通道**（`LocalCrewControlStore` 扩展）：`rename` 是 last-write-wins 单文件；spawn 可重复→**每命令一文件队列** `<crewId>.<uuid>.crewcmd.json`，`drainCommands()` 读全部+删文件（**删在任何 await 前 → 再入安全、不双执行/不丢**，opus 复核确认）。`McpServer` 在 `isCaptain` 分支注册两工具 + `tools/call` 再守卫；非机长/空 brief 拒绝不入队。

@@ -1065,3 +1065,9 @@
 
 - 🟡 **`create_child_crew` 部分失败回执措辞误导**:`CrewStore.executeCreateChildCrew` 里 `createCrew` 成功但 `attachParent` 抛错时走同一个 `catch`，往父白板贴的是「建子 crew 失败」——但子 crew 其实已建成、子机长会自动起，只是没挂上父 DAG 边（孤立子 crew）。现实触发概率低（新建 crew 的 `descendants` 为空 → cycle-guard 不会 fire，主要剩 `notAuthenticated`/瞬时刷新错），且用户能在侧栏看到那个 crew。**根治**：拆开回执，post-create 的 attach 失败改读「子 crew 已建但未挂到父下」。final review（opus）判为可接受、不阻塞合并，记此备忘。
 - 🟢 **`LocalCrewControlStoreMain.swift`（swiftc harness `@main`）被 xcodegen 注册进 PendingCrewTests bundle**:Task 1 为 headless 校验建的 standalone harness 落在 `Tests/PendingCrewTests/` 下，被 glob 收进测试 target。XCTest runner 自己驱动执行、不会调这个 `main()`，263 单测确认无劫持/冲突——只是测试 target 里多一个无引用 harness 文件的轻度杂音。**清理**：把 harness 挪出测试目录或删（swiftc 校验已被 `xcodebuild test` 覆盖，harness 冗余）。
+
+## 2026-07-04 crew 协作体验批 A（`fix/crew-collab-polish`）
+
+- 🟡 **PTY 注入「回车分笔 + 200ms 延迟」是时序启发式**:`AgentTerminalSession.send()` 修 @ 消息不自动提交,靠的是「正文与 \r 分两笔、隔 200ms」让回车落在 claude TUI 粘贴判定窗口外(tmux send-keys 同款手法)。依赖 TUI 的判定阈值,claude code 改判定逻辑可能回归;且 200ms 内 session 恰好退出则回车被 guard 吞掉(消息已注入未提交,与修复前等价、不更糟)。真机活验归 #443;若真机仍不提交,备选是改发 `\n`(0x0a) 或拉长间隔。
+- 🟢 **持久 session 成员无退出/清理路径**:`LocalCrewStore.sessionMembers` 只进不出——session 成员登记后永久留在成员列表(语义=IM 成员离线仍在群),但没有「移出成员」入口,长寿 crew 会积累大量死 session 成员;@ 到已退出 session 的消息本地直投会静默无目标(白板仍留档)。后续给成员列表加移除入口或按退出时间归档折叠。
+- 🔴 **runner 状态感知空白(分诊第 7 点,设计未写)**:PendingCrew 对 claude/codex 的登录态、额度、运行中错误零感知——状态模型只有 running/exited,claude 报错只在 PTY 字节流滚过、app 不识别,codex `account/*` 事件被丢弃。未登录/爆额度时 crew 不报错,用户只能进终端肉眼看。**这是「session 间协作不起来」的三根之一**(另两根已修:@ 不提交、成员注册缺)。需先写 handbook 期望页(探测手段:claude credentials/`/status`、PTY 文案识别、codex account 事件;fail-loud 到群聊/成员状态点)再实现——批 C,独立 session 做。
