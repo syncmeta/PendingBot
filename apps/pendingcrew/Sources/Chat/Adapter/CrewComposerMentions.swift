@@ -190,6 +190,24 @@ enum CrewComposerMentionParser {
         return kept
     }
 
+    /// Append a mention to the tail of `draft` **without** replacing an open
+    /// `@token` (that's `insert`'s job at the caret). Used by the "右键头像 → @"
+    /// path where there's no in-progress token — the user picked a sender from
+    /// their avatar, not by typing. Inserts a single leading space when the
+    /// draft is non-empty and doesn't already end with whitespace, then
+    /// `@label ` (trailing space so typing continues cleanly). Dedups by mention
+    /// target: if that exact target is already staged, it's a no-op (draft +
+    /// staged unchanged) so hammering the menu doesn't pile up `@X @X @X`.
+    static func appendMention(
+        _ staged: CrewStagedMention, to draft: String, existing: [CrewStagedMention]
+    ) -> (newDraft: String, staged: [CrewStagedMention]) {
+        guard !existing.contains(where: { $0.mention == staged.mention }) else {
+            return (draft, existing)
+        }
+        let sep = (draft.isEmpty || draft.last?.isWhitespace == true) ? "" : " "
+        return (draft + sep + staged.token + " ", existing + [staged])
+    }
+
     /// Collapse a staged list into the de-duplicated `[CrewMention]` to send.
     /// Same logical target staged twice (e.g. via reply auto-@ + manual @) is
     /// sent once.

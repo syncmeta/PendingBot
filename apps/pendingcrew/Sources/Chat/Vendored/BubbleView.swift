@@ -58,6 +58,10 @@ struct BubbleView<Menu: View>: View {
     /// Tapping the failure indicator on a failed outgoing message
     /// re-sends it. nil leaves the indicator non-interactive.
     var onRetry: (() -> Void)? = nil
+    /// Group convs — right-click (macOS) / long-press (iOS) the sender
+    /// avatar to @-mention them into the composer. Passed the resolved
+    /// `groupSender`. nil (1:1 / non-group) = no avatar mention menu.
+    var onMentionSender: ((GroupBubbleSender) -> Void)? = nil
     /// Long-press context-menu items. Attached to just the avatar+bubble
     /// region (see `botLayout` / `userLayout`) — NOT the full-width row —
     /// so the system highlight platter hugs the bubble instead of
@@ -109,6 +113,7 @@ struct BubbleView<Menu: View>: View {
                 }
             }
             .padding(.top, 2)
+            .modifier(AvatarMentionMenu(sender: groupSender, action: onMentionSender))
 
             VStack(alignment: .leading, spacing: 4) {
                 if let g = groupSender {
@@ -427,6 +432,29 @@ struct FileAttachmentChip: View {
         } catch {
             loadError = true
             Haptics.error()
+        }
+    }
+}
+
+/// Attaches a "@ <name>" context menu to the sender avatar so右键(macOS)/长按
+/// (iOS)可把该发送者 @ 进 composer。仅当是群消息(`sender != nil`)且宿主给了
+/// `action`(群聊上下文)时挂载——1:1 / 无 action 时原样返回,头像不弹菜单。
+/// 嵌套在气泡外层 contextMenu 之内:SwiftUI 命中最内层,头像区弹 @ 菜单、其余
+/// 区域仍是气泡自己的菜单(回复/复制…)。
+private struct AvatarMentionMenu: ViewModifier {
+    let sender: GroupBubbleSender?
+    let action: ((GroupBubbleSender) -> Void)?
+    func body(content: Content) -> some View {
+        if let sender, let action {
+            content.contextMenu {
+                Button {
+                    action(sender)
+                } label: {
+                    Label("@ \(sender.displayName)", systemImage: "at")
+                }
+            }
+        } else {
+            content
         }
     }
 }

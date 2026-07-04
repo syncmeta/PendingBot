@@ -92,6 +92,20 @@ extension ConversationView {
         Haptics.tap()
     }
 
+    /// Append `@<displayName> ` to the composer without an in-progress `@token`
+    /// to replace — used by the "右键/长按头像 → @ 该发送者" path (the user
+    /// didn't type `@`, they picked from the avatar). Inserts a leading space
+    /// only when needed, and no-ops if the mention token is already present so
+    /// hammering the menu doesn't pile up `@X @X`. mentions travel as plain
+    /// `@name` text (server parses ids), same as `insertMention`.
+    func appendMention(_ sender: GroupBubbleSender) {
+        let token = "@" + sender.displayName
+        guard !input.contains(token + " ") else { return }
+        let sep = (input.isEmpty || input.last?.isWhitespace == true) ? "" : " "
+        input = input + sep + token + " "
+        Haptics.tap()
+    }
+
     func decideContinue(_ pc: PendingContinue, allow: Bool) async {
         continueDeciding = true
         defer { continueDeciding = false }

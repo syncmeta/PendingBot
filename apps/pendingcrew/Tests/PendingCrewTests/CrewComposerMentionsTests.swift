@@ -150,6 +150,37 @@ final class CrewComposerMentionsTests: XCTestCase {
         XCTAssertEqual(kept.count, 1)
     }
 
+    // MARK: - appendMention (右键头像 → @，无 open token)
+
+    func testAppendMentionToEmptyDraft() {
+        let staged = CrewStagedMention(token: "@机长", mention: .captain)
+        let r = CrewComposerMentionParser.appendMention(staged, to: "", existing: [])
+        XCTAssertEqual(r.newDraft, "@机长 ")
+        XCTAssertEqual(r.staged, [staged])
+    }
+
+    func testAppendMentionInsertsLeadingSpaceWhenNeeded() {
+        let staged = CrewStagedMention(token: "@小绿", mention: .session("s1"))
+        let r = CrewComposerMentionParser.appendMention(staged, to: "帮我看下", existing: [])
+        XCTAssertEqual(r.newDraft, "帮我看下 @小绿 ")
+        XCTAssertEqual(r.staged, [staged])
+    }
+
+    func testAppendMentionNoDoubleSpaceAfterTrailingSpace() {
+        let staged = CrewStagedMention(token: "@小绿", mention: .session("s1"))
+        let r = CrewComposerMentionParser.appendMention(staged, to: "帮我看下 ", existing: [])
+        XCTAssertEqual(r.newDraft, "帮我看下 @小绿 ")
+    }
+
+    func testAppendMentionDedupsSameTargetToNoOp() {
+        let staged = CrewStagedMention(token: "@小绿", mention: .session("s1"))
+        // 已经 @ 过同一 session（token 文本可不同）→ 原样返回，不叠加。
+        let existing = [CrewStagedMention(token: "@小绿 (会话)", mention: .session("s1"))]
+        let r = CrewComposerMentionParser.appendMention(staged, to: "@小绿 (会话) ", existing: existing)
+        XCTAssertEqual(r.newDraft, "@小绿 (会话) ")
+        XCTAssertEqual(r.staged, existing)
+    }
+
     func testMentionsToSendDeduplicates() {
         let staged = [
             CrewStagedMention(token: "@小绿", mention: .session("s1")),

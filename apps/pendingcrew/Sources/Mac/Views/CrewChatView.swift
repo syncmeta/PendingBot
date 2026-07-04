@@ -260,6 +260,31 @@ struct CrewChatView: View {
         // nil (token now closed by the trailing space), so the popover closes.
     }
 
+    // MARK: - avatar → @-mention (right-click / long-press the sender avatar)
+
+    /// Build the staged mention for @-ing a bubble's sender from its avatar.
+    /// captain → `.captain`(不按 id);session → `.session(id)`;human → human
+    /// target。泛 bot(非机长)无 mention 目标 → nil(不显示 @ 菜单)。id 取值对齐
+    /// `CrewChatAdapter.adapt`:session=senderSessionId、human=senderUserId。
+    private func avatarMention(_ sender: GroupBubbleSender) -> CrewStagedMention? {
+        let token = "@\(sender.displayName)"
+        if sender.isCaptain { return CrewStagedMention(token: token, mention: .captain) }
+        if sender.isSession { return CrewStagedMention(token: token, mention: .session(sender.id)) }
+        if sender.kind == .user {
+            return CrewStagedMention(token: token, mention: CrewMention(kind: "human", targetId: sender.id))
+        }
+        return nil
+    }
+
+    /// Append the avatar-picked mention to the composer draft + staged set
+    /// (dedup by target; no-op if already @'d). Pure logic in
+    /// `CrewComposerMentionParser.appendMention`; here just apply to @State.
+    private func appendMentionFromAvatar(_ staged: CrewStagedMention) {
+        let r = CrewComposerMentionParser.appendMention(staged, to: draft, existing: stagedMentions)
+        draft = r.newDraft
+        stagedMentions = r.staged
+    }
+
     // MARK: - reply plumbing (Phase 6)
 
     /// Begin replying to `entry`: show the quote banner. The auto-@ on the
@@ -422,6 +447,9 @@ struct CrewChatView: View {
             // 那条,取发送者名 + 摘要渲染成「回复 X:…」。找不到 → 退化占位,不崩。
             // mine(右对齐)时引用条也右对齐贴齐气泡。
             let replyRef = replyReference(for: entry)
+            // 右键(macOS)/长按(iOS)头像 → @ 该发送者。仅他人消息(sender != nil)且
+            // 能解析出 mention 目标(captain/session/human)时给闭包;泛 bot 无 @ 目标 → nil。
+            let mentionStaged = sender.flatMap(avatarMention)
             let bubbleBody = BubbleView(
                 message: msg,
                 botName: sender?.displayName ?? "机组",
@@ -430,6 +458,7 @@ struct CrewChatView: View {
                 groupSender: sender,
                 serverURL: appModel.imageAuth?.baseURL,
                 onRetry: nil,
+                onMentionSender: mentionStaged.map { staged in { _ in appendMentionFromAvatar(staged) } },
                 menu: { EmptyView() }
             )
             let bubble = Group {

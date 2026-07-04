@@ -553,7 +553,10 @@ struct ConversationView: View {
                                        citations: citationsByMsgId[msg.id] ?? [],
                                        isStreaming: revealTargetId == msg.id,
                                        streamPaused: revealTargetId == msg.id && streamPaused,
-                                       onRetry: { retryFailedMessage(msg) }) {
+                                       onRetry: { retryFailedMessage(msg) },
+                                       // 右键(macOS)/长按(iOS)头像 → @ 该发送者。
+                                       // 仅群消息有 groupSender，modifier 内 gate 掉 1:1/自己。
+                                       onMentionSender: { appendMention($0) }) {
                                     Button {
                                         Clipboard.copy(msg.content)
                                         Haptics.tap()
