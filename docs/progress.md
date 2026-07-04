@@ -1,6 +1,12 @@
 # PendingBot / PendingCrew 进度账本 (Progress Ledger)
 
-**最近对账：2026-07-05**（crew 协作批 B 头像@ + 批 C runner 健康感知落地；其余见 2026-07-04 起；对照实际代码 / 迁移 / git，不是看 task 标记）
+**最近对账：2026-07-05**（模型/effort/额度三能力 + 批 B/C；其余见 2026-07-04 起；对照实际代码 / 迁移 / git，不是看 task 标记）
+
+> **2026-07-05 crew 模型/effort/额度三能力（`feat/model-effort-quota` 6 commit，task #455，用户夜间授权持续推进；期间真实撞额度一次,按用户指令设 4h hook 唤醒后续跑——正是本功能要产品化的工作流）**：
+> - **模型/effort 调配（人+机长+session 三入口）**：composer 双 picker（`0683b71f`,别名清单收 `SessionLaunchOptions`:claude opus/sonnet/haiku + low…max,codex gpt-5-codex/gpt-5 + minimal…high,档位实测核对）;`start_session` 带 model/effort 全链透传（`fa2a58b3`,MCP schema 单 token 卫生→CrewCommand(旧队列文件兼容)→SpawnRequest→startForBrief→argv）;`set_session_profile` session 自切（`7c1e828e`,claude 注入 /model /effort 斜杠命令、分两笔隔 700ms 防与延迟回车互串;codex 无中途切换通道(model 绑 thread/effort 绑 -c,实测核对)→白板说明引导 start_session 另起）。
+> - **额度可见（数据源全部本机实测定档,拒绝臆测）**：claude 走 `claude -p "/usage"`（实测=本地 control-request、不烧额度、CLI 自理 OAuth refresh;文本解析,fixture 取实测输出）;codex 走 `~/.codex/sessions` rollout jsonl 的 `token_count.rate_limits`（每轮落盘,无进程可读;free 计划 secondary=null 已覆盖）。`QuotaCenter` 10 分钟双源刷新 → 侧栏额度行（不分登录态,≥90% 染橙,hover 重置时刻）+ quota.json 快照 → `get_quota` 工具。两家均只有百分比+重置时刻,无剩余 token 绝对值——照实呈现。**结构化备选已探明**:claude `/api/oauth/usage`(Keychain OAuth+beta 头实测通,含 utilization/resets_at/limits 数组)、codex app-server `account/rateLimits/read`(实测通)——留作后续升级,v1 不背 Keychain/token-refresh 工程尾巴。
+> - **额度重置自唤醒**：`schedule_wakeup(after_minutes|at, note)` → wakeups.json 持久化+定时器（app 重启 `rearmWakeups` 不失约）→ 到点注入回原 session（已退→白板留痕给机长）。世界观 §11（中英）教「get_quota 看重置→收尾可交接→约醒→停手」纪律与"额度全机共享"意识。
+> - **验证**：AgentQuotaTests 5 + McpServerQuotaToolsTests 9 + spawn 3 项新测,全量 293 绿;macOS test + iOS Sim build 绿。**尾巴归 #443**:真起 session 调三工具 E2E、真跨额度窗唤醒、侧栏额度行/composer picker 像素验。期望页 `features/session-quota-and-profile.md` + state 镜像已补。
 
 > **2026-07-05 crew 协作批 B + 批 C 落地（`feat/avatar-mention` `2237dbbf` ff 合入 + `feat/session-health` 3 commit `--no-ff` 合入 `757eefe5`，task #453/#454）**：接批 A（2026-07-04）把分诊剩下两批做完。
 > - **批 B — 两端右键/长按头像 → @ 该发送者**：PendingBot IM 与 PendingCrew 共享的 `BubbleView` 加 `onMentionSender` 闭包 + 头像专属 `AvatarMentionMenu`（嵌套 contextMenu 命中最内层：头像区弹「@ 名字」、其余区域保持气泡原菜单），仅群消息且宿主给闭包时挂载。PendingBot 侧 mention=纯文本 `@名字`（服务端解析），新加 `appendMention`（原 `insertMention` 的 `dropLast` 是替换 open token 用的，程序化插入会吃字符）；PendingCrew 侧走 staged 模型，`CrewComposerMentionParser.appendMention` 按 target 去重（捶菜单不叠 @X @X），captain→`.captain`、session→`.session(id)`、human→human。PendingCrewTests 267 绿（+4）、两端 iOS Sim build 绿。

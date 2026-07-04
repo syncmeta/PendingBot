@@ -29,6 +29,9 @@ struct CrewSessionWindowView: View {
     /// composer 里给「新 worker session」选的 agent kind。初值从 crew 的
     /// `captainAgentKind` 派生（见 `.onAppear` / `.onChange`），crew 没记 → `.codex`。
     @State private var selectedKind: LocalCodingAgentKind = .codex
+    /// 新建 session 的模型/effort 覆盖；nil = 对应 CLI 默认（composer 两个 picker）。
+    @State private var selectedModel: String?
+    @State private var selectedEffort: String?
 
     // MARK: - 成员列表模式 state（自轮询白板 + roster，与中栏各拉各的）
 
@@ -610,6 +613,32 @@ struct CrewSessionWindowView: View {
                     .labelsHidden()
                     .frame(width: 130)
                     .disabled(starting)
+                    .onChange(of: selectedKind) { _, _ in
+                        // 两家的模型别名/effort 档位不同，切 runner 就回默认，防带错档。
+                        selectedModel = nil
+                        selectedEffort = nil
+                    }
+                    // 模型 / effort：nil = 该 CLI 默认。选项按 runner 分家 ——
+                    // claude 用稳定别名(CLI 解析到当代最新)，effort 档位两家不同
+                    // (claude: low…max；codex: minimal…high，见 SessionConfig)。
+                    Picker("", selection: $selectedModel) {
+                        Text("默认模型").tag(String?.none)
+                        ForEach(SessionLaunchOptions.models(for: selectedKind), id: \.self) { m in
+                            Text(m).tag(String?.some(m))
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 110)
+                    .disabled(starting)
+                    Picker("", selection: $selectedEffort) {
+                        Text("默认 effort").tag(String?.none)
+                        ForEach(SessionLaunchOptions.efforts(for: selectedKind), id: \.self) { e in
+                            Text(e).tag(String?.some(e))
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 110)
+                    .disabled(starting)
                 }
                 TextField(isContinuing ? "继续对 agent 说…（⌘↩ 发送）" : "下第一条指令开始…",
                           text: $draft, axis: .vertical)
@@ -670,7 +699,8 @@ struct CrewSessionWindowView: View {
         let serverLink: CrewSessionServerLink? = nil
         if let sid = serverLink?.sessionId { handledSessionIds.insert(sid) }
         do {
-            var cfg = SessionConfig(kind: selectedKind, initialPrompt: firstPrompt)
+            var cfg = SessionConfig(kind: selectedKind, model: selectedModel,
+                                    effort: selectedEffort, initialPrompt: firstPrompt)
             // isolation=on → 独立 worktree;off → crew 共享目录（spec §8/§11）。
             let workdir = SessionWorkspace.resolve(
                 crewDirectory: dir, isolation: cfg.isolation, hint: firstPrompt)

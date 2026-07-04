@@ -91,17 +91,33 @@ struct MacThreePaneView: View {
                     do {
                         try await sessionRunner.startForBrief(
                             detail: detail, backend: model.backend, brief: req.brief,
-                            runnerOverride: kind, isolation: req.isolation)
+                            runnerOverride: kind, isolation: req.isolation,
+                            model: req.model, effort: req.effort)
                     } catch {
                         sessionRunner.lastStartError = error.localizedDescription
                     }
                 }
             }
         }
+        // session 自切模型/effort（set_session_profile）：claude 注入 /model /effort,
+        // codex 白板说明。数组语义同 sessionSpawnRequests（防同 tick 丢命令）。
+        .onChange(of: crewStore.profileChangeRequests) { _, reqs in
+            guard !reqs.isEmpty else { return }
+            crewStore.profileChangeRequests = []
+            Task { for req in reqs { await sessionRunner.applyProfileChange(req) } }
+        }
+        // 定时唤醒登记（schedule_wakeup）→ runner 持久化 + 挂定时器。
+        .onChange(of: crewStore.wakeupRequests) { _, reqs in
+            guard !reqs.isEmpty else { return }
+            crewStore.wakeupRequests = []
+            for req in reqs { sessionRunner.scheduleWakeup(req) }
+        }
         // 去掉 toolbar 底部那条灰色分隔线（详见 WindowSeparatorRemover）。tick 传
         // selectedCrewId —— 切 crew 时借 updateNSView 重设，抢在 SwiftUI 把它重置回去之后。
         .background(WindowSeparatorRemover(tick: crewStore.selectedCrewId ?? ""))
         .task {
+            // app 重启后重挂持久化的定时唤醒（schedule_wakeup 不因重启失约）。
+            sessionRunner.rearmWakeups()
             // 首次进入时把列表 + subjects 都拉一遍 —— subjects 用于创建
             // crew sheet 的 picker，提前 prefetch 避免 sheet 打开时空。
             await crewStore.refreshList()

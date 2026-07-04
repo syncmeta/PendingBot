@@ -114,6 +114,12 @@ status: partial, pending-qa
 证据: SessionHealth.swift + SessionHealthTests 9 项(去 ANSI/跨 chunk/去重/codex 分类)绿;PendingCrewTests 276 全绿;macOS test + iOS Sim build 绿
 task: 20260626-qa(Mac/真机 GUI QA 批次)
 
+## features/session-quota-and-profile
+status: partial, pending-qa
+现状: v1 代码全落（2026-07-05 `feat/model-effort-quota`）——①模型/effort 三入口：composer 双 picker（稳定别名,清单收 `SessionLaunchOptions`）、机长 `start_session` 带 model/effort（全链透传到 SessionConfig argv）、session `set_session_profile` 自切（claude 注入 /model /effort 斜杠命令分两笔隔 700ms;codex 无通道→白板说明）;②额度可见：`QuotaCenter` 10 分钟双源刷新（claude `-p "/usage"` 文本解析 + codex rollout jsonl rate_limits,均 2026-07-05 实测定档）→侧栏额度行（≥90% 染橙）+ quota.json 快照 → session `get_quota`;③额度重置自唤醒：`schedule_wakeup(after_minutes|at, note)` → wakeups.json 持久化 + 定时器（app 重启 rearm）→ 到点注入回原 session/已退白板留痕;世界观 §11（中英）教「查额度→收尾→约醒」纪律。活体验证（真起 session 调三工具、真跨额度窗唤醒、侧栏额度行渲染）归 #443。
+证据: AgentQuotaTests 5 + McpServerQuotaToolsTests 9 + spawn model/effort 3 项全绿;全量 293 绿;macOS test + iOS Sim build 绿;额度数据源实测记录见 progress 2026-07-05 条
+task: 20260626-qa(Mac/真机 GUI QA 批次)
+
 ## features/cross-device-control
 status: partial, pending-qa
 现状: 遥控地基 + PendingCrew 侧 viewer 实时层已落——按 session 绑定中转点 SessionProxyDO(viewer/runner 角色 + 离线队列 500 上限 + 持久信箱权威源 + 路由侧角色鉴权)+ WS 协议 + 单测;runner 边跑边推 `session.state`「WS 替轮询」= DONE。注意(2026-06-26 refresh 校正):原 iOS PendingBot 那套 crew/viewer 已于 095dfc2b(2026-06-15)整体删除(待重做),当前 viewer 链只在 PendingCrew(Mac/iPad)端;真机只验过早期 3s HTTP 轮询只读 viewer(2026-06-02),带真 device-grant 的完整 WS 往返(runner 连上→DO 推 state→viewer 实时看到→viewer 发命令)尚未真机验(T5.3 两设备 E2E 尾巴),仅验过 prod 路由活性(wss 401)。远端"下指令真注入运行中 session"卡在本地↔edge 绑定尾巴(worker 部署被权限层拦待用户手动部署);fly 云遥控 + 终端字节级跨端隧道未做(v1.1 / 另一条线)。
