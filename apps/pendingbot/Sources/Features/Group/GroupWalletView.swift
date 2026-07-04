@@ -165,12 +165,15 @@ struct GroupWalletView: View {
             actionButton("充值(注资进群)", icon: "plus.circle") { activeForm = .topup }
             actionButton("设 / 改认缴额度", icon: "hand.raised") { activeForm = .pledge(current: wallet?.me.pledgePnc ?? 0) }
             actionButton("部分取出", icon: "arrow.down.circle") { activeForm = .withdraw(max: wallet?.me.contributionShareNowPnc ?? 0) }
-            actionButton("退群(全额退款)", icon: "rectangle.portrait.and.arrow.right", tint: Theme.Palette.danger) {
-                confirmingLeave = true
-            }
+            // 权限矩阵(spec v2 §4.3):owner 不能直接退群 —— 先转让或解散。
+            // 客户端预检只做 UX 禁用,服务端 /leave 对 owner 返回 409 是最终裁决。
             if isOwner {
                 actionButton("解散群(全员退款)", icon: "trash", tint: Theme.Palette.danger) {
                     confirmingDissolve = true
+                }
+            } else {
+                actionButton("退群(全额退款)", icon: "rectangle.portrait.and.arrow.right", tint: Theme.Palette.danger) {
+                    confirmingLeave = true
                 }
             }
         } header: {
@@ -178,6 +181,9 @@ struct GroupWalletView: View {
         } footer: {
             if let actionNotice {
                 Text(actionNotice).font(Theme.Fonts.monoSmall).foregroundStyle(Theme.Palette.success)
+            } else if isOwner {
+                Text("金额按整数 PNC。认缴填 0 = 撤销认缴。群主需先转让群主或解散群,不能直接退群。")
+                    .font(Theme.Fonts.monoSmall).foregroundStyle(Theme.Palette.inkMuted)
             } else {
                 Text("金额按整数 PNC。认缴填 0 = 撤销认缴。")
                     .font(Theme.Fonts.monoSmall).foregroundStyle(Theme.Palette.inkMuted)
