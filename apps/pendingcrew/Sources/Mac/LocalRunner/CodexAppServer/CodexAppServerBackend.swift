@@ -19,6 +19,10 @@ final class CodexAppServerBackend: ObservableObject, SessionBackend {
     /// UI 头像「干活中/空闲」用,与 isBusy 同值但可观察。turn/started→true,completed→false。
     @Published private(set) var isWorking = false
     var isWorkingPublisher: Published<Bool>.Publisher { $isWorking }
+    /// runner 健康异常 —— codex 侧目前只有一个可靠信号:`account/*` server-request
+    /// (token 刷新请求 = 登录态失效),见 `handleServerRequest` 的 `.account` 分支。
+    @Published private(set) var health: CrewSessionHealth?
+    var healthPublisher: Published<CrewSessionHealth?>.Publisher { $health }
 
     private let connection: CodexAppServerConnection
     private let cwd: String
@@ -131,9 +135,18 @@ final class CodexAppServerBackend: ObservableObject, SessionBackend {
             // crew tool call. Genuine input-form elicitations still decline (no v1 UI; a
             // reply still lets the turn proceed instead of hanging). See elicitationResult.
             try? await connection.respond(serverId: id, result: CodexProtocol.elicitationResult(params: params))
+        case .account:
+            // codex 要客户端刷新 ChatGPT token(account/chatgptAuthTokens/refresh)。
+            // 无法代刷 —— 仍回错误让 turn 继续(不挂死),但同时翻 health:这是
+            // 「codex 登录态失效」的强信号,浮出到成员状态点/白板,别再静默丢。
+            health = CrewSessionHealth(
+                kind: .authRequired,
+                detail: "Codex 登录态失效（ChatGPT token 刷新请求客户端无法处理）—— 在终端跑 codex login 重新登录后重启该 session。")
+            try? await connection.respondError(serverId: id, code: -32601,
+                                               message: "client does not handle \(method)")
         case .unsupported:
             // Fail-safe for anything we don't model (item/tool/requestUserInput,
-            // item/tool/call, account/*, attestation/*): reply with an error so codex
+            // item/tool/call, attestation/*): reply with an error so codex
             // fails just that operation and continues the turn rather than blocking.
             try? await connection.respondError(serverId: id, code: -32601,
                                                message: "client does not handle \(method)")

@@ -32,6 +32,11 @@ protocol SessionBackend: AnyObject {
     /// spinner/输出不断 → true，空闲等指令时安静 → false）。`status==.exited` 时恒 false。
     var isWorking: Bool { get }
     var isWorkingPublisher: Published<Bool>.Publisher { get }
+    /// 最近一次探测到的 runner 健康异常（未登录/额度到顶）；nil = 未见异常。
+    /// claude = PTY 文案扫描（`SessionHealthScanner`）；codex = `account/*`
+    /// server-request。进程存活但干不了活的状态靠它浮出（分诊第 7 点）。
+    var health: CrewSessionHealth? { get }
+    var healthPublisher: Published<CrewSessionHealth?>.Publisher { get }
     var kind: LocalCodingAgentKind { get }
     func send(_ text: String)
     func interrupt()

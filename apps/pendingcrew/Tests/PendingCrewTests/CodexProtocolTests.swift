@@ -74,10 +74,11 @@ final class CodexProtocolTests: XCTestCase {
         XCTAssertEqual(CodexProtocol.serverRequestKind(method: "item/fileChange/requestApproval"), .approval)
         XCTAssertEqual(CodexProtocol.serverRequestKind(method: "item/permissions/requestApproval"), .approval)
         XCTAssertEqual(CodexProtocol.serverRequestKind(method: "mcpServer/elicitation/request"), .elicitation)
+        // account/* 单列(批 C 健康感知):仍回错误应答(不代刷 token),但要翻 health。
+        XCTAssertEqual(CodexProtocol.serverRequestKind(method: "account/chatgptAuthTokens/refresh"), .account)
         // Everything we don't model → unsupported, but STILL answered (with an error), never dropped.
         XCTAssertEqual(CodexProtocol.serverRequestKind(method: "item/tool/requestUserInput"), .unsupported)
         XCTAssertEqual(CodexProtocol.serverRequestKind(method: "item/tool/call"), .unsupported)
-        XCTAssertEqual(CodexProtocol.serverRequestKind(method: "account/chatgptAuthTokens/refresh"), .unsupported)
         XCTAssertEqual(CodexProtocol.serverRequestKind(method: "attestation/generate"), .unsupported)
     }
 

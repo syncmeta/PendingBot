@@ -78,11 +78,15 @@ enum CodexProtocol {
     /// (codex-cli 0.137.0 `generate-json-schema`) is: three `*requestApproval` +
     /// `mcpServer/elicitation/request` + `item/tool/requestUserInput` + `item/tool/call`
     /// + `account/chatgptAuthTokens/refresh` + `attestation/generate`.
-    enum ServerRequestKind: Equatable { case approval, elicitation, unsupported }
+    enum ServerRequestKind: Equatable { case approval, elicitation, account, unsupported }
 
     static func serverRequestKind(method: String) -> ServerRequestKind {
         if method.hasSuffix("requestApproval") { return .approval }   // command / fileChange / permissions
         if method == "mcpServer/elicitation/request" { return .elicitation }
+        // account/chatgptAuthTokens/refresh —— codex 要客户端刷新 ChatGPT token。
+        // 我们无法代刷(回错误让 turn 继续),但这是「codex 登录态失效」的强信号,
+        // 单列出来给健康感知用(此前混在 unsupported 里被静默丢,分诊第 7 点)。
+        if method.hasPrefix("account/") { return .account }
         return .unsupported
     }
 

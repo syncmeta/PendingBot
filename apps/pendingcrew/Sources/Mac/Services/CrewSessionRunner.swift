@@ -515,15 +515,21 @@ final class CrewSessionRun: ObservableObject, Identifiable {
     /// 干活中(跑回合) vs 空闲(存活等指令) —— 镜像后端 `isWorking`，驱动头像/切换条状态点。
     /// (与 backend.isBusy 区分:那个是唤醒注入门禁;这个是 UI 活跃信号,见 SessionBackend。)
     @Published private(set) var isWorking = false
+    /// runner 健康异常(未登录/额度到顶) —— 镜像后端 `health`。非 nil 时成员状态点
+    /// 转红、成员行副行显示 detail,并往本 crew 白板 fail-loud 一条(每 Kind 一次)。
+    @Published private(set) var health: CrewSessionHealth?
 
     /// 用户主动停 → 终端退出时落 `.cancelled` 而非 `.failed`。
     private var cancelled = false
     /// Guards double-finalize.
     private var finalized = false
+    /// 已经往白板 fail-loud 过的健康异常 Kind（每 Kind 只喊一次，TUI 重绘不刷屏）。
+    private var announcedHealthKinds: Set<CrewSessionHealth.Kind> = []
     /// Server row lifecycle close (logged mode only; nil for BYOK/local-only).
     private let serverLink: CrewSessionServerLink?
     private var statusObservation: Task<Void, Never>?
     private var workingObservation: Task<Void, Never>?
+    private var healthObservation: Task<Void, Never>?
 
     nonisolated var id: UUID { runID }
 
@@ -553,6 +559,25 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         self.isWorking = backend.isWorking
         observeBackendStatus()
         observeBackendWorking()
+        observeBackendHealth()
+    }
+
+    /// 镜像后端健康异常到 run 上,并往白板 fail-loud（每 Kind 一次）——用户不用
+    /// 进终端就知道「claude 没登录 / 额度到顶 / codex token 失效」（分诊第 7 点）。
+    private func observeBackendHealth() {
+        healthObservation = Task { [weak self] in
+            guard let self else { return }
+            for await h in self.backend.healthPublisher.values {
+                if Task.isCancelled { return }
+                self.health = h
+                guard let h, !self.announcedHealthKinds.contains(h.kind) else { continue }
+                self.announcedHealthKinds.insert(h.kind)
+                LocalWhiteboardStore.shared.appendSessionMessage(
+                    crewId: self.crewId, sessionId: self.sessionId,
+                    text: "⚠️ \(self.displayName) 出问题了：\(h.detail)",
+                    category: "error", senderName: self.displayName)
+            }
+        }
     }
 
     /// 镜像后端 `isWorking`(claude=输出活跃度;codex=turn 进行中)到 run 上,供 UI 观察。

@@ -412,6 +412,10 @@ struct CrewSessionWindowView: View {
     /// **尾巴**：只有走 `post_to_crew` 写进白板的进展才拿得到 —— 纯终端 stdout
     /// （没 post_to_crew）这里看不到，退回状态展示。
     private func latestStep(for run: CrewSessionRun) -> String {
+        // 健康异常优先于最新动作 —— 挂了就该一眼看到怎么修,别被普通进展盖住。
+        if let health = run.health, run.status == .running {
+            return "⚠️ \(health.detail)"
+        }
         if let last = LocalWhiteboardStore.shared
             .list(crewId: run.crewId)
             .last(where: { $0.senderSessionId == run.sessionId }) {
@@ -433,8 +437,10 @@ struct CrewSessionWindowView: View {
             avatarPath: nil,
             avatarSeed: isCaptain ? (captainBotId ?? run.sessionId) : run.sessionId,
             isCaptain: isCaptain,
-            // 三态:退出=exited(灰)、跑着干活=working(绿)、存活空闲=idle(黄)。
-            sessionStatus: run.status != .running ? "exited" : (run.isWorking ? "working" : "idle"),
+            // 四态:退出=exited(灰)、健康异常=error(红,进程活着但未登录/额度到顶)、
+            // 跑着干活=working(绿)、存活空闲=idle(黄)。
+            sessionStatus: run.status != .running ? "exited"
+                : (run.health != nil ? "error" : (run.isWorking ? "working" : "idle")),
             isSession: true,
             // 头像红点 = 有未读待办/消息(非前台 run)。复用切换条同一份未读数,
             // badgeCount 已排除选中的前台 run;`badgeTick` 由白板变更事件 bump(去轮询),
