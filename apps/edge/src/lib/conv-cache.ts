@@ -48,7 +48,13 @@ export async function deleteCachedConv(env: Env, convId: string): Promise<void> 
 }
 
 /// Single-owner conv types — the cached user_id field is the gate.
-const SINGLE_OWNER_TYPES = new Set([
+///
+/// ⚠️ RLS 对齐不变量:这里的每个类型都必须满足「conversations.user_id 一定
+/// 在 conversation_participants 里有对应 participant_type='user' 行」——
+/// 否则 owner 本地放行(user_id === caller)会比 RLS(is_participant)更宽 =
+/// 越权读。多方会话(group / temporary_group / crew / subagent)绝不能加进来;
+/// 成员判定必须走 roster / RLS。护栏测试:apps/edge/tests/projection-rls-guard.test.ts。
+export const SINGLE_OWNER_TYPES: ReadonlySet<string> = new Set([
   'user_bot',
   'self',
   'user_user',

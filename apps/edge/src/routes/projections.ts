@@ -31,7 +31,7 @@
 import { Hono } from 'hono';
 import { requireSession } from '@pendingbot/identity';
 import { serviceClient, userClient } from '../lib/supabase';
-import { getCachedConv, resolveConv } from '../lib/conv-cache';
+import { getCachedConv, resolveConv, SINGLE_OWNER_TYPES } from '../lib/conv-cache';
 import { safeWaitUntil } from '../lib/safe-wait-until';
 import { jsonError } from '../lib/http-error';
 import { UUID_RE } from '../lib/ids';
@@ -49,15 +49,8 @@ export const messageTailRoutes = new Hono<AppBindings>();
 conversationListRoutes.use('*', requireSession());
 messageTailRoutes.use('*', requireSession());
 
-/** 单 owner 会话类型:owner_user_id 即成员证明(与 conv-cache 同集)。 */
-const SINGLE_OWNER_TYPES = new Set([
-  'user_bot',
-  'self',
-  'user_user',
-  'discuss',
-  'surf',
-  'portrait',
-]);
+// 单 owner 会话类型(owner_user_id 即成员证明)从 conv-cache 单源导入,
+// 避免两处 Set 漂移 —— RLS 对齐不变量的护栏见 tests/projection-rls-guard.test.ts。
 
 /** /messages/tail 默认/封顶返回条数(对齐 conv-projection 的 DEFAULT_TAIL_LIMIT≈200)。 */
 const DEFAULT_TAIL_LIMIT = 200;

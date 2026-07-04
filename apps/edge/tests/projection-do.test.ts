@@ -58,6 +58,17 @@ const resolveConvMock = vi.fn();
 vi.mock('../src/lib/conv-cache', () => ({
   getCachedConv: (...a: unknown[]) => getCachedConvMock(...a),
   resolveConv: (...a: unknown[]) => resolveConvMock(...a),
+  // projections.ts imports the single-owner type set from here; keep the mock
+  // in sync with the real set (its correctness is guarded by
+  // tests/projection-rls-guard.test.ts).
+  SINGLE_OWNER_TYPES: new Set([
+    'user_bot',
+    'self',
+    'user_user',
+    'discuss',
+    'surf',
+    'portrait',
+  ]),
 }));
 
 installFakeSupabaseMock();
