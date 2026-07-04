@@ -105,6 +105,43 @@ struct MessageTabView: View {
     /// 列模式开关:true = body 渲染 Mac 壳的 list 列(见 body 注释)。
     var renderAsMacListColumn = false
 
+    /// Cache-first seed, applied **synchronously at construction** so the very
+    /// first painted frame already shows the last-known conversation list —
+    /// instead of an empty list that fills in 0.x s later. The read is a
+    /// synchronous `@MainActor` GRDB cache load; `.task { load() }` stays the
+    /// network-refresh pass only (its `conversations != fresh` diff means a
+    /// cache-accurate seed causes no re-render). Before this, the hydrate
+    /// lived inside `load()`, which SwiftUI runs *after* first paint, so every
+    /// appearance (and every iPad/Mac tab rebuild that reconstructs this view)
+    /// flashed empty before the cache landed. `.listColumn`/`.detailColumn`
+    /// mutate a `var view = self` copy after this init, so the Mac-shell entry
+    /// points inherit the same seed. (Same fix shape as FriendsTabView.)
+    @MainActor
+    init() {
+        let seeded = LocalDatabase.shared.loadConversations().map { row in
+            Conversation(
+                id: row.id,
+                bot_id: row.bot_id ?? "",
+                user_id: row.user_id ?? "",
+                title: row.title,
+                feature_type: row.feature,
+                conversation_type: row.conversation_type,
+                last_activity_at: row.last_activity_at,
+                round_count: row.round_count,
+                bot_name: row.bot_name,
+                last_message_content: row.last_message_content,
+                last_message_sender_type: row.last_message_sender_type
+            )
+        }
+        .sorted { l, r in
+            if l.last_activity_at != r.last_activity_at {
+                return l.last_activity_at > r.last_activity_at
+            }
+            return l.id < r.id
+        }
+        _conversations = State(initialValue: seeded)
+    }
+
     /// The selection the row highlight reads + the regular-layout nav writes:
     /// the shell's binding when our list is hosted by the Mac shell, otherwise
     /// the internal @State. This is the single seam that lets the shared
@@ -726,37 +763,11 @@ struct MessageTabView: View {
     }
 
     private func load() async {
-        // Hydrate from local cache instantly — UI shows last-known state
-        // before we await the network. The Supabase fetch below replaces it.
-        // Cache hydrate is a first-paint fallback only — its rows lack
-        // last_message_content, so re-hydrating during a pull-to-refresh
-        // would visibly wipe the preview text back to "还没有消息" while
-        // the network call is in flight (and leave it that way if the
-        // network response is delayed / cancelled).
-        let cached = LocalDatabase.shared.loadConversations()
-        if conversations.isEmpty && !cached.isEmpty {
-            self.conversations = cached.map { row in
-                Conversation(
-                    id: row.id,
-                    bot_id: row.bot_id ?? "",
-                    user_id: row.user_id ?? "",
-                    title: row.title,
-                    feature_type: row.feature,
-                    conversation_type: row.conversation_type,
-                    last_activity_at: row.last_activity_at,
-                    round_count: row.round_count,
-                    bot_name: row.bot_name,
-                    last_message_content: row.last_message_content,
-                    last_message_sender_type: row.last_message_sender_type
-                )
-            }
-            .sorted { l, r in
-                if l.last_activity_at != r.last_activity_at {
-                    return l.last_activity_at > r.last_activity_at
-                }
-                return l.id < r.id
-            }
-        }
+        // First-paint hydration from the local cache now happens synchronously
+        // in `init()` (the cache-first seed there), so the list never flashes
+        // empty before this network round-trip lands. `load()` is the refresh
+        // pass only — and it must NOT re-hydrate from cache: cached rows lack
+        // fresh previews, so re-seeding mid-refresh would visibly wipe state.
         loading = true; defer { loading = false }
         do {
             async let botRows: [BotRow] = SupabaseStack.shared
