@@ -1,5 +1,19 @@
 import Foundation
+import OSLog
 import Supabase
+
+/// Observable lifecycle of one hub socket. Surfaced by RealtimeManager as
+/// `@Published` state so UI / diagnostics can see whether realtime is
+/// actually connected instead of guessing from silence.
+enum RealtimeConnectionState: Equatable, Sendable {
+    case idle
+    case connecting
+    /// The hub acked the subscription with its "ready" frame.
+    case connected
+    /// The last attempt failed; the socket is waiting out the backoff.
+    /// `failures` counts consecutive failures since the last ready frame.
+    case retrying(failures: Int, lastError: String)
+}
 
 /// One frame delivered over a realtime hub WebSocket. Three payload
 /// kinds share the socket — a row change ("change"), a group voice call
@@ -74,19 +88,29 @@ struct VoiceCostFrame: Sendable {
 /// missed-event replay.
 @MainActor
 final class RealtimeSocket {
+    private static let log = Logger.category("realtime")
+
     private let url: URL
+    /// Short topic label for log lines, e.g. "user" or "conv/<id>".
+    private let label: String
     private let onFrame: (HubFrame) -> Void
+    /// Optional lifecycle observer — RealtimeManager forwards this into
+    /// its `@Published` connection state.
+    var onStateChange: ((RealtimeConnectionState) -> Void)?
 
     private var task: URLSessionWebSocketTask?
     private var runLoop: Task<Void, Never>?
     private var pingLoop: Task<Void, Never>?
     private var closed = false
     private var backoff = 1.0
+    /// Consecutive failed connection attempts since the last ready frame.
+    private var failureCount = 0
 
     /// `path` is relative to the worker base, e.g.
     /// "v1/realtime-hub/conv/<id>" or "v1/realtime-hub/user".
     init(path: String, onFrame: @escaping (HubFrame) -> Void) {
         self.url = Self.wsURL(path: path)
+        self.label = path.replacingOccurrences(of: "v1/realtime-hub/", with: "")
         self.onFrame = onFrame
     }
 
@@ -111,15 +135,26 @@ final class RealtimeSocket {
         runLoop?.cancel(); runLoop = nil
         task?.cancel(with: .goingAway, reason: nil)
         task = nil
+        onStateChange?(.idle)
     }
 
     // MARK: - Internals
 
     private func connectLoop() async {
         while !closed && !Task.isCancelled {
-            // connectOnce returns (throws) when the socket drops; fall
-            // through to a backed-off reconnect.
-            try? await connectOnce()
+            // connectOnce returns/throws when the socket drops; fall
+            // through to a backed-off reconnect. Failures are never
+            // swallowed silently — every one is logged with its reason
+            // and reflected in the connection state.
+            do {
+                try await connectOnce()
+            } catch {
+                if closed || Task.isCancelled { break }
+                failureCount += 1
+                let reason = Self.describe(error)
+                Self.log.error("[\(self.label, privacy: .public)] connection failed (attempt #\(self.failureCount)): \(reason, privacy: .public) — retrying in \(Int(self.backoff))s")
+                onStateChange?(.retrying(failures: failureCount, lastError: reason))
+            }
             if closed || Task.isCancelled { break }
             let delay = backoff
             backoff = min(backoff * 2, 30)
@@ -129,7 +164,25 @@ final class RealtimeSocket {
 
     private func connectOnce() async throws {
         // A fresh token each attempt so reconnects survive JWT expiry.
-        let token = try await SupabaseStack.shared.auth.session.accessToken
+        // `auth.session` already auto-refreshes an expired session; if it
+        // still fails (e.g. stale refresh token), try one explicit
+        // refreshSession() before giving up this attempt — and say so
+        // out loud either way, because "no token" is the classic silent
+        // realtime killer (esp. macOS keychain paths).
+        let token: String
+        do {
+            token = try await SupabaseStack.shared.auth.session.accessToken
+        } catch {
+            Self.log.warning("[\(self.label, privacy: .public)] auth token unavailable (\(Self.describe(error), privacy: .public)); trying refreshSession()")
+            do {
+                token = try await SupabaseStack.shared.auth.refreshSession().accessToken
+            } catch {
+                Self.log.error("[\(self.label, privacy: .public)] refreshSession failed — abandoning this attempt: \(Self.describe(error), privacy: .public)")
+                throw error
+            }
+        }
+        Self.log.debug("[\(self.label, privacy: .public)] connecting to \(self.url.absoluteString, privacy: .public)")
+        onStateChange?(.connecting)
         var req = URLRequest(url: url)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         let ws = URLSession.shared.webSocketTask(with: req)
@@ -150,6 +203,15 @@ final class RealtimeSocket {
                 break
             }
         }
+    }
+
+    /// Human-readable failure reason, with URLError codes spelled out so
+    /// Console logs distinguish DNS / TLS / refused / timeout at a glance.
+    private static func describe(_ error: Error) -> String {
+        if let urlError = error as? URLError {
+            return "URLError(\(urlError.code.rawValue)) \(urlError.localizedDescription)"
+        }
+        return String(describing: error)
     }
 
     private func startPing() {
@@ -210,8 +272,14 @@ final class RealtimeSocket {
                 cumulativePncMicros: cum,
                 atMs: at,
             )))
+        case "ready":
+            // The hub acked the subscription — the channel is live.
+            Self.log.info("[\(self.label, privacy: .public)] subscribed (ready)")
+            failureCount = 0
+            backoff = 1.0
+            onStateChange?(.connected)
         default:
-            // "ready" / "pong" / anything unrecognised — ignore.
+            // "pong" / anything unrecognised — ignore.
             break
         }
     }
