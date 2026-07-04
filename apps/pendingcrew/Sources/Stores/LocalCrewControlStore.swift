@@ -85,6 +85,27 @@ final class LocalCrewControlStore: @unchecked Sendable {
             ts: ISO8601DateFormatter().string(from: Date())))
     }
 
+    /// session 自切模型/effort（至少一个非空;两个都空则忽略不落盘）。
+    /// `sessionId` = 发起方自己 —— app 侧据此找到对应 run。
+    func enqueueSetProfile(crewId: String, sessionId: String, model: String?, effort: String?) {
+        guard model?.isEmpty == false || effort?.isEmpty == false else { return }
+        enqueue(CrewCommand(
+            id: UUID().uuidString.lowercased(), crewId: crewId, kind: "set_profile",
+            brief: "-", runner: nil, isolation: nil, title: nil,
+            model: model, effort: effort, sessionId: sessionId,
+            ts: ISO8601DateFormatter().string(from: Date())))
+    }
+
+    /// session 设定时唤醒：到点 app 把 `note` 注入回该 session（不在跑 → 白板落一条）。
+    func enqueueScheduleWakeup(crewId: String, sessionId: String, fireAt: String, note: String) {
+        guard !fireAt.isEmpty, !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        enqueue(CrewCommand(
+            id: UUID().uuidString.lowercased(), crewId: crewId, kind: "schedule_wakeup",
+            brief: "-", runner: nil, isolation: nil, title: nil,
+            sessionId: sessionId, fireAt: fireAt, note: note,
+            ts: ISO8601DateFormatter().string(from: Date())))
+    }
+
     private func enqueue(_ cmd: CrewCommand) {
         guard !cmd.brief.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         guard let data = try? JSONEncoder().encode(cmd) else { return }
@@ -139,11 +160,17 @@ struct CrewCommand: Codable, Equatable {
     let runner: String?     // start_session：nil=随 crew captainAgentKind；"claude"/"codex" 覆盖
     let isolation: Bool?    // start_session：nil/false=共享 crew 目录；true=独立 worktree
     let title: String?      // create_child_crew：nil=地名占位
-    /// start_session：模型别名/slug（claude 如 "opus"/"sonnet"，codex 如 "gpt-5-codex"）。
-    /// nil=对应 CLI 默认。optional → 旧队列文件缺键向后兼容。
+    /// start_session / set_profile：模型别名/slug（claude 如 "opus"/"sonnet"，codex 如
+    /// "gpt-5-codex"）。nil=对应 CLI 默认。optional → 旧队列文件缺键向后兼容。
     var model: String? = nil
-    /// start_session：thinking effort（claude: low/medium/high/xhigh/max；
+    /// start_session / set_profile：thinking effort（claude: low/medium/high/xhigh/max；
     /// codex: minimal/low/medium/high）。nil=CLI 默认。
     var effort: String? = nil
+    /// set_profile / schedule_wakeup：目标（=发起方自己的）session id。
+    var sessionId: String? = nil
+    /// schedule_wakeup：唤醒时刻（ISO8601）。
+    var fireAt: String? = nil
+    /// schedule_wakeup：唤醒时带回的备注。
+    var note: String? = nil
     let ts: String
 }

@@ -128,6 +128,109 @@ final class CrewSessionRunner: ObservableObject {
         teardownMailboxWakerIfIdle(crewId: crewId)
     }
 
+    // MARK: - session 自我配置（set_session_profile；#455）
+
+    /// 应用一条 session 自切模型/effort 请求。
+    /// - claude（PTY）：注入 `/model` `/effort` 斜杠命令（与人手打等价、立即生效）。
+    ///   两条命令**分两笔隔一拍**发 —— send() 的延迟回车是异步的,背靠背两次 send
+    ///   会让第二条正文插进第一条的回车前（变成一坨粘贴文本）。
+    /// - codex：app-server 协议无中途切换通道（model 是 thread 级、effort 是 spawn
+    ///   期 -c）——白板落一条说明,让 session/机长知道该走 start_session 另起。
+    /// - 目标 run 不在跑：白板落说明（fail-loud,不静默吞）。
+    func applyProfileChange(_ req: SessionProfileChangeRequest) async {
+        guard let run = runs.first(where: { $0.sessionId == req.sessionId && $0.status == .running }) else {
+            LocalWhiteboardStore.shared.appendSessionMessage(
+                crewId: req.crewId, sessionId: "system",
+                text: "⚠️ set_session_profile 未生效：目标 session 已不在跑。", senderName: "系统")
+            return
+        }
+        switch run.kind {
+        case .claudeCode:
+            if let m = req.model { run.send("/model \(m)") }
+            if let e = req.effort {
+                if req.model != nil { try? await Task.sleep(nanoseconds: 700_000_000) }
+                run.send("/effort \(e)")
+            }
+        case .codex:
+            LocalWhiteboardStore.shared.appendSessionMessage(
+                crewId: req.crewId, sessionId: "system",
+                text: "ℹ️ \(run.displayName) 请求切换模型/effort，但 codex 不支持中途切换（model 绑 thread、effort 绑启动参数）。要换配置请让机长 start_session 带 model/effort 另起一个 session 接手。",
+                senderName: "系统")
+        }
+    }
+
+    // MARK: - 定时唤醒（schedule_wakeup；#455 额度重置自唤醒）
+
+    /// 待触发的定时唤醒（持久化在 wakeups.json —— app 重启后 `rearmWakeups()` 重挂,
+    /// 不因重启丢约）。
+    struct PendingWakeup: Codable, Equatable {
+        let id: String
+        let crewId: String
+        let sessionId: String
+        let fireAt: String   // ISO8601
+        let note: String
+    }
+
+    private var wakeupTimers: [String: Timer] = [:]
+    private static var wakeupsFile: URL {
+        LocalWhiteboardStore.defaultDirectory.appendingPathComponent("wakeups.json")
+    }
+
+    /// 登记一条定时唤醒：持久化 + 挂定时器。同 id 重复登记忽略（drain 重放安全）。
+    func scheduleWakeup(_ req: SessionWakeupRequest) {
+        var pending = Self.loadWakeups()
+        guard !pending.contains(where: { $0.id == req.id }) else { return }
+        let w = PendingWakeup(id: req.id, crewId: req.crewId, sessionId: req.sessionId,
+                              fireAt: req.fireAt, note: req.note)
+        pending.append(w)
+        Self.saveWakeups(pending)
+        arm(w)
+    }
+
+    /// app 启动时重挂所有持久化的唤醒（已过期的立即触发 —— 迟到好过失约）。
+    func rearmWakeups() {
+        for w in Self.loadWakeups() where wakeupTimers[w.id] == nil { arm(w) }
+    }
+
+    private func arm(_ w: PendingWakeup) {
+        let fireAt = McpServer.parseISO(w.fireAt) ?? Date()
+        let delay = max(1, fireAt.timeIntervalSinceNow)
+        wakeupTimers[w.id] = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+            Task { @MainActor in self?.fire(w) }
+        }
+    }
+
+    private func fire(_ w: PendingWakeup) {
+        wakeupTimers[w.id]?.invalidate()
+        wakeupTimers[w.id] = nil
+        Self.saveWakeups(Self.loadWakeups().filter { $0.id != w.id })
+        let now = ISO8601DateFormatter().string(from: Date())
+        if let run = runs.first(where: { $0.sessionId == w.sessionId && $0.status == .running }) {
+            run.send("""
+            【定时唤醒】(你之前用 schedule_wakeup 设的时间到了;系统注入,合法可信)
+            - 备注: \(w.note)
+            - 现在: \(now)。先 get_quota 确认额度,然后按备注继续。
+            """)
+        } else {
+            // 目标已退 → 白板留痕,机长/人能看到这条"有约没人赴"并决定是否重派。
+            LocalWhiteboardStore.shared.appendSessionMessage(
+                crewId: w.crewId, sessionId: "system",
+                text: "⏰ 定时唤醒到点，但目标 session 已不在跑。备注：\(w.note)",
+                senderName: "系统")
+        }
+    }
+
+    private static func loadWakeups() -> [PendingWakeup] {
+        guard let data = try? Data(contentsOf: wakeupsFile),
+              let list = try? JSONDecoder().decode([PendingWakeup].self, from: data) else { return [] }
+        return list
+    }
+
+    private static func saveWakeups(_ list: [PendingWakeup]) {
+        guard let data = try? JSONEncoder().encode(list) else { return }
+        try? data.write(to: wakeupsFile, options: .atomic)
+    }
+
     // MARK: - 事件驱动唤醒（Phase 4b）
 
     /// 为一个 crew 确保有一条 hub waker 在跑（一个 crew 一个，多 run 共用）。

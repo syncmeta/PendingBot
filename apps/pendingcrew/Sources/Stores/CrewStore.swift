@@ -43,6 +43,12 @@ final class CrewStore: ObservableObject {
     /// 消费方读完整体后清空,同 `captainAutostartRequest` 的"一次性信号"
     /// 模式但扛得住同 tick 多条。
     @Published var sessionSpawnRequests: [SessionSpawnRequest] = []
+    /// `set_profile` 命令排空后的待切换队列（同 sessionSpawnRequests 的数组语义,
+    /// 防同 tick coalescing 丢命令）。`MacRootView` 观察执行。
+    @Published var profileChangeRequests: [SessionProfileChangeRequest] = []
+    /// `schedule_wakeup` 命令排空后的待登记队列。`MacRootView` 交给
+    /// `CrewSessionRunner.scheduleWakeup`（持久化 + 定时器）。
+    @Published var wakeupRequests: [SessionWakeupRequest] = []
 
     private unowned let appModel: AppModel
 
@@ -303,6 +309,15 @@ final class CrewStore: ObservableObject {
                     crewId: cmd.crewId, brief: cmd.brief,
                     runner: cmd.runner, isolation: cmd.isolation ?? false,
                     model: cmd.model, effort: cmd.effort))
+            case "set_profile":
+                guard let sid = cmd.sessionId else { break }
+                profileChangeRequests.append(SessionProfileChangeRequest(
+                    crewId: cmd.crewId, sessionId: sid, model: cmd.model, effort: cmd.effort))
+            case "schedule_wakeup":
+                guard let sid = cmd.sessionId, let fireAt = cmd.fireAt else { break }
+                wakeupRequests.append(SessionWakeupRequest(
+                    id: cmd.id, crewId: cmd.crewId, sessionId: sid,
+                    fireAt: fireAt, note: cmd.note ?? ""))
             case "create_child_crew":
                 await executeCreateChildCrew(cmd)
             default:
@@ -373,6 +388,23 @@ final class CrewStore: ObservableObject {
 
 /// `start_session` 命令排空后的一次待起会话请求。`MacRootView` 观察
 /// `CrewStore.sessionSpawnRequests` 数组，逐条调 `runner.startForBrief`。
+/// `set_profile` 命令排空后的一次待切换请求（session 自切模型/effort）。
+struct SessionProfileChangeRequest: Equatable {
+    let crewId: String
+    let sessionId: String
+    let model: String?
+    let effort: String?
+}
+
+/// `schedule_wakeup` 命令排空后的一次待登记唤醒。
+struct SessionWakeupRequest: Equatable {
+    let id: String
+    let crewId: String
+    let sessionId: String
+    let fireAt: String   // ISO8601
+    let note: String
+}
+
 struct SessionSpawnRequest: Equatable {
     let crewId: String
     let brief: String

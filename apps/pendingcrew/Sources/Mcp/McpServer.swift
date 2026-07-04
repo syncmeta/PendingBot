@@ -23,10 +23,14 @@ final class McpServer {
     /// · abc123」）。`post_to_crew` 写白板时带上 → agent 看的白板不再裸 uuid。
     /// nil（未传 label / 旧调用）→ 渲染退回 `session:<id>`，保持兼容。
     let sessionLabel: String?
+    /// quota.json 所在目录（app 的 `QuotaCenter` 定时写、`get_quota` 工具读）。
+    /// 与 store/approvals/control 同 `--dir`。
+    let quotaDirectory: URL
 
     init(store: LocalWhiteboardStore, approvals: LocalApprovalStore, control: LocalCrewControlStore,
          crewId: String, sessionId: String,
-         isCaptain: Bool = false, sessionLabel: String? = nil) {
+         isCaptain: Bool = false, sessionLabel: String? = nil,
+         quotaDirectory: URL? = nil) {
         self.store = store
         self.approvals = approvals
         self.control = control
@@ -34,6 +38,7 @@ final class McpServer {
         self.sessionId = sessionId
         self.isCaptain = isCaptain
         self.sessionLabel = sessionLabel
+        self.quotaDirectory = quotaDirectory ?? LocalWhiteboardStore.defaultDirectory
     }
 
     /// 处理一行 JSON-RPC。返回应答 JSON 字符串；通知（无 id / `notifications/*`）→ nil。
@@ -98,6 +103,35 @@ final class McpServer {
                         "type": "object",
                         "properties": ["question": ["type": "string"]],
                         "required": ["question"],
+                    ],
+                ],
+                [
+                    "name": "get_quota",
+                    "description": "查本机 coding-agent 订阅额度（claude / codex 的已用百分比 + 重置时刻）。开长活前、或怀疑额度紧张时查一下用于规划：额度将尽 → 把剩余工作收尾成可交接状态，再用 schedule_wakeup 约在重置后继续；富余 → 放心跑。数据由 PendingCrew 每 ~10 分钟刷新（只有百分比和重置时刻，没有剩余 token 绝对值）。",
+                    "inputSchema": ["type": "object", "properties": [String: Any]()],
+                ],
+                [
+                    "name": "schedule_wakeup",
+                    "description": "设一个定时唤醒：到点后系统会把一条带你备注的消息注入回你这个 session，把你叫醒继续干。典型用法：额度快耗尽时（get_quota 看重置时刻），把手头活收尾，然后约在额度重置后几分钟唤醒自己接着做。after_minutes 与 at 二选一；note 写清醒来该干什么（醒来时只有这条备注 + 白板可看）。",
+                    "inputSchema": [
+                        "type": "object",
+                        "properties": [
+                            "after_minutes": ["type": "number", "description": "多少分钟后唤醒（1–1440）。"],
+                            "at": ["type": "string", "description": "ISO8601 时刻（如 2026-07-05T04:45:00+08:00）。与 after_minutes 二选一。"],
+                            "note": ["type": "string", "description": "唤醒时带回给你的备注：醒来该继续什么、上下文在哪。"],
+                        ],
+                        "required": ["note"],
+                    ],
+                ],
+                [
+                    "name": "set_session_profile",
+                    "description": "切换你自己这个 session 的模型/thinking effort（至少给一个）。用于按任务阶段调配：机械收尾活降到轻模型/低 effort 省额度，难题升 effort。claude session 立即生效（等价 /model、/effort）；codex 没有中途切换通道——会在白板收到说明，新任务请让机长用 start_session 带 model/effort 另起。claude effort: low/medium/high/xhigh/max。",
+                    "inputSchema": [
+                        "type": "object",
+                        "properties": [
+                            "model": ["type": "string", "description": "模型别名/slug，如 opus/sonnet/haiku。"],
+                            "effort": ["type": "string", "description": "thinking effort 档位。"],
+                        ],
                     ],
                 ],
             ]
@@ -252,6 +286,51 @@ final class McpServer {
             control.enqueueStartSession(crewId: crewId, brief: brief, runner: runner,
                                         isolation: isolation, model: model, effort: effort)
             return toolResult(id: id, text: "已安排起 session：\(brief)。它起来后会在群聊报到。")
+        case "get_quota":
+            let url = quotaDirectory.appendingPathComponent("quota.json")
+            guard let data = try? Data(contentsOf: url),
+                  let file = try? JSONDecoder().decode(AgentQuotaFile.self, from: data) else {
+                return toolResult(id: id, text: "暂无额度数据（PendingCrew 尚未完成首次刷新，稍后再查）。")
+            }
+            var lines: [String] = []
+            for snap in [file.claude, file.codex].compactMap({ $0 }) {
+                let name = snap.agent == "claude" ? "Claude Code" : "Codex"
+                let windows = snap.windows.map { w in
+                    "\(w.label) 已用 \(w.usedPercent)%" + (w.resetsAt.map { "（\($0) 重置）" } ?? "")
+                }.joined(separator: "；")
+                lines.append("\(name)：\(windows)（数据时间 \(snap.fetchedAt)）")
+            }
+            if lines.isEmpty { lines = ["两家 agent 均未取到额度数据。"] }
+            lines.append("注：只有百分比 + 重置时刻，无剩余 token 绝对值。额度将尽时先收尾、再用 schedule_wakeup 约重置后继续。")
+            return toolResult(id: id, text: lines.joined(separator: "\n"))
+        case "schedule_wakeup":
+            let note = ((args["note"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !note.isEmpty else { return toolResult(id: id, text: "ERROR: note 不能为空 —— 醒来的你只有这条备注可依靠。") }
+            let fireAt: Date
+            if let mins = args["after_minutes"] as? Double, mins >= 1, mins <= 1440 {
+                fireAt = Date().addingTimeInterval(mins * 60)
+            } else if let atRaw = args["at"] as? String,
+                      let parsed = Self.parseISO(atRaw), parsed > Date() {
+                fireAt = parsed
+            } else {
+                return toolResult(id: id, text: "ERROR: 需要 after_minutes（1–1440）或未来的 at（ISO8601）之一。")
+            }
+            let iso = ISO8601DateFormatter().string(from: fireAt)
+            control.enqueueScheduleWakeup(crewId: crewId, sessionId: sessionId, fireAt: iso, note: note)
+            return toolResult(id: id, text: "已设定时唤醒：\(iso)。到点会把你的备注注入回本 session；若届时你已退出，会落到群聊白板由机长接手。")
+        case "set_session_profile":
+            let model = (args["model"] as? String)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .flatMap { $0.isEmpty || $0.contains(" ") ? nil : $0 }
+            let effort = (args["effort"] as? String)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+                .flatMap { $0.isEmpty || $0.contains(" ") ? nil : $0 }
+            guard model != nil || effort != nil else {
+                return toolResult(id: id, text: "ERROR: model / effort 至少给一个（单 token，别整句话）。")
+            }
+            control.enqueueSetProfile(crewId: crewId, sessionId: sessionId, model: model, effort: effort)
+            let parts = [model.map { "模型→\($0)" }, effort.map { "effort→\($0)" }].compactMap { $0 }
+            return toolResult(id: id, text: "已提交切换：\(parts.joined(separator: "、"))。claude 立即生效；codex 无中途切换通道（会在白板收到说明）。")
         case "create_child_crew":
             guard isCaptain else { return toolResult(id: id, text: "ERROR: 仅机长可用") }
             let brief = ((args["brief"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -263,6 +342,15 @@ final class McpServer {
         default:
             return toolResult(id: id, text: "ERROR: 未知工具 \(name ?? "nil")")
         }
+    }
+
+    /// 宽容的 ISO8601 解析：带/不带小数秒都收（agent 生成的时间串两种都常见）。
+    static func parseISO(_ s: String) -> Date? {
+        let f1 = ISO8601DateFormatter()
+        if let d = f1.date(from: s) { return d }
+        let f2 = ISO8601DateFormatter()
+        f2.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f2.date(from: s)
     }
 
     /// 阻塞 long-poll 直到待决策被答复或到上限，返回答复文本 / 超时占位。
