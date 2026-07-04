@@ -101,7 +101,7 @@ billingWebhookRoutes.post('/polar/webhook', async (c) => {
   const productId: string | undefined = order.productId ?? order.product?.id ?? undefined;
 
   if (event.type === 'order.paid' && subjectId && productId) {
-    const pack = resolvePack('polar_checkout', productId);
+    const pack = await resolvePack(c.env, 'polar_checkout', productId);
     if (pack) {
       const pncMicros = pncToMicros(pack.pnc);
       const { applied } = await recordCreditIn(supa, om, {
@@ -117,7 +117,7 @@ billingWebhookRoutes.post('/polar/webhook', async (c) => {
     return c.json({ ok: true });
   }
   if (event.type === 'order.refunded' && subjectId && productId) {
-    const pack = resolvePack('polar_checkout', productId);
+    const pack = await resolvePack(c.env, 'polar_checkout', productId);
     if (pack) {
       const intended = pncToMicros(pack.pnc);
       // 链式退款:先从该用户已注资进群的份额冲减(防"注资进群→退款→群留额度"),
@@ -183,7 +183,7 @@ billingWebhookRoutes.post('/revenuecat/webhook', async (c) => {
 
   const supa = serviceClient(c.env);
   const subjectId: string | undefined = ev.app_user_id;
-  const pack = ev.product_id ? resolvePack('iap_ios', ev.product_id) : null;
+  const pack = ev.product_id ? await resolvePack(c.env, 'iap_ios', String(ev.product_id)) : null;
   if (!subjectId || !pack) return c.json({ ok: true, skipped: 'no_subject_or_pack' });
 
   if (ev.type === 'NON_RENEWING_PURCHASE') {
