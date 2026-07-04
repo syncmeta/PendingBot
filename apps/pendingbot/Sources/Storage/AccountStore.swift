@@ -245,17 +245,47 @@ final class AccountStore: ObservableObject {
             // the network half fails the local session is gone.
             log.error("signOut error: \(String(describing: error), privacy: .public)")
         }
-        LocalDatabase.shared.wipeForSignOut()
+        wipeLocalDataCaches()
         // 主动登出也清掉共享组里的家族凭据 —— 凭据是账号级的，下个登录者
         // 不能继承上个账号的 PendingCrew 静默登录能力（iOS + macOS 均清）。
         if clearSharedLogin {
             FamilyCredentialWriter.clear()
         }
+    }
+
+    /// Account-scoped local cache wipe, shared by `signOut()` and the
+    /// account-switch guard in PendingBotApp. Everything here is data the
+    /// next account must not inherit: the SQLCipher conversation cache
+    /// (file deleted + key rotated), the shared URLCache (cached HTTP
+    /// bodies — mainly attachment images served by /v1/uploads/:id; this is
+    /// the ProtectedURLCache-backed instance, so the flush covers its disk
+    /// directory too), and the in-memory avatar cache.
+    func wipeLocalDataCaches() {
+        LocalDatabase.shared.wipeForSignOut()
+        URLCache.shared.removeAllCachedResponses()
         #if os(iOS)
         // AvatarCache lives in Sources/Components/UserAvatar.swift, which
         // is whole-file gated behind #if os(iOS) (UIImage-based).
         AvatarCache.shared.clear()
         #endif
+    }
+
+    /// Called from PendingBotApp's account `onChange` when it detects an
+    /// account SWITCH — old and new user ids both non-nil and different —
+    /// that never passed through `signOut()` (a session replaced in place,
+    /// e.g. a deep-link / magic-link login over an existing session). The
+    /// local caches all belong to the previous account, so wipe them at
+    /// the same level sign-out does. The shared family-SSO credential is
+    /// cleared too: it's account-scoped, and `FamilyCredentialWriter
+    /// .syncIfNeeded` only writes when the slot is EMPTY, so a stale
+    /// credential would otherwise never be replaced. `refreshProfileFlags()`
+    /// then re-issues the new account's credential (and re-derives profile
+    /// state) — this also repairs the benign race where the new session's
+    /// earlier sync wrote a fresh credential that this clear just removed.
+    func handleAccountSwitch() {
+        wipeLocalDataCaches()
+        FamilyCredentialWriter.clear()
+        Task { await refreshProfileFlags() }
     }
 
     private static func makeAccount(session: Session) -> Account {

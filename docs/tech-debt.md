@@ -711,13 +711,14 @@
 
 ## 🟢 不规范
 
-### 🟢 surf_runs / scroll_runs 是 envelope 取代后的遗留死表(仍挂在 realtime publication 上)
+### 🟢 surf_runs / scroll_runs 「遗留死表」 — ✅ 误判,实无死表(surf 已 drop / scroll 已改名 envelope_runs)
 - **发现**: 2026-06-07 · chore/edge-read-offload-spec(T2 读卸载梳理)
-- **位置**: `supabase/migrations/*`(`surf_runs` / `scroll_runs` 建表 + realtime publication)、`apps/edge/src/db/schema.ts`
-- **问题**: surf / scroll 两个 feature 早已被 envelope(来信)取代,edge + iOS 活代码对 `surf_runs` / `scroll_runs` / `surfRun` / `scrollRun` **零引用**,仅 schema 残留。且 `surf_runs` 还挂在 `supabase_realtime` publication 里,白占一个 webhook/复制通道。
-- **影响**: 纯死表噪音——拉大 schema、误导后来者以为是活 feature(本次 T2 梳理就一度把它们当 live 列进矩阵)、realtime publication 多一张无用表。无功能危害。
-- **建议**: 确认无线上数据依赖后,迁移 drop 两表 + 从 realtime publication 摘除;`db push` 后 regen schema.ts。低优先,可与下次清理迁移合并。
-- **状态**: 待办
+- **位置**: `supabase/migrations/*`、`apps/edge/src/db/schema.ts`
+- **复核结论(2026-07-05 · chore/debt-quickwins,对照迁移 + live DB 只读查证)**: 原条目「两张残留死表待 drop」**是误判**——
+  - `surf_runs`:早在 `0021_drop_deprecated_features.sql` 已 `DROP TABLE` + 从 publication 摘除,不存在残留。
+  - `scroll_runs`:**不是死表,是被改名**——`20260520034033_rename_scroll_runs_to_envelope_runs.sql` 用 `ALTER TABLE … RENAME TO envelope_runs` 整体改名(publication 成员按 OID 随 RENAME 保留),`scroll_runs` 这个名字自然不再存在。`envelope_runs`(来信/信封 feature)是**活表、在用**,`db query --linked` 查得到、edge 活代码引用。schema.ts 里没有 `scroll_runs` 正是因为它现在叫 `envelope_runs`,不是"残留"。
+  - live DB 查 `pendingbot.scroll_runs` = `relation does not exist`。**无表可 drop,无 publication 需摘除**。原 T2 梳理把 rename 误读成 dangling。
+- **状态**: ✅ 已解决/误判澄清(无遗留、无需迁移)。
 
 ### 🟢 iOS FriendsTabView 群邀请兜底文案仍是旧分摊口径
 - **发现**: 2026-06-04 · fix/billing-tails-email-norm（#226 解耦）
