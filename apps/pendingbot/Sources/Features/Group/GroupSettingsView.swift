@@ -323,8 +323,8 @@ struct GroupSettingsView: View {
 
     @ViewBuilder
     private func memberRow(_ m: Member) -> some View {
-        HStack(spacing: 12) {
-            memberAvatar(m, size: 36)
+        HStack(spacing: 14) {
+            memberAvatar(m, size: 40)
             Text(m.displayLabel)
                 .font(Theme.Fonts.body)
                 .foregroundStyle(Theme.Palette.ink)
@@ -332,7 +332,7 @@ struct GroupSettingsView: View {
             Spacer(minLength: 8)
             // Right side: role / bot tags. Stacked so a 群主 + 机器人 row
             // still fits on one line by truncating the name first.
-            HStack(spacing: 6) {
+            HStack(spacing: 8) {
                 if m.isBot {
                     statusPill(text: "机器人",
                                fg: Theme.Palette.inkMuted,
@@ -348,6 +348,7 @@ struct GroupSettingsView: View {
                 }
             }
         }
+        .padding(.vertical, 4)
         .contentShape(Rectangle())
     }
 
