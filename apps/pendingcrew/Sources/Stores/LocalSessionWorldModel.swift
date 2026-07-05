@@ -34,6 +34,10 @@ struct LocalSessionWorldModel {
         var humans: [Human] = []
         var captainName: String? = nil
         var captainBotId: String? = nil
+        /// 本地 DAG 组织位置：直系父 crew 标签 / 直系子 crew 标签（#463 起本地
+        /// 也真实填充,不再 strip）。空 = 根 crew 无子。
+        var parentTitles: [String] = []
+        var childTitles: [String] = []
         var locale: String = "zh"
     }
 
@@ -60,8 +64,23 @@ struct LocalSessionWorldModel {
             "workingDirectory": ctx.workingDirectory.isEmpty ? "(未设置)" : ctx.workingDirectory,
             "humanRoster": renderRoster(ctx.humans),
             "captainBlock": renderCaptain(name: ctx.captainName, botId: ctx.captainBotId),
-            // lineageBlock / sharesBlock / tiebreakerBlock 本地不提供 → strip 成空。
+            "lineageBlock": renderLineage(parents: ctx.parentTitles, children: ctx.childTitles),
+            // sharesBlock / tiebreakerBlock 本地不提供（无责任分账）→ strip 成空。
         ]
+    }
+
+    /// 组织位置：上级部门（父 crew）/ 下辖部门（子 crew）。跨部门协调经各自
+    /// 机长走汇报线,不直接跨群喊话。
+    private func renderLineage(parents: [String], children: [String]) -> String {
+        var lines: [String] = []
+        lines.append(parents.isEmpty
+            ? "本 crew 是根 crew（没有上级部门）。"
+            : "上级（父）crew：" + parents.map { "「\($0)」" }.joined(separator: "、"))
+        lines.append(children.isEmpty
+            ? "暂无子 crew（下属部门）。"
+            : "下辖子 crew：" + children.map { "「\($0)」" }.joined(separator: "、"))
+        lines.append("跨 crew 协调经各自机长走汇报线（机长工具 `report_to_parent` / `message_child_crew`），worker 不直接跨群喊话——有跨部门诉求就发到本群或 `ask` 机长。")
+        return lines.joined(separator: "\n")
     }
 
     private func renderRoster(_ humans: [Human]) -> String {
