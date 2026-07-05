@@ -179,6 +179,35 @@ final class LocalCrewStore {
         return result
     }
 
+    /// `crewId` 的父 crew id 列表（直系,不递归）。
+    func parentIds(of crewId: String) -> [String] {
+        crews[crewId]?.parentCrewIds ?? []
+    }
+
+    /// `crewId` 的直接子 crew `(id, title)` 列表（反推 parentCrewIds,不递归）。
+    func children(of crewId: String) -> [(id: String, title: String)] {
+        crews.values
+            .filter { $0.parentCrewIds.contains(crewId) }
+            .sorted { $0.createdAt < $1.createdAt }
+            .map { ($0.id, $0.title) }
+    }
+
+    func title(of crewId: String) -> String? { crews[crewId]?.title }
+
+    /// 机长 `message_child_crew` 的目标解析：`hint` 依次按 子 crew 的 id 精确 →
+    /// title 精确（忽略大小写）→ **唯一** title 前缀匹配。歧义/无匹配 → nil
+    /// （调用方回执可选清单,别猜错部门投错群）。
+    func resolveChild(of parentId: String, hint: String) -> String? {
+        let kids = children(of: parentId)
+        let h = hint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !h.isEmpty else { return nil }
+        if let exact = kids.first(where: { $0.id == h }) { return exact.id }
+        let lower = h.lowercased()
+        if let exact = kids.first(where: { $0.title.lowercased() == lower }) { return exact.id }
+        let prefix = kids.filter { $0.title.lowercased().hasPrefix(lower) }
+        return prefix.count == 1 ? prefix[0].id : nil
+    }
+
     /// 沿父边算深度：无父 = 0，否则 1 + max(父深度)。带 visited 防脏数据成环无限递归。
     /// 用于 create_child_crew 前的深度 cap 检查（根 depth 0）。
     ///

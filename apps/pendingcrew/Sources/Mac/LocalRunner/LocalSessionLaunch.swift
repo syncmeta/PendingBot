@@ -127,6 +127,15 @@ enum LocalSessionLaunch {
             .filter { $0.memberKind == "human" }
             .map { LocalSessionWorldModel.Human(
                 displayName: $0.displayName ?? "(无名)", role: $0.role ?? "member", userId: $0.userId) }
+        // 组织位置（本地 DAG）：caller 都在 MainActor（startCaptain/startForBrief/
+        // 零配置启动）,直接读 store;非本地 crew（store 查无此 id）自然得空数组。
+        let parents = MainActor.assumeIsolated {
+            LocalCrewStore.shared.parentIds(of: detail.crew.id)
+                .compactMap { LocalCrewStore.shared.title(of: $0) }
+        }
+        let children = MainActor.assumeIsolated {
+            LocalCrewStore.shared.children(of: detail.crew.id).map(\.title)
+        }
         let ctx = LocalSessionWorldModel.Context(
             sessionTaskBrief: taskBrief,
             runnerKind: runnerKind == .claudeCode ? "claude_code" : "codex",
@@ -136,7 +145,9 @@ enum LocalSessionLaunch {
             workingDirectory: workdir.path,
             humans: humans,
             captainName: detail.captain?.displayName,
-            captainBotId: detail.captain?.botId)
+            captainBotId: detail.captain?.botId,
+            parentTitles: parents,
+            childTitles: children)
         guard var md = try? LocalSessionWorldModel().render(ctx) else { return nil }
         if let persona = appendPersona {
             md += "\n\n---\n\n" + persona

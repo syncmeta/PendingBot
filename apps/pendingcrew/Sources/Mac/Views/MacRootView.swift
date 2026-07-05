@@ -114,6 +114,29 @@ struct MacThreePaneView: View {
             crewStore.wakeupRequests = []
             for req in reqs { sessionRunner.scheduleWakeup(req) }
         }
+        // 跨 crew 汇报线消息 → 唤醒目标 crew 机长（#463）。idle 才直投注入（busy
+        // 的机长下轮白板注入自然看到）；机长没在跑 → 目标白板留系统注记,
+        // 人/下次起机长时能看到「有上级/下级消息待处理」。
+        .onChange(of: crewStore.crewMessageWakes) { _, wakes in
+            guard !wakes.isEmpty else { return }
+            crewStore.crewMessageWakes = []
+            for wake in wakes {
+                let captainRun = sessionRunner.runs.first {
+                    $0.crewId == wake.targetCrewId && $0.role == .captain && $0.status == .running
+                }
+                if let run = captainRun {
+                    if !run.backend.isBusy {
+                        run.send(CrewLocalMentionInjectLogic.renderInjection(
+                            messageText: wake.text, senderName: wake.senderLabel))
+                    }
+                } else {
+                    LocalWhiteboardStore.shared.appendSessionMessage(
+                        crewId: wake.targetCrewId, sessionId: "system",
+                        text: "ℹ️ 收到「\(wake.senderLabel)」的消息，但本 crew 机长未在跑——起机长后它会在白板看到。",
+                        senderName: "系统")
+                }
+            }
+        }
         // 额度快照更新 → 过警戒线(≥85%)往活跃 crew 白板广播（按重置周期去重）。
         .onChange(of: quotaCenter.claude) { _, snap in
             sessionRunner.broadcastQuotaWarningIfNeeded(snap)
@@ -127,6 +150,8 @@ struct MacThreePaneView: View {
         .task {
             // app 重启后重挂持久化的定时唤醒（schedule_wakeup 不因重启失约）。
             sessionRunner.rearmWakeups()
+            // 成员状态快照定时器（机长 list_sessions 的数据源）。
+            sessionRunner.startSessionsSnapshotTimer()
             // 首次进入时把列表 + subjects 都拉一遍 —— subjects 用于创建
             // crew sheet 的 picker，提前 prefetch 避免 sheet 打开时空。
             await crewStore.refreshList()

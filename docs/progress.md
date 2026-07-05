@@ -1,6 +1,13 @@
 # PendingBot / PendingCrew 进度账本 (Progress Ledger)
 
-**最近对账：2026-07-05**（模型/effort/额度三能力 + 批 B/C；其余见 2026-07-04 起；对照实际代码 / 迁移 / git，不是看 task 标记）
+**最近对账：2026-07-05**（机长组织能力 + 模型/effort/额度三能力 + 批 B/C；其余见 2026-07-04 起；对照实际代码 / 迁移 / git，不是看 task 标记）
+
+> **2026-07-05 机长组织能力 — 汇报线 + 点名 + 组织方法论（`feat/model-effort-quota` 3 commit，task #463，用户「机长要像企业里一样有组织能力:建 crew 建部门、部门内协调」）**：建制工具此前已有（`start_session` 起人 / `create_child_crew` 拆部门），本轮补的是**协调神经**——组织起来后信息怎么流。
+> - **点名（`list_sessions`）**：机长随时看本 crew 花名册——每个成员的名字/角色/任务/状态（🟢干活中 🟡空闲 🔴异常带故障详情 ⚪已退出）。数据源 = runner 2s 定时器写的 `crew-sessions.json` 快照（离线 helper 进程碰不到 app 内存,同 quota.json 模式）。
+> - **汇报线（`report_to_parent` / `message_child_crew`）**：父子 crew 之间机长对机长沟通。helper 入队 `crew_message` 控制命令（消息乘 brief、目标提示乘 title、direction 区分上下行）→ app 侧 drain：to_parent 沿 `LocalCrewStore.parentIds`、to_child 走 `resolveChild`（id 精确→标题精确→唯一前缀,歧义/无匹配拒绝并回执现有子 crew 清单）→ 落对方白板署名「某某·机长」+ @captain,对方机长 idle 直投注入唤醒、busy 下轮白板自然看到、没在跑留系统注记;源白板回 📨 递达回执。**只连直系、不越级不跨线**——组织约束刻意收紧。
+> - **世界观组织位置**：`lineageBlock` 本地真实填充（此前 strip 空）——每个 session 起来就知道上级/下辖 crew 是谁、跨部门诉求走机长汇报线不直接跨群喊话。`LocalSessionLaunch` 起 session 时读本地 DAG 传入。
+> - **组织方法论（persona）**：`crew-captain.zh.md` 新增整节——用人优先序（点名找空闲成员复用 → `start_session` 按难度配 model/effort → 拆子 crew 是重决策宁可先用 worker）、跟进与验收（报完成要证据、卡住给方向、没动静点名查状态）、汇报线纪律（结论先行、收到「某某·机长」消息当正事、不越级）、额度当部门预算。
+> - **验证**：CaptainOrgToolsTests 9 项（DAG helpers / resolveChild 匹配规则 / 汇报线入队 / 机长门+空参校验 / 快照渲染 / lineage 渲染）+ 全量 304 绿;macOS test + iOS Sim build 绿。期望页 captain.md 工具清单收口成七件套（旧「start_session 未实装」注意条转 ✅）+ state 镜像同步。**尾巴归 #443**：真起父子 crew 跑一轮「点名→派活→report_to_parent→message_child_crew」E2E。
 
 > **2026-07-05 PendingBot 批量收口（7 分支合 main，全部 build/typecheck/vitest 真绿）**：用户「理一下 pendingbot 没做的」→ 5 路只读探查摸真实进度 → 7 条并行分支落地，逐个编译验证 + 逐个 --no-ff 合 main。① `fix/anon-write-guard`（🔴 债根治）`SupabaseStack.authedClient()` fail-loud 写门（8 处直写点接入，治静默降级 anon）；② `chore/debt-quickwins` MessageTabView 首帧播种 + 登出清 URLCache + 换号守卫 + 文案；③ `fix/realtime-mac-diagnostics` RealtimeSocket fail-loud；④ `chore/projection-rls-guard` 读投影授权门↔RLS 护栏（确认无越权）；⑤ `feat/group-subject-client` 群聊成员管理矩阵驱动 UX + subject API 层；⑥ `feat/crew-tab-remote` 机组 tab 从零重做为 coding session 遥控台（Codex/Code tab 范式，2017 行，+2 edge 聚合端点 + vendored viewer proxy）；⑦ `feat/iap-purchase-flow` 计费闭环（RevenueCat PurchaseSheet + 402 去充值卡 + 低额 banner + packs 迁 KV + board 套餐/钱包/grant 页，grant 走 WalletDO 活路径）。最终 main：iOS+macOS BUILD SUCCEEDED / edge typecheck 0 / vitest 626 passed。task #456-462 全 completed。
 > - **三条账本纠偏（醒来重点）**：① 群账号 T1.2 前提部分错——chat-group（`conversation_participants.role`）与 group_account subject（`group_subject_members.role`）是两套并行未桥接的角色系统，硬切 `/v1/group-subjects/*` 会 404；已按真实 chat-group 端点做正确子集，架构断层 + 服务端 `group_remove_member` 未挡「踢 admin」真安全洞记 tech-debt，roadmap T1.2 保持 🟡。② tech-debt「scroll_runs 死表」是误判——早被 rename 成 envelope_runs（活表），已澄清。③ realtime 账本「Mac 全靠轮询」是过时误记——Mac 与 iOS 共享同一条 RealtimeSocket 无平台 gate，真问题是运行时静默连接失败被吞，已 fail-loud（真机确认归 #443）。

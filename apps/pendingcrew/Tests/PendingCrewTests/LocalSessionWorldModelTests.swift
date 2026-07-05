@@ -50,10 +50,11 @@ final class LocalSessionWorldModelTests: XCTestCase {
         XCTAssertEqual(renderer.buildVars(ctx)["captainBlock"], "本 crew 暂无指定 captain。")
     }
 
-    func testBuildVarsOmitsLineageAndShares() {
+    func testBuildVarsFillsLineageOmitsShares() {
         let vars = renderer.buildVars(sampleContext())
-        // 这三个本地不提供 → 不在 vars 里（交给 PromptTemplate strip）。
-        XCTAssertNil(vars["lineageBlock"])
+        // #463 起 lineageBlock 本地真实填充（默认根 crew 表述）；
+        // shares/tiebreaker 仍不提供（无责任分账）→ 交给 PromptTemplate strip。
+        XCTAssertTrue((vars["lineageBlock"] ?? "").contains("根 crew"))
         XCTAssertNil(vars["sharesBlock"])
         XCTAssertNil(vars["tiebreakerBlock"])
         XCTAssertEqual(vars["runtimeLocation"], "local_host")
