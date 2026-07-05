@@ -379,13 +379,13 @@ crewsRoutes.get('/:crewId', async (c) => {
   if (subjectIds.length > 0) {
     const { data: subjRows, error: subjErr } = await svc
       .from('subjects')
-      .select('id, display_name, subject_type')
+      .select('id, display_name, kind')
       .in('id', subjectIds);
     if (subjErr) return jsonError(c, 500, 'database_error', { detail: subjErr.message });
     for (const row of subjRows ?? []) {
       subjectInfo.set(row.id, {
         displayName: row.display_name,
-        kind: row.subject_type,
+        kind: row.kind,
       });
     }
   }
@@ -590,7 +590,7 @@ export async function accessibleSubjectIds(
     const { data, error } = await supa
       .from('subjects')
       .select('id')
-      .eq('subject_type', 'user_account')
+      .eq('kind', 'user_account')
       .eq('user_id', userId)
       .eq('status', 'active')
       .maybeSingle();

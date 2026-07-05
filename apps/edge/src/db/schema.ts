@@ -3410,7 +3410,6 @@ export type Database = {
           id: string
           kind: string
           status: string
-          subject_type: string
           updated_at: string
           user_id: string | null
         }
@@ -3422,7 +3421,6 @@ export type Database = {
           id?: string
           kind: string
           status?: string
-          subject_type: string
           updated_at?: string
           user_id?: string | null
         }
@@ -3434,7 +3432,6 @@ export type Database = {
           id?: string
           kind?: string
           status?: string
-          subject_type?: string
           updated_at?: string
           user_id?: string | null
         }
@@ -3553,7 +3550,6 @@ export type Database = {
           responsibility_mode: string
           responsible_subject_id: string | null
           root_temporary_group_id: string | null
-          runtime_kind: string
           runtime_location: string
           source_conversation_id: string | null
           status: string
@@ -3579,7 +3575,6 @@ export type Database = {
           responsibility_mode?: string
           responsible_subject_id?: string | null
           root_temporary_group_id?: string | null
-          runtime_kind?: string
           runtime_location?: string
           source_conversation_id?: string | null
           status?: string
@@ -3605,7 +3600,6 @@ export type Database = {
           responsibility_mode?: string
           responsible_subject_id?: string | null
           root_temporary_group_id?: string | null
-          runtime_kind?: string
           runtime_location?: string
           source_conversation_id?: string | null
           status?: string
@@ -4206,7 +4200,7 @@ export type Database = {
           current_crew_id: string | null
           direction: string | null
           linked_crew_id: string | null
-          runtime_kind: string | null
+          runtime_location: string | null
           status: string | null
           title: string | null
         }

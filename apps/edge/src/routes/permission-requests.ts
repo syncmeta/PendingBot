@@ -181,17 +181,17 @@ async function canControlPermissionMode(
 ): Promise<{ ok: boolean; reason?: string }> {
   const { data: subject, error: subjectErr } = await svc
     .from('subjects')
-    .select('id, subject_type, user_id, status')
+    .select('id, kind, user_id, status')
     .eq('id', responsibleSubjectId)
     .maybeSingle();
   if (subjectErr) return { ok: false, reason: subjectErr.message };
   if (!subject) return { ok: false, reason: 'subject not found' };
 
-  if (subject.subject_type === 'user_account') {
+  if (subject.kind === 'user_account') {
     if (subject.user_id === userId) return { ok: true };
     return { ok: false, reason: 'only subject owner can change permission mode' };
   }
-  if (subject.subject_type === 'group_account') {
+  if (subject.kind === 'group_account') {
     const { data: hasRole, error: roleErr } = await untypedRpc(svc).rpc('subject_user_has_role', {
       p_subject_id: responsibleSubjectId,
       p_user_id: userId,
@@ -201,7 +201,7 @@ async function canControlPermissionMode(
     if (hasRole === true) return { ok: true };
     return { ok: false, reason: 'owner or admin required' };
   }
-  return { ok: false, reason: `unsupported subject_type: ${subject.subject_type}` };
+  return { ok: false, reason: `unsupported subject kind: ${subject.kind}` };
 }
 
 crewPermissionModeRoutes.patch('/:crewId/permission-mode', requireSubjectAuth(['crew:write']), async (c) => {

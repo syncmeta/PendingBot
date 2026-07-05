@@ -245,7 +245,7 @@ type CrewLinkSummaryRow = {
   direction: 'parent' | 'child';
   title: string | null;
   status: string;
-  runtime_kind: string;
+  runtime_location: string;
   captain_bot_id: string | null;
   captain_member_id: string | null;
   created_at: string;
@@ -263,7 +263,7 @@ function serializeCrewLink(row: CrewLinkSummaryRow) {
     crew_conversation_id: row.linked_crew_id,
     title: row.title ?? 'Crew',
     status: row.status,
-    runtime_kind: row.runtime_kind,
+    runtime_location: row.runtime_location,
     captain_bot_id: row.captain_bot_id,
     captain_member_id: row.captain_member_id,
     created_at: row.created_at,
@@ -279,7 +279,7 @@ crewRoutes.get('/:id/links', requireSubjectAuth(['crew:read']), async (c) => {
   const [linksResult, sharesResult] = await Promise.all([
     looseSupa
       .from('crew_link_summaries')
-      .select('current_crew_id, linked_crew_id, direction, title, status, runtime_kind, captain_bot_id, captain_member_id, created_at')
+      .select('current_crew_id, linked_crew_id, direction, title, status, runtime_location, captain_bot_id, captain_member_id, created_at')
       .eq('current_crew_id', crewConversationId)
       .order('created_at', { ascending: true }),
     looseSupa
@@ -558,7 +558,7 @@ crewRoutes.get('/', requireSubjectAuth(['crew:read']), async (c) => {
 
   let metaQuery = supa
     .from('temporary_group_meta')
-    .select('conversation_id, responsible_subject_id, status, title, runtime_kind, created_at, updated_at')
+    .select('conversation_id, responsible_subject_id, status, title, runtime_location, created_at, updated_at')
     .eq('temporary_kind', 'crew')
     .order('created_at', { ascending: false });
   if (c.var.authKind === 'device_grant') {
@@ -593,7 +593,7 @@ crewRoutes.get('/', requireSubjectAuth(['crew:read']), async (c) => {
         responsible_subject_id: meta.responsible_subject_id,
         status: meta.status,
         title: meta.title ?? conv?.title ?? 'Crew',
-        runtime_kind: typeof meta.runtime_kind === 'string' ? meta.runtime_kind : 'local',
+        runtime_location: typeof meta.runtime_location === 'string' ? meta.runtime_location : 'local_host',
         created_at: meta.created_at,
         updated_at: meta.updated_at ?? conv?.updated_at ?? meta.created_at,
       };

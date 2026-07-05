@@ -211,7 +211,7 @@ describe('POST /v1/device-login/challenges/:id/approve', () => {
     const subjectId = '11111111-1111-4111-8111-111111111111';
     db.rows.subjects = [{
       id: subjectId,
-      subject_type: 'user_account',
+      kind: 'user_account',
       user_id: 'user-1',
       status: 'active',
     }];
@@ -258,7 +258,7 @@ describe('POST /v1/device-login/challenges/:id/approve', () => {
     const subjectId = '11111111-1111-4111-8111-111111111111';
     db.rows.subjects = [{
       id: subjectId,
-      subject_type: 'group_account',
+      kind: 'group_account',
       user_id: null,
       status: 'active',
     }];
@@ -477,7 +477,7 @@ describe('GET /v1/device-login/challenges/:id', () => {
     const grantedByUserId = '22222222-2222-4222-8222-222222222222';
     db.rows.subjects = [{
       id: subjectId,
-      subject_type: 'user_account',
+      kind: 'user_account',
       user_id: grantedByUserId,
       status: 'active',
     }];

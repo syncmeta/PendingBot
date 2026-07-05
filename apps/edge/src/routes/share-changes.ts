@@ -188,7 +188,7 @@ shareChangesRoutes.get('/pending', async (c) => {
     const { data, error } = await supa
       .from('subjects')
       .select('id')
-      .eq('subject_type', 'user_account')
+      .eq('kind', 'user_account')
       .eq('user_id', userId)
       .eq('status', 'active')
       .maybeSingle();

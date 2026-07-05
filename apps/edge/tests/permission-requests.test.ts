@@ -88,7 +88,7 @@ function seedWithUserAccountSubject(): FakeDb {
     subjects: [
       {
         id: SUBJECT_ALICE,
-        subject_type: 'user_account',
+        kind: 'user_account',
         user_id: USER_ALICE,
         status: 'active',
       },
@@ -155,7 +155,7 @@ function seedWithUserAccountSubject(): FakeDb {
       const subjectId = request.responsible_subject_id as string;
       const subject = (db.rows.subjects as Array<Record<string, unknown>>).find((s) => s.id === subjectId);
       if (!subject) return { error: { code: 'P0002', message: 'responsible subject missing' } };
-      if (subject.subject_type === 'user_account' && subject.user_id !== callerId) {
+      if (subject.kind === 'user_account' && subject.user_id !== callerId) {
         return { error: { code: '42501', message: 'forbidden: only subject owner can decide' } };
       }
       request.status = decision === 'approve' ? 'approved' : 'denied';
