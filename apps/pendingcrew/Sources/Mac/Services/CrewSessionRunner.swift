@@ -220,6 +220,61 @@ final class CrewSessionRunner: ObservableObject {
         }
     }
 
+    // MARK: - 撞墙自动挂钩 + 额度警戒广播（#455 增补：不只靠 session 自觉）
+
+    /// session 撞到 usageLimit（健康感知首报,每 session 一次）→ 自动挂一条
+    /// 「额度重置后唤醒」。重置时刻取额度快照:claude 解析 /usage 人话文本,
+    /// codex 用 ISO;都解析不出 → 45 分钟保守重试（唤醒词让它先 get_quota
+    /// 核实,醒来仍受限会自己顺延,不会瞎跑）。
+    func autoScheduleQuotaWakeup(for run: CrewSessionRun) {
+        guard !Self.loadWakeups().contains(where: {
+            $0.sessionId == run.sessionId && $0.note.hasPrefix("[auto]")
+        }) else { return }
+        Task { @MainActor in
+            await QuotaCenter.shared.refresh()   // 撞墙瞬间拿最新重置时刻
+            let snap = run.kind == .claudeCode ? QuotaCenter.shared.claude : QuotaCenter.shared.codex
+            let resetText = snap?.fiveHourWindow?.resetsAt
+            let reset: Date? = run.kind == .claudeCode
+                ? resetText.flatMap { ClaudeResetTimeParser.parse($0) }
+                : resetText.flatMap { McpServer.parseISO($0) }
+            let fireAt = reset.map { $0.addingTimeInterval(180) }
+                ?? Date().addingTimeInterval(45 * 60)
+            let iso = ISO8601DateFormatter().string(from: fireAt)
+            scheduleWakeup(SessionWakeupRequest(
+                id: "autoq-\(run.sessionId)-\(Int(fireAt.timeIntervalSince1970))",
+                crewId: run.crewId, sessionId: run.sessionId, fireAt: iso,
+                note: "[auto] 你之前撞到额度上限被迫停下,现在按重置时刻叫醒你：先 get_quota 核实额度已恢复,再回顾白板与工作区继续未完成的活;若仍受限,自己 schedule_wakeup 顺延。"))
+            LocalWhiteboardStore.shared.appendSessionMessage(
+                crewId: run.crewId, sessionId: "system",
+                text: "⏰ \(run.displayName) 撞到额度上限，已自动挂额度重置唤醒（\(iso)）。",
+                senderName: "系统")
+        }
+    }
+
+    /// 已广播过的警戒键（agent|窗|重置时刻）——一个重置周期只喊一次,不刷屏。
+    private var warnedQuotaKeys: Set<String> = []
+
+    /// 额度过警戒线（任一窗已用 ≥85%）→ 往所有有活跃 run 的 crew 白板广播。
+    /// session 每轮注入白板 → 不用主动轮询 get_quota 也能"发现"额度将尽,
+    /// 接上世界观 §11 教的「收尾成可交接 → schedule_wakeup 约醒」动作。
+    func broadcastQuotaWarningIfNeeded(_ snap: AgentQuotaSnapshot?) {
+        guard let snap else { return }
+        let name = snap.agent == "claude" ? "Claude Code" : "Codex"
+        for w in snap.windows where w.usedPercent >= 85 {
+            let key = "\(snap.agent)|\(w.label)|\(w.resetsAt ?? "?")"
+            guard !warnedQuotaKeys.contains(key) else { continue }
+            warnedQuotaKeys.insert(key)
+            for crewId in Set(runs.filter({ $0.status == .running }).map(\.crewId)) {
+                LocalWhiteboardStore.shared.appendSessionMessage(
+                    crewId: crewId, sessionId: "system",
+                    text: "⚠️ 额度警戒：\(name) \(w.label)已用 \(w.usedPercent)%"
+                        + (w.resetsAt.map { "（\($0) 重置）" } ?? "")
+                        + "。各 session 请及时把手头活收尾成可交接状态（该提交的提交、进展发白板），必要时 schedule_wakeup 约在重置后继续；新的重活先缓。",
+                    senderName: "系统")
+            }
+        }
+    }
+
     private static func loadWakeups() -> [PendingWakeup] {
         guard let data = try? Data(contentsOf: wakeupsFile),
               let list = try? JSONDecoder().decode([PendingWakeup].self, from: data) else { return [] }
@@ -343,6 +398,8 @@ final class CrewSessionRunner: ObservableObject {
         runs.append(run)
         selectedRunId = run.runID
         isComposingNew = false
+        // 撞额度上限（健康感知首报）→ 自动挂重置唤醒（用户定调:hit limit 才挂钩）。
+        run.onUsageLimit = { [weak self] r in self?.autoScheduleQuotaWakeup(for: r) }
         // 本地 crew:把 worker session 登记成持久成员（成员列表/@ 名单退出后不丢）。
         // captain 已作为 captain 成员在 roster 里,不重复登记;登录态 crew 的
         // membership 归 edge(H1 迁移),store 里查无此 crew → no-op。
@@ -622,6 +679,9 @@ final class CrewSessionRun: ObservableObject, Identifiable {
     /// runner 健康异常(未登录/额度到顶) —— 镜像后端 `health`。非 nil 时成员状态点
     /// 转红、成员行副行显示 detail,并往本 crew 白板 fail-loud 一条(每 Kind 一次)。
     @Published private(set) var health: CrewSessionHealth?
+    /// 首次撞 usageLimit 时回调（与白板播报同一次去重）——runner 挂上
+    /// `autoScheduleQuotaWakeup`,实现「撞墙 → 自动约额度重置唤醒」。
+    var onUsageLimit: ((CrewSessionRun) -> Void)?
 
     /// 用户主动停 → 终端退出时落 `.cancelled` 而非 `.failed`。
     private var cancelled = false
@@ -680,6 +740,7 @@ final class CrewSessionRun: ObservableObject, Identifiable {
                     crewId: self.crewId, sessionId: self.sessionId,
                     text: "⚠️ \(self.displayName) 出问题了：\(h.detail)",
                     category: "error", senderName: self.displayName)
+                if h.kind == .usageLimit { self.onUsageLimit?(self) }
             }
         }
     }

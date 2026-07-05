@@ -23,6 +23,16 @@ struct AgentQuotaSnapshot: Codable, Equatable {
             w.usedPercent >= 0 ? "\(w.label) \(w.usedPercent)%" : w.label
         }.joined(separator: " · ")
     }
+
+    /// 5 小时滚动窗（claude 的 "session" / codex 的 "5小时窗"）。
+    var fiveHourWindow: AgentQuotaWindow? {
+        windows.first { $0.label == "session" || $0.label == "5小时窗" }
+    }
+
+    /// 周窗（claude 取「全模型」总窗,模型分窗只进 tooltip；codex 的 "周窗"）。
+    var weeklyWindow: AgentQuotaWindow? {
+        windows.first { $0.label == "周(全模型)" || $0.label == "周窗" }
+    }
 }
 
 /// quota.json 的文件形状 —— app 的 `QuotaCenter` 定时写、helper 的 `get_quota`
@@ -72,6 +82,43 @@ enum ClaudeUsageTextParser {
             return "周(\(inner))"
         }
         return raw
+    }
+}
+
+/// claude `/usage` 输出里重置时刻的**人话文本**解析（"Jul 5 at 4:39am
+/// (Asia/Shanghai)" → Date）。撞额度自动挂唤醒钩子要真实的重置时刻,不能拿
+/// 展示串糊弄。年份按「未来最近」推断（12 月看 1 月的重置会跨年）。
+/// 解析不出 → nil,调用方走保守回退（定期重试）,不猜。
+enum ClaudeResetTimeParser {
+    static func parse(_ raw: String, now: Date = Date()) -> Date? {
+        var text = raw.trimmingCharacters(in: .whitespaces)
+        // 尾部时区 "(Asia/Shanghai)" —— 抠出来喂 formatter,剩下 "Jul 5 at 4:39am"。
+        var tz = TimeZone.current
+        if let open = text.lastIndex(of: "("), text.hasSuffix(")") {
+            let name = String(text[text.index(after: open)..<text.index(before: text.endIndex)])
+            if let parsed = TimeZone(identifier: name) { tz = parsed }
+            text = String(text[..<open]).trimmingCharacters(in: .whitespaces)
+        }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = tz
+        // 无年份格式 —— DateFormatter 默认落在 2000 年,parse 后把年份替换成
+        // 「>= now 的最近一年」。分/无分两个变体（"4pm" 与 "4:39am" 都出现过）。
+        for fmt in ["MMM d 'at' h:mma", "MMM d 'at' ha"] {
+            f.dateFormat = fmt
+            guard let base = f.date(from: text) else { continue }
+            var cal = Calendar(identifier: .gregorian)
+            cal.timeZone = tz
+            var parts = cal.dateComponents([.month, .day, .hour, .minute], from: base)
+            let nowYear = cal.component(.year, from: now)
+            for year in [nowYear, nowYear + 1] {
+                parts.year = year
+                if let candidate = cal.date(from: parts), candidate >= now {
+                    return candidate
+                }
+            }
+        }
+        return nil
     }
 }
 

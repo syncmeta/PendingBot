@@ -68,6 +68,54 @@ final class AgentQuotaTests: XCTestCase {
         XCTAssertNil(CodexRolloutQuotaParser.parse(""))
     }
 
+    // MARK: - 窗口取值（侧栏四段显示 / 自动挂钩用）
+
+    func testFiveHourAndWeeklyWindowSelection() {
+        let claude = ClaudeUsageTextParser.parse("""
+        Current session: 80% used · resets Jul 5 at 4:39am (Asia/Shanghai)
+        Current week (all models): 23% used · resets Jul 5 at 10:59am (Asia/Shanghai)
+        Current week (Fable): 18% used · resets Jul 5 at 10:59am (Asia/Shanghai)
+        """)
+        XCTAssertEqual(claude?.fiveHourWindow?.usedPercent, 80)
+        XCTAssertEqual(claude?.weeklyWindow?.usedPercent, 23)   // 全模型总窗,非 Fable 分窗
+        let codex = CodexRolloutQuotaParser.parse("""
+        {"payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":9.0,"window_minutes":300,"resets_at":1782030455},"secondary":{"used_percent":16.0,"window_minutes":10080,"resets_at":1782380334}}}}
+        """)
+        XCTAssertEqual(codex?.fiveHourWindow?.usedPercent, 9)
+        XCTAssertEqual(codex?.weeklyWindow?.usedPercent, 16)
+    }
+
+    // MARK: - claude 重置时刻人话解析（撞墙自动挂钩用）
+
+    func testClaudeResetTimeParsesWithTimezone() throws {
+        // now = 2026-07-04 18:00 UTC；"Jul 5 at 4:39am (Asia/Shanghai)" =
+        // 2026-07-04 20:39 UTC —— 未来最近年份推断应取 2026。
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        let now = cal.date(from: DateComponents(year: 2026, month: 7, day: 4, hour: 18))!
+        let d = try XCTUnwrap(ClaudeResetTimeParser.parse("Jul 5 at 4:39am (Asia/Shanghai)", now: now))
+        var sh = Calendar(identifier: .gregorian)
+        sh.timeZone = TimeZone(identifier: "Asia/Shanghai")!
+        let parts = sh.dateComponents([.year, .month, .day, .hour, .minute], from: d)
+        XCTAssertEqual([parts.year, parts.month, parts.day, parts.hour, parts.minute],
+                       [2026, 7, 5, 4, 39])
+        XCTAssertGreaterThan(d, now)
+    }
+
+    func testClaudeResetTimeYearRollover() throws {
+        // 12 月底看 "Jan 2 at 3pm" → 应推断成明年,不是今年一月(已过去)。
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        let now = cal.date(from: DateComponents(year: 2026, month: 12, day: 30))!
+        let d = try XCTUnwrap(ClaudeResetTimeParser.parse("Jan 2 at 3pm (UTC)", now: now))
+        XCTAssertEqual(cal.component(.year, from: d), 2027)
+    }
+
+    func testClaudeResetTimeGarbageReturnsNil() {
+        XCTAssertNil(ClaudeResetTimeParser.parse("soon-ish"))
+        XCTAssertNil(ClaudeResetTimeParser.parse(""))
+    }
+
     // MARK: - snapshot codec（quota.json 给 helper get_quota 读）
 
     func testSnapshotRoundTripsThroughJSON() throws {
