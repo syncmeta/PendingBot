@@ -34,6 +34,19 @@ enum CrewSenderResolver {
                 isCaptain: false, sessionStatus: nil, isMine: mine
             )
 
+        case "captain":
+            // 机长 run 的发言（本地 MCP helper 标 senderKind "captain"）。头像种子
+            // 用稳定的 captainBotId —— 与 roster/`CrewSenderNaming.groupSender` 的
+            // captain 成员同源，成员列表和气泡才是同一张脸；run sessionId 每次启动
+            // 都变，不能当身份种子。
+            let cap = members.first { $0.memberKind == "captain" }
+            return CrewSender(
+                kind: .bot,
+                displayName: entry.senderDisplayName ?? cap?.displayName ?? "机长",
+                avatarSeed: cap?.botId ?? captainBotId ?? entry.senderSessionId ?? entry.id,
+                isCaptain: true, sessionStatus: nil, isMine: false
+            )
+
         case "session":
             let m = members.first { $0.codeSessionId != nil && $0.codeSessionId == entry.senderSessionId }
             // 名字优先级:roster 成员名(登录态)→ entry.senderDisplayName(本地 session

@@ -237,10 +237,13 @@ final class McpServer {
             // （见 CrewRelayAgent.push）—— 本地这步只负责把信息留住。
             let mentions = parseMentions(args["mentions"])
             let replyTo = (args["reply_to"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            // 机长发言标 senderKind "captain" —— 渲染端据此用稳定的 captainBotId
+            // 当头像种子（成员列表与气泡同一张脸），并点亮星标。
             store.appendSessionMessage(crewId: crewId, sessionId: sessionId,
                                        text: message, category: args["category"] as? String,
                                        senderName: sessionLabel,
-                                       mentions: mentions, inReplyTo: replyTo)
+                                       mentions: mentions, inReplyTo: replyTo,
+                                       senderKind: isCaptain ? "captain" : "session")
             return toolResult(id: id, text: "已发到 crew 群聊白板。")
         case "read_whiteboard":
             let rows = store.list(crewId: crewId).map(renderRow)
@@ -258,7 +261,8 @@ final class McpServer {
             // reporter session 思考后 @人类」属 chunk 2）。答复仍走待办列表（approvals）。
             store.appendSessionMessage(crewId: crewId, sessionId: sessionId,
                                        text: "🔔 待决策：\(question)\n（请在 PendingCrew 待办列表里答复）",
-                                       category: "question", senderName: sessionLabel)
+                                       category: "question", senderName: sessionLabel,
+                                       senderKind: isCaptain ? "captain" : "session")
             return toolResult(id: id, text: awaitReply(reqId: reqId))
         case "answer_decision":
             // 机长专用（chunk2 T4）：答复一条 decision，解开发起 session 的 long-poll。

@@ -264,6 +264,11 @@ enum CrewReplyTargetBuilder {
         switch entry.senderKind {
         case "session":
             mention = entry.senderSessionId.map { CrewMention.session($0) }
+        case "captain":
+            // 机长 run 的发言（本地 senderKind "captain"）：回复即 @机长 —— 走
+            // .captain 让唤醒端解析到当前 captain run，比钉死发消息时的 sessionId
+            // 更稳（机长重启后 id 会换）。
+            mention = .captain
         case "user", "human":
             mention = entry.senderUserId.map { CrewMention(kind: "human", targetId: $0) }
         default:

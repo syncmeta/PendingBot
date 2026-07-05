@@ -134,13 +134,18 @@ final class LocalWhiteboardStore: @unchecked Sendable {
     /// `inReplyTo` = 被回复消息的白板 id（Phase 7 reply_to；nil = 非回复）。
     /// 本地先**记录保留**这两项（不静默吞）；把它们一路路由到 edge 信箱 / hub
     /// 还需本地↔edge 同步链（block 3 relay），那条尾巴见 CrewRelayAgent.push。
+    ///
+    /// `senderKind` 默认 "session"；机长 run 的发言传 "captain" —— 让渲染端
+    /// 按稳定的 captain 身份（captainBotId）取头像种子，而不是每次启动都变的
+    /// run sessionId（否则机长在成员列表和群聊气泡长两张脸）。
     func appendSessionMessage(crewId: String, sessionId: String, text: String,
                               category: String? = nil, senderName: String? = nil,
                               mentions: [LocalWhiteboardMention]? = nil,
-                              inReplyTo: String? = nil) {
+                              inReplyTo: String? = nil,
+                              senderKind: String = "session") {
         append(crewId: crewId, LocalWhiteboardMessage(
             id: UUID().uuidString.lowercased(),
-            senderKind: "session",
+            senderKind: senderKind,
             senderUserId: nil,
             senderSessionId: sessionId,
             category: category,

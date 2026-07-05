@@ -74,7 +74,12 @@ enum CrewChatAdapter {
 
         var sender = GroupBubbleSender(
             kind: gbKind,
-            id: e.senderBotId ?? e.senderSessionId ?? e.senderUserId ?? e.id,
+            // emoji 种子与色种子同用 resolver 的 avatarSeed —— roster 侧
+            // （CrewSenderNaming.groupSender）两个种子也是同一个值，气泡和
+            // 成员列表才恒同脸。此前 id 独立取 senderBotId/SessionId 兜底链，
+            // captain（senderKind "captain"/bot 且 botId 为空）会跟 roster 的
+            // captainBotId 种子岔开 → 两张脸。
+            id: s.avatarSeed,
             displayName: s.displayName,
             avatarPath: nil,        // PendingCrew has no per-user attachment avatar yet
             avatarSeed: s.avatarSeed
