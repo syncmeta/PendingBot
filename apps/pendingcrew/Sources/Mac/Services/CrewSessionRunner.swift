@@ -220,6 +220,46 @@ final class CrewSessionRunner: ObservableObject {
         }
     }
 
+    // MARK: - 成员状态快照（机长 list_sessions 用;#463 组织能力）
+
+    /// 把 runs 实时状态落 crew-sessions.json（离线 helper 的 `list_sessions` 读）。
+    /// 2 秒节流定时器周期写 + start/remove 即写 —— run 的 working/health 变化
+    /// 最迟 2 秒进快照,机长点名够用,不追帧。
+    private var snapshotTimer: Timer?
+
+    func startSessionsSnapshotTimer() {
+        guard snapshotTimer == nil else { return }
+        snapshotTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.persistSessionsSnapshot() }
+        }
+    }
+
+    func persistSessionsSnapshot() {
+        var snapshot = CrewSessionsSnapshot()
+        snapshot.updatedAt = ISO8601DateFormatter().string(from: Date())
+        for run in runs {
+            let state: String
+            var healthDetail: String? = nil
+            if run.status != .running {
+                state = "exited"
+            } else if let h = run.health {
+                state = "error"; healthDetail = h.detail
+            } else {
+                state = run.isWorking ? "working" : "idle"
+            }
+            snapshot.crews[run.crewId, default: []].append(CrewSessionsSnapshot.Entry(
+                sessionId: run.sessionId, name: run.displayName,
+                role: run.role == .captain ? "captain" : "worker",
+                brief: run.role == .captain ? "" : run.taskBrief,
+                state: state, healthDetail: healthDetail))
+        }
+        guard let data = try? JSONEncoder().encode(snapshot) else { return }
+        try? data.write(
+            to: LocalWhiteboardStore.defaultDirectory
+                .appendingPathComponent(CrewSessionsSnapshot.fileName),
+            options: .atomic)
+    }
+
     // MARK: - 撞墙自动挂钩 + 额度警戒广播（#455 增补：不只靠 session 自觉）
 
     /// session 撞到 usageLimit（健康感知首报,每 session 一次）→ 自动挂一条
@@ -400,6 +440,7 @@ final class CrewSessionRunner: ObservableObject {
         isComposingNew = false
         // 撞额度上限（健康感知首报）→ 自动挂重置唤醒（用户定调:hit limit 才挂钩）。
         run.onUsageLimit = { [weak self] r in self?.autoScheduleQuotaWakeup(for: r) }
+        persistSessionsSnapshot()   // 新成员立刻进机长的点名快照
         // 本地 crew:把 worker session 登记成持久成员（成员列表/@ 名单退出后不丢）。
         // captain 已作为 captain 成员在 roster 里,不重复登记;登录态 crew 的
         // membership 归 edge(H1 迁移),store 里查无此 crew → no-op。

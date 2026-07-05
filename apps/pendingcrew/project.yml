@@ -101,6 +101,8 @@ targets:
       - path: Sources/Stores/LocalCrewControlStore.swift
       - path: Sources/Stores/LocalCrewStore.swift
       - path: Sources/Stores/PlaceNames.swift
+      # 成员状态快照（机长 list_sessions 数据源，纯 Foundation Codable）。
+      - path: Sources/Stores/CrewSessionsSnapshot.swift
       # 家族 SSO 凭据共享组存储（纯 Foundation+Security，自包含）。
       - path: Sources/Support/FamilyCredentialStore.swift
       # 机器分组纯函数（依赖 Models 里的 Machine / CrewSummary，已编进 bundle）。
