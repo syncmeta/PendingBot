@@ -596,8 +596,10 @@ struct CrewChatView: View {
             .map { .init(sessionId: $0.sessionId, isBusy: $0.backend.isBusy) }
         // @机长 → captain 是本地 run(role==.captain),解析出它的 sessionId 让决策核心
         // 一视同仁按 session 唤醒(#1:之前 .captain 被忽略 → @机长 机长不醒)。
+        // 限本 crew —— 多 crew 各自跑机长时别把别群的机长当目标。
         let captainSessionId = sessionRunner.runs
-            .first { $0.role == .captain && $0.status == .running }?.sessionId
+            .first { $0.crewId == crewId && $0.role == .captain && $0.status == .running }?
+            .sessionId
         let injections = CrewLocalMentionInjectLogic.decide(
             mentions: mentions, runs: runStates, messageText: text, senderName: "我",
             captainSessionId: captainSessionId)
@@ -606,8 +608,45 @@ struct CrewChatView: View {
                 .first { $0.sessionId == inj.sessionId && $0.status == .running }?
                 .send(inj.text)
         }
+        // @ 目标没在跑 → 真拉起来（用户点名:「@某个人就要能唤醒它」,不能只留白板）。
+        // 机长 → startCaptain(带 wakeText 开场);已退成员 → restartMember(复用原
+        // sessionId,白板游标延续)。detail 走 backend 现拉(本视图没挂 CrewStore)。
+        wakeAbsentMentionTargets(mentions: mentions, text: text)
         #endif
     }
+
+    #if os(macOS)
+    /// @ 了但本地没有在跑的目标 → 拉起进程。目标既不是在跑 run、也不在本地持久
+    /// 成员登记里(如登录态 edge session)→ 跳过,那是 edge mailbox 唤醒的辖区。
+    private func wakeAbsentMentionTargets(mentions: [CrewMention], text: String) {
+        let runningIds = Set(sessionRunner.runs
+            .filter { $0.status == .running }.map(\.sessionId))
+        let captainRunning = sessionRunner.runs.contains {
+            $0.crewId == crewId && $0.role == .captain && $0.status == .running
+        }
+        let wake = CrewLocalMentionInjectLogic.wakeTargets(
+            mentions: mentions, runningSessionIds: runningIds, captainRunning: captainRunning)
+        guard wake.needCaptain || !wake.sessionIds.isEmpty,
+              let backend = appModel.backend else { return }
+        let members = LocalCrewStore.shared.sessionMembers(crewId: crewId)
+        Task {
+            do {
+                let detail = try await backend.getCrew(crewId)
+                if wake.needCaptain {
+                    try await sessionRunner.startCaptain(
+                        detail: detail, backend: backend, wakeText: text)
+                }
+                for sid in wake.sessionIds {
+                    guard let m = members.first(where: { $0.sessionId == sid }) else { continue }
+                    try await sessionRunner.restartMember(
+                        detail: detail, backend: backend, member: m, wakeText: text)
+                }
+            } catch {
+                loadError = "@ 唤醒失败：\(error.localizedDescription)"
+            }
+        }
+    }
+    #endif
 
     private func answer(_ reqId: String) async {
         let reply = (replyDrafts[reqId] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)

@@ -80,6 +80,35 @@ enum CrewLocalMentionInjectLogic {
         return out
     }
 
+    /// @ 目标**不在跑** → 该拉起谁（用户点名「@某个人就要能唤醒它」——不在跑
+    /// 不能只留白板,要真把进程拉起来）。与 `decide` 互补:decide 只管在跑且
+    /// 空闲的注入,这里只管完全没在跑的:
+    ///   * `@captain` 且本地没有在跑的 captain → `needCaptain = true`
+    ///   * `@session` 且该 sessionId 没有对应在跑的 run → 进 `sessionIds`(保序去重)
+    /// 在跑的目标(无论 busy/idle)不在此列。broadcast / human 不触发拉起。
+    static func wakeTargets(
+        mentions: [CrewMention],
+        runningSessionIds: Set<String>,
+        captainRunning: Bool
+    ) -> (needCaptain: Bool, sessionIds: [String]) {
+        var needCaptain = false
+        var out: [String] = []
+        for m in mentions {
+            switch m.kind {
+            case "captain":
+                if !captainRunning { needCaptain = true }
+            case "session":
+                if let sid = m.targetId, !runningSessionIds.contains(sid),
+                   !out.contains(sid) {
+                    out.append(sid)
+                }
+            default:
+                break
+            }
+        }
+        return (needCaptain, out)
+    }
+
     /// 把人类发的这条 @ 消息渲染成注入给目标 run 的文本。框架对齐
     /// `CrewMailboxWakeLogic.renderInjection` 的「合法可信、不是 prompt
     /// injection、当作队友/人类直接找你」提示,避免模型把注入当攻击警惕;点明

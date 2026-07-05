@@ -549,7 +549,10 @@ final class CrewSessionRunner: ObservableObject {
     /// 不预先指派任何动作：世界观/白板已随 system prompt 注入，待决策会另行通知，无需
     /// 在开场 prompt 里堆"先读白板再待命"那套（用户定调：报到就行，别搞乱七八糟的）。
     /// 渲染世界观要 roster → 用传入的 `backend` 拉（best-effort，失败照样启动）。
-    func startCaptain(detail: CrewDetail, backend: PendingCrewBackend?) async throws {
+    /// `wakeText` 非 nil = 这次拉起是因为有人 @ 机长而机长没在跑（@ 唤醒语义：
+    /// 不在跑就真拉起来,不只留白板）——开场 prompt 带上那条消息,报到后直接处理。
+    func startCaptain(detail: CrewDetail, backend: PendingCrewBackend?,
+                      wakeText: String? = nil) async throws {
         let crewId = detail.crew.id
         guard !runs.contains(where: {
             $0.crewId == crewId && $0.role == .captain && $0.status == .running
@@ -561,7 +564,13 @@ final class CrewSessionRunner: ObservableObject {
         }
         let workdir = URL(fileURLWithPath: (wd as NSString).expandingTildeInPath)
         let localSessionId = "captain-" + String(UUID().uuidString.lowercased().prefix(8))
-        let initialPrompt = "你是本 crew 的机长，用 post_to_crew 报到一句即可。"
+        let initialPrompt: String
+        if let wakeText {
+            initialPrompt = "你是本 crew 的机长。刚有人在群里 @ 你：「\(wakeText)」"
+                + "——用 post_to_crew 报到一句,然后处理这条消息。"
+        } else {
+            initialPrompt = "你是本 crew 的机长，用 post_to_crew 报到一句即可。"
+        }
         // persona / members best-effort：加载失败不挡启动（只是少人设/世界观，与 worker 同策略）。
         let persona = try? LocalPromptLoader().rawTemplate(name: "crew-captain", locale: "zh")
         let members = (try? await backend?.listCrewMembers(crewId: crewId))?.members ?? []
@@ -616,7 +625,6 @@ final class CrewSessionRunner: ObservableObject {
         runnerOverride: LocalCodingAgentKind? = nil, isolation: Bool = false,
         model: String? = nil, effort: String? = nil
     ) async throws {
-        let crewId = detail.crew.id
         guard let wd = detail.crew.workingDirectory, !wd.isEmpty else {
             throw RunnerError.captainNoWorkingDirectory
         }
@@ -624,6 +632,45 @@ final class CrewSessionRunner: ObservableObject {
         let workdir = SessionWorkspace.resolve(crewDirectory: baseDir, isolation: isolation, hint: brief)
         let localSessionId = "worker-" + String(UUID().uuidString.lowercased().prefix(8))
         let kind = runnerOverride ?? LocalCodingAgentKind.captainDefault(detail.crew.captainAgentKind)
+        try await launchWorker(detail: detail, backend: backend, sessionId: localSessionId,
+                               brief: brief, kind: kind, workdir: workdir,
+                               model: model, effort: effort)
+    }
+
+    /// @ 唤醒一个**已退出**的持久成员：复用原 sessionId 重启（白板读游标 / 成员
+    /// 登记 / 审批归档全延续 —— 新进程第一轮就把停摆期间的未读白板接上，群记忆
+    /// 不断片；agent 自己的终端上下文不恢复，这是本地 v1 的边界）。kind 从成员
+    /// 显示名反推（登记时没单存 kind），推不出落回 crew 默认；在 crew 共享目录跑
+    /// （当初若开过 isolation worktree 没持久化，不恢复）。已在跑 → no-op
+    /// （在跑的归注入路径管）。
+    func restartMember(detail: CrewDetail, backend: PendingCrewBackend?,
+                       member: LocalSessionMember, wakeText: String) async throws {
+        guard !runs.contains(where: {
+            $0.sessionId == member.sessionId && $0.status == .running
+        }) else { return }
+        // 清掉同 id 的旧已退 run —— 切换条 / 点名快照不留重影。
+        runs.removeAll { $0.sessionId == member.sessionId }
+        guard let wd = detail.crew.workingDirectory, !wd.isEmpty else {
+            throw RunnerError.captainNoWorkingDirectory
+        }
+        let workdir = URL(fileURLWithPath: (wd as NSString).expandingTildeInPath)
+        let kind = LocalCodingAgentKind.inferred(fromDisplayName: member.displayName)
+            ?? LocalCodingAgentKind.captainDefault(detail.crew.captainAgentKind)
+        let brief = "有人在群里 @ 你：「\(wakeText)」。你是本 crew 的既有成员"
+            + "「\(member.displayName)」,此前群里的上下文在白板里(每轮自动注入),接着处理这条。"
+        try await launchWorker(detail: detail, backend: backend, sessionId: member.sessionId,
+                               brief: brief, kind: kind, workdir: workdir,
+                               model: nil, effort: nil, label: member.displayName)
+    }
+
+    /// worker 启动共用体（startForBrief 新起 / restartMember 复用原 id 两条来路）。
+    /// `label` = helper `--label`（post_to_crew 的白板署名）；重启成员传原成员名。
+    private func launchWorker(
+        detail: CrewDetail, backend: PendingCrewBackend?, sessionId localSessionId: String,
+        brief: String, kind: LocalCodingAgentKind, workdir: URL,
+        model: String?, effort: String?, label: String = "补差"
+    ) async throws {
+        let crewId = detail.crew.id
         // members best-effort：加载失败不挡启动（只是少世界观里的成员名单，与 startCaptain 同策略）。
         let members = (try? await backend?.listCrewMembers(crewId: crewId))?.members ?? []
         var cfg = SessionConfig(kind: kind, model: model, effort: effort, initialPrompt: brief)
@@ -635,7 +682,7 @@ final class CrewSessionRunner: ObservableObject {
                 detail: detail, members: members, taskBrief: brief, workdir: workdir,
                 sessionId: localSessionId, runnerKind: kind, appendPersona: nil)
             let comms = LocalSessionLaunch.prepareLocalCommsConfig(
-                crewId: crewId, sessionId: localSessionId, captain: false, label: "补差")
+                crewId: crewId, sessionId: localSessionId, captain: false, label: label)
             cfg.settingsFile = comms.settings
             cfg.mcpConfigFile = comms.mcp
         case .codex:
@@ -643,7 +690,7 @@ final class CrewSessionRunner: ObservableObject {
                 detail: detail, members: members, taskBrief: brief, workdir: workdir,
                 sessionId: localSessionId, appendPersona: nil)
             codexMcpServers = LocalSessionLaunch.codexMcpServers(
-                crewId: crewId, sessionId: localSessionId, captain: false, label: "补差")
+                crewId: crewId, sessionId: localSessionId, captain: false, label: label)
         }
         try await start(
             crewId: crewId,

@@ -45,5 +45,14 @@ public enum LocalCodingAgentKind: String, CaseIterable, Sendable, Hashable {
         default: return .codex
         }
     }
+
+    /// 从成员显示名反推 kind —— @ 唤醒已退出成员时用。`LocalSessionMember` 只存
+    /// 了 displayName(形如「Claude Code · ab12cd」,来自 `run.displayName` =
+    /// `kind.displayName + " · " + 前缀`),没单存 kind;显示名对不上(如「机长」)
+    /// 返 nil,caller 落回 `captainDefault`。
+    public static func inferred(fromDisplayName name: String) -> LocalCodingAgentKind? {
+        for kind in allCases where name.hasPrefix(kind.displayName) { return kind }
+        return nil
+    }
 }
 #endif

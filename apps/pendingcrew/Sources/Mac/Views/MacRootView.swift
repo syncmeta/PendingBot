@@ -115,8 +115,8 @@ struct MacThreePaneView: View {
             for req in reqs { sessionRunner.scheduleWakeup(req) }
         }
         // 跨 crew 汇报线消息 → 唤醒目标 crew 机长（#463）。idle 才直投注入（busy
-        // 的机长下轮白板注入自然看到）；机长没在跑 → 目标白板留系统注记,
-        // 人/下次起机长时能看到「有上级/下级消息待处理」。
+        // 的机长下轮白板注入自然看到）；机长没在跑 → **直接拉起**（@ 唤醒语义：
+        // 不在跑不能只留白板），开场 prompt 带上这条消息;拉起失败才落白板注记。
         .onChange(of: crewStore.crewMessageWakes) { _, wakes in
             guard !wakes.isEmpty else { return }
             crewStore.crewMessageWakes = []
@@ -130,10 +130,20 @@ struct MacThreePaneView: View {
                             messageText: wake.text, senderName: wake.senderLabel))
                     }
                 } else {
-                    LocalWhiteboardStore.shared.appendSessionMessage(
-                        crewId: wake.targetCrewId, sessionId: "system",
-                        text: "ℹ️ 收到「\(wake.senderLabel)」的消息，但本 crew 机长未在跑——起机长后它会在白板看到。",
-                        senderName: "系统")
+                    Task {
+                        do {
+                            guard let backend = model.backend else { throw CancellationError() }
+                            let detail = try await backend.getCrew(wake.targetCrewId)
+                            try await sessionRunner.startCaptain(
+                                detail: detail, backend: backend,
+                                wakeText: "\(wake.senderLabel)：\(wake.text)")
+                        } catch {
+                            LocalWhiteboardStore.shared.appendSessionMessage(
+                                crewId: wake.targetCrewId, sessionId: "system",
+                                text: "⚠️ 收到「\(wake.senderLabel)」的消息，自动拉起本 crew 机长失败（\(error.localizedDescription)）——手动起机长后它会在白板看到。",
+                                senderName: "系统")
+                        }
+                    }
                 }
             }
         }

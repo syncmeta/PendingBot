@@ -96,13 +96,53 @@ final class CrewLocalMentionInjectLogicTests: XCTestCase {
     }
 
     func testCaptainMentionWithoutRunningCaptainIgnored() {
-        // 本地没在跑 captain(captainSessionId nil)→ @机长 不注入(不崩),退回旧行为。
+        // 本地没在跑 captain(captainSessionId nil)→ @机长 不注入(不崩)——
+        // 该场景由 wakeTargets 接手真拉起(见下)。
         let out = CrewLocalMentionInjectLogic.decide(
             mentions: [.captain],
             runs: [run("sess-a", busy: false)],
             messageText: "x", senderName: "我",
             captainSessionId: nil)
         XCTAssertTrue(out.isEmpty)
+    }
+
+    // MARK: - wakeTargets（@ 目标不在跑 → 拉起谁）
+
+    func testWakeCaptainWhenNotRunning() {
+        let w = CrewLocalMentionInjectLogic.wakeTargets(
+            mentions: [.captain], runningSessionIds: [], captainRunning: false)
+        XCTAssertTrue(w.needCaptain)
+        XCTAssertTrue(w.sessionIds.isEmpty)
+    }
+
+    func testNoCaptainWakeWhenRunning() {
+        let w = CrewLocalMentionInjectLogic.wakeTargets(
+            mentions: [.captain], runningSessionIds: ["captain-abc"], captainRunning: true)
+        XCTAssertFalse(w.needCaptain, "在跑的机长归注入路径,不重复拉起")
+    }
+
+    func testWakeExitedSessionAndSkipRunning() {
+        let w = CrewLocalMentionInjectLogic.wakeTargets(
+            mentions: [.session("sess-dead"), .session("sess-live"), .session("sess-dead")],
+            runningSessionIds: ["sess-live"], captainRunning: true)
+        XCTAssertEqual(w.sessionIds, ["sess-dead"], "在跑的跳过、重复 @ 去重")
+        XCTAssertFalse(w.needCaptain)
+    }
+
+    func testBroadcastAndHumanNeverWake() {
+        let w = CrewLocalMentionInjectLogic.wakeTargets(
+            mentions: [.broadcast, CrewMention(kind: "human", targetId: "u1")],
+            runningSessionIds: [], captainRunning: false)
+        XCTAssertFalse(w.needCaptain)
+        XCTAssertTrue(w.sessionIds.isEmpty)
+    }
+
+    // MARK: - kind 反推（重启已退成员时用）
+
+    func testKindInferredFromMemberDisplayName() {
+        XCTAssertEqual(LocalCodingAgentKind.inferred(fromDisplayName: "Claude Code · ab12cd"), .claudeCode)
+        XCTAssertEqual(LocalCodingAgentKind.inferred(fromDisplayName: "Codex · ef34gh"), .codex)
+        XCTAssertNil(LocalCodingAgentKind.inferred(fromDisplayName: "机长"))
     }
 }
 #endif
