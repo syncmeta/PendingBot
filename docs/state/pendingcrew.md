@@ -14,8 +14,8 @@ task: 20260626-qa(Mac/真机 GUI QA 批次;像素验 #369/#342 已 completed)
 
 ## concepts/captain
 status: partial, pending-qa
-现状: captain = 被打机长标记的本地 session,edge bot-当-captain 整套已实删;本地工具 `answer_decision` / `rename_crew` + **`start_session` / `create_child_crew`**（2026-07-03 `feat/captain-spawn` 落地：机长可自主起 worker session、以当前 crew 为父建子 crew，子 crew 自动起子机长；命令走 `LocalCrewControlStore` 离线文件队列、depth cap=3）+ worker triage 单测跑通,报到链路 GUI E2E 过;真机改名 E2E + "拆 worker → ask → answer_decision"完整编排 + 机长自主 spawn 真机 E2E 是尾巴（归 #443）。start_session prompt/实装漂移已消除（tech-debt:61 收口）。
-证据: 编排面退役已验证删除;MCP dispatch / 控制通道 round-trip 单测（含 spawn 命令队列 + depth cap，xcodebuild test 绿）;codex 机长报到 GUI E2E 2026-06-17(computer-use 驱动、截图存档)
+现状: captain = 被打机长标记的本地 session,edge bot-当-captain 整套已实删;机长工具七件全落——`answer_decision` / `rename_crew` + `start_session` / `create_child_crew`（2026-07-03,含 model/effort 参数;命令走 `LocalCrewControlStore` 离线文件队列、depth cap=3）+ **`list_sessions` / `report_to_parent` / `message_child_crew`**（2026-07-05 #463 组织能力:点名读 crew-sessions.json 快照〔runner 2s 定时器写〕;汇报线沿本地 DAG 直系父子投递,目标白板署名「某某·机长」@captain、idle 机长直投唤醒、未在跑留注记;子 crew 按 id/标题/唯一前缀解析,歧义拒并回清单）;世界观 lineageBlock 本地真实填充(上级/下辖 + 汇报线纪律),persona 加「组织方法论」(用人优先序/跟进验收/不越级/额度当预算)。真机 E2E(点名→派活→跨 crew 汇报完整编排)归 #443。
+证据: 编排面退役已验证删除;CaptainOrgToolsTests 9 项(DAG helpers/resolveChild/汇报线入队/机长门/快照渲染/lineage)+全量 304 绿;codex 机长报到 GUI E2E 2026-06-17
 task: 20260626-qa(Mac/真机 GUI QA 批次)
 
 ## concepts/governance

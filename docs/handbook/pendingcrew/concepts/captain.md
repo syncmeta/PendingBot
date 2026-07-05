@@ -13,6 +13,8 @@
   - **给 crew 起名** —— crew 刚建出来时名字是个随机地名(占位);captain 摸清这个 crew 在做什么后,用机长工具 `rename_crew` 把它改成一个**短标签**(一个概括,不是一句描述,例「鉴权重构」「深色模式」)。一两次就够,别反复改;人类自己已起了有意义的名字就别动。
   - **同步关键节点** —— 重要进展 / 决定 / 卡点在群里发一条让大家知道,不必事事汇报。
   - **接 worker session 的待决策(triage)** —— worker 用 `ask` 提问时,系统把待决策先推给 captain。captain 是**第一响应人**:在它判断范围内能拍板的(方向选择、技术取舍、澄清),直接用机长工具 `answer_decision` 答,发起的 session 立刻拿到答复继续;拍不了的(花钱、删数据、对外发布、人类明确关心过的、拿不准的),转述 + 给倾向,@ 人类来拍。
+  - **组织与编排(像企业里带部门)** —— captain 有完整的组织能力,按用人优先序使:① `list_sessions` 点名(看本 crew 成员谁空闲/干活中/异常)→ 有合适的现有成员就 @ 它接手(有上下文,复用省额度);② 没有 → `start_session(brief, runner?, model?, effort?)` 起新 worker,按难度配模型/effort;③ 一块事大到该有自己的机长、自己的群聊、独立演进 → `create_child_crew` 拆"部门"(重决策,宁可先用 worker)。
+  - **跨 crew 协调走汇报线** —— 父子 crew 之间由机长对机长沟通:`report_to_parent(message)` 向上汇报(阶段成果 / 要上级拍板 / 被阻塞,结论先行),`message_child_crew(crew, message)` 向下派任务 / 调方向 / 催进度。消息落到对方白板、署名「某某·机长」并 @ 对方机长(空闲即唤醒;没在跑则留白板注记)。**不越级、不跨线**:不替子 crew 机长指挥它的 worker,不绕过父机长找爷爷辈。
 
 **为什么**
 
@@ -31,14 +33,15 @@
 
 - **一个 crew 一个 captain**,不多不少;captain 不是"群主"也不是必经的指挥层 —— worker session 之间、worker 与人类之间都能在白板上直接说话,captain 是协调者不是网关。
 - **captain 只做业务分诊,不做权限审批** —— 这条边界不要混淆:能 `answer_decision` ≠ 能批准危险操作。
-- captain 的机长专用工具当前 = `answer_decision`(答待决策)+ `rename_crew`(给 crew 起标签名)两个;普通工具(`post_to_crew` / `read_whiteboard` / `ask`)是所有 session 都有的。
+- captain 的机长专用工具 = `answer_decision` / `rename_crew` / `start_session` / `create_child_crew` / `list_sessions` / `report_to_parent` / `message_child_crew` 七个;所有 session 共有的是 `post_to_crew` / `read_whiteboard` / `ask` + 额度三件套(`get_quota` / `schedule_wakeup` / `set_session_profile`)。
+- **汇报线只连直系**:`report_to_parent` 只达直系父 crew、`message_child_crew` 只达直系子 crew(按 id / 标题 / 唯一前缀解析,歧义即拒并回子 crew 清单)。跨线沟通没有工具支持——这是刻意的组织约束,不是缺功能。
 
 **注意 — 已死的旧方案 / 易错点(别按它实现)**
 
 > ⚠️ 本概念是全手册过时风险最高的几篇之一。详见 `docs/stale-model-audit-2026-06-15.md`(R1)。
 
 - ❌ **captain 是一个 edge bot、由 edge `bot-reply` 注入机长 persona、被白板消息唤醒去跑** —— 老 spec(§6.3)的说法。**现状:captain 唯一形态 = 本地 session**(跑在 PendingCrew 本机),edge **不再**唤醒任何 "edge-bot captain"。这个转向定调于 2026-06-10「接合 v2」(本地为家、edge 是邮差),2026-06-16 审计**实删**了 edge 侧整套残留。
-- ❌ **captain 有 `start_session` / `create_child_crew` / `recruit_temp_bot` / `request_permission` 这一组 edge 编排工具** —— 这些 edge 工具**已全删**。captain 现在的工具走**本地 MCP**(`apps/pendingcrew/Sources/Mcp/McpServer.swift`):所有 session 都有 `post_to_crew` / `read_whiteboard` / `ask`,captain 额外解锁 `answer_decision` 和 `rename_crew`。
+- ❌ **captain 的编排工具是 edge bot 工具(`recruit_temp_bot` / `request_permission` 那一组)** —— edge 编排面**已全删**。captain 现在的全部工具走**本地 MCP**(`apps/pendingcrew/Sources/Mcp/McpServer.swift`);`start_session` / `create_child_crew` 是 2026-07 重新以本地 MCP 形态实装的,与旧 edge 同名工具无代码渊源,别按旧 spec 的 edge 语义理解它们。
 - ❌ **审批由 captain 处理或经 captain 转交** —— 现状:权限审批不归 captain,系统直接送人类。captain 自己的 prompt 就写明「权限审批不归你管」(`crew-captain.zh.md`)。
 - ⚠️ **`decisions.md` D4「captain 4 种来源」已部分过时,谨慎引用。** D4(2026-06-01)写 captain 有 4 种来源(含 `spawned_by_captain` 等)。但当前活的建 crew RPC(`create_crew_with_captain`)只接受 **2 种** `captain_source`:`reuse_bot` 和 `system_generated`,且**客户端实际只用 `system_generated`**。`spawned_by_captain` / `create_child_crew` 那套只在 legacy 的 `/v1/crew`(单数)路由和旧迁移注释里还有引用,不是当前主路径。引 D4 前先核对到这一层。
-- ⚠️ **captain prompt 与本地 MCP 工具集对不齐(已知尾巴)**:`crew-captain.zh.md` 仍把 `start_session(brief, runner?)` 写成机长工具,但本地 MCP server(`McpServer.swift`)**没有实装 `start_session`**(只实装了 `answer_decision` / `rename_crew` 两个机长工具)。prompt 描述领先于实现,以代码为准——"captain 拆出 worker session"的具体落地工具仍待补齐。
+- ✅(已收口)**captain prompt 与本地 MCP 工具集对不齐**的旧尾巴已消除:`start_session` / `create_child_crew`(2026-07-03)与 `list_sessions` / `report_to_parent` / `message_child_crew`(2026-07-05 #463)均已实装,prompt(`crew-captain.zh.md`「组织方法论」节)与工具集一致。
