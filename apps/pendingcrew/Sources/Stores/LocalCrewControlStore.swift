@@ -96,6 +96,18 @@ final class LocalCrewControlStore: @unchecked Sendable {
             ts: ISO8601DateFormatter().string(from: Date())))
     }
 
+    /// 机长跨 crew 消息（汇报线）：`direction` = "to_parent"（发所有直系父）|
+    /// "to_child"（发 `targetHint` 指定的直系子）。消息文本放 `brief`（复用非空
+    /// 校验）。DAG 解析/投递/唤醒归 app 侧（helper 读不到 crew store）。
+    func enqueueCrewMessage(crewId: String, sessionId: String, direction: String,
+                            targetHint: String?, message: String) {
+        enqueue(CrewCommand(
+            id: UUID().uuidString.lowercased(), crewId: crewId, kind: "crew_message",
+            brief: message, runner: nil, isolation: nil, title: targetHint,
+            sessionId: sessionId, direction: direction,
+            ts: ISO8601DateFormatter().string(from: Date())))
+    }
+
     /// session 设定时唤醒：到点 app 把 `note` 注入回该 session（不在跑 → 白板落一条）。
     func enqueueScheduleWakeup(crewId: String, sessionId: String, fireAt: String, note: String) {
         guard !fireAt.isEmpty, !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
@@ -172,5 +184,7 @@ struct CrewCommand: Codable, Equatable {
     var fireAt: String? = nil
     /// schedule_wakeup：唤醒时带回的备注。
     var note: String? = nil
+    /// crew_message：投递方向 "to_parent" | "to_child"（targetHint 复用 `title` 字段）。
+    var direction: String? = nil
     let ts: String
 }

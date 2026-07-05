@@ -49,6 +49,9 @@ final class CrewStore: ObservableObject {
     /// `schedule_wakeup` 命令排空后的待登记队列。`MacRootView` 交给
     /// `CrewSessionRunner.scheduleWakeup`（持久化 + 定时器）。
     @Published var wakeupRequests: [SessionWakeupRequest] = []
+    /// `crew_message` 投递后的待唤醒队列（目标 crew 机长）。`MacRootView` 找
+    /// 目标机长 run 直投注入（idle 才注,busy 靠下轮白板注入）。
+    @Published var crewMessageWakes: [CrewMessageWake] = []
 
     private unowned let appModel: AppModel
 
@@ -318,6 +321,8 @@ final class CrewStore: ObservableObject {
                 wakeupRequests.append(SessionWakeupRequest(
                     id: cmd.id, crewId: cmd.crewId, sessionId: sid,
                     fireAt: fireAt, note: cmd.note ?? ""))
+            case "crew_message":
+                executeCrewMessage(cmd)
             case "create_child_crew":
                 await executeCreateChildCrew(cmd)
             default:
@@ -376,6 +381,50 @@ final class CrewStore: ObservableObject {
         }
     }
 
+    /// 执行一条机长跨 crew 消息（汇报线;#463 组织能力）。DAG 解析在这（helper
+    /// 读不到 crew store）：to_parent → 所有直系父;to_child → resolveChild
+    /// 按 标签/id/唯一前缀 解析,歧义或无匹配回执现有子 crew 清单（别投错部门）。
+    /// 投递 = 写目标 crew 白板（署名「<源crew名>·机长」,@captain）+ 唤醒请求
+    /// 交 `crewMessageWakes`（MacRootView 找目标机长 run 直投注入）。
+    /// 全部失败路径都回执源 crew 白板,不静默吞。
+    private func executeCrewMessage(_ cmd: CrewCommand) {
+        let store = LocalCrewStore.shared
+        let sourceTitle = store.title(of: cmd.crewId) ?? cmd.crewId
+        var targets: [String] = []
+        switch cmd.direction {
+        case "to_parent":
+            targets = store.parentIds(of: cmd.crewId)
+            if targets.isEmpty {
+                postSystemNotice(crewId: cmd.crewId, text: "ℹ️ 向上汇报未送出：本 crew 没有父 crew（已是根）。")
+                return
+            }
+        case "to_child":
+            guard let hint = cmd.title, let child = store.resolveChild(of: cmd.crewId, hint: hint) else {
+                let kids = store.children(of: cmd.crewId)
+                let listing = kids.isEmpty ? "本 crew 目前没有子 crew。"
+                    : "现有子 crew：" + kids.map { "「\($0.title)」" }.joined(separator: "、") + "。"
+                postSystemNotice(crewId: cmd.crewId,
+                                 text: "⚠️ 消息未送出：找不到子 crew「\(cmd.title ?? "?")」（或名称有歧义）。\(listing)")
+                return
+            }
+            targets = [child]
+        default:
+            return
+        }
+        let label = "\(sourceTitle)·机长"
+        for target in targets {
+            LocalWhiteboardStore.shared.appendSessionMessage(
+                crewId: target, sessionId: cmd.sessionId ?? "captain-\(cmd.crewId)",
+                text: cmd.brief, category: "report", senderName: label,
+                mentions: [LocalWhiteboardMention(kind: "captain", targetId: nil)])
+            crewMessageWakes.append(CrewMessageWake(
+                targetCrewId: target, text: cmd.brief, senderLabel: label))
+            postSystemNotice(
+                crewId: cmd.crewId,
+                text: "📨 已送达「\(store.title(of: target) ?? target)」群聊（\(cmd.direction == "to_parent" ? "向上汇报" : "下达消息")）。")
+        }
+    }
+
     /// 往 crew 白板发一行系统回执。`LocalWhiteboardStore` 没有单独的
     /// "系统消息" API —— 复用 `appendSessionMessage`（senderKind "session"），
     /// `senderName` 标成「系统」区分于真实 session/机长发言，`sessionId` 用固定
@@ -388,6 +437,13 @@ final class CrewStore: ObservableObject {
 
 /// `start_session` 命令排空后的一次待起会话请求。`MacRootView` 观察
 /// `CrewStore.sessionSpawnRequests` 数组，逐条调 `runner.startForBrief`。
+/// `crew_message` 投递后的一次目标机长唤醒（汇报线;#463）。
+struct CrewMessageWake: Equatable {
+    let targetCrewId: String
+    let text: String
+    let senderLabel: String
+}
+
 /// `set_profile` 命令排空后的一次待切换请求（session 自切模型/effort）。
 struct SessionProfileChangeRequest: Equatable {
     let crewId: String

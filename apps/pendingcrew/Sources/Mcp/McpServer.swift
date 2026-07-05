@@ -175,6 +175,32 @@ final class McpServer {
                     ],
                 ])
                 tools.append([
+                    "name": "list_sessions",
+                    "description": "（机长专用）点名：列出本 crew 全部 session 成员的实时状态（干活中/空闲/异常/已退出 + 各自任务）。派活前先点名——有空闲的合适成员就 @ 它接手,别急着 start_session 起新人;有异常的（未登录/额度）先处置或上报。",
+                    "inputSchema": ["type": "object", "properties": [String: Any]()],
+                ])
+                tools.append([
+                    "name": "report_to_parent",
+                    "description": "（机长专用）向上级（父 crew）汇报：消息会送达所有直系父 crew 的群聊并唤醒父机长。用于:阶段性成果、需要上级拍板/协调资源、本部门被阻塞。汇报要短、带结论——上级不看过程日志。本 crew 没有父（根 crew）时会收到提示。",
+                    "inputSchema": [
+                        "type": "object",
+                        "properties": ["message": ["type": "string", "description": "汇报内容（结论先行）。"]],
+                        "required": ["message"],
+                    ],
+                ])
+                tools.append([
+                    "name": "message_child_crew",
+                    "description": "（机长专用）给某个直系子 crew（下属部门）下达消息：送达其群聊并唤醒子机长。用于:派新任务、调整方向、催进度、要汇报。crew 参数填子 crew 的标签名或 id（不确定有哪些子 crew 时,消息发错会收到现有子 crew 清单）。",
+                    "inputSchema": [
+                        "type": "object",
+                        "properties": [
+                            "crew": ["type": "string", "description": "目标子 crew 的标签名或 id。"],
+                            "message": ["type": "string", "description": "要传达的内容。"],
+                        ],
+                        "required": ["crew", "message"],
+                    ],
+                ])
+                tools.append([
                     "name": "create_child_crew",
                     "description": "（机长专用）以当前 crew 为父，建一个子 crew。**只在一块事大到该独立成组、要有自己的机长和群聊时才拆，别滥拆。**子 crew 继承本 crew 的工作目录与机长类型，会自动起自己的机长，brief 作为它的开场任务。title 可不填（自动取个地名，子机长之后自己改名）。有子 crew 深度上限，太深会被拒。",
                     "inputSchema": [
@@ -331,6 +357,31 @@ final class McpServer {
             control.enqueueSetProfile(crewId: crewId, sessionId: sessionId, model: model, effort: effort)
             let parts = [model.map { "模型→\($0)" }, effort.map { "effort→\($0)" }].compactMap { $0 }
             return toolResult(id: id, text: "已提交切换：\(parts.joined(separator: "、"))。claude 立即生效；codex 无中途切换通道（会在白板收到说明）。")
+        case "list_sessions":
+            guard isCaptain else { return toolResult(id: id, text: "ERROR: 仅机长可用") }
+            let url = quotaDirectory.appendingPathComponent(CrewSessionsSnapshot.fileName)
+            guard let data = try? Data(contentsOf: url),
+                  let snap = try? JSONDecoder().decode(CrewSessionsSnapshot.self, from: data) else {
+                return toolResult(id: id, text: "暂无成员状态快照（app 未在跑或刚启动）。")
+            }
+            return toolResult(id: id, text: snap.renderRoster(crewId: crewId))
+        case "report_to_parent":
+            guard isCaptain else { return toolResult(id: id, text: "ERROR: 仅机长可用") }
+            let msg = ((args["message"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !msg.isEmpty else { return toolResult(id: id, text: "ERROR: message 不能为空") }
+            control.enqueueCrewMessage(crewId: crewId, sessionId: sessionId,
+                                       direction: "to_parent", targetHint: nil, message: msg)
+            return toolResult(id: id, text: "已提交向上汇报。送达结果（含「本 crew 无父」的情况）会回执到本 crew 群聊。")
+        case "message_child_crew":
+            guard isCaptain else { return toolResult(id: id, text: "ERROR: 仅机长可用") }
+            let target = ((args["crew"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let msg = ((args["message"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !target.isEmpty, !msg.isEmpty else {
+                return toolResult(id: id, text: "ERROR: crew 与 message 都不能为空")
+            }
+            control.enqueueCrewMessage(crewId: crewId, sessionId: sessionId,
+                                       direction: "to_child", targetHint: target, message: msg)
+            return toolResult(id: id, text: "已提交给子 crew「\(target)」的消息。送达/找不到的回执会出现在本 crew 群聊。")
         case "create_child_crew":
             guard isCaptain else { return toolResult(id: id, text: "ERROR: 仅机长可用") }
             let brief = ((args["brief"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
