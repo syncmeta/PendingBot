@@ -104,7 +104,7 @@ task: 20260626-qa(Mac/真机 GUI QA 批次)
 
 ## features/session-crew-comms
 status: partial, pending-qa
-现状: 群聊通信重做代码全落——edge 600+ vitest 覆盖(入站/出站 @ + reply + 发送者身份 + reply 引用)、双端 build/test 绿(去轮询、事件驱动唤醒、composer @ picker + reply 手势)、本地 @ 直接注入唤醒 idle session 单机真跑通、实时推送客户端跨平台化 iPad 也接;远端 runner 唤醒 + session→@ edge 上行 + 活体 hub 推送真机 E2E 卡在「本地 ↔ edge 绑定」尾巴(`CrewRelayAgent.push` 未透传 mentions/reply_to),记 tech-debt。
+现状: 群聊通信重做代码全落——edge 600+ vitest 覆盖(入站/出站 @ + reply + 发送者身份 + reply 引用)、双端 build/test 绿(去轮询、事件驱动唤醒、composer @ picker + reply 手势)、本地 @ 直接注入唤醒 idle session 单机真跑通、实时推送客户端跨平台化 iPad 也接;**@ 目标没在跑 → 真拉起**(2026-07-05:@机长 无在跑机长自动 startCaptain 带消息开场;@已退成员 restartMember 复用原 sessionId 重启,白板游标/署名延续、kind 从显示名反推;跨 crew 汇报线目标机长未在跑同样自动拉起,失败才留白板注记;wakeTargets 纯决策 +5 测)。远端 runner 唤醒 + session→@ edge 上行 + 活体 hub 推送真机 E2E 卡在「本地 ↔ edge 绑定」尾巴(`CrewRelayAgent.push` 未透传 mentions/reply_to),记 tech-debt。
 证据: edge 600+ vitest;双端 build/test 绿;本地单机真跑通
 task: —(尾巴记 tech-debt)
 

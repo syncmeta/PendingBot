@@ -2,6 +2,8 @@
 
 **最近对账：2026-07-05**（机长组织能力 + 模型/effort/额度三能力 + 批 B/C；其余见 2026-07-04 起；对照实际代码 / 迁移 / git，不是看 task 标记）
 
+> **2026-07-05 @ 唤醒补全 — 目标没在跑就真拉起（`feat/model-effort-quota` 1 commit，用户反馈「@机长/@session 没在跑不能唤醒,我希望 @ 某个人就要能唤醒它」）**：此前 @ 只对在跑且空闲的 run 直投注入,目标没在跑只剩白板留言。现在三条路都拉真进程：① @机长 无在跑机长 → `startCaptain(wakeText:)` 自动起,开场 prompt 带上那条消息（报到后直接处理）;② @已退成员 → `restartMember` 复用**原 sessionId** 重启（白板读游标/成员登记/白板署名全延续,第一轮接上停摆期间的未读白板——群记忆不断片;agent 终端上下文不恢复是 v1 边界;kind 从成员显示名反推,推不出落回 crew 默认）;③ 跨 crew 汇报线目标机长未在跑 → 从「白板注记」升级为自动拉起,失败才留注记。纯决策 `wakeTargets` 与注入 `decide` 互补（在跑归注入、没在跑归拉起）;顺手修 captainSessionId 解析缺 crewId 过滤（多 crew 各跑机长时可能错拿别群机长）。+5 测,全量 309 绿,iOS Sim 绿。活体验证归 #443。
+>
 > **2026-07-05 机长组织能力 — 汇报线 + 点名 + 组织方法论（`feat/model-effort-quota` 3 commit，task #463，用户「机长要像企业里一样有组织能力:建 crew 建部门、部门内协调」）**：建制工具此前已有（`start_session` 起人 / `create_child_crew` 拆部门），本轮补的是**协调神经**——组织起来后信息怎么流。
 > - **点名（`list_sessions`）**：机长随时看本 crew 花名册——每个成员的名字/角色/任务/状态（🟢干活中 🟡空闲 🔴异常带故障详情 ⚪已退出）。数据源 = runner 2s 定时器写的 `crew-sessions.json` 快照（离线 helper 进程碰不到 app 内存,同 quota.json 模式）。
 > - **汇报线（`report_to_parent` / `message_child_crew`）**：父子 crew 之间机长对机长沟通。helper 入队 `crew_message` 控制命令（消息乘 brief、目标提示乘 title、direction 区分上下行）→ app 侧 drain：to_parent 沿 `LocalCrewStore.parentIds`、to_child 走 `resolveChild`（id 精确→标题精确→唯一前缀,歧义/无匹配拒绝并回执现有子 crew 清单）→ 落对方白板署名「某某·机长」+ @captain,对方机长 idle 直投注入唤醒、busy 下轮白板自然看到、没在跑留系统注记;源白板回 📨 递达回执。**只连直系、不越级不跨线**——组织约束刻意收紧。
