@@ -127,6 +127,7 @@
 - **发现**: 2026-06-14 · `feat/crew-machine`（machine 概念 + 新建流程精简）
 - **三条尾巴**:
   1. **`temporary_group_meta.runtime_location` 现为派生镜像列**：本次把 crew 的运行位置收口成单个 `machine_id` FK（事实源），但因 `runtime_location`/`runtime_kind` 被 6+ 处读取（`session-world-model.ts`、`crew-comms.ts`、`messages.ts`、`crew.ts` 等），没物理删——改成 `create_crew_with_captain` RPC **写入时从所选 machine 派生**（NULL→local_host / kind=fly→fly_machine）。两个真值（machine_id + 派生的 runtime_location）并存有漂移风险（若以后有别的写路径绕过 RPC 直写 runtime_location）。**根治**：读取方逐个改成从 machine 派生 / 读 machine_id，然后 drop `runtime_location` 列 + Swift `RuntimeLocation` 枚举。
+     *2026-07-05 更新（双写收口 session）*：老镜像 `runtime_kind` 已随三组双写 cutover 物理 drop（`20260705031552`），读点全部收敛到 `runtime_location` 单列（edge 端不再有混用）；`create_child_crew_inheriting_responsibility_for_actor` 也改为继承 parent 的 `runtime_location`+`machine_id`（旧版抄 runtime_kind、location 落默认值的不一致镜像已修）。**machine_id ↔ runtime_location 两真值并存的本条根治仍待做**（drop runtime_location 本体不在本轮范围）。
   2. **CrewGround 地名 corpus 与服务端 `place_names` 分家**：CrewGround 随机目录名用 app 内置 `apps/pendingcrew/Resources/crewground_places.txt`（**GeoNames cities15000，CC BY 4.0，asciiname 去标点/空格去重，~3.2 万条**，离线可用），服务端 `random_place_name()` 用的是 `place_names` 表（**中文**地名，建群/会话标题用）。两份独立、来源不同（GeoNames 全球英文 vs 中文）。本是有意（CrewGround 离线也要能用 + 用户要权威全球地名），但若以后要统一来源需对齐。corpus 刷新：重跑 `cities15000.txt` → asciiname 去标点去重即可。
   3. **`captainAgentKind` 只在本地 crew 持久**：建 crew 选的 captain coding-agent（claude_code/codex）存在 `LocalCrew` + 穿过客户端模型，但 **edge crew 表无此列**——relay/登录态远端 crew 不记住 captain kind（解码恒 nil→默认 Codex）。pre-launch + captain 跑本机，可接受；要远端 crew 记住时给 `temporary_group_meta` 加列 + RPC 透传。
 - **状态**: 常驻参考（1 是日后清理项；2/3 是有意取舍，记着别当 bug）。
@@ -611,7 +612,12 @@
 - **问题**: 我让 sub-agent 在 T1.1 / T2.1 写 schema 时图省事,选了 "新加列 + trigger 同步" 而不是 "改老列 + 全量回填 + 老 column drop"。triggers 把读写两边都对上,但**两套字段的存在让任何后续改这些字段的人要同时维护两套**,read path 也乱(看 schema.ts 不知道用哪个)。
 - **影响**: 每多一个引用这些字段的 code path,都要决定用新名还是老名;混用很容易出现;长期会让 schema 不易理解。已经在 `crews.ts` route 等地方混用了 runtime_kind 跟 runtime_location 两个名字。
 - **建议**: 起一轮 hard cutover migration:把所有 read path 切到 spec v2 字段名 → 删 trigger → DROP 老字段。趁 v1 还没发外、用户量为 0 时做最便宜。**v1 launch 前必须完成**,不然 user data 落到老字段就要做 backfill 比现在贵。
-- **状态**: 待办(v1 launch 前必须 cutover)
+- **状态**: ✅ 已解决(2026-07-05 · 双写收口 session,两段式 cutover)
+  - **Phase 0 盘点纠偏**: 第 2 组本条把新旧记反了 —— `runtime_location` 才是新列(spec v2 §8.2)、`runtime_kind` 是老列;第 3 组(`cloud_machine_id` ↔ `fly_machine_id`)在记账后已被别的收口顺手解决:两列分别于 `20260614123750`(machine 表收口)/ `20260616024230`(审计 G16)被 `machine_id` FK 取代并 drop,本轮无事可做。
+  - **Phase 1(读切换)**: edge 8 个路由文件全部改读 `kind` / `runtime_location`(commit `ff978680`);迁移 `20260705030253` + 修正件 `20260705031227` 把 live 上仍引用旧列的 12 个函数、2 个视图(bi_subjects 输出 `kind AS subject_type` 保 BI 列名)、5 条 RLS 策略、2 个部分唯一索引(含 ensure_* 的 ON CONFLICT 仲裁谓词)全量改写(commit `45d5c326`)。API 兼容:`GET /v1/me/subject` 响应仍输出 `subject_type`(从 kind 派生,PendingCrew 按此字段名解码);`/v1/crew*` 响应字段改名 `runtime_location`(grep 证实无客户端消费旧名)。
+  - **Phase 2(drop)**: 迁移 `20260705031552` drop `subjects.subject_type`、`temporary_group_meta.runtime_kind` 及 `subjects_sync_kind_trg`/`tg_subjects_sync_kind`(commit `d95b7579`)。drop 前 live 复核:subjects 3 行零漂移、tgm 0 行、pg_depend 无外部残余依赖。
+  - **验证**: 每阶段 `typecheck` + vitest 71 files / 617 tests 全绿;live information_schema 确认三列均不存在。
+  - **遗留尾巴**: 已部署的 edge worker 仍是旧代码(读 `subject_type`/`runtime_kind`),Phase 2 drop 后线上这些读点会 500 —— 合并本分支后需尽快 `bun --filter='@pendingbot/edge' run deploy`。
 
 ### 🟡 Spec v2 §6.3.1 captain 三种来源跟现有 schema 不一致
 - **发现**: 2026-05-28 · feat/crew-core-schema(T2.2 sub-agent 报告)
