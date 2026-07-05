@@ -327,11 +327,11 @@ deviceLoginRoutes.post('/challenges/:id/approve', requireSession(), async (c) =>
   if (challenge.app_kind === 'pendingbot_macos') {
     const { data: subject, error: subjectErr } = await svc
       .from('subjects')
-      .select('id, subject_type, user_id')
+      .select('id, kind, user_id')
       .eq('id', parsed.subjectId)
       .maybeSingle();
     if (subjectErr) return jsonError(c, 500, 'database_error', { detail: subjectErr.message });
-    if (!subject || subject.subject_type !== 'user_account' || subject.user_id !== userId) {
+    if (!subject || subject.kind !== 'user_account' || subject.user_id !== userId) {
       return jsonError(c, 403, 'forbidden', {
         message: 'PendingBot Mac login must use the approving user account',
       });

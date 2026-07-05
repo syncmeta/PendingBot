@@ -61,7 +61,7 @@ function seedOwnSubject(db: FakeDb) {
     ...(db.rows.subjects ?? []),
     {
       id: USER_SUBJECT,
-      subject_type: 'user_account',
+      kind: 'user_account',
       user_id: USER,
       display_name: '我',
       status: 'active',

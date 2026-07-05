@@ -80,7 +80,7 @@ async function sha256Hex(input: string): Promise<string> {
 
 const ALICE = {
   id: 'subject-1',
-  subject_type: 'user_account',
+  kind: 'user_account',
   user_id: 'user-1',
   display_name: 'Alice',
   status: 'active',

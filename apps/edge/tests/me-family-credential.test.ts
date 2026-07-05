@@ -50,7 +50,7 @@ async function call(
 
 const ALICE_SUBJECT = {
   id: 'subject-1',
-  subject_type: 'user_account',
+  kind: 'user_account',
   user_id: 'user-1',
   display_name: 'Alice',
   status: 'active',

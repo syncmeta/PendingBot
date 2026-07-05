@@ -586,7 +586,7 @@ crewMessagesRoutes.get('/:crewId/messages', requireSubjectAuth(['crew:read']), a
   // Resolve the crew's responsible subject for the device-grant gate.
   const { data: meta, error: metaErr } = await svc
     .from('temporary_group_meta')
-    .select('conversation_id, responsible_subject_id, captain_bot_id, title, working_directory, runtime_kind, runtime_location, status')
+    .select('conversation_id, responsible_subject_id, captain_bot_id, title, working_directory, runtime_location, status')
     .eq('conversation_id', crewId)
     .maybeSingle();
   if (metaErr) return jsonError(c, 500, 'database_error', { detail: metaErr.message });
@@ -896,7 +896,7 @@ sessionInboxRoutes.get('/:sessionId/inbox', requireSubjectAuth(['crew:read']), a
   // prompt template feeds on these).
   const { data: crewMeta, error: metaErr } = await svc
     .from('temporary_group_meta')
-    .select('conversation_id, responsible_subject_id, captain_bot_id, master_bot_id, runtime_kind, runtime_location, working_directory, title, status, parent_temporary_group_id, root_temporary_group_id')
+    .select('conversation_id, responsible_subject_id, captain_bot_id, master_bot_id, runtime_location, working_directory, title, status, parent_temporary_group_id, root_temporary_group_id')
     .eq('conversation_id', sessionRow.crew_conversation_id)
     .maybeSingle();
   if (metaErr) return jsonError(c, 500, 'database_error', { detail: metaErr.message });

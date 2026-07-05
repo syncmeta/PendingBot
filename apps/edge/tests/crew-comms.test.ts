@@ -884,7 +884,6 @@ describe('GET /v1/sessions/:sessionId/inbox', () => {
         conversation_id: CREW_ID,
         responsible_subject_id: SUBJECT,
         captain_bot_id: CAPTAIN_BOT_ID,
-        runtime_kind: 'crew',
         runtime_location: 'local_host',
         working_directory: '/Users/me/proj',
         title: 'Test Crew',

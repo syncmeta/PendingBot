@@ -54,7 +54,7 @@ async function ownSubjectId(
   const { data, error } = await supa
     .from('subjects')
     .select('id')
-    .eq('subject_type', 'user_account')
+    .eq('kind', 'user_account')
     .eq('user_id', userId)
     .eq('status', 'active')
     .maybeSingle();

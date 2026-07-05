@@ -71,19 +71,17 @@ function seedSubjectAccess(db: FakeDb) {
     ...(db.rows.subjects ?? []),
     {
       id: USER_SUBJECT,
-      subject_type: 'user_account',
+      kind: 'user_account',
       user_id: USER,
       display_name: '我',
       status: 'active',
-      kind: 'user',
     },
     {
       id: GROUP_SUBJECT,
-      subject_type: 'group_account',
+      kind: 'group_account',
       user_id: null,
       display_name: '工程团队',
       status: 'active',
-      kind: 'group',
     },
   ];
   db.rows.group_subject_members = [
@@ -381,8 +379,8 @@ describe('GET /v1/crews/:crewId', () => {
         },
       ],
       subjects: [
-        { id: USER_SUBJECT, display_name: '我', subject_type: 'user_account' },
-        { id: GROUP_SUBJECT, display_name: '工程团队', subject_type: 'group_account' },
+        { id: USER_SUBJECT, display_name: '我', kind: 'user_account' },
+        { id: GROUP_SUBJECT, display_name: '工程团队', kind: 'group_account' },
       ],
       bots: [
         { id: CAPTAIN_BOT_ID, display_name: '机长' },

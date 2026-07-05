@@ -209,10 +209,10 @@ meRoutes.get('/subject', requireSubjectAuth(['subject:read']), async (c) => {
 
   let subjectQuery = supa
     .from('subjects')
-    .select('id, subject_type, display_name, status, created_at, updated_at');
+    .select('id, kind, display_name, status, created_at, updated_at');
   subjectQuery = isDeviceGrant
     ? subjectQuery.eq('id', deviceGrant!.subjectId)
-    : subjectQuery.eq('subject_type', 'user_account').eq('user_id', c.var.userId!);
+    : subjectQuery.eq('kind', 'user_account').eq('user_id', c.var.userId!);
 
   const { data: subject, error } = await subjectQuery.maybeSingle();
 
@@ -243,8 +243,13 @@ meRoutes.get('/subject', requireSubjectAuth(['subject:read']), async (c) => {
   // (= messages.user_id = auth.users.id) to right-align the local user's
   // own crew-chat bubbles.
   const userId = isDeviceGrant ? (deviceGrant?.grantedByUserId ?? null) : (c.var.userId ?? null);
+  // Wire shape keeps `subject_type`(= kind 的旧名): PendingCrew 的
+  // listMySubjects() 显式按 CodingKeys `subject_type` 解码本响应
+  // (apps/pendingcrew/Sources/Services/PendingCrewAPI.swift)。DB 列
+  // subject_type 已切到 kind,这里从 kind 派生保持响应向后兼容。
+  const { kind, ...subjectRest } = subject;
   return c.json({
-    subject,
+    subject: { ...subjectRest, subject_type: kind },
     user_id: userId,
     wallet: {
       balance_credits: balanceMicros,
@@ -271,8 +276,8 @@ meRoutes.get('/subjects', async (c) => {
   // backfill + signup trigger guarantee it).
   const { data: personal, error: personalErr } = await supa
     .from('subjects')
-    .select('id, subject_type, display_name, status')
-    .eq('subject_type', 'user_account')
+    .select('id, kind, display_name, status')
+    .eq('kind', 'user_account')
     .eq('user_id', userId)
     .eq('status', 'active')
     .maybeSingle();
@@ -288,7 +293,7 @@ meRoutes.get('/subjects', async (c) => {
   // not "subjects you can spend from".
   const { data: groupRows, error: groupErr } = await supa
     .from('group_subject_members')
-    .select('role, subject:subjects!inner(id, subject_type, display_name, status)')
+    .select('role, subject:subjects!inner(id, kind, display_name, status)')
     .eq('user_id', userId)
     .in('role', ['owner', 'admin']);
   if (groupErr) {
@@ -315,7 +320,7 @@ meRoutes.get('/subjects', async (c) => {
     // depending on FK cardinality; group_subject_members has a single FK
     // to subjects so the typed shape is an object, but be defensive.
     const subj = Array.isArray(row.subject) ? row.subject[0] : row.subject;
-    if (!subj || subj.status !== 'active' || subj.subject_type !== 'group_account') continue;
+    if (!subj || subj.status !== 'active' || subj.kind !== 'group_account') continue;
     const role = row.role === 'owner' || row.role === 'admin' ? row.role : undefined;
     items.push({
       id: subj.id,
@@ -353,7 +358,7 @@ meRoutes.post('/family-credential', async (c) => {
   const { data: personal, error: subjectErr } = await supa
     .from('subjects')
     .select('id, display_name')
-    .eq('subject_type', 'user_account')
+    .eq('kind', 'user_account')
     .eq('user_id', userId)
     .eq('status', 'active')
     .maybeSingle();
