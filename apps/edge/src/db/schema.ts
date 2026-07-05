@@ -4206,7 +4206,7 @@ export type Database = {
           current_crew_id: string | null
           direction: string | null
           linked_crew_id: string | null
-          runtime_kind: string | null
+          runtime_location: string | null
           status: string | null
           title: string | null
         }
