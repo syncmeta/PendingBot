@@ -19,6 +19,8 @@ struct MacThreePaneView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var crewStore: CrewStore
     @StateObject private var sessionRunner = CrewSessionRunner()
+    /// 额度中心（侧栏 start;这里观察快照变化做警戒广播）。
+    @ObservedObject private var quotaCenter = QuotaCenter.shared
     /// edge 信箱同步代理（接合 v2 block 3）—— window 级常驻，登录态下对已
     /// 接入 PendingBot 的 crew 跑 5s 拉/推循环。
     @StateObject private var relayAgent = CrewRelayAgent()
@@ -111,6 +113,13 @@ struct MacThreePaneView: View {
             guard !reqs.isEmpty else { return }
             crewStore.wakeupRequests = []
             for req in reqs { sessionRunner.scheduleWakeup(req) }
+        }
+        // 额度快照更新 → 过警戒线(≥85%)往活跃 crew 白板广播（按重置周期去重）。
+        .onChange(of: quotaCenter.claude) { _, snap in
+            sessionRunner.broadcastQuotaWarningIfNeeded(snap)
+        }
+        .onChange(of: quotaCenter.codex) { _, snap in
+            sessionRunner.broadcastQuotaWarningIfNeeded(snap)
         }
         // 去掉 toolbar 底部那条灰色分隔线（详见 WindowSeparatorRemover）。tick 传
         // selectedCrewId —— 切 crew 时借 updateNSView 重设，抢在 SwiftUI 把它重置回去之后。

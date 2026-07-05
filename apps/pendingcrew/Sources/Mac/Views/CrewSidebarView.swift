@@ -271,30 +271,62 @@ struct CrewSidebarView: View {
         .padding(.vertical, 10)
     }
 
-    /// 订阅额度行（两家都拿不到时隐藏）：`C 80%·23% · X 9%·16%`，hover 出
-    /// 完整窗名与重置时刻。90%+ 的窗把整行染橙提醒。
+    /// 订阅额度行（两家都拿不到时隐藏）：claude/codex 各显 5小时窗 + 周窗共
+    /// 四个百分比，**每个数按自己的余量着色**（<60% 绿 / <80% 黄 / <90% 橙 /
+    /// ≥90% 红）。hover 出完整窗名与重置时刻（含 claude 模型分窗）。
     @ViewBuilder
     private var quotaFooterLine: some View {
         let snaps = [quota.claude, quota.codex].compactMap { $0 }
         if !snaps.isEmpty {
-            HStack(spacing: 6) {
-                Image(systemName: "gauge.with.needle").imageScale(.small)
+            HStack(spacing: 8) {
+                Image(systemName: "gauge.with.needle")
+                    .imageScale(.small)
+                    .foregroundStyle(.tertiary)
                 ForEach(snaps, id: \.agent) { s in
-                    Text((s.agent == "claude" ? "Claude " : "Codex ") + s.summary)
+                    HStack(spacing: 4) {
+                        Text(s.agent == "claude" ? "Claude" : "Codex")
+                            .foregroundStyle(.tertiary)
+                        quotaSegment("5h", s.fiveHourWindow)
+                        quotaSegment("周", s.weeklyWindow)
+                    }
                 }
             }
             .font(.caption2)
-            .foregroundStyle(snaps.flatMap(\.windows).contains { $0.usedPercent >= 90 }
-                             ? AnyShapeStyle(.orange) : AnyShapeStyle(.tertiary))
             .lineLimit(1)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 12)
             .padding(.vertical, 4)
             .help(snaps.map { s in
                 "\(s.agent == "claude" ? "Claude Code" : "Codex")：" + s.windows.map { w in
-                    "\(w.label) \(w.usedPercent)%" + (w.resetsAt.map { "（\($0) 重置）" } ?? "")
+                    "\(w.label) 已用 \(w.usedPercent)%" + (w.resetsAt.map { "（\($0) 重置）" } ?? "")
                 }.joined(separator: "；")
             }.joined(separator: "\n"))
+        }
+    }
+
+    /// 一个窗口段：`5h 80%`，百分比按余量着色。窗口缺失（如 codex free 无周窗）
+    /// 显示灰 "–"。
+    @ViewBuilder
+    private func quotaSegment(_ short: String, _ window: AgentQuotaWindow?) -> some View {
+        HStack(spacing: 1) {
+            Text(short).foregroundStyle(.tertiary)
+            if let w = window {
+                Text("\(w.usedPercent)%")
+                    .foregroundStyle(Self.quotaColor(usedPercent: w.usedPercent))
+                    .fontWeight(w.usedPercent >= 90 ? .semibold : .regular)
+            } else {
+                Text("–").foregroundStyle(.quaternary)
+            }
+        }
+    }
+
+    /// 余量配色：已用 <60 绿(充裕) / <80 黄(过半) / <90 橙(将尽) / ≥90 红(告急)。
+    static func quotaColor(usedPercent: Int) -> Color {
+        switch usedPercent {
+        case ..<60: return .green
+        case ..<80: return .yellow
+        case ..<90: return .orange
+        default:    return .red
         }
     }
 
