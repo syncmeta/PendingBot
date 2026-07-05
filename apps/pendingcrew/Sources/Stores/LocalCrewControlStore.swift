@@ -118,6 +118,19 @@ final class LocalCrewControlStore: @unchecked Sendable {
             ts: ISO8601DateFormatter().string(from: Date())))
     }
 
+    /// session 开/关群聊收听（`listen` 工具;#465）。开 = `until`（ISO8601）必给，
+    /// `senders` 可选（nil = 听全部）；关 = `off: true`（until/senders 忽略）。
+    /// 同一 session 重复开 = 覆盖（app 侧 last-write-wins）。
+    func enqueueListen(crewId: String, sessionId: String, until: String?,
+                       senders: [String]?, off: Bool) {
+        guard off || until?.isEmpty == false else { return }
+        enqueue(CrewCommand(
+            id: UUID().uuidString.lowercased(), crewId: crewId, kind: "listen",
+            brief: off ? "off" : "on", runner: nil, isolation: nil, title: nil,
+            sessionId: sessionId, fireAt: until, senders: senders, off: off,
+            ts: ISO8601DateFormatter().string(from: Date())))
+    }
+
     private func enqueue(_ cmd: CrewCommand) {
         guard !cmd.brief.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         guard let data = try? JSONEncoder().encode(cmd) else { return }
@@ -186,5 +199,9 @@ struct CrewCommand: Codable, Equatable {
     var note: String? = nil
     /// crew_message：投递方向 "to_parent" | "to_child"（targetHint 复用 `title` 字段）。
     var direction: String? = nil
+    /// listen：只听这些发送者（"human"/"captain"/session id 或其前缀/显示名）。nil=全部。
+    var senders: [String]? = nil
+    /// listen：true=停止收听（此时 fireAt/senders 忽略）。
+    var off: Bool? = nil
     let ts: String
 }

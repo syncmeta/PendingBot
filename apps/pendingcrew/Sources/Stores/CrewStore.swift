@@ -52,6 +52,9 @@ final class CrewStore: ObservableObject {
     /// `crew_message` 投递后的待唤醒队列（目标 crew 机长）。`MacRootView` 找
     /// 目标机长 run 直投注入（idle 才注,busy 靠下轮白板注入）。
     @Published var crewMessageWakes: [CrewMessageWake] = []
+    /// `listen` 命令排空后的待登记队列（群聊收听;#465）。`MacRootView` 交给
+    /// `CrewSessionRunner.applyListen`（登记 + 白板观察 + 到期自动停）。
+    @Published var listenRequests: [SessionListenRequest] = []
 
     private unowned let appModel: AppModel
 
@@ -321,6 +324,11 @@ final class CrewStore: ObservableObject {
                 wakeupRequests.append(SessionWakeupRequest(
                     id: cmd.id, crewId: cmd.crewId, sessionId: sid,
                     fireAt: fireAt, note: cmd.note ?? ""))
+            case "listen":
+                guard let sid = cmd.sessionId else { break }
+                listenRequests.append(SessionListenRequest(
+                    crewId: cmd.crewId, sessionId: sid,
+                    until: cmd.fireAt, senders: cmd.senders, off: cmd.off ?? false))
             case "crew_message":
                 executeCrewMessage(cmd)
             case "create_child_crew":
@@ -442,6 +450,16 @@ struct CrewMessageWake: Equatable {
     let targetCrewId: String
     let text: String
     let senderLabel: String
+}
+
+/// `listen` 命令排空后的一次收听登记请求（群聊收听;#465）。`off == true` 时
+/// until/senders 无意义（撤销该 session 的收听）。
+struct SessionListenRequest: Equatable {
+    let crewId: String
+    let sessionId: String
+    let until: String?
+    let senders: [String]?
+    let off: Bool
 }
 
 /// `set_profile` 命令排空后的一次待切换请求（session 自切模型/effort）。

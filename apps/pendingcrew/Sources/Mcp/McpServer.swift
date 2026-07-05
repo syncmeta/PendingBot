@@ -124,6 +124,19 @@ final class McpServer {
                     ],
                 ],
                 [
+                    "name": "listen",
+                    "description": "开启「群聊收听」：像人开着微信群一样，在一段时间内，群里**没有 @ 任何人**的新消息（以及 @ 你的消息）会像被 @ 一样注入唤醒你。典型用法：你刚 post_to_crew 问了个问题在等回复、把活交接出去想盯进展、或想留意一段时间内人类/机长的动向。minutes 是收听时长（1–480，默认 30），到期自动停、不另行通知；senders 可选——只听某些发送者（\"human\"=人类、\"captain\"=机长、或某 session id/其前 6 位）；off=true 立即停止收听。你忙碌时不会被打断（消息会在你下一轮的白板注入里出现）。等待期间正常结束你的回合即可——不要空转轮询 read_whiteboard。",
+                    "inputSchema": [
+                        "type": "object",
+                        "properties": [
+                            "minutes": ["type": "number", "description": "收听时长（分钟，1–480）。默认 30。"],
+                            "senders": ["type": "array", "items": ["type": "string"],
+                                        "description": "只听这些发送者：\"human\"/\"captain\"/session id（或前 6 位）。不填=全部。"],
+                            "off": ["type": "boolean", "description": "true=停止收听。"],
+                        ],
+                    ],
+                ],
+                [
                     "name": "set_session_profile",
                     "description": "切换你自己这个 session 的模型/thinking effort（至少给一个）。用于按任务阶段调配：机械收尾活降到轻模型/低 effort 省额度，难题升 effort。claude session 立即生效（等价 /model、/effort）；codex 没有中途切换通道——会在白板收到说明，新任务请让机长用 start_session 带 model/effort 另起。claude effort: low/medium/high/xhigh/max。",
                     "inputSchema": [
@@ -348,6 +361,28 @@ final class McpServer {
             let iso = ISO8601DateFormatter().string(from: fireAt)
             control.enqueueScheduleWakeup(crewId: crewId, sessionId: sessionId, fireAt: iso, note: note)
             return toolResult(id: id, text: "已设定时唤醒：\(iso)。到点会把你的备注注入回本 session；若届时你已退出，会落到群聊白板由机长接手。")
+        case "listen":
+            // 群聊收听（#465）：写一条 listen 命令进控制通道，app 侧 CrewSessionRunner
+            // 登记后把收听期内的广播消息直投注入本 session。到期/off 都是 app 侧语义，
+            // 这里只做参数卫生 + 计算截止时刻。
+            if (args["off"] as? Bool) == true {
+                control.enqueueListen(crewId: crewId, sessionId: sessionId,
+                                      until: nil, senders: nil, off: true)
+                return toolResult(id: id, text: "已停止收听群聊广播。之后只有 @ 你的消息会唤醒你（白板每轮注入照旧）。")
+            }
+            let mins = (args["minutes"] as? Double) ?? 30
+            guard mins >= 1, mins <= 480 else {
+                return toolResult(id: id, text: "ERROR: minutes 需在 1–480 之间。")
+            }
+            let untilDate = Date().addingTimeInterval(mins * 60)
+            let until = ISO8601DateFormatter().string(from: untilDate)
+            let senders = (args["senders"] as? [Any])?
+                .compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            control.enqueueListen(crewId: crewId, sessionId: sessionId, until: until,
+                                  senders: (senders?.isEmpty ?? true) ? nil : senders, off: false)
+            let who = (senders?.isEmpty ?? true) ? "全部成员" : senders!.joined(separator: "、")
+            return toolResult(id: id, text: "已开启群聊收听至 \(until)（听：\(who)）。期间无定向 @ 的新消息和 @ 你的消息会注入唤醒你；到期自动停。现在正常结束你的回合等消息即可，不要空转轮询。")
         case "set_session_profile":
             let model = (args["model"] as? String)
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }

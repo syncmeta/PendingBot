@@ -220,6 +220,100 @@ final class CrewSessionRunner: ObservableObject {
         }
     }
 
+    // MARK: - 群聊收听（listen；#465）
+
+    /// 生效中的收听登记（每 session 至多一条，后写覆盖）。**内存态不持久化** ——
+    /// 本地 run 不跨 app 重启，收听跟着 run 的生命周期走。
+    private var listeners: [CrewListenLogic.Listener] = []
+    /// sessionId → 所属 crewId（决定观察哪块白板）。
+    private var listenerCrew: [String: String] = [:]
+    /// 每 crew 的收听游标（白板 entry id）：只送「开启收听之后」的新消息。
+    private var listenCursors: [String: String] = [:]
+    private var listenWatchers: [AnyCancellable] = []
+
+    /// 应用一条 `listen` 请求（开/关群聊收听）。开 = 覆盖登记 + 游标钉到白板当前
+    /// 末尾（历史消息不回放 —— 白板每轮整块注入本就覆盖）；关 = 撤销登记。
+    /// 到期自动失效（`CrewListenLogic.decide` 按 `until` 判定 + 惰性清理）。
+    func applyListen(_ req: SessionListenRequest) {
+        listeners.removeAll { $0.sessionId == req.sessionId }
+        if req.off {
+            listenerCrew[req.sessionId] = nil
+            return
+        }
+        guard let until = req.until.flatMap(McpServer.parseISO), until > Date() else { return }
+        // 本 crew 还没有别的收听者时才钉游标 —— 已有收听者的游标在跟进中，
+        // 重置会把没送完的窗口吞掉。
+        if !listenerCrew.values.contains(req.crewId) {
+            listenCursors[req.crewId] = LocalWhiteboardStore.shared.list(crewId: req.crewId).last?.id
+        }
+        listeners.append(CrewListenLogic.Listener(
+            sessionId: req.sessionId, until: until, senders: req.senders))
+        listenerCrew[req.sessionId] = req.crewId
+        startListenWatchIfNeeded()
+        // 白板留一行系统回执 —— 人在群里看得见谁在收听（在线感）。
+        let label = runs.first { $0.sessionId == req.sessionId }?.displayName
+            ?? CrewSenderNaming.sessionFallback(req.sessionId)
+        let who = (req.senders?.isEmpty ?? true) ? "" : "，听：\(req.senders!.joined(separator: "、"))"
+        LocalWhiteboardStore.shared.appendSessionMessage(
+            crewId: req.crewId, sessionId: "system",
+            text: "👂 \(label) 开启了群聊收听（至 \(req.until ?? "?")\(who)）——期间群里的广播消息会直接唤醒它。",
+            senderName: "系统")
+    }
+
+    /// 挂上白板观察（幂等）。进程内 append 走 `changes`（带 crewId）；helper 子进程
+    /// 的 `post_to_crew` 写盘走 `directoryChanged`（无 crewId → 扫所有有收听者的
+    /// crew，读增量很廉价）。两路对同一批消息先后触发时，游标推进让第二次成 no-op。
+    private func startListenWatchIfNeeded() {
+        guard listenWatchers.isEmpty else { return }
+        LocalWhiteboardStore.shared.startWatching()
+        LocalWhiteboardStore.shared.changes
+            .sink { [weak self] crewId in
+                Task { @MainActor in self?.deliverListens(crewId: crewId) }
+            }
+            .store(in: &listenWatchers)
+        LocalWhiteboardStore.shared.directoryChanged
+            .sink { [weak self] in
+                Task { @MainActor in
+                    guard let self else { return }
+                    for crewId in Set(self.listenerCrew.values) {
+                        self.deliverListens(crewId: crewId)
+                    }
+                }
+            }
+            .store(in: &listenWatchers)
+    }
+
+    /// 把该 crew 白板游标之后的新消息按收听登记投给空闲的收听 run。
+    /// busy 不打断（决策核心语义）——漏掉的由下一轮白板整块注入兜底。
+    private func deliverListens(crewId: String) {
+        pruneExpiredListeners()
+        let active = listeners.filter { listenerCrew[$0.sessionId] == crewId }
+        guard !active.isEmpty else { return }
+        let entries = LocalWhiteboardStore.shared.entries(
+            crewId: crewId, afterId: listenCursors[crewId])
+        guard let last = entries.last else { return }
+        listenCursors[crewId] = last.id
+        let runStates = runs.filter { $0.status == .running }
+            .map { CrewLocalMentionInjectLogic.RunState(sessionId: $0.sessionId, isBusy: $0.backend.isBusy) }
+        let injections = CrewListenLogic.decide(
+            entries: entries, listeners: active, runs: runStates, now: Date())
+        for inj in injections {
+            runs.first { $0.sessionId == inj.sessionId && $0.status == .running }?.send(inj.text)
+        }
+    }
+
+    /// 惰性清理：过期登记 + 已无收听者的 crew 游标。到期不发通知（像人不再盯群，
+    /// 静默回落到「仅 @ 唤醒」）。
+    private func pruneExpiredListeners() {
+        let now = Date()
+        let expired = listeners.filter { $0.until <= now }.map(\.sessionId)
+        guard !expired.isEmpty else { return }
+        listeners.removeAll { $0.until <= now }
+        for sid in expired { listenerCrew[sid] = nil }
+        let liveCrews = Set(listenerCrew.values)
+        listenCursors = listenCursors.filter { liveCrews.contains($0.key) }
+    }
+
     // MARK: - 成员状态快照（机长 list_sessions 用;#463 组织能力）
 
     /// 把 runs 实时状态落 crew-sessions.json（离线 helper 的 `list_sessions` 读）。

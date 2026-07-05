@@ -114,6 +114,12 @@ struct MacThreePaneView: View {
             crewStore.wakeupRequests = []
             for req in reqs { sessionRunner.scheduleWakeup(req) }
         }
+        // 群聊收听登记（listen；#465）→ runner 登记 + 白板观察 + 广播直投。
+        .onChange(of: crewStore.listenRequests) { _, reqs in
+            guard !reqs.isEmpty else { return }
+            crewStore.listenRequests = []
+            for req in reqs { sessionRunner.applyListen(req) }
+        }
         // 跨 crew 汇报线消息 → 唤醒目标 crew 机长（#463）。idle 才直投注入（busy
         // 的机长下轮白板注入自然看到）；机长没在跑 → **直接拉起**（@ 唤醒语义：
         // 不在跑不能只留白板），开场 prompt 带上这条消息;拉起失败才落白板注记。
