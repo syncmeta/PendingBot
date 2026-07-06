@@ -283,6 +283,7 @@ final class CrewStore: ObservableObject {
         LocalWhiteboardStore.shared.startWatching()
         Task {
             await applyPendingRenames()
+            await applyPendingAttentions()
             await drainPendingCommands()
         }
         renameWatch = LocalWhiteboardStore.shared.directoryChanged
@@ -291,6 +292,7 @@ final class CrewStore: ObservableObject {
                     // 白板有变 → 计数 +1，驱动侧栏最新消息预览重渲染（spec §2）。
                     self?.whiteboardRevision += 1
                     await self?.applyPendingRenames()
+                    await self?.applyPendingAttentions()
                     await self?.drainPendingCommands()
                 }
             }
@@ -302,6 +304,16 @@ final class CrewStore: ObservableObject {
         let renames = LocalCrewControlStore.shared.drainRenames()
         guard !renames.isEmpty else { return }
         for r in renames { LocalCrewStore.shared.setTitle(r.crewId, r.title) }
+        await refreshList()
+    }
+
+    /// 排空 attention 变更（机长 `raise_attention` / `clear_attention`，crew-sidebar-status
+    /// spec §3），逐条落到 `LocalCrewStore.setAttention`（nil = 熄灭）；有变更才刷新列表
+    /// （`crews` 重发布 → 侧栏头像黄点亮/灭）。
+    private func applyPendingAttentions() async {
+        let changes = LocalCrewControlStore.shared.drainAttentions()
+        guard !changes.isEmpty else { return }
+        for ch in changes { LocalCrewStore.shared.setAttention(ch.crewId, reason: ch.reason) }
         await refreshList()
     }
 

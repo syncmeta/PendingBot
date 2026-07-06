@@ -80,6 +80,18 @@ final class LocalCrewStore {
         persistToDisk()
     }
 
+    /// 点亮/熄灭机长 attention 黄点（`raise_attention` / `clear_attention` 经控制
+    /// 通道落地，由 `CrewStore` 调）。`reason == nil`（或 trim 后空）= 熄灭。
+    /// crew 不存在 / 值未变 → 忽略（幂等，避免无谓重写 + 变更信号）。
+    func setAttention(_ id: String, reason: String?) {
+        let trimmed = reason?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = (trimmed?.isEmpty == false) ? trimmed : nil
+        guard var crew = crews[id], crew.attentionReason != normalized else { return }
+        crew.attentionReason = normalized
+        crews[id] = crew
+        persistToDisk()
+    }
+
     /// 新建本地 crew。返回包含自生成的 crewId + captainBotId(本地都用 UUID)。
     ///
     /// captain 当前只接 `systemGenerated(templateName:)` —— reuseBot 走的是
@@ -417,6 +429,9 @@ private struct LocalCrew: Codable, Equatable {
     var processedTaskRequestIds: [String]? = nil
     /// 持久 session 成员（chunk 4 补口）。optional → 旧 JSON 缺键向后兼容。
     var sessionMembers: [LocalSessionMember]? = nil
+    /// 机长点亮的 attention 黄点文案（crew-sidebar-status spec §3）。非 nil = 点亮，
+    /// 侧栏头像右上角显黄点 + 悬浮提示。optional → 旧 JSON 缺键向后兼容。
+    var attentionReason: String? = nil
 
     /// memberwise init —— `createCrew` 等内部构造点用。父边默认空(新建 = 根)。
     init(
@@ -476,6 +491,7 @@ private struct LocalCrew: Codable, Equatable {
         relayPushedThroughId = try c.decodeIfPresent(String.self, forKey: .relayPushedThroughId)
         processedTaskRequestIds = try c.decodeIfPresent([String].self, forKey: .processedTaskRequestIds)
         sessionMembers = try c.decodeIfPresent([LocalSessionMember].self, forKey: .sessionMembers)
+        attentionReason = try c.decodeIfPresent(String.self, forKey: .attentionReason)
     }
 
     var summary: CrewSummary {
@@ -490,7 +506,8 @@ private struct LocalCrew: Codable, Equatable {
             updatedAt: updatedAt,
             parentCrewIds: parentCrewIds,
             captainAgentKind: captainAgentKind,
-            machineId: machineId
+            machineId: machineId,
+            attentionReason: attentionReason
         )
     }
 

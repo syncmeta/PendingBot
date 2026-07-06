@@ -57,4 +57,71 @@ final class LocalCrewStoreTests: XCTestCase {
         s.setTitle("local-does-not-exist", "x")  // 不崩即可
         XCTAssertNil(s.getCrew("local-does-not-exist"))
     }
+
+    // MARK: - Attention（机长黄点持久化）
+
+    func testSetAttentionUpdatesSummary() {
+        let s = LocalCrewStore(baseDirectory: tempDir())
+        let resp = s.createCrew(req(title: "Lisbon"))
+        XCTAssertNil(s.listCrews().first?.attentionReason)
+        s.setAttention(resp.crewId, reason: "需要人类拍板")
+        XCTAssertEqual(s.listCrews().first(where: { $0.id == resp.crewId })?.attentionReason, "需要人类拍板")
+    }
+
+    func testSetAttentionNilClears() {
+        let s = LocalCrewStore(baseDirectory: tempDir())
+        let resp = s.createCrew(req(title: "Lisbon"))
+        s.setAttention(resp.crewId, reason: "有问题")
+        s.setAttention(resp.crewId, reason: nil)
+        XCTAssertNil(s.listCrews().first(where: { $0.id == resp.crewId })?.attentionReason)
+    }
+
+    func testSetAttentionBlankTreatedAsClear() {
+        let s = LocalCrewStore(baseDirectory: tempDir())
+        let resp = s.createCrew(req(title: "Lisbon"))
+        s.setAttention(resp.crewId, reason: "有问题")
+        s.setAttention(resp.crewId, reason: "   ")
+        XCTAssertNil(s.listCrews().first(where: { $0.id == resp.crewId })?.attentionReason)
+    }
+
+    func testSetAttentionPersistsAcrossInstances() {
+        let dir = tempDir()
+        let s = LocalCrewStore(baseDirectory: dir)
+        let resp = s.createCrew(req(title: "Lisbon"))
+        s.setAttention(resp.crewId, reason: "app 重启不丢")
+        XCTAssertEqual(
+            LocalCrewStore(baseDirectory: dir).listCrews()
+                .first(where: { $0.id == resp.crewId })?.attentionReason,
+            "app 重启不丢")
+    }
+
+    func testSetAttentionUnknownCrewIgnored() {
+        let s = LocalCrewStore(baseDirectory: tempDir())
+        s.setAttention("local-does-not-exist", reason: "x")  // 不崩即可
+        XCTAssertNil(s.getCrew("local-does-not-exist"))
+    }
+
+    // 旧 JSON（无 attentionReason 键）向后兼容：能解码，字段兜 nil。
+    func testDecodesLegacyJSONWithoutAttentionReason() throws {
+        let dir = tempDir()
+        let legacy = """
+        {"version":1,"crews":[{
+            "id":"local-legacy",
+            "title":"老 crew",
+            "responsibleSubjectId":"local-byok",
+            "runtimeLocation":"local_host",
+            "createdAt":"2026-01-01T00:00:00Z",
+            "updatedAt":"2026-01-01T00:00:00Z"
+        }]}
+        """
+        try legacy.data(using: .utf8)!.write(to: dir.appendingPathComponent("local-crews.json"))
+        let s = LocalCrewStore(baseDirectory: dir)
+        let summary = s.listCrews().first(where: { $0.id == "local-legacy" })
+        XCTAssertNotNil(summary)                    // 解码没炸（没走 corrupt 备份路径）
+        XCTAssertEqual(summary?.title, "老 crew")
+        XCTAssertNil(summary?.attentionReason)
+        // 老记录也能点亮。
+        s.setAttention("local-legacy", reason: "补个黄点")
+        XCTAssertEqual(s.listCrews().first(where: { $0.id == "local-legacy" })?.attentionReason, "补个黄点")
+    }
 }
