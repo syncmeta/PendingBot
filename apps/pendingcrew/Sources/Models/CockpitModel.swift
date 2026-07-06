@@ -86,6 +86,42 @@ func cockpitStatusBucket(_ raw: String) -> String {
     return "other"
 }
 
+/// 路线账(docs/roadmap.md,第四本账)——期望的时间切片。阶段顺序 = 文件顺序;
+/// 进度不落盘,渲染时由 cockpitPhaseProgress 从现状账派生(spec 2026-07-07)。
+struct CockpitPhaseEntry: Equatable {
+    let relpath: String   // 期望页 relpath,同 CockpitTopic.expectationRelpath 坐标系
+    let note: String      // " — " 后的备注,可空
+}
+
+struct CockpitPhase: Identifiable, Equatable {
+    let name: String      // "## " 后的阶段名
+    let status: String    // planned / doing / done / dropped(人拍板,captain 只提议)
+    let target: String    // 可空,粗粒度时间锚,不做到期检测
+    let goal: String      // 目标: 一句话
+    let entries: [CockpitPhaseEntry]
+    var id: String { name }
+}
+
+struct CockpitRoadmap: Equatable {
+    let preamble: String  // 第一个 "## " 之前的 markdown 原文(主线声明)
+    let phases: [CockpitPhase]
+}
+
+/// 阶段进度 = 条目在现状账里的 status 桶聚合(纯展示,不判 drift)。
+/// 期望页没有现状条 → "unfiled" 桶(未入账,本身是信号)。
+func cockpitPhaseProgress(_ phase: CockpitPhase, topics: [CockpitTopic]) -> [CockpitStats.StatusCount] {
+    var m: [String: Int] = [:]
+    for e in phase.entries {
+        if let t = topics.first(where: { $0.expectationRelpath == e.relpath }) {
+            m[cockpitStatusBucket(t.status), default: 0] += 1
+        } else {
+            m["unfiled", default: 0] += 1
+        }
+    }
+    return ["done", "pending-qa", "partial", "planned", "dropped", "other", "unfiled"]
+        .compactMap { k in m[k].map { CockpitStats.StatusCount(bucket: k, count: $0) } }
+}
+
 /// 一次加载出的三本账数据。
 struct CockpitData {
     var topics: [CockpitTopic]
@@ -94,6 +130,8 @@ struct CockpitData {
     var handbookTree: [HandbookNode]
     /// docs/handbook 绝对目录,用于详情页按需读期望页 markdown。
     var handbookDir: URL
+    /// 路线账(docs/roadmap.md);文件不存在为 nil(路线段渲空态引导)。
+    var roadmap: CockpitRoadmap?
 
     func task(_ id: String) -> CockpitTask? { tasks.first { $0.id == id } }
     var stats: CockpitStats { CockpitStats.from(self) }
@@ -172,6 +210,36 @@ enum CockpitParser {
         return out
     }
 
+    /// 解析 docs/roadmap.md。第一个 "## " 前是 preamble;每节 = 一阶段,
+    /// 字段裸行(status/target/目标),列表项 = 条目(relpath [— 备注])。
+    static func parseRoadmapFile(_ content: String) -> CockpitRoadmap {
+        var preamble: [String] = []
+        var phases: [CockpitPhase] = []
+        var name: String?
+        var status = "", target = "", goal = ""
+        var entries: [CockpitPhaseEntry] = []
+        func flush() {
+            guard let n = name else { return }
+            phases.append(CockpitPhase(name: n, status: status, target: target, goal: goal, entries: entries))
+        }
+        for line in content.components(separatedBy: "\n") {
+            if let h = headingKey(line) {
+                flush()
+                name = h; status = ""; target = ""; goal = ""; entries = []
+                continue
+            }
+            if name == nil { preamble.append(line); continue }
+            if let v = field(line, "status") { status = v }
+            else if let v = field(line, "target") { target = v }
+            else if let v = field(line, "目标") { goal = v }
+            else if let e = entryItem(line) { entries.append(e) }
+        }
+        flush()
+        return CockpitRoadmap(
+            preamble: preamble.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines),
+            phases: phases)
+    }
+
     // MARK: helpers
 
     private static func headingKey(_ line: String) -> String? {
@@ -191,6 +259,20 @@ enum CockpitParser {
 
     private static func isIdSuffix(_ c: Character) -> Bool {
         c.isNumber || (c.isLetter && c.isLowercase)
+    }
+
+    /// "- <relpath>[ — <note>]" → 条目;其他行忽略。
+    private static func entryItem(_ line: String) -> CockpitPhaseEntry? {
+        let t = line.trimmingCharacters(in: .whitespaces)
+        guard t.hasPrefix("- ") else { return nil }
+        let body = String(t.dropFirst(2)).trimmingCharacters(in: .whitespaces)
+        guard !body.isEmpty else { return nil }
+        if let r = body.range(of: " — ") {
+            return CockpitPhaseEntry(
+                relpath: String(body[..<r.lowerBound]).trimmingCharacters(in: .whitespaces),
+                note: String(body[r.upperBound...]).trimmingCharacters(in: .whitespaces))
+        }
+        return CockpitPhaseEntry(relpath: body, note: "")
     }
 
     /// 抽 frontmatter(首个 `---` … `---` 之间)。
@@ -247,10 +329,14 @@ enum CockpitLoader {
             }
         }
 
+        let roadmapFile = crewRoot.appendingPathComponent("docs/roadmap.md")
+        let roadmap = readString(roadmapFile).map(CockpitParser.parseRoadmapFile)
+
         return CockpitData(
             topics: topics, tasks: tasks,
             handbookTree: handbookTree(handbookDir: handbookDir),
-            handbookDir: handbookDir)
+            handbookDir: handbookDir,
+            roadmap: roadmap)
     }
 
     /// 读期望页 markdown(详情页用)。relpath 形如 "pendingcrew/concepts/cockpit"。
