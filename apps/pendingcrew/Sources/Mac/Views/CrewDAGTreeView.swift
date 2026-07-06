@@ -125,7 +125,10 @@ private struct CrewDAGNode: View {
                     }
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(lastMessagePreview)
+                    // 传 whiteboardRevision 进 preview：本身不参与文案，但让本行订阅
+                    // CrewStore 的白板变更计数 —— 白板一变（含 helper 子进程跨进程写）
+                    // 行重渲染、预览重新求值。删掉它预览就退化成「点选才刷新」。
+                    Text(lastMessagePreview(revision: crewStore.whiteboardRevision))
                         .font(Theme.Fonts.footnote)
                         .foregroundStyle(Theme.Palette.inkMuted)
                         .lineLimit(1)
@@ -155,7 +158,9 @@ private struct CrewDAGNode: View {
     }
 
     /// 最近一条白板消息(本地 store);空则"还没有消息"。
-    private var lastMessagePreview: String {
+    /// `revision` = `CrewStore.whiteboardRevision`,值本身不用 —— 只为把「白板变了」
+    /// 变成本视图的依赖,变更时重新同步读 store(spec 2026-07-06 §2 方案 A)。
+    private func lastMessagePreview(revision: Int) -> String {
         let text = LocalWhiteboardStore.shared.list(crewId: crew.id).last?.text ?? ""
         return text.isEmpty ? "还没有消息" : text
     }

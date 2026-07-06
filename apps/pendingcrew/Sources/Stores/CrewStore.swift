@@ -56,6 +56,12 @@ final class CrewStore: ObservableObject {
     /// `CrewSessionRunner.applyListen`（登记 + 白板观察 + 到期自动停）。
     @Published var listenRequests: [SessionListenRequest] = []
 
+    /// 白板目录变更计数（crew-sidebar-status spec §2 方案 A）。`directoryChanged`
+    /// 每 tick +1；侧栏行（`CrewDAGNode`）读一下它，白板一变（本进程 append /
+    /// helper 子进程跨进程写）就触发行重渲染，让同步读 `LocalWhiteboardStore` 的
+    /// `lastMessagePreview` 重新求值 —— 否则最新消息预览只在点选等偶发重渲染时刷新。
+    @Published private(set) var whiteboardRevision: Int = 0
+
     private unowned let appModel: AppModel
 
     /// crew-naming：机长 `rename_crew` 经 `LocalCrewControlStore` 写的待改名，
@@ -282,6 +288,8 @@ final class CrewStore: ObservableObject {
         renameWatch = LocalWhiteboardStore.shared.directoryChanged
             .sink { [weak self] in
                 Task { @MainActor in
+                    // 白板有变 → 计数 +1，驱动侧栏最新消息预览重渲染（spec §2）。
+                    self?.whiteboardRevision += 1
                     await self?.applyPendingRenames()
                     await self?.drainPendingCommands()
                 }
