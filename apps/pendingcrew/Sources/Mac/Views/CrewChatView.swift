@@ -121,7 +121,11 @@ struct CrewChatView: View {
         // 成员列表 + 待审批已搬进 inspector(CrewSessionWindowView 的成员列表模式)。
         // 中栏只留群聊本体。macOS 宿主跟 PendingBot 一样给 composer 用纯 canvas
         // 底色；输入胶囊自身的轻阴影留在 vendored ComposerView 里。
-        timeline
+        //
+        // 标题栏透明 + fullSizeContentView(WindowSeparatorRemover)会让消息滚进
+        // navigationTitle 底下叠字 —— 顶部滚动边缘用 .hard：标题后面是一条不透明底,
+        // 消息滚到顶被它挡住,标题始终可读。
+        timelineWithTopEdge
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(spacing: 0) {
                     errorBar
@@ -142,6 +146,17 @@ struct CrewChatView: View {
         }
         #endif
     }
+
+    #if os(macOS)
+    @ViewBuilder
+    private var timelineWithTopEdge: some View {
+        if #available(macOS 26.0, *) {
+            timeline.scrollEdgeEffectStyle(.hard, for: .top)
+        } else {
+            timeline
+        }
+    }
+    #endif
 
     @ViewBuilder
     private var errorBar: some View {

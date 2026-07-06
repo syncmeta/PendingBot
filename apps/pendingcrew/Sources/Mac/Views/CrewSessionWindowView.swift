@@ -3,8 +3,8 @@ import SwiftUI
 
 /// 右栏（inspector）：两模式合一。
 ///
-/// - **成员列表模式**（`sessionRunner.viewingTerminal == false`，平时）：顶部
-///   ⚓启动 Captain + 「+ 新 session」，下面是待审批区 + crew 成员富列表（session
+/// - **成员列表模式**（`sessionRunner.viewingTerminal == false`，平时）：待审批区 +
+///   crew 成员富列表，「+ 新 session」作为成员列表第一行（session
 ///   行带简介 + 最新一步动作，可点进终端）。
 /// - **终端模式**（`viewingTerminal == true`）：顶部「‹ 成员」返回，下面是原样的
 ///   session 切换条 + 终端 + composer + 内联审批卡。
@@ -184,13 +184,8 @@ struct CrewSessionWindowView: View {
 
     private var memberListMode: some View {
         VStack(spacing: 0) {
-            // 顶部：⚓启动 Captain + 「+ 新 session」。
-            if crewStore.selectedDetail != nil {
-                memberListHeader
-                Divider()
-            }
             // 启动 Captain 失败原因（含「未在 PATH 中找到 codex/claude」「无工作目录」）——
-            // 按钮就在这屏，错误必须在这显，否则点了像没反应。
+            // 点击入口（captain 成员行）就在这屏，错误必须在这显，否则点了像没反应。
             if let err = sessionRunner.lastStartError {
                 Text(err)
                     .font(.caption)
@@ -216,38 +211,6 @@ struct CrewSessionWindowView: View {
                 Text("先在左侧选一个 crew").foregroundStyle(.secondary)
             }
         }
-    }
-
-    private var memberListHeader: some View {
-        HStack(spacing: 6) {
-            if !hasRunningCaptain {
-                Button {
-                    Task { await startCaptain() }
-                } label: {
-                    Text("⚓ 启动 Captain")
-                        .font(.caption.weight(.semibold))
-                }
-                .buttonStyle(.bordered)
-                .tint(.indigo)
-                .controlSize(.small)
-                .disabled(starting)
-                .help("起一个机长 session：读白板、报到、答复待决策")
-            }
-            Spacer()
-            Button {
-                sessionRunner.composeNew()
-                sessionRunner.viewingTerminal = true
-            } label: {
-                Label("新 session", systemImage: "plus")
-                    .font(.caption.weight(.semibold))
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .disabled(starting)
-            .help("起一个新 session（与在跑的并存）")
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
     }
 
     /// 时间线里需要人答的交互卡 —— 滤出来挂待审批区（从中栏搬来）。
@@ -289,13 +252,18 @@ struct CrewSessionWindowView: View {
             Text("成员 \(memberRowItems.count)")
                 .font(Theme.Fonts.caption.weight(.semibold))
                 .foregroundStyle(Theme.Palette.inkMuted)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-            LazyVStack(spacing: 1) {
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+            LazyVStack(spacing: 2) {
+                // 「+ 新 session」占成员列表第一行 —— 起新 session 的常驻入口
+                //（原顶栏按钮撤了；终端模式左条末尾的「+」仍在）。
+                if crewStore.selectedDetail != nil {
+                    newSessionRow
+                }
                 ForEach(memberRowItems) { memberRow($0) }
             }
-            .padding(.horizontal, 6)
-            .padding(.bottom, 8)
+            .padding(.horizontal, 8)
+            .padding(.bottom, 10)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -367,25 +335,52 @@ struct CrewSessionWindowView: View {
         }
     }
 
+    /// 成员列表第一行：起新 session。排版对齐成员行（圆形「+」当头像位）。
+    private var newSessionRow: some View {
+        Button {
+            sessionRunner.composeNew()
+            sessionRunner.viewingTerminal = true
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "plus")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.accent)
+                    .frame(width: 30, height: 30)
+                    .background(Circle().fill(Theme.Palette.accentBg))
+                Text("新 session")
+                    .font(Theme.Fonts.callout)
+                    .foregroundStyle(Theme.Palette.ink)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(starting)
+        .help("起一个新 session（与在跑的并存）")
+    }
+
     /// 成员行的「头像 + 名」基础排版（captain 入口与 human 行共用）。
     private func memberPlainRow(_ sender: GroupBubbleSender) -> some View {
-        HStack(spacing: 8) {
-            CrewAvatarBadges(sender: sender, size: 26)
+        HStack(spacing: 10) {
+            CrewAvatarBadges(sender: sender, size: 30)
             Text(sender.displayName)
                 .font(Theme.Fonts.callout)
                 .foregroundStyle(Theme.Palette.ink)
                 .lineLimit(1)
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
     }
 
     @ViewBuilder
     private func sessionRowContent(sender: GroupBubbleSender, run: CrewSessionRun) -> some View {
         let isSelected = run.runID == sessionRunner.selectedRunId
-        HStack(alignment: .top, spacing: 8) {
-            CrewAvatarBadges(sender: sender, size: 26)
+        HStack(alignment: .top, spacing: 10) {
+            CrewAvatarBadges(sender: sender, size: 30)
             VStack(alignment: .leading, spacing: 2) {
                 // captain 行标题用名字(Captain),不用 taskBrief —— captain 的 taskBrief
                 // 是开场报到 prompt,拿来当标题没意义。worker 仍用首条指令(taskBrief)。
@@ -401,8 +396,8 @@ struct CrewSessionWindowView: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(isSelected ? Theme.Palette.accentBg : .clear)
