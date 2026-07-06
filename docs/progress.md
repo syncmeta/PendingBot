@@ -1,6 +1,12 @@
 # PendingBot / PendingCrew 进度账本 (Progress Ledger)
 
-**最近对账：2026-07-05**（机长组织能力 + 模型/effort/额度三能力 + 批 B/C；其余见 2026-07-04 起；对照实际代码 / 迁移 / git，不是看 task 标记）
+**最近对账：2026-07-06**（crew 侧栏三件套；其余见 2026-07-05 起；对照实际代码 / 迁移 / git，不是看 task 标记）
+
+> **2026-07-06 crew 侧栏三件套 — 机长改名意识 / 最新消息实时 / 头像状态点（`feat/crew-sidebar-status` 4 commit + spec，task #466-470，spec 2026-07-06-crew-sidebar-status-design）**：用户三点反馈全落地，纯本地（Mac PendingCrew），无 edge/DB 改动。
+> - **机长改名意识**：白板每轮注入头部加「本 crew 当前名：X」（`HookEmitter.render` 是 claude PostToolUse hook 与 codex turn 前注入的公共渲染函数，title 从共享 local-crews.json 轻量读，helper 子进程/app 进程同路径，rename 落盘即生效）；crew-captain.zh.md 命名条从「一两次就够别反复改」改为「名字是活的，主题演进随手改；人类起的名字别动」。何时改名完全归机长自主判断（用户定调：不规定时机，只保证它时刻知道当前名 + 有工具）。
+> - **侧栏最新消息实时**：病根是 `CrewDAGNode.lastMessagePreview` 同步读 `LocalWhiteboardStore` 但不订阅变化——只在点选等偶发重渲染时刷新。方案 A：`CrewStore.whiteboardRevision`（`directoryChanged` 每 tick +1），侧栏行读它把白板变更变成 SwiftUI 依赖。
+> - **头像状态点（右上角，红>黄>绿>灰）**：红=任一 session health 异常且存活（hit limit/未登录——crew 自己解决不了）；**黄=机长主动点亮**（新工具 `raise_attention(reason)`/`clear_attention`，走 rename 同款离线文件通道 `<crewId>.crewattention.json` last-write-wins，`LocalCrewStore.attentionReason` 持久化，何时亮/熄由机长判断——用户定调不绑定固定信号）；绿=任一 isWorking；灰=有 session 记录但全闲/退；无记录且无 attention 不画（防闲置 crew 全挂灰点）。聚合是纯函数 `CrewStatusAggregation.dot`；渲染 overlay 10pt 圆点+底色描边，黄/红点 hover 显 reason/health detail；merge 各 run 的 objectWillChange 实时重聚合。
+> - **验证**：新增 31 测（attention 通道/持久化/旧 JSON 兼容/工具门禁/聚合优先级），全量 339 绿 + macOS build 绿。**活体尾巴归 #443**：注入头显示、侧栏消息实时刷、真让机长 raise_attention 看黄点、真跑 session 看绿点/打满额度看红点。
 
 > **2026-07-05 @ 唤醒补全 — 目标没在跑就真拉起（`feat/model-effort-quota` 1 commit，用户反馈「@机长/@session 没在跑不能唤醒,我希望 @ 某个人就要能唤醒它」）**：此前 @ 只对在跑且空闲的 run 直投注入,目标没在跑只剩白板留言。现在三条路都拉真进程：① @机长 无在跑机长 → `startCaptain(wakeText:)` 自动起,开场 prompt 带上那条消息（报到后直接处理）;② @已退成员 → `restartMember` 复用**原 sessionId** 重启（白板读游标/成员登记/白板署名全延续,第一轮接上停摆期间的未读白板——群记忆不断片;agent 终端上下文不恢复是 v1 边界;kind 从成员显示名反推,推不出落回 crew 默认）;③ 跨 crew 汇报线目标机长未在跑 → 从「白板注记」升级为自动拉起,失败才留注记。纯决策 `wakeTargets` 与注入 `decide` 互补（在跑归注入、没在跑归拉起）;顺手修 captainSessionId 解析缺 crewId 过滤（多 crew 各跑机长时可能错拿别群机长）。+5 测,全量 309 绿,iOS Sim 绿。活体验证归 #443。
 >
