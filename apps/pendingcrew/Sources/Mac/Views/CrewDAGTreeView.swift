@@ -55,7 +55,7 @@ struct CrewDAGTreeView: View {
     }
 }
 
-/// 单个 crew 树节点 —— 头像 + 标题,有子时带 disclosure 三角。
+/// 单个 crew 树节点 —— 竖色条 + 标题,有子时带 disclosure 三角。
 private struct CrewDAGNode: View {
     let crew: CrewSummary
     let childMap: [String: [CrewSummary]]
@@ -93,9 +93,9 @@ private struct CrewDAGNode: View {
         }
     }
 
-    /// 会话行样式(对齐 PendingBot `ConversationListRow`):36pt 头像 + 无衬线-16
-    /// 标题 + 最近一条消息 + 相对时间。三角槽**仅在有子时占位**——
-    /// 无子节点头像直接贴左,免左侧空白。
+    /// 会话行样式(对齐 PendingBot `ConversationListRow`):36pt 竖色条(谱系
+    /// 二分色,见 `CrewColorBar`) + 无衬线-16 标题 + 最近一条消息 + 相对时间。
+    /// 三角槽**仅在有子时占位**—— 无子节点色条直接贴左,免左侧空白。
     ///
     /// **不再贴每行「本机/云端」location tag**(#369:侧栏已按 machine 分组,crew
     /// 视觉嵌在所属 machine Section 下,行内派生标签既冗余又把派生列当事实源)。
@@ -113,15 +113,15 @@ private struct CrewDAGNode: View {
                 .padding(.top, 12)
             }
 
-            CrewGroupAvatar(seed: crew.id, size: 36)
-                // 状态点浮在头像右上角（spec §3）：红=异常、黄=机长 attention、
+            CrewColorBar(colors: CrewColorBar.chain(for: crew, crewsById: crewsById))
+                // 状态点浮在色条右上角（spec §3）：红=异常、黄=机长 attention、
                 // 绿=干活中、灰=全闲/退；无 session 且无 attention 不画。
                 .overlay(alignment: .topTrailing) {
                     CrewStatusDotView(
                         attentionReason: crew.attentionReason,
                         runs: sessionRunner.runs.filter { $0.crewId == crew.id }
                     )
-                    .offset(x: 3, y: -3)
+                    .offset(x: 6, y: -5)
                 }
 
             VStack(alignment: .leading, spacing: 4) {
