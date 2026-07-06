@@ -93,14 +93,15 @@ private struct CrewDAGNode: View {
         }
     }
 
-    /// 会话行样式(对齐 PendingBot `ConversationListRow`):36pt 竖色条(谱系
-    /// 二分色,见 `CrewColorBar`) + 无衬线-16 标题 + 最近一条消息 + 相对时间。
-    /// 三角槽**仅在有子时占位**—— 无子节点色条直接贴左,免左侧空白。
+    /// 会话行样式(对齐 PendingBot `ConversationListRow`):细竖色条(谱系
+    /// 二分色,见 `CrewColorBar`) + 无衬线-14 标题 + 最近一条消息 + 相对时间。
+    /// 三角槽**恒占位**(无子节点画透明占位)—— 同层级的色条/标题左缘必须
+    /// 对齐,不能因为某行有子带三角就被推出去。
     ///
     /// **不再贴每行「本机/云端」location tag**(#369:侧栏已按 machine 分组,crew
     /// 视觉嵌在所属 machine Section 下,行内派生标签既冗余又把派生列当事实源)。
     private var row: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: 6) {
             if !expandableChildren.isEmpty {
                 Button { isExpanded.toggle() } label: {
                     Image(systemName: "chevron.right")
@@ -110,7 +111,9 @@ private struct CrewDAGNode: View {
                 }
                 .buttonStyle(.plain)
                 .frame(width: 12)
-                .padding(.top, 12)
+                .padding(.top, 10)
+            } else {
+                Color.clear.frame(width: 12, height: 1)
             }
 
             CrewColorBar(colors: CrewColorBar.chain(for: crew, crewsById: crewsById))
@@ -127,13 +130,13 @@ private struct CrewDAGNode: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(crew.title)
-                        .font(Theme.Fonts.system(size: 16, weight: .semibold))
+                        .font(Theme.Fonts.system(size: 14, weight: .semibold))
                         .foregroundStyle(Theme.Palette.ink)
                         .lineLimit(1)
                     Spacer(minLength: 8)
                     if let when = relativeUpdated {
                         Text(when)
-                            .font(Theme.Fonts.caption)
+                            .font(Theme.Fonts.caption2)
                             .foregroundStyle(Theme.Palette.inkMuted)
                     }
                 }
@@ -142,7 +145,7 @@ private struct CrewDAGNode: View {
                     // CrewStore 的白板变更计数 —— 白板一变（含 helper 子进程跨进程写）
                     // 行重渲染、预览重新求值。删掉它预览就退化成「点选才刷新」。
                     Text(lastMessagePreview(revision: crewStore.whiteboardRevision))
-                        .font(Theme.Fonts.footnote)
+                        .font(Theme.Fonts.caption)
                         .foregroundStyle(Theme.Palette.inkMuted)
                         .lineLimit(1)
                         .truncationMode(.tail)

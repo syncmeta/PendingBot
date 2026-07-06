@@ -10,8 +10,8 @@ import SwiftUI
 struct CrewColorBar: View {
     /// 色链：[0] = 本 crew，依次向上直到根。至少 1 个。
     let colors: [Color]
-    var width: CGFloat = 12
-    var height: CGFloat = 36
+    var width: CGFloat = 5
+    var height: CGFloat = 32
 
     var body: some View {
         VStack(spacing: 0) {
@@ -21,7 +21,7 @@ struct CrewColorBar: View {
             }
         }
         .frame(width: width, height: height)
-        .clipShape(RoundedRectangle(cornerRadius: width / 3, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: width / 2, style: .continuous))
     }
 
     /// 逐段折半，末段吃掉全部余量（与倒数第二段等高），保证总高恰为 height。
