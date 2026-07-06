@@ -372,6 +372,19 @@ meRoutes.post('/family-credential', async (c) => {
     });
   }
 
+  // 头像 seed（users.custom_fields.avatar_seed，缺则回落 user id）——
+  // PendingCrew 把它连同 displayName 存进共享 keychain 家族凭据，
+  // 侧栏身份头像才能与 PendingBot 同字形。
+  const { data: userRow } = await supa
+    .from('users')
+    .select('custom_fields')
+    .eq('id', userId)
+    .maybeSingle();
+  const cf = (userRow?.custom_fields ?? null) as Record<string, unknown> | null;
+  const avatarSeed = typeof cf?.avatar_seed === 'string' && cf.avatar_seed.length > 0
+    ? cf.avatar_seed
+    : userId;
+
   const token = randomToken('pfa');
   const svc = serviceClient(c.env);
   const { error: famErr } = await svc.rpc('issue_family_sso_credential', {
@@ -388,6 +401,7 @@ meRoutes.post('/family-credential', async (c) => {
   return c.json({
     familyCredential: { token, subjectId: personal.id },
     displayName: personal.display_name ?? null,
+    avatarSeed,
   });
 });
 

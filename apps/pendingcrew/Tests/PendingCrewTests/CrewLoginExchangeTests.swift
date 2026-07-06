@@ -8,7 +8,7 @@ final class CrewLoginExchangeTests: XCTestCase {
         let exchange = CrewLoginExchange(
             issueFamily: { token in
                 XCTAssertEqual(token, "jwt-123")
-                return .init(token: "pfa_x", subjectId: "sid", displayName: "阿狸")
+                return .init(token: "pfa_x", subjectId: "sid", displayName: "阿狸", avatarSeed: "seed-1")
             },
             mintGrant: { fam, sid in
                 XCTAssertEqual(fam, "pfa_x"); XCTAssertEqual(sid, "sid")
@@ -22,6 +22,7 @@ final class CrewLoginExchangeTests: XCTestCase {
         XCTAssertEqual(savedGrant, "pdg_ok")
         XCTAssertEqual(savedFamily?.token, "pfa_x")
         XCTAssertEqual(savedFamily?.displayName, "阿狸")
+        XCTAssertEqual(savedFamily?.avatarSeed, "seed-1")
         XCTAssertTrue(teardownCalled, "session 必须在兑换后被清")
     }
 

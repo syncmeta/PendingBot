@@ -34,4 +34,8 @@ struct DeviceLoginPollResponse: Decodable, Equatable {
     let grantKind: String?
     let scopes: [String]?
     let familyCredential: String?
+    /// 批准者的展示名 / 头像 seed —— consume 一拍随凭据下发（旧 edge 无此
+    /// 字段时 decode 不失败），存进家族凭据供侧栏身份区首帧显示真实身份。
+    let displayName: String?
+    let avatarSeed: String?
 }

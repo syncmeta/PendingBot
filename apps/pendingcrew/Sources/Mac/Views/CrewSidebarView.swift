@@ -15,9 +15,12 @@ struct CrewSidebarView: View {
     @State private var showingLogin = false
     /// 折叠起来的机器分组 id 集合（默认全展开）。
     @State private var collapsedMachineIds: Set<String> = []
-    /// 登录账号头像 seed —— 在 footer `.task` 里从家族凭据(共享 keychain)解析一次,
-    /// 不在 render 路径上碰 keychain。见 `identityFooter`。
+    /// 登录账号身份（头像 seed + 显示名兜底）—— 在 footer `.task` 里从家族凭据
+    /// (共享 keychain)解析一次,不在 render 路径上碰 keychain。见 `identityFooter`。
     @State private var identityAvatarSeed: String?
+    /// 家族凭据里的真实显示名 —— subjects 还没拉回来(或拉取失败)时的标题兜底,
+    /// 避免 footer 显示"已登录"占位。generic 凭据(无 displayName)不算。
+    @State private var credentialDisplayName: String?
     @StateObject private var usageMonitor = LocalAgentUsageMonitor()
     @ObservedObject private var quota = QuotaCenter.shared
 
@@ -217,10 +220,14 @@ struct CrewSidebarView: View {
                         Text(identityTitle)
                             .font(.callout.weight(.medium))
                             .lineLimit(1)
-                        Text(identitySubtitle)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                        // 账号类型只在 subject 解析出来后显示 —— 未解析时不渲染,
+                        // 避免标题/副标题双双回落成"已登录"的重复占位。
+                        if let subtitle = identitySubtitle {
+                            Text(subtitle)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
                         agentUsageLine
                     }
                     Spacer(minLength: 4)
@@ -238,12 +245,18 @@ struct CrewSidebarView: View {
                     .menuIndicator(.hidden)
                     .fixedSize()
                 }
-                // 头像 seed 解析放 `.task`(不在 render 路径碰 keychain);subject 解析
+                // 身份解析放 `.task`(不在 render 路径碰 keychain);subject 解析
                 // 出来后 id 变 → 重跑一次拿到稳定回落。家族凭据里的 avatar_seed 与登录
-                // 确认卡同字形,缺则回落 subject id。
+                // 确认卡同字形,缺则回落 subject id;displayName 兜标题(generic 不算)。
+                // subjects 还空着(首拉失败/未跑)就补拉一次 —— 拉成功后 id 变会
+                // 自然重跑本 task,不会循环。
                 .task(id: crewStore.subjects.first?.id) {
-                    identityAvatarSeed = CrewLoginIdentity.current()?.avatarSeed
-                        ?? crewStore.subjects.first?.id
+                    let cred = CrewLoginIdentity.current()
+                    credentialDisplayName = (cred?.isGeneric == false) ? cred?.title : nil
+                    identityAvatarSeed = cred?.avatarSeed ?? crewStore.subjects.first?.id
+                    if crewStore.subjects.isEmpty {
+                        await crewStore.refreshSubjects()
+                    }
                 }
             } else {
                 Button {
@@ -359,15 +372,15 @@ struct CrewSidebarView: View {
     // identity 三件套只在已登录 footer 渲染(未登录 footer 是登录菜单,
     // 自带文案)—— 接合 v2 后不再按 mode 分叉。头像走 `BotAvatar(seed:)`
     // (见 footer),不再用 SF Symbol。
+    // 标题优先级:edge 真实 subject → 家族凭据 displayName → "已登录"最终兜底。
     private var identityTitle: String {
-        crewStore.subjects.first?.displayName ?? "已登录"
+        crewStore.subjects.first?.displayName ?? credentialDisplayName ?? "已登录"
     }
 
-    private var identitySubtitle: String {
-        if let kind = crewStore.subjects.first?.kindEnum {
-            return kind == .groupAccount ? "群账号" : "本人账号"
-        }
-        return "已登录"
+    /// 账号类型副标题;subject 未解析时返回 nil(footer 隐藏该行,不再重复"已登录")。
+    private var identitySubtitle: String? {
+        guard let kind = crewStore.subjects.first?.kindEnum else { return nil }
+        return kind == .groupAccount ? "群账号" : "本人账号"
     }
 
     private func signOut() {

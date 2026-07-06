@@ -229,8 +229,29 @@ deviceLoginRoutes.get('/challenges/:id', async (c) => {
   // log and continue — a missing family credential must never fail a login
   // the device grant already succeeded for.
   let familyCredential: string | null = null;
+  // 批准者的展示名 + 头像 seed —— 随凭据一起下发，PendingCrew 存进共享
+  // keychain 的家族凭据里，侧栏身份区在 /v1/me/subject 拉回来之前就能显示
+  // 真实身份（而不是"已登录"占位 + 错头像）。best-effort，取不到不挡登录。
+  let displayName: string | null = null;
+  let avatarSeed: string | null = null;
   const grantedByUserId = typeof grantRow.granted_by_user_id === 'string' ? grantRow.granted_by_user_id : '';
   if (grantedByUserId) {
+    // 链式多 .eq 超出本文件 UntypedDb 的窄类型 —— 这两条读走带类型的 client。
+    const typed = serviceClient(c.env);
+    const [{ data: personal }, { data: userRow }] = await Promise.all([
+      typed.from('subjects')
+        .select('display_name')
+        .eq('kind', 'user_account')
+        .eq('user_id', grantedByUserId)
+        .eq('status', 'active')
+        .maybeSingle(),
+      typed.from('users').select('custom_fields').eq('id', grantedByUserId).maybeSingle(),
+    ]);
+    displayName = typeof personal?.display_name === 'string' ? personal.display_name : null;
+    const cf = (userRow?.custom_fields ?? null) as Record<string, unknown> | null;
+    avatarSeed = typeof cf?.avatar_seed === 'string' && cf.avatar_seed.length > 0
+      ? cf.avatar_seed
+      : grantedByUserId;
     const deviceName = typeof grantRow.device_name === 'string' && grantRow.device_name.length > 0
       ? grantRow.device_name
       : 'Mac';
@@ -260,6 +281,8 @@ deviceLoginRoutes.get('/challenges/:id', async (c) => {
     grantKind: typeof grantRow.grant_kind === 'string' ? grantRow.grant_kind : null,
     scopes,
     familyCredential,
+    displayName,
+    avatarSeed,
   });
 });
 

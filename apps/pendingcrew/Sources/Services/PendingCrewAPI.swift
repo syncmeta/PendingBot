@@ -681,6 +681,9 @@ struct CrewFamilyCredentialResponse: Decodable {
     let familyCredential: Cred
     /// 绑定 subject 的显示名（`personal.display_name`），可选。
     let displayName: String?
+    /// 用户头像 seed（`users.custom_fields.avatar_seed`，缺则 edge 回落 user id），
+    /// 可选：旧 edge 不回此字段时 decode 不失败。
+    let avatarSeed: String?
 }
 
 // MARK: - Error envelope (private to PendingCrewAPI)
