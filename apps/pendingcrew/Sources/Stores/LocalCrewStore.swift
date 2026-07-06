@@ -327,6 +327,25 @@ final class LocalCrewStore {
         persistToDisk()
     }
 
+    // MARK: - 轻量跨进程只读
+
+    /// 按 crewId 读当前 title —— 不建 `@MainActor` store 实例，直接解码
+    /// `local-crews.json`。给 `HookEmitter`（每轮注入白板时带「本 crew 当前名」）
+    /// 用：它既跑在 app 进程（codex whiteboardProvider）也跑在 helper 子进程
+    /// （claude PostToolUse hook），后者拿不到 MainActor 单例，只能读共享文件。
+    /// `whiteboardDirectory` = 白板目录（helper 的 `--dir`），`local-crews.json`
+    /// 固定在其父目录（`Application Support/PendingCrew/`，见
+    /// `LocalWhiteboardStore.defaultDirectory` 布局）。缺文件/解码失败/查无此
+    /// crew → nil。
+    nonisolated static func title(ofCrew crewId: String, whiteboardDirectory: URL) -> String? {
+        let file = whiteboardDirectory.deletingLastPathComponent()
+            .appendingPathComponent("local-crews.json")
+        guard let data = try? Data(contentsOf: file),
+              let payload = try? JSONDecoder().decode(LocalCrewFile.self, from: data)
+        else { return nil }
+        return payload.crews.first { $0.id == crewId }?.title
+    }
+
     // MARK: - Persistence
 
     private func loadFromDisk() {
