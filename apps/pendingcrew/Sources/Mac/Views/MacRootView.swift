@@ -35,6 +35,7 @@ struct MacThreePaneView: View {
                 // 范围选择器(切 crew 即切驾驶舱范围)。退出在驾驶舱头部。
                 NavigationSplitView(columnVisibility: $columnVisibility) {
                     CrewSidebarView()
+                        .environmentObject(sessionRunner) // 侧栏头像状态点要看 runs
                         .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 340)
                 } detail: {
                     CockpitView(runner: sessionRunner)
@@ -47,6 +48,7 @@ struct MacThreePaneView: View {
                 // 「成员列表 ↔ 终端」间切（viewingTerminal），不再需要单独开关收/放一栏。
                 NavigationSplitView(columnVisibility: $columnVisibility) {
                     CrewSidebarView()
+                        .environmentObject(sessionRunner) // 侧栏头像状态点要看 runs
                         .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 340)
                 } content: {
                     CrewCenterView()

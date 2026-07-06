@@ -60,6 +60,56 @@ final class LocalCrewControlStore: @unchecked Sendable {
         return out
     }
 
+    // MARK: - Attention（机长 raise_attention / clear_attention → 侧栏黄点）
+    //
+    // 与 rename 同款 last-write-wins 单文件：`<crewId>.crewattention.json` =
+    // `CrewAttentionChange`（reason 非 nil = 点亮，nil = 熄灭）。同 tick 先 raise
+    // 后 clear 只落最后一次 —— app 侧 drain 时直接应用最终态即可。
+
+    /// 点亮 attention（helper 侧：`raise_attention` 工具）。reason 一句话说明为什么
+    /// 需要人类注意；空（trim 后）忽略，不落盘。
+    func requestAttention(crewId: String, reason: String) {
+        let trimmed = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        writeAttention(crewId: crewId, reason: trimmed)
+    }
+
+    /// 熄灭 attention（helper 侧：`clear_attention` 工具）。
+    func requestClearAttention(crewId: String) {
+        writeAttention(crewId: crewId, reason: nil)
+    }
+
+    /// 偷看某 crew 的待应用 attention 变更（不删）。无 → nil。
+    func pendingAttention(crewId: String) -> CrewAttentionChange? {
+        guard let data = try? Data(contentsOf: attentionFileURL(crewId)) else { return nil }
+        return try? JSONDecoder().decode(CrewAttentionChange.self, from: data)
+    }
+
+    /// 排空全部待应用 attention 变更（目录监听 tick 调）：返回 `(crewId, reason)`
+    /// 列表并删除对应文件。`reason == nil` = 熄灭。落地由调用方做
+    /// （`LocalCrewStore.setAttention` + 刷新）。
+    func drainAttentions() -> [(crewId: String, reason: String?)] {
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: nil) else { return [] }
+        var out: [(crewId: String, reason: String?)] = []
+        for url in files where url.lastPathComponent.hasSuffix(Self.attentionSuffix) {
+            let file = url.lastPathComponent
+            let crewId = String(file.dropLast(Self.attentionSuffix.count))
+            guard !crewId.isEmpty,
+                  let data = try? Data(contentsOf: url),
+                  let change = try? JSONDecoder().decode(CrewAttentionChange.self, from: data) else { continue }
+            out.append((crewId, change.reason))
+            try? FileManager.default.removeItem(at: url)
+        }
+        return out
+    }
+
+    private func writeAttention(crewId: String, reason: String?) {
+        let change = CrewAttentionChange(reason: reason, ts: ISO8601DateFormatter().string(from: Date()))
+        guard let data = try? JSONEncoder().encode(change) else { return }
+        try? data.write(to: attentionFileURL(crewId), options: .atomic)
+    }
+
     // MARK: - Command queue（helper 侧：start_session / create_child_crew）
     //
     // rename 是 last-write-wins 单文件；起 session / 建子 crew 可重复，用队列：
@@ -159,9 +209,15 @@ final class LocalCrewControlStore: @unchecked Sendable {
 
     private static let suffix = ".crewmeta.json"
 
+    private static let attentionSuffix = ".crewattention.json"
+
     private func fileURL(_ crewId: String) -> URL {
         // crewId 是受控本地 id（"local-"+uuid，无路径分隔符/点），直接当文件名安全。
         directory.appendingPathComponent("\(crewId)\(Self.suffix)")
+    }
+
+    private func attentionFileURL(_ crewId: String) -> URL {
+        directory.appendingPathComponent("\(crewId)\(Self.attentionSuffix)")
     }
 
     private func load(_ crewId: String) -> CrewMetaChange? {
@@ -173,6 +229,13 @@ final class LocalCrewControlStore: @unchecked Sendable {
 /// 一条待落地的 crew 元数据变更（目前只有改名）。`ts` = 写入时间（ISO8601），调试用。
 struct CrewMetaChange: Codable, Equatable {
     let title: String
+    let ts: String
+}
+
+/// 一条待落地的 attention 变更（机长黄点）。`reason` 非 nil = 点亮（悬浮提示文案），
+/// nil = 熄灭。`ts` = 写入时间（ISO8601），调试用。
+struct CrewAttentionChange: Codable, Equatable {
+    let reason: String?
     let ts: String
 }
 

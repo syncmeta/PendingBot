@@ -90,6 +90,69 @@ final class LocalCrewControlStoreTests: XCTestCase {
         XCTAssertTrue(s.drainCommands().isEmpty)
     }
 
+    // MARK: - Attention（raise_attention / clear_attention → 侧栏黄点）
+
+    func testRequestAttentionThenPeek() {
+        let s = LocalCrewControlStore(directory: tempDir())
+        s.requestAttention(crewId: "local-abc", reason: "需要人类拍板部署时机")
+        XCTAssertEqual(s.pendingAttention(crewId: "local-abc")?.reason, "需要人类拍板部署时机")
+    }
+
+    func testRequestAttentionTrimsAndRejectsEmpty() {
+        let s = LocalCrewControlStore(directory: tempDir())
+        s.requestAttention(crewId: "c", reason: "  额度到顶了  ")
+        XCTAssertEqual(s.pendingAttention(crewId: "c")?.reason, "额度到顶了")
+        s.requestAttention(crewId: "blank", reason: "   \n  ")
+        XCTAssertNil(s.pendingAttention(crewId: "blank"))
+    }
+
+    func testClearAttentionWritesNilReason() {
+        let s = LocalCrewControlStore(directory: tempDir())
+        s.requestClearAttention(crewId: "c")
+        let pending = s.pendingAttention(crewId: "c")
+        XCTAssertNotNil(pending)       // clear 也是一条待应用变更
+        XCTAssertNil(pending?.reason)  // reason nil = 熄灭
+    }
+
+    func testDrainAttentionsReturnsAndDeletes() {
+        let s = LocalCrewControlStore(directory: tempDir())
+        s.requestAttention(crewId: "local-abc", reason: "卡在权限上")
+        let drained = s.drainAttentions()
+        XCTAssertEqual(drained.count, 1)
+        XCTAssertEqual(drained[0].crewId, "local-abc")
+        XCTAssertEqual(drained[0].reason, "卡在权限上")
+        // 排空后文件已删 —— 再 drain / peek 为空。
+        XCTAssertNil(s.pendingAttention(crewId: "local-abc"))
+        XCTAssertTrue(s.drainAttentions().isEmpty)
+    }
+
+    // raise 后 clear：last-write-wins 只留最后的熄灭态。
+    func testAttentionLastWriteWinsRaiseThenClear() {
+        let s = LocalCrewControlStore(directory: tempDir())
+        s.requestAttention(crewId: "c", reason: "有问题")
+        s.requestClearAttention(crewId: "c")
+        let drained = s.drainAttentions()
+        XCTAssertEqual(drained.count, 1)
+        XCTAssertNil(drained[0].reason)
+    }
+
+    func testAttentionAndRenameDoNotInterfere() {
+        let s = LocalCrewControlStore(directory: tempDir())
+        s.requestRename(crewId: "c", name: "起个名")
+        s.requestAttention(crewId: "c", reason: "要人看")
+        // drainAttentions 只拿 attention,不碰 rename;反之亦然。
+        XCTAssertEqual(s.drainAttentions().count, 1)
+        XCTAssertEqual(s.pendingRename(crewId: "c"), "起个名")
+        XCTAssertEqual(s.drainRenames().count, 1)
+        XCTAssertTrue(s.drainAttentions().isEmpty)
+    }
+
+    func testAttentionPersistsAcrossInstances() {
+        let dir = tempDir()
+        LocalCrewControlStore(directory: dir).requestAttention(crewId: "c", reason: "持久")
+        XCTAssertEqual(LocalCrewControlStore(directory: dir).pendingAttention(crewId: "c")?.reason, "持久")
+    }
+
     func testCommandsAndRenamesDoNotInterfere() {
         let s = LocalCrewControlStore(directory: tempDir())
         s.requestRename(crewId: "c", name: "起个名")

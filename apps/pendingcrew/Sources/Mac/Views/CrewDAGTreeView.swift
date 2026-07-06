@@ -1,4 +1,5 @@
 #if os(macOS)
+import Combine
 import SwiftUI
 
 /// 左栏的本地 crew **DAG 折叠树**。
@@ -63,6 +64,9 @@ private struct CrewDAGNode: View {
     let ancestors: Set<String>
 
     @EnvironmentObject private var crewStore: CrewStore
+    /// session 状态源（isWorking/health/退出）—— 状态点聚合用。由 `MacRootView`
+    /// 注入 sidebar（与中/右栏同一实例，才看得到同一批 run）。
+    @EnvironmentObject private var sessionRunner: CrewSessionRunner
     @State private var isExpanded = false
 
     private var children: [CrewSummary] { childMap[crew.id] ?? [] }
@@ -110,6 +114,15 @@ private struct CrewDAGNode: View {
             }
 
             CrewGroupAvatar(seed: crew.id, size: 36)
+                // 状态点浮在头像右上角（spec §3）：红=异常、黄=机长 attention、
+                // 绿=干活中、灰=全闲/退；无 session 且无 attention 不画。
+                .overlay(alignment: .topTrailing) {
+                    CrewStatusDotView(
+                        attentionReason: crew.attentionReason,
+                        runs: sessionRunner.runs.filter { $0.crewId == crew.id }
+                    )
+                    .offset(x: 3, y: -3)
+                }
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -125,7 +138,10 @@ private struct CrewDAGNode: View {
                     }
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(lastMessagePreview)
+                    // 传 whiteboardRevision 进 preview：本身不参与文案，但让本行订阅
+                    // CrewStore 的白板变更计数 —— 白板一变（含 helper 子进程跨进程写）
+                    // 行重渲染、预览重新求值。删掉它预览就退化成「点选才刷新」。
+                    Text(lastMessagePreview(revision: crewStore.whiteboardRevision))
                         .font(Theme.Fonts.footnote)
                         .foregroundStyle(Theme.Palette.inkMuted)
                         .lineLimit(1)
@@ -155,7 +171,9 @@ private struct CrewDAGNode: View {
     }
 
     /// 最近一条白板消息(本地 store);空则"还没有消息"。
-    private var lastMessagePreview: String {
+    /// `revision` = `CrewStore.whiteboardRevision`,值本身不用 —— 只为把「白板变了」
+    /// 变成本视图的依赖,变更时重新同步读 store(spec 2026-07-06 §2 方案 A)。
+    private func lastMessagePreview(revision: Int) -> String {
         let text = LocalWhiteboardStore.shared.list(crewId: crew.id).last?.text ?? ""
         return text.isEmpty ? "还没有消息" : text
     }
@@ -164,6 +182,73 @@ private struct CrewDAGNode: View {
     private var relativeUpdated: String? {
         guard let date = ISO8601DateFormatter().date(from: crew.updatedAt) else { return nil }
         return date.formatted(.relative(presentation: .numeric))
+    }
+}
+
+/// 头像右上角的 crew 状态点。聚合逻辑在 `CrewStatusAggregation`（纯函数，单测
+/// 覆盖优先级），这里只负责取信号 + 画点。
+///
+/// **嵌套 ObservableObject 观察**：`run.isWorking` / `run.health` / `run.status`
+/// 是各 run 自己的 `@Published` —— 父视图观察 `CrewSessionRunner` 看不到 run 内
+/// 部变更（同 `SessionBarItemView` 的问题）。这里 merge 所有 run 的
+/// `objectWillChange` 撞一下本视图的 `@State revision`，任一 run 状态变化即重
+/// 渲染重新聚合。runs 列表本身增删由父视图（观察 runner.runs）驱动重建。
+private struct CrewStatusDotView: View {
+    let attentionReason: String?
+    let runs: [CrewSessionRun]
+
+    @State private var revision = 0
+
+    var body: some View {
+        Group {
+            if let color = dotColor {
+                ZStack {
+                    // 2pt 背景色描边 —— 让点从头像盘上浮出（点 10pt + 描边圈 14pt）。
+                    Circle()
+                        .fill(Theme.Palette.canvas)
+                        .frame(width: 14, height: 14)
+                    Circle()
+                        .fill(fill(color))
+                        .frame(width: 10, height: 10)
+                }
+                .help(helpText(color) ?? "")
+            }
+        }
+        .onReceive(Publishers.MergeMany(runs.map(\.objectWillChange))) { _ in
+            revision &+= 1
+        }
+    }
+
+    private var dotColor: CrewStatusDotColor? {
+        _ = revision // 把 revision 变成 body 依赖：run 内部状态一变即重新聚合。
+        return CrewStatusAggregation.dot(
+            sessions: runs.map {
+                CrewSessionStatusSignal(
+                    isAlive: $0.status == .running,
+                    isWorking: $0.isWorking,
+                    hasHealthIssue: $0.health != nil)
+            },
+            attentionReason: attentionReason)
+    }
+
+    /// 配色对齐右栏切换条状态点（`SessionBarItemView`）：系统语义色。
+    private func fill(_ color: CrewStatusDotColor) -> Color {
+        switch color {
+        case .red: return .red
+        case .yellow: return .yellow
+        case .green: return .green
+        case .gray: return .gray
+        }
+    }
+
+    /// 悬浮提示：黄 = 机长的 attention reason；红 = 首个异常 session 的 health
+    /// detail（实现顺手，spec 允许）。绿/灰不带。
+    private func helpText(_ color: CrewStatusDotColor) -> String? {
+        switch color {
+        case .yellow: return attentionReason
+        case .red: return runs.first(where: { $0.health != nil && $0.status == .running })?.health?.detail
+        case .green, .gray: return nil
+        }
     }
 }
 #endif

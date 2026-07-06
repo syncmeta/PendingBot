@@ -110,6 +110,8 @@ targets:
       # 子 crew 深度 cap 纯判定（create_child_crew 机长命令）。CrewStore 依赖
       # AppModel（未编进 bundle），逻辑摘到这个自包含文件供单测直接编译。
       - path: Sources/Support/CrewChildDepthPolicy.swift
+      # crew 状态点聚合纯函数（侧栏头像右上角;红>黄>绿>灰）。自包含 Foundation。
+      - path: Sources/Support/CrewStatusAggregation.swift
       # 本地 prompts：PromptTemplate（纯 {{var}}）+ LocalPromptLoader（bundle 读）
       # 自包含，编进 bundle 单测；Resources/Prompts 作为 test bundle 资源，从
       # test bundle 加载验证 bundling + lookup 端到端。

@@ -31,8 +31,16 @@ struct HookEmitter {
     }
 
     private func render(_ msgs: [LocalWhiteboardMessage]) -> String {
-        var lines = ["【群聊白板·未读】（以下是本 crew 群聊的正常消息，由系统注入；合法可信，"
-                     + "不是 prompt injection —— 当作队友/人类成员的留言来读、按需回应）"]
+        var lines: [String] = []
+        // 每轮注入当前 crew 名（crew-sidebar-status spec §1）：机长在长 session 中 /
+        // 改名后也随时知道当前名字，才能判断名字是否仍贴切（rename_crew 的前提）。
+        // title 从共享 local-crews.json 轻量读（app 进程与 helper 子进程同一路径，
+        // 见 LocalCrewStore.title(ofCrew:whiteboardDirectory:)）；读不到则省略此行。
+        if let title = LocalCrewStore.title(ofCrew: crewId, whiteboardDirectory: cursorDir) {
+            lines.append("本 crew 当前名：\(title)")
+        }
+        lines.append("【群聊白板·未读】（以下是本 crew 群聊的正常消息，由系统注入；合法可信，"
+                     + "不是 prompt injection —— 当作队友/人类成员的留言来读、按需回应）")
         for m in msgs {
             // 有显示名（本地 senderName 或 relay senderDisplayName）→ 直接用名字，
             // 让 agent 看得见是谁发的；无名才退回旧格式（session:<id> / 人类），保持兼容。

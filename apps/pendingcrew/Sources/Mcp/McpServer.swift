@@ -173,6 +173,22 @@ final class McpServer {
                     ],
                 ])
                 tools.append([
+                    "name": "raise_attention",
+                    "description": "（机长专用）点亮侧栏本 crew 头像上的黄色提醒点，提示人类来看。用于：有事需要人类决策、或遇到你自己解决不了的问题。reason 一句话说清为什么需要人类注意——会作为黄点的悬浮提示展示给人类。何时点亮由你自主判断；黄点是打扰人类的信号，别滥用。事情解决或人类已回复不再需要时，记得用 clear_attention 熄灭。",
+                    "inputSchema": [
+                        "type": "object",
+                        "properties": [
+                            "reason": ["type": "string", "description": "一句话：为什么需要人类注意（待决策的事 / 解决不了的问题）。"],
+                        ],
+                        "required": ["reason"],
+                    ],
+                ])
+                tools.append([
+                    "name": "clear_attention",
+                    "description": "（机长专用）熄灭侧栏本 crew 头像上的黄色提醒点。事情解决、或人类已回复不再需要关注时调用。",
+                    "inputSchema": ["type": "object", "properties": [String: Any]()],
+                ])
+                tools.append([
                     "name": "start_session",
                     "description": "（机长专用）在当前 crew 里起一个 worker session 去干一件明确的编码任务。brief 写清要干什么。runner 默认随本 crew（不填即可），可填 \"claude\"/\"codex\" 覆盖。isolation 默认 false（与你共享 crew 目录）；只有当这件事会大改文件、想隔离到独立 worktree 时才传 true。model/effort 可选：按任务难度配置——简单机械活给低 effort/轻模型省额度，难活给高 effort；不填用该 CLI 默认。起完 worker 会自己报到，你在群聊看得到。",
                     "inputSchema": [
@@ -312,6 +328,24 @@ final class McpServer {
             }
             control.requestRename(crewId: crewId, name: name)
             return toolResult(id: id, text: "已把 crew 改名为「\(name)」。")
+        case "raise_attention":
+            // 机长专用（crew-sidebar-status §3）：写 attention 变更进控制通道；app 侧
+            // CrewStore 排空落地到 LocalCrewStore.setAttention → 侧栏头像黄点点亮。
+            guard isCaptain else {
+                return toolResult(id: id, text: "ERROR: 仅机长可用")
+            }
+            let reason = ((args["reason"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !reason.isEmpty else {
+                return toolResult(id: id, text: "ERROR: reason 不能为空 —— 一句话说明为什么需要人类注意。")
+            }
+            control.requestAttention(crewId: crewId, reason: reason)
+            return toolResult(id: id, text: "已点亮本 crew 的黄色提醒点：\(reason)。事了记得 clear_attention 熄灭。")
+        case "clear_attention":
+            guard isCaptain else {
+                return toolResult(id: id, text: "ERROR: 仅机长可用")
+            }
+            control.requestClearAttention(crewId: crewId)
+            return toolResult(id: id, text: "已熄灭本 crew 的黄色提醒点。")
         case "start_session":
             guard isCaptain else { return toolResult(id: id, text: "ERROR: 仅机长可用") }
             let brief = ((args["brief"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)

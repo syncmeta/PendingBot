@@ -30,6 +30,10 @@ struct CrewSummary: Decodable, Identifiable, Equatable, Hashable {
     /// 侧栏「按机器分组」的分组键。
     let machineId: String?
 
+    /// 机长点亮的 attention 黄点文案（非 nil = 侧栏头像右上角显黄点，值为悬浮
+    /// 提示）。**纯本地概念** —— `LocalCrewStore` 透传;edge 不下发 → 缺键兜 nil。
+    let attentionReason: String?
+
     /// memberwise init —— `LocalCrewStore.summary` 等本地构造点用。
     init(
         id: String,
@@ -42,7 +46,8 @@ struct CrewSummary: Decodable, Identifiable, Equatable, Hashable {
         updatedAt: String,
         parentCrewIds: [String] = [],
         captainAgentKind: String? = nil,
-        machineId: String? = nil
+        machineId: String? = nil,
+        attentionReason: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -55,6 +60,7 @@ struct CrewSummary: Decodable, Identifiable, Equatable, Hashable {
         self.parentCrewIds = parentCrewIds
         self.captainAgentKind = captainAgentKind
         self.machineId = machineId
+        self.attentionReason = attentionReason
     }
 
     /// 显式 decoder —— edge `GET /v1/crews` 不下发 `parentCrewIds` / `captainAgentKind`,缺键兜底。
@@ -71,12 +77,13 @@ struct CrewSummary: Decodable, Identifiable, Equatable, Hashable {
         parentCrewIds = try c.decodeIfPresent([String].self, forKey: .parentCrewIds) ?? []
         captainAgentKind = try c.decodeIfPresent(String.self, forKey: .captainAgentKind)
         machineId = try c.decodeIfPresent(String.self, forKey: .machineId)
+        attentionReason = try c.decodeIfPresent(String.self, forKey: .attentionReason)
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, title, responsibleSubjectId, runtimeLocation
         case captainBotId, status, createdAt, updatedAt, parentCrewIds
-        case captainAgentKind, machineId
+        case captainAgentKind, machineId, attentionReason
     }
 
     enum RuntimeLocation: String {

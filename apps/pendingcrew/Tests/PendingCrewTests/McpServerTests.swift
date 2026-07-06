@@ -248,4 +248,60 @@ final class McpServerTests: XCTestCase {
         _ = callRenameCrew(s, name: "鉴权   重构")
         XCTAssertEqual(s.control.pendingRename(crewId: "c"), "鉴权 重构")
     }
+
+    // MARK: - raise_attention / clear_attention（机长专用，crew-sidebar-status）
+
+    private func callTool(_ s: McpServer, name: String, argsJSON: String = "{}") -> String {
+        s.handleLine("""
+        {"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"\(name)","arguments":\(argsJSON)}}
+        """) ?? ""
+    }
+
+    func testNonCaptainToolsListLacksAttentionTools() {
+        let r = server(tempDir()).handleLine(#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#)!
+        XCTAssertFalse(r.contains("raise_attention"))
+        XCTAssertFalse(r.contains("clear_attention"))
+    }
+
+    func testCaptainToolsListHasAttentionTools() {
+        let r = server(tempDir(), isCaptain: true).handleLine(#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#)!
+        XCTAssertTrue(r.contains("raise_attention"))
+        XCTAssertTrue(r.contains("clear_attention"))
+    }
+
+    func testNonCaptainRaiseAttentionRejected() {
+        let s = server(tempDir())
+        XCTAssertTrue(callTool(s, name: "raise_attention", argsJSON: #"{"reason":"要人看"}"#).contains("仅机长可用"))
+        XCTAssertNil(s.control.pendingAttention(crewId: "c"))
+    }
+
+    func testNonCaptainClearAttentionRejected() {
+        let s = server(tempDir())
+        XCTAssertTrue(callTool(s, name: "clear_attention").contains("仅机长可用"))
+        XCTAssertNil(s.control.pendingAttention(crewId: "c"))
+    }
+
+    func testCaptainRaiseAttentionWritesControl() {
+        let s = server(tempDir(), isCaptain: true)
+        let r = callTool(s, name: "raise_attention", argsJSON: #"{"reason":"需要人类拍板部署时机"}"#)
+        XCTAssertTrue(r.contains("已点亮"))
+        XCTAssertEqual(s.control.pendingAttention(crewId: "c")?.reason, "需要人类拍板部署时机")
+    }
+
+    func testRaiseAttentionEmptyReasonRejected() {
+        let s = server(tempDir(), isCaptain: true)
+        XCTAssertTrue(callTool(s, name: "raise_attention", argsJSON: #"{"reason":"   "}"#).contains("reason 不能为空"))
+        XCTAssertNil(s.control.pendingAttention(crewId: "c"))
+    }
+
+    func testCaptainClearAttentionWritesControl() {
+        let s = server(tempDir(), isCaptain: true)
+        _ = callTool(s, name: "raise_attention", argsJSON: #"{"reason":"有问题"}"#)
+        let r = callTool(s, name: "clear_attention")
+        XCTAssertTrue(r.contains("已熄灭"))
+        // last-write-wins：留下的是熄灭态（reason nil）。
+        let pending = s.control.pendingAttention(crewId: "c")
+        XCTAssertNotNil(pending)
+        XCTAssertNil(pending?.reason)
+    }
 }
