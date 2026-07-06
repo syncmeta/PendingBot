@@ -79,10 +79,10 @@ status: partial
 task: 20260626-tl(task 账本已落) / 20260626-cp(驾驶舱待建)
 
 ## concepts/cockpit
-status: planned
-现状: 规划——驾驶舱(对账的呈现 + 控制面、看板半边渲染两本 + task、控制半边 captain 看差生 session、per-crew 沿 DAG 子树过滤视图)模型已拍定;dashboard / 渲染 / per-crew 过滤切片 / 控制半边生 session 编排均未实现;crew 父子 DAG 已有但「沿子树聚合成驾驶舱」整个未做。
-证据: 无落地证据(模型已拍定,MVP 设想成文) —
-task: 20260626-cp
+status: partial, pending-qa
+现状: dashboard / 渲染 / per-crew 过滤切片 / 控制半边生 session 编排代码已落(见 async-delegation);crew 父子 DAG 已有,「沿子树聚合成驾驶舱」的深递归仍是尾巴。路线段(第四本账 docs/roadmap.md:parser + 阶段进度派生 + 驾驶舱第五分段「路线」渲染)已落,`docs/roadmap.md` 首版内容 + 世界观 prompt roadmap 纪律小节 + 本 handbook 回写随之补齐;真机 GUI 活验归 20260626-qa。
+证据: CockpitRoadmapParserTests + CockpitView 第五分段(a6015a5e/ae944f21)macOS build 绿;`docs/roadmap.md` 首版已写(20260707-rd)
+task: 20260626-cp / 20260626-qa / 20260707-rd
 
 ## features/three-pane-ui
 status: partial, pending-qa
