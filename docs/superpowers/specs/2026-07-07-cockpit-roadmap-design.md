@@ -107,16 +107,16 @@ session-world-model prompt 模板加一小节（走既有 prompt 通道，不内
 - 阶段条目全绿时向人提议翻 status，**不自己翻**；不改 preamble、不动阶段划分与顺序。
 - 派活优先从当前 doing 阶段的非绿条目里挑 brief。
 
-## reconcile-check 断言扩展
+## 坏链的呈现（无自动断言）
 
-既有 fail-loud 对账断言（`docs/tasks` 账 #444 那套）加两条：
+> 2026-06-26 用户已撤回 reconcile-check 自动断言（「不自动检测 drift，差靠人读两本」，脚本+lefthook 门已删）。roadmap 不重建任何校验门。
 
-- **hard fail**：roadmap 条目 relpath 在 `docs/handbook/` 下无对应 `.md`（防期望页改名/删除后 roadmap 漂移）。
-- **soft report**：列出未归入任何阶段的期望页（只报告不 fail——不是所有期望页都必须上路线）。
+- 条目 relpath 在 `docs/handbook/` 下无对应 `.md` → 条目行渲成**警示色 +「期望页不存在」**，纯呈现，靠人读后手改 roadmap。
+- 未归入任何阶段的期望页不做任何报告——期望段本来就列全部页，上不上路线是人的取舍。
 
 ## 落地范围
 
-**In scope**：`docs/roadmap.md` 首版（人写骨架，本次由用户/我按现状草一版供改）、parser + 模型 + 单测、路线段 UI + dashboard 摘要卡、spawnBrief 复用接线、世界观 prompt 小节、reconcile-check 两条断言、cockpit.md / reconciliation.md 期望页回写 roadmap 概念 + 对应现状条 + docs/tasks 账目。
+**In scope**：`docs/roadmap.md` 首版（人写骨架，本次由用户/我按现状草一版供改）、parser + 模型 + 单测、路线段 UI + dashboard 摘要卡、spawnBrief 复用接线、世界观 prompt 小节、cockpit.md / reconciliation.md 期望页回写 roadmap 概念 + 对应现状条 + docs/tasks 账目。
 
 **Out of scope（本期不做）**：per-crew DAG 切片视图（随驾驶舱既有切片尾巴一起）、时间轴/甘特图渲染、target 到期提醒、任何自动排期或自动翻状态、对外分享形态。
 
