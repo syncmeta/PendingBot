@@ -4,6 +4,8 @@ enum AppSymbol: Hashable {
     case system(String)
     case custom(String)
 
+    static let pendingCrew = AppSymbol.custom("PendingCrewSymbol")
+
     var image: Image {
         switch self {
         case .system(let name):
@@ -43,7 +45,7 @@ enum TopTab: String, Hashable, CaseIterable, Identifiable {
         switch self {
         case .message:  return .system("bubble.left")
         case .friends:  return .system("person.2")
-        case .crew:     return .system("person.3.sequence")
+        case .crew:     return .pendingCrew
         case .envelope: return .system("envelope.open")
         case .me:       return .system("person.crop.circle")
         }
