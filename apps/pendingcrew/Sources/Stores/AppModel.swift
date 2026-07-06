@@ -101,8 +101,13 @@ final class AppModel: ObservableObject {
 
     /// QR 登录 consume 时随 grant 下发的家族凭据（`pfa_*`）落到共享 keychain
     /// 组，供家族 app（含本 app 重装后）静默 mint。CrewQRLoginView poll 成功分支调。
-    func saveFamilyCredential(token: String, subjectId: String) {
-        FamilyCredentialStore.set(FamilyCredential(token: token, subjectId: subjectId))
+    func saveFamilyCredential(token: String, subjectId: String, displayName: String? = nil, avatarSeed: String? = nil) {
+        FamilyCredentialStore.set(FamilyCredential(
+            token: token,
+            subjectId: subjectId,
+            displayName: displayName,
+            avatarSeed: avatarSeed
+        ))
     }
 
     /// 共享 keychain 组里是否有家族凭据 —— 侧栏据此决定显不显示

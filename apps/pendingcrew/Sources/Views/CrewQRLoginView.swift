@@ -171,7 +171,12 @@ struct CrewQRLoginView: View {
                                 // 缺失就不存（凭据没有默认 mint 目标没意义）。
                                 if let fam = response.familyCredential,
                                    let sid = response.subjectId {
-                                    model.saveFamilyCredential(token: fam, subjectId: sid)
+                                    model.saveFamilyCredential(
+                                        token: fam,
+                                        subjectId: sid,
+                                        displayName: response.displayName,
+                                        avatarSeed: response.avatarSeed
+                                    )
                                 }
                                 status = .approved
                             } catch {

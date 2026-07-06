@@ -107,7 +107,7 @@ struct CrewWelcomeView: View {
             let exchange = CrewLoginExchange(
                 issueFamily: { token in
                     let r = try await api.issueFamilyCredential(accessToken: token)
-                    return .init(token: r.familyCredential.token, subjectId: r.familyCredential.subjectId, displayName: r.displayName)
+                    return .init(token: r.familyCredential.token, subjectId: r.familyCredential.subjectId, displayName: r.displayName, avatarSeed: r.avatarSeed)
                 },
                 mintGrant: { fam, sid in
                     let resp = try await api.mintGrant(
