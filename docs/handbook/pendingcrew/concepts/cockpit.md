@@ -41,6 +41,7 @@
 - **看板半边**:期望 handbook 与现状 handbook 两本并排(可点开各自的篇)、task 看板(按 crew / 状态)、frontmatter 状态渲染成色块、DAG 责任地图。一眼看清这片子树到哪了、谁负责什么、期望和现状差在哪。
 - **控制半边**:在看板上读出差后,**一步生 session / 子 crew**——选一段期望当 brief 派下去;不排队、不冒 chip。
 - **补差即刷现状**:派下去的 session 干完 → 回来刷现状那本 → 看板上那处差消失、frontmatter 状态回绿。
+- **路线段**:渲染 `docs/roadmap.md`(第四本账);阶段进度由现状账实时派生不落盘;非 done 条目一步生 session。
 
 ## 示例(规划)
 
@@ -51,6 +52,7 @@
 - **驾驶舱只是呈现 + 控制面,机制全在 [对账](reconciliation.md)。** 三层 / 两段式 / 强制刷现状 / 三本账怎么记,都不在本篇定义——本篇只定"长什么样 / 怎么用"。改机制改 [对账](reconciliation.md),不改这里。
 - **不冒 chip、不做 chip 队列、不自动派活。** 控制半边是"看着差手动生 session"一个动作;不把待办排成一列卡片、不一键自动起活(见 [对账](reconciliation.md):不自动 converge / 不做 chip 队列)。
 - **不自动检测 drift、不重解析文档。** 差靠人读两本看出来;驾驶舱不跑 drift 算法、不把文档解析成 AST(见 [对账](reconciliation.md) 边界)。
+- **路线账无自动断言**——坏链渲警示色靠人读(reconcile-check 已撤回的定调不变)。
 - **驾驶舱不是实体,项目不单独存储。** 永远是"某个 crew + 其子树"沿 DAG 的派生过滤视图。任何"项目表 / 项目级字段 / per-crew 独立账本"的设计都与此冲突——存储是仓库级一份。
 - **本篇只定模型**(对账的呈现 + 控制面 + per-crew 过滤视图 + 看板 / 控制一体),不定具体 UI / schema——真动工(#439)时再设计。
 - 这是 **PendingCrew** 的 feature —— PendingBot 只"看见 crew",深度的项目编排 / 驾驶舱在 PendingCrew;人侧的轻量提要是 PendingBot 的 [todolist](../../pendingbot/concepts/todolist.md)(机器视角 vs 人视角,配对)。

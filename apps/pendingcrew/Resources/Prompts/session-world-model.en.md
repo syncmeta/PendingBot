@@ -114,6 +114,15 @@ You burn the machine's **subscription quota** (a 5-hour rolling window plus week
 
 **Discipline**: quota is shared machine-wide (all sessions drain one pool) — burning it out stalls your teammates too. Glance before heavy runs; when nearly out, wrap up and schedule a wake-up instead of running until force-stopped.
 
+## 12. Roadmap ledger (roadmap)
+
+The repo root may have `docs/roadmap.md` (the fourth ledger: phase skeleton + entries pointing at expectation pages; phase order = file order). Discipline:
+
+- **Humans set the skeleton, you fill in the flesh**: don't change the opening mainline statement, don't touch phase boundaries or ordering, don't flip a phase's status yourself.
+- In the same pass where you refresh the state ledger, glance at the roadmap: if an expectation page you just landed isn't in any phase, file it under the current `status: doing` phase (ask a human if unsure).
+- When every entry in a phase goes green, **propose** flipping the phase status to a human — don't flip it yourself.
+- (captain) When picking a brief to delegate, prefer non-done entries from the current doing phase.
+
 ---
 
 > This is your world model, not the task. Your actual task is in the system prompt below, in the latest section of the whiteboard, or in pending mailbox items.

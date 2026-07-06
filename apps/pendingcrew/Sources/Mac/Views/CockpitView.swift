@@ -28,11 +28,12 @@ struct CockpitView: View {
     @State private var spawnNotice: String?       // 控制半边:派 session 的反馈(成功/失败)
 
     enum Segment: String, CaseIterable, Identifiable {
-        case dashboard = "总览", expectation = "期望", state = "现状", tasks = "任务"
+        case dashboard = "总览", roadmap = "路线", expectation = "期望", state = "现状", tasks = "任务"
         var id: String { rawValue }
         var icon: String {
             switch self {
             case .dashboard: return "gauge.with.dots.needle.33percent"
+            case .roadmap: return "map"
             case .expectation: return "doc.text.magnifyingglass"
             case .state: return "checklist"
             case .tasks: return "square.stack.3d.up"
@@ -99,7 +100,10 @@ struct CockpitView: View {
         if let data {
             switch segment {
             case .dashboard:
-                CockpitDashboard(data: data, detail: crewStore.selectedDetail, nav: handleNav)
+                CockpitDashboard(data: data, detail: crewStore.selectedDetail, nav: handleNav,
+                                 openRoadmap: { segment = .roadmap })
+            case .roadmap:
+                CockpitRoadmapSegment(data: data, nav: handleNav, onSpawnBrief: spawnBrief)
             case .expectation:
                 CockpitExpectation(data: data, selectedNodeID: $selectedNodeID, nav: handleNav)
             case .state:
@@ -209,11 +213,16 @@ private struct CockpitDashboard: View {
     let data: CockpitData
     let detail: CrewDetail?
     let nav: (CockpitNav) -> Void
+    let openRoadmap: () -> Void
 
     var body: some View {
         let stats = data.stats
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                if let roadmap = data.roadmap,
+                   let current = roadmap.phases.first(where: { cockpitStatusBucket($0.status) == "partial" }) {
+                    currentPhaseCard(current)
+                }
                 statCards(stats)
                 if !stats.recentTasks.isEmpty { recentTasks(stats) }
                 modules
@@ -222,6 +231,32 @@ private struct CockpitDashboard: View {
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    /// 「当前阶段」摘要卡 —— 第一个 doing 阶段 + 派生进度,点击去路线段。
+    private func currentPhaseCard(_ phase: CockpitPhase) -> some View {
+        Button(action: openRoadmap) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Image(systemName: "map").foregroundStyle(Theme.Palette.accent)
+                    Text("当前阶段").font(.caption.weight(.semibold)).foregroundStyle(Theme.Palette.inkMuted)
+                    Text(phase.name).font(.callout.weight(.semibold)).foregroundStyle(Theme.Palette.ink)
+                    if !phase.target.isEmpty {
+                        Text(phase.target).font(.caption2.monospaced()).foregroundStyle(Theme.Palette.inkMuted)
+                    }
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right").font(.caption2).foregroundStyle(Theme.Palette.inkMuted)
+                }
+                if !phase.goal.isEmpty {
+                    Text(phase.goal).font(.caption).foregroundStyle(Theme.Palette.inkMuted).lineLimit(1)
+                }
+                CockpitDistributionBar(dist: cockpitPhaseProgress(phase, topics: data.topics))
+            }
+            .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.Palette.surface, in: RoundedRectangle(cornerRadius: 12))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private func statCards(_ stats: CockpitStats) -> some View {
@@ -771,8 +806,8 @@ private struct TaskMiniCard: View {
     }
 }
 
-/// 状态分布横条(按桶比例上色)。
-private struct CockpitDistributionBar: View {
+/// 状态分布横条(按桶比例上色)。internal(非 private):供 CockpitRoadmapView.swift 复用。
+struct CockpitDistributionBar: View {
     let dist: [CockpitStats.StatusCount]
     var body: some View {
         let total = max(1, dist.reduce(0) { $0 + $1.count })

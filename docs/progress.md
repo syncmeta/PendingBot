@@ -1,6 +1,13 @@
 # PendingBot / PendingCrew 进度账本 (Progress Ledger)
 
-**最近对账：2026-07-06**（crew 侧栏三件套；其余见 2026-07-05 起；对照实际代码 / 迁移 / git，不是看 task 标记）
+**最近对账：2026-07-07**（驾驶舱路线段 + 第四本账；其余见 2026-07-06 起；对照实际代码 / 迁移 / git，不是看 task 标记）
+
+> **2026-07-07 驾驶舱路线段 + 第四本账 roadmap（`feat/cockpit-roadmap` 4 commit，task 20260707-rd，spec 2026-07-07-cockpit-roadmap-design，用户夜间授权持续推进）**：用户「cockpit 要有 roadmap」→ brainstorm 定方案 A（完整 roadmap：排期+进度+方向一体；人定骨架 captain 填血肉；条目挂期望页）。
+> - **第四本账 `docs/roadmap.md`**：期望的时间切片（先要哪块、走到哪了、主线是什么）。格式与现状账同构（`## 阶段名` 一节一阶段 + 裸字段行 status/target/目标 + 条目 `- <relpath>[ — 备注]`，阶段顺序=文件顺序）；首版三阶段骨架（v1 收口 doing / v1.1 远端与云 / v2 治理与规模，20 条目 relpath 全核实）。**进度不落盘**——渲染时 `cockpitPhaseProgress` 从现状账派生（含「未入账」灰桶），账本永不漂。
+> - **驾驶舱第五分段「路线」**：preamble + 阶段卡（status 色点/target/派生进度条/条目行），条目行点击跨账跳转、非 done 行直接「⚡ 生 session 补差」（复用 spawnBrief，未入账合成空 topic）；坏链（期望页不存在）渲警示色纯呈现——**无自动断言**（守 2026-06-26 撤回 reconcile-check 的定调，spec 里原写的断言扩展已改掉）。总览段顶部加「当前阶段」摘要卡点进路线段。
+> - **维护纪律进世界观**：session-world-model zh/en 加 §12 路线账——人定骨架（不改主线/阶段划分/不自翻 status）、刷现状同一拍归阶段、全绿提议人翻、机长派活优先当前 doing 阶段非 done 条目。
+> - **回写**：cockpit.md/reconciliation.md 补 roadmap 概念；state 账 cockpit 条刷新（顺手修正 planned→partial 漂移）；task 20260707-rd（pending-qa）。
+> - **验证**：CockpitRoadmapParserTests 3 项 TDD + 全量 356 绿 + macOS build 绿；subagent-driven（3 task 各自实现+审查全过）。**GUI 活验归 #443/20260626-qa**：路线段渲真账、跨账跳转、生 session 按钮、当前阶段卡。
 
 > **2026-07-06 crew 侧栏三件套 — 机长改名意识 / 最新消息实时 / 头像状态点（`feat/crew-sidebar-status` 4 commit + spec，task #466-470，spec 2026-07-06-crew-sidebar-status-design）**：用户三点反馈全落地，纯本地（Mac PendingCrew），无 edge/DB 改动。
 > - **机长改名意识**：白板每轮注入头部加「本 crew 当前名：X」（`HookEmitter.render` 是 claude PostToolUse hook 与 codex turn 前注入的公共渲染函数，title 从共享 local-crews.json 轻量读，helper 子进程/app 进程同路径，rename 落盘即生效）；crew-captain.zh.md 命名条从「一两次就够别反复改」改为「名字是活的，主题演进随手改；人类起的名字别动」。何时改名完全归机长自主判断（用户定调：不规定时机，只保证它时刻知道当前名 + 有工具）。

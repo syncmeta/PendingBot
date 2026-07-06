@@ -27,6 +27,8 @@
 - **现状 handbook**(`docs/state/`)—— 结构化、**镜像 `docs/handbook/` 的路径**、**每 session 强制刷**;每条 = `status:`(枚举,不放 emoji)+ 一句现状 + 证据指针 + **链到相关 task**。
 - **task 系统** —— 细粒度"做没做",**喂现状**;**反链回 handbook 概念**(双向:现状条→task,task 描述→期望页)。约定(借 Claude Code + org-mode):状态**绑事件翻 + 留时间戳痕**(captain turn 完 / 决策定那一刻翻,不攒)· 一 task 一 owner(不 co-own,拆小)· `completed = 已验证`(非"有代码",带显式 `pending-qa` 中间态)· 依赖是 id 字段、不做 urgency 评分。
 
+另有**路线账** `docs/roadmap.md`(期望的时间切片:先要哪块、走到哪了);进度是现状账的派生投影,不独立记进度。
+
 ## per-crew = 显示层
 
 存储**仓库级**(一份期望 + 一份现状 + 一个 task)。**per-crew / 项目都只是过滤视图**(沿 DAG 子树切片,派生无损、零额外存储 —— 借 Logseq 的查询派生子图)。
