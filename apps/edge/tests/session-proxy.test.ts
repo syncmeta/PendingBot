@@ -378,6 +378,66 @@ describe('SessionProxyDO permission round-trip', () => {
     });
   });
 
+  it('acks a permission.request back to the runner with the persisted id', async () => {
+    const env = envWith({
+      create_permission_request: () => ({ data: REQUEST_ID, error: null }),
+    });
+    const dao = makeDO(env);
+
+    const runnerWs = new FakeWebSocket();
+    const runner = runnerPeer(dao, runnerWs);
+    await dao.onMessage(runner, frame({ type: 'subscribe', role: 'runner' }));
+
+    await dao.onMessage(
+      runner,
+      frame({
+        type: 'permission.request',
+        // `id` is the runner's local correlation id — echoed back on the ack
+        // so the runner can map the DO-persisted id onto its local approval.
+        request: { id: 'local-approval-1', action: 'computer-use click' },
+      }),
+    );
+
+    expect(runnerWs.last('permission.request.ack')).toMatchObject({
+      clientRequestId: 'local-approval-1',
+      requestId: REQUEST_ID,
+    });
+    // The runner does NOT receive the viewer fan-out of its own request.
+    expect(runnerWs.count('permission.request')).toBe(0);
+  });
+
+  it('queues a viewer decision for an offline runner and flushes it on reconnect', async () => {
+    const env = envWith({
+      decide_permission_request: () => ({ data: null, error: null }),
+    });
+    const dao = makeDO(env);
+
+    const viewerWs = new FakeWebSocket();
+    const viewer = viewerPeer(dao, viewerWs);
+    await dao.onMessage(viewer, frame({ type: 'subscribe', role: 'viewer' }));
+
+    // No runner connected — the decision must not vanish.
+    await dao.onMessage(
+      viewer,
+      frame({ type: 'permission.decision', requestId: REQUEST_ID, decision: 'reject' }),
+    );
+
+    const runnerWs = new FakeWebSocket();
+    const runner = runnerPeer(dao, runnerWs);
+    await dao.onMessage(runner, frame({ type: 'subscribe', role: 'runner' }));
+
+    // Flushed from the offline queue as a session.command the runner already
+    // knows how to consume.
+    const flushed = runnerWs.last('session.command');
+    expect(flushed).toMatchObject({
+      command: {
+        kind: 'permission.decision',
+        payload: { requestId: REQUEST_ID, decision: 'reject' },
+      },
+      queued: true,
+    });
+  });
+
   it('rejects a runner submitting a permission.decision', async () => {
     const env = envWith({});
     const dao = makeDO(env);

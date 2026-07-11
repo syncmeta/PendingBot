@@ -336,6 +336,16 @@ export class SessionProxyDO {
         riskLevel: msg.request.riskLevel,
       },
     });
+
+    // Ack the runner with the canonical persisted id, echoing its own
+    // `request.id` (local approval id) so it can correlate the later
+    // permission.decision (which carries the persisted id) back onto the
+    // local approval that is blocking the agent.
+    this.sendTo(peer, {
+      type: 'permission.request.ack',
+      requestId,
+      ...(msg.request.id ? { clientRequestId: msg.request.id } : {}),
+    });
   }
 
   // ── permission.decision (viewer → runner + persist) ────────────────
@@ -378,11 +388,23 @@ export class SessionProxyDO {
     }
 
     // Route the decision to the runner so it can unblock the paused action.
+    // Runner offline → ride the offline command queue (flushed on its next
+    // connect as a session.command kind='permission.decision'); the paused
+    // agent would otherwise wait forever on a decision that only landed in
+    // the DB. No mailbox persist — decide_permission_request above is the
+    // durable record.
     if (this.runnerSocket && this.runner) {
       this.sendTo(this.runner, {
         type: 'permission.decision',
         requestId: msg.requestId,
         decision: msg.decision,
+      });
+    } else {
+      await this.enqueueOffline({
+        commandId: uuidv7(),
+        kind: 'permission.decision',
+        payload: { requestId: msg.requestId, decision: msg.decision },
+        enqueuedAt: Date.now(),
       });
     }
     // Fan the decision back out to other viewers too so every端 clears its

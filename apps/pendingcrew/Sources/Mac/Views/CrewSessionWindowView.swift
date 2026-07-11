@@ -735,6 +735,12 @@ struct CrewSessionWindowView: View {
                 codexMcpServers: codexMcp
             )
             // 指令已在 argv 里(positional prompt)—— 不再等 REPL 就绪 sleep + 事后注入。
+            // server link 恢复启用（block 3）后，登录态 run 同步接 waker + permission
+            // relay（#204）——与 auto-claim 路径一致；现 serverLink 恒 nil 时不跑。
+            if let link = serverLink {
+                attachMailboxWaker(crewId: detail.crew.id, api: link.api)
+                attachPermissionRelay(crewId: detail.crew.id, sessionId: link.sessionId, api: link.api)
+            }
             draft = ""
         } catch {
             localError = error.localizedDescription
@@ -863,6 +869,9 @@ struct CrewSessionWindowView: View {
             // 登录态 run → 接上事件驱动唤醒（Phase 4b）：一个 crew 一条 hub 连接，
             // 收到「该 crew 有动静」→ 拉本 session inbox → 空闲且有@我的项 → 注入唤醒。
             attachMailboxWaker(crewId: detail.crew.id, api: api)
+            // 登录态 run → 接上 permission relay（#204 permission over WS）：
+            // 本地待审批实时推给远端 viewer，远端 allow/deny 经 WS 回来解 hook 阻塞。
+            attachPermissionRelay(crewId: detail.crew.id, sessionId: s.id, api: api)
             // taskBrief 已在 argv —— 不再 0.6s sleep + send(brief)。
         } catch {
             localError = "自动认领 session 失败: \(error.localizedDescription)"
@@ -877,6 +886,14 @@ struct CrewSessionWindowView: View {
         guard let auth = appModel.imageAuth else { return }
         sessionRunner.ensureMailboxWaker(
             crewId: crewId, api: api, baseURL: auth.baseURL, token: auth.token)
+    }
+
+    /// 登录态 run 起好后接上本 session 的 permission relay（#204）。依赖同
+    /// waker：device-grant token（runner:write）+ baseURL；非登录态静默跳过。
+    private func attachPermissionRelay(crewId: String, sessionId: String, api: PendingCrewAPI) {
+        guard let auth = appModel.imageAuth else { return }
+        sessionRunner.ensurePermissionRelay(
+            crewId: crewId, sessionId: sessionId, api: api, baseURL: auth.baseURL, token: auth.token)
     }
 
     /// `taskBrief` is the session's first instruction — the edge requires a

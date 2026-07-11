@@ -103,9 +103,14 @@ actor SessionProxyClient {
     }
 
     /// Raise a manual-mode permission request to viewers. Best-effort.
-    func requestPermission(action: String, payload: [String: JSONValue]?, riskLevel: String?) {
-        guard subscribed, let task else { return }
-        send(.permissionRequest(action: action, payload: payload, riskLevel: riskLevel), over: task)
+    /// `id` = local correlation id (echoed back on `permission.request.ack`).
+    /// Returns false when the frame could not be sent (not subscribed yet) so
+    /// the caller can retry after (re)connect.
+    @discardableResult
+    func requestPermission(id: String? = nil, action: String, payload: [String: JSONValue]?, riskLevel: String?) -> Bool {
+        guard subscribed, let task else { return false }
+        send(.permissionRequest(id: id, action: action, payload: payload, riskLevel: riskLevel), over: task)
+        return true
     }
 
     /// Viewer → DO: send a command to the session's runner (e.g. `cancel`).
@@ -204,7 +209,7 @@ actor SessionProxyClient {
             if let latestState, let task {
                 send(.sessionState(latestState), over: task)
             }
-        case .command, .permissionDecision:
+        case .command, .permissionDecision, .permissionRequestAck:
             inboundContinuation.yield(frame)
         case let .error(code, message):
             print("[session-proxy] server error frame: \(code) \(message)")
