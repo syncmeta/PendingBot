@@ -2286,19 +2286,12 @@ struct MyQRSheet: View {
             ZStack {
                 Theme.Palette.canvas.ignoresSafeArea()
                 ScrollView {
-                    #if os(iOS)
+                    // MyQRBusinessCard is cross-platform (CoreImage QR via the
+                    // `QRCode` shim; save = Photos on iOS, copy/save-panel on
+                    // macOS). Only *scanning* stays iOS-only.
                     MyQRBusinessCard()
                         .padding(.horizontal, 24)
                         .padding(.vertical, 12)
-                    #else
-                    // MyQRBusinessCard is iOS-only (UIKit image rendering,
-                    // PHPhotoLibrary save). macOS shows a placeholder until a
-                    // cross-platform QR card lands.
-                    Text("二维码名片暂不支持 Mac")
-                        .font(Theme.Fonts.footnote)
-                        .foregroundStyle(.secondary)
-                        .padding(40)
-                    #endif
                 }
             }
             .toolbar {

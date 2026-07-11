@@ -3,17 +3,12 @@ import Supabase
 
 /// 加我为好友的方式 — 两部分:
 ///   1. 二维码名片 — QR-kind handle,卡片内同时显示预置 ID (kind='id')
-///      (iOS 限定 — `MyQRBusinessCard` 重度依赖 UIKit / Photos,Mac 端无此入口)
+///      (跨平台 — 生成侧走 CoreImage `QRCode` shim;扫码侧仍 iOS 限定)
 ///   2. 我的隐私号 — 用户自定义的 handle (kind='number'), 最多 3 个
 struct AddMeMethodsView: View {
     var body: some View {
         List {
-            #if os(iOS)
-            // 二维码名片是 iOS-only:`MyQRBusinessCard` 走 CoreImage QR 生成 +
-            // PHPhotoLibrary 长按存图 + UIScreen,Mac 上没有对应路径,所以该 section
-            // 在 macOS 整段缺席(隐私号管理仍跨平台可用)。
             QRCardSection()
-            #endif
             HandlesSection()
         }
         .platformListStyle()
@@ -26,11 +21,10 @@ struct AddMeMethodsView: View {
 
 // MARK: - QR card section
 
-#if os(iOS)
 /// Embeds the shared `MyQRBusinessCard` so the inline section here
 /// matches the Friends-tab QR sheet exactly. No section header /
-/// footer — the card is self-explanatory. iOS-only: `MyQRBusinessCard`
-/// is UIKit/Photos-heavy and has no macOS path.
+/// footer — the card is self-explanatory. Cross-platform: the card
+/// generates via the CoreImage `QRCode` shim on both iOS and macOS.
 private struct QRCardSection: View {
     var body: some View {
         Section {
@@ -43,7 +37,6 @@ private struct QRCardSection: View {
         }
     }
 }
-#endif
 
 // MARK: - Handles (number-kind) section — API-key-management style
 

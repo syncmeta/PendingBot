@@ -1,19 +1,28 @@
-#if os(iOS)
 import SwiftUI
-import CoreImage.CIFilterBuiltins
-import Photos
+import CoreImage
 import Supabase
+#if os(iOS)
+import Photos
 import UIKit
+#elseif os(macOS)
+import AppKit
+import UniformTypeIdentifiers
+#endif
 
 /// "我的名片" — shared QR business-card view used by both the
 /// Friends-tab `MyQRSheet` and the QR section in `AddMeMethodsView`,
-/// so the two surfaces stay visually identical.
+/// so the two surfaces stay visually identical. Cross-platform: QR
+/// generation goes through the CoreImage `QRCode.image` shim and the
+/// bitmap is held as `PlatformImage`, so the same view serves iOS and
+/// macOS (scanning stays iOS-only — this card is the *generate* side).
 ///
 /// Renders the user's currently-active QR-kind handle as a deep-green
-/// QR (Liquid Glass card on iOS 26+, plain rounded surface as
-/// fallback) with the brand mark in the centre, then avatar + name
+/// QR (Liquid Glass card on iOS 26+ / macOS 26+, plain rounded surface
+/// as fallback) with the brand mark in the centre, then avatar + name
 /// directly below, then a circular "refresh" button and the user's
-/// preset ID row. Long-press the QR to save the card as an image.
+/// preset ID row. Long-press (right-click on Mac) the QR to save the
+/// card as an image — Photos album on iOS, copy-to-clipboard / save
+/// panel on macOS.
 ///
 /// Owns its own load / mint / refresh lifecycle — drop it in and it
 /// will fetch (or mint) the active handle on first appear. The active
@@ -25,22 +34,35 @@ struct MyQRBusinessCard: View {
     @State private var loading = false
     @State private var error: String?
     @State private var saveStatus: String?
-    @State private var qrUIImage: UIImage?
+    @State private var qrBitmap: PlatformImage?
     @State private var idCopied = false
     @State private var confirmRefresh = false
-
-    private let context = CIContext()
 
     var body: some View {
         VStack(spacing: 22) {
             qrPanel(forSnapshot: false)
                 .contextMenu {
+                    #if os(iOS)
                     Button {
                         saveCardImage()
                     } label: {
                         Label("保存图片", systemImage: "square.and.arrow.down")
                     }
                     .disabled(currentValue == nil)
+                    #else
+                    Button {
+                        copyCardImage()
+                    } label: {
+                        Label("拷贝图片", systemImage: "doc.on.doc")
+                    }
+                    .disabled(currentValue == nil)
+                    Button {
+                        saveCardImage()
+                    } label: {
+                        Label("保存图片…", systemImage: "square.and.arrow.down")
+                    }
+                    .disabled(currentValue == nil)
+                    #endif
                 }
             identityBlock
             VStack(spacing: 14) {
@@ -71,13 +93,13 @@ struct MyQRBusinessCard: View {
         ZStack {
             qrBackground(size: size, forSnapshot: forSnapshot)
 
-            if loading && qrUIImage == nil {
+            if loading && qrBitmap == nil {
                 ProgressView().controlSize(.large)
-            } else if let qr = qrUIImage {
+            } else if let qr = qrBitmap {
                 // Solid white card behind the QR provides the quiet zone
                 // scanners need — the surrounding glass background is
                 // translucent and unreliable as a "white" baseline.
-                Image(uiImage: qr)
+                Image(platformImage: qr)
                     .interpolation(.none)
                     .resizable()
                     .scaledToFit()
@@ -113,7 +135,7 @@ struct MyQRBusinessCard: View {
     @ViewBuilder
     private func qrBackground(size: CGFloat, forSnapshot: Bool) -> some View {
         let shape = RoundedRectangle(cornerRadius: 28, style: .continuous)
-        if #available(iOS 26.0, *), !forSnapshot {
+        if #available(iOS 26.0, macOS 26.0, *), !forSnapshot {
             // ImageRenderer can't capture the live blur of Liquid
             // Glass, so the snapshot path uses the plain fallback.
             Color.clear
@@ -200,7 +222,7 @@ struct MyQRBusinessCard: View {
     }
 
     private func copyId(_ value: String) {
-        UIPasteboard.general.string = value
+        Clipboard.copy(value)
         Haptics.tap()
         idCopied = true
         Task {
@@ -221,7 +243,7 @@ struct MyQRBusinessCard: View {
     /// next open can paint instantly before the network confirms.
     private func setToken(_ token: String) {
         if currentValue != token {
-            qrUIImage = qrImage(for: PendingBotQR.url(forToken: token))
+            qrBitmap = qrImage(for: PendingBotQR.url(forToken: token))
         }
         currentValue = token
         if let key = tokenCacheKey {
@@ -302,61 +324,42 @@ struct MyQRBusinessCard: View {
 
     // MARK: - QR image
     //
-    // Produces an opaque deep-green-on-cream QR with a 4-module quiet
-    // zone baked in. A scannable QR needs (a) ≥4 modules of solid
-    // background around the data and (b) a high-contrast colour pair
-    // — `CIQRCodeGenerator` provides neither on its own, so we add the
-    // border in CGContext and recolour with `CIFalseColor`.
-    private func qrImage(for payload: String) -> UIImage? {
-        let filter = CIFilter.qrCodeGenerator()
-        filter.message = Data(payload.utf8)
-        filter.correctionLevel = "H"
-        guard let raw = filter.outputImage else { return nil }
-
-        // Recolour: 0 → deep green (data), 1 → cream (background).
-        let recolour = CIFilter.falseColor()
-        recolour.inputImage = raw
-        recolour.color0 = CIColor(red: 4 / 255.0, green: 71 / 255.0, blue: 53 / 255.0)   // accent
-        recolour.color1 = CIColor(red: 253 / 255.0, green: 252 / 255.0, blue: 250 / 255.0) // canvas
-        guard let coloured = recolour.outputImage else { return nil }
-
-        // Render at 10× without interpolation. CIQRCodeGenerator does NOT
-        // emit a quiet zone, so we blit into a slightly larger canvas
-        // pre-filled with the same cream colour to give scanners the
-        // 4-module margin they need.
-        let scale: CGFloat = 10
-        let scaled = coloured.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-        guard let cg = context.createCGImage(scaled, from: scaled.extent) else { return nil }
-
-        let inner = CGFloat(cg.width)
-        let quiet = scale * 4   // 4 modules per QR spec
-        let total = inner + quiet * 2
-        let renderer = UIGraphicsImageRenderer(
-            size: CGSize(width: total, height: total),
-            format: {
-                let f = UIGraphicsImageRendererFormat.default()
-                f.scale = 1
-                f.opaque = true
-                return f
-            }(),
+    // Deep-green-on-cream QR with a baked-in 4-module quiet zone. Runs
+    // through the cross-platform `QRCode.image` shim (CoreImage on both
+    // iOS and macOS) — same colours + correction level "H" as before,
+    // and the shim reproduces the old UIGraphicsImageRenderer quiet-zone
+    // composite in CoreImage, so the iOS output is visually identical.
+    private func qrImage(for payload: String) -> PlatformImage? {
+        QRCode.image(
+            payload,
+            scale: 10,
+            correctionLevel: "H",
+            dark: CIColor(red: 4 / 255.0, green: 71 / 255.0, blue: 53 / 255.0),    // accent
+            light: CIColor(red: 253 / 255.0, green: 252 / 255.0, blue: 250 / 255.0), // canvas
+            quietModules: 4,
         )
-        // Draw via UIImage rather than ctx.cgContext.draw — the CGContext
-        // form would flip the result vertically (mirrored QRs don't scan).
-        let qrUIImage = UIImage(cgImage: cg)
-        return renderer.image { ctx in
-            UIColor(red: 253 / 255.0, green: 252 / 255.0, blue: 250 / 255.0, alpha: 1).setFill()
-            ctx.fill(CGRect(x: 0, y: 0, width: total, height: total))
-            ctx.cgContext.interpolationQuality = .none
-            qrUIImage.draw(in: CGRect(x: quiet, y: quiet, width: inner, height: inner))
-        }
     }
 
-    // MARK: - Save card image
+    // MARK: - Save / copy card image
 
-    private func saveCardImage() {
+    /// Renders `snapshotContent` into a platform bitmap at the screen's
+    /// backing scale. Shared by the iOS Photos save and the macOS
+    /// copy / save-panel paths.
+    @MainActor
+    private func renderCardImage() -> PlatformImage? {
         let renderer = ImageRenderer(content: snapshotContent)
+        #if os(iOS)
         renderer.scale = UIScreen.main.scale
-        guard let img = renderer.uiImage else {
+        return renderer.uiImage
+        #elseif os(macOS)
+        renderer.scale = NSScreen.main?.backingScaleFactor ?? 2
+        return renderer.nsImage
+        #endif
+    }
+
+    #if os(iOS)
+    private func saveCardImage() {
+        guard let img = renderCardImage() else {
             updateSaveStatus("保存失败")
             return
         }
@@ -372,6 +375,39 @@ struct MyQRBusinessCard: View {
             }
         }
     }
+    #elseif os(macOS)
+    private func copyCardImage() {
+        guard let img = renderCardImage() else {
+            updateSaveStatus("拷贝失败")
+            return
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.writeObjects([img])
+        updateSaveStatus("已拷贝到剪贴板")
+    }
+
+    private func saveCardImage() {
+        guard let img = renderCardImage(),
+              let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              let png = NSBitmapImageRep(cgImage: cg)
+                  .representation(using: .png, properties: [:]) else {
+            updateSaveStatus("保存失败")
+            return
+        }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.png]
+        panel.nameFieldStringValue = "我的名片.png"
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                try png.write(to: url)
+                updateSaveStatus("已保存")
+            } catch {
+                updateSaveStatus("保存失败")
+            }
+        }
+    }
+    #endif
 
     private func updateSaveStatus(_ message: String) {
         saveStatus = message
@@ -381,9 +417,9 @@ struct MyQRBusinessCard: View {
         }
     }
 
-    /// View used as the photo-album snapshot. Same QR + identity, on
-    /// a plain canvas-tinted backdrop so the saved image looks like a
-    /// finished card rather than a window grab.
+    /// View used as the export snapshot. Same QR + identity, on a plain
+    /// canvas-tinted backdrop so the saved image looks like a finished
+    /// card rather than a window grab.
     @ViewBuilder
     private var snapshotContent: some View {
         VStack(spacing: 22) {
@@ -394,4 +430,3 @@ struct MyQRBusinessCard: View {
         .background(Theme.Palette.canvas)
     }
 }
-#endif
