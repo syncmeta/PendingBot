@@ -86,9 +86,9 @@
         "BILLING_ENABLED": "false",
         "SENTRY_ENABLED": "true",
         "POSTHOG_ENABLED": "true",
-        // Langfuse stays off until traceGeneration sends full input/output
-        // (not just metrics) — see #247/#248. Flip to "true" then.
-        "LANGFUSE_ENABLED": "false",
+        // Full-content LLM traces to Langfuse Cloud (user opted in 2026-07-11;
+        // was held off on privacy grounds while trace payloads were metrics-only).
+        "LANGFUSE_ENABLED": "true",
         "SUPABASE_URL": "https://zafhoiwwpanpuashtnxy.supabase.co",
         // Publishable API key — public by design (ships in the iOS binary
         // too), so a plain var, not a secret. Pairs with the caller's JWT
