@@ -130,6 +130,17 @@ export interface PermissionDecisionDeliverMsg {
   decision: 'approve' | 'reject';
 }
 
+/// DO → runner: ack of a runner-raised permission.request. `requestId` is the
+/// canonical persisted id (T4.3 permission_requests row) that viewers will
+/// echo back in their permission.decision. `clientRequestId` echoes the
+/// runner-supplied `request.id` (its local approval id) so the runner can map
+/// server decisions back onto the local approval that is blocking the agent.
+export interface PermissionRequestAckMsg {
+  type: 'permission.request.ack';
+  requestId: string;
+  clientRequestId?: string;
+}
+
 export interface ErrorMsg {
   type: 'error';
   code: string;
@@ -140,6 +151,7 @@ export type ProxyToClientMsg =
   | SubscribedMsg
   | SessionStateMsg
   | PermissionRequestMsg
+  | PermissionRequestAckMsg
   | SessionCommandDeliverMsg
   | SessionCommandAckMsg
   | PermissionDecisionDeliverMsg
