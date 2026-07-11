@@ -157,8 +157,11 @@ public enum SessionProxyOutbound: Sendable {
     case subscribe(role: ProxyRole, token: String?)
     /// Publish current state to all viewers.
     case sessionState(SessionState)
-    /// Raise a permission request (manual-mode high-risk action).
-    case permissionRequest(action: String, payload: [String: JSONValue]?, riskLevel: String?)
+    /// Raise a permission request (manual-mode high-risk action). `id` is the
+    /// runner's local correlation id (e.g. the LocalApprovalStore item id) —
+    /// the DO echoes it back on `permission.request.ack` together with the
+    /// persisted server request id.
+    case permissionRequest(id: String?, action: String, payload: [String: JSONValue]?, riskLevel: String?)
 
     /// The wire dictionary (stable shape; matches the TS interfaces).
     public func wireDict() -> [String: Any] {
@@ -169,8 +172,9 @@ public enum SessionProxyOutbound: Sendable {
             return d
         case let .sessionState(state):
             return ["type": "session.state", "state": state.dict()]
-        case let .permissionRequest(action, payload, riskLevel):
+        case let .permissionRequest(id, action, payload, riskLevel):
             var req: [String: Any] = ["action": action]
+            if let id { req["id"] = id }
             if let payload { req["payload"] = JSONValue.object(payload).anyValue }
             if let riskLevel { req["riskLevel"] = riskLevel }
             return ["type": "permission.request", "request": req]
@@ -225,6 +229,10 @@ public enum SessionProxyInbound: Equatable, Sendable {
     case command(commandId: String, kind: String, payload: [String: JSONValue]?, queued: Bool)
     /// A viewer's approve/reject for a pending permission request.
     case permissionDecision(requestId: String, decision: String)
+    /// Ack of a runner-raised permission.request: `requestId` is the
+    /// DO-persisted server id, `clientRequestId` echoes the runner's own
+    /// `request.id` (local approval id) for correlation.
+    case permissionRequestAck(clientRequestId: String?, requestId: String)
     /// A protocol/error frame from the DO.
     case error(code: String, message: String)
     /// Valid JSON we don't act on as a runner (e.g. a viewer-targeted frame),
@@ -259,6 +267,12 @@ public enum SessionProxyInbound: Equatable, Sendable {
                 return .unknown(raw)
             }
             return .permissionDecision(requestId: requestId, decision: decision)
+        case "permission.request.ack":
+            guard let requestId = obj["requestId"] as? String else {
+                return .unknown(raw)
+            }
+            return .permissionRequestAck(
+                clientRequestId: obj["clientRequestId"] as? String, requestId: requestId)
         case "error":
             return .error(code: (obj["code"] as? String) ?? "",
                           message: (obj["message"] as? String) ?? "")

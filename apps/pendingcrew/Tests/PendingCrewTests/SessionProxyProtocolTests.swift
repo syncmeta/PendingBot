@@ -40,15 +40,26 @@ final class SessionProxyProtocolTests: XCTestCase {
     func testPermissionRequestFrameShape() throws {
         let payload: [String: JSONValue] = ["path": .string("/etc/hosts"), "bytes": .number(42)]
         let frame = SessionProxyOutbound.permissionRequest(
-            action: "write_file", payload: payload, riskLevel: "high")
+            id: nil, action: "write_file", payload: payload, riskLevel: "high")
         let d = decode(try frame.jsonData())
         XCTAssertEqual(d["type"] as? String, "permission.request")
         let req = d["request"] as? [String: Any]
+        XCTAssertNil(req?["id"], "nil id must be omitted, not encoded as null")
         XCTAssertEqual(req?["action"] as? String, "write_file")
         XCTAssertEqual(req?["riskLevel"] as? String, "high")
         let p = req?["payload"] as? [String: Any]
         XCTAssertEqual(p?["path"] as? String, "/etc/hosts")
         XCTAssertEqual((p?["bytes"] as? NSNumber)?.intValue, 42)
+    }
+
+    func testPermissionRequestFrameCarriesClientId() throws {
+        // `id` = the runner's local approval id — the DO echoes it back on
+        // permission.request.ack so decisions can be correlated.
+        let frame = SessionProxyOutbound.permissionRequest(
+            id: "local-1", action: "computer-use", payload: nil, riskLevel: nil)
+        let req = decode(try frame.jsonData())["request"] as? [String: Any]
+        XCTAssertEqual(req?["id"] as? String, "local-1")
+        XCTAssertEqual(req?["action"] as? String, "computer-use")
     }
 
     // MARK: - inbound
@@ -77,6 +88,18 @@ final class SessionProxyProtocolTests: XCTestCase {
         let raw = #"{"type":"permission.decision","requestId":"r9","decision":"approve"}"#
         XCTAssertEqual(SessionProxyInbound.parse(raw),
                        .permissionDecision(requestId: "r9", decision: "approve"))
+    }
+
+    func testParsePermissionRequestAck() {
+        let raw = #"{"type":"permission.request.ack","requestId":"srv-9","clientRequestId":"local-1"}"#
+        XCTAssertEqual(SessionProxyInbound.parse(raw),
+                       .permissionRequestAck(clientRequestId: "local-1", requestId: "srv-9"))
+    }
+
+    func testParsePermissionRequestAckWithoutClientId() {
+        let raw = #"{"type":"permission.request.ack","requestId":"srv-9"}"#
+        XCTAssertEqual(SessionProxyInbound.parse(raw),
+                       .permissionRequestAck(clientRequestId: nil, requestId: "srv-9"))
     }
 
     func testParseErrorFrame() {
