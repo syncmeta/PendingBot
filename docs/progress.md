@@ -1,6 +1,14 @@
 # PendingBot / PendingCrew 进度账本 (Progress Ledger)
 
-**最近对账：2026-07-07**（驾驶舱路线段 + 第四本账；其余见 2026-07-06 起；对照实际代码 / 迁移 / git，不是看 task 标记）
+**最近对账：2026-07-11**（in_progress 批量收口 + 生产 edge 补部署；对照实际代码 / 迁移 / git，不是看 task 标记）
+
+> **2026-07-11 in_progress 批量收口（用户「做完 in_progress 的」，3 分支合 main + 1 次生产部署 + 2 条对账关闭）**：
+> - **⚠️ 悬账清掉：生产 edge worker 补部署**（version `12dd4297`，7-05 drop 旧列后线上 500 的端点恢复，`/v1/me/subject` 冒烟回规范 401）。首跑被 Docker 未启动挡（容器构建步），`orb start` 后全绿。**task #464 关**。
+> - **`feat/crew-runner-hub`（CC-P4，#373 关）**：勘察发现 waker/@唤醒/mark-delivered/离线 drain 已由 Phase 4b 先行落地；本次补真缺口=远端消息→本地白板即时化（CrewRelayHubLogic 连接对账+拉取合并去重 TDD 7 测；relay 每绑定 crew 常驻 hub 连接，5s 轮询降兜底）。hub 鉴权原生支持 pdg_* device-grant，edge 零改动。tech-debt 新记 🟢 同 crew 双 hub socket。
+> - **`feat/mac-social-parity`（#292 关 + #212 收口）**：二维码名片跨平台化（复用 QRCode shim，Mac 右键拷贝/存 PNG）+ Mac「我」tab 可改头像/昵称（ProfileBootstrapView 本就跨平台，补入口+fileImporter）。#212 全面对账：原 follow-up 大头（Realtime 推送/附件/机组遥控台/来信 compose/真图头像）早已落地；**剩余真缺口=Mac 语音通话整块**（宜独立立项）+ 扫码/相机小件。
+> - **`feat/permission-ws`（#204 代码侧收口）**：勘察发现 edge SessionProxyDO permission 帧 + viewer 三端解析早已完工；真缺口=runner 桥接——permission.request.ack + 离线 decision 命令队列（edge，+2 vitest→628 绿）+ SessionPermissionRelay 纯核心（12 测 TDD）挂进登录态 run 生命周期。PendingCrew 377 测绿 + 三端 build 绿。注意：手动 startSession 的 serverLink 接合 v2 下恒 nil（既有现状），#297 恢复绑定后 relay 自动生效。
+> - **对账关闭（代码早落地、账没翻）**：#274 L8 ask 工具+权限审批（①-⑦ 全在 main，356 测绿核实）、#439 驾驶舱 brainstorm（交付物全落地）。
+> - **活验尾巴全部归 #443**（新增场景 10-13：hub 七场景 / permission-WS 八场景 / QR+资料编辑 GUI / ask 审批 GUI）。**仍 in_progress**：#242/#297（等部署尾巴+E2E）、#248（Langfuse 用户决定保持关）、#447/#449/#465（纯 QA 尾巴）、#212（剩 Mac 语音大块）。
 
 > **2026-07-07 驾驶舱路线段 + 第四本账 roadmap（`feat/cockpit-roadmap` 4 commit，task 20260707-rd，spec 2026-07-07-cockpit-roadmap-design，用户夜间授权持续推进）**：用户「cockpit 要有 roadmap」→ brainstorm 定方案 A（完整 roadmap：排期+进度+方向一体；人定骨架 captain 填血肉；条目挂期望页）。
 > - **第四本账 `docs/roadmap.md`**：期望的时间切片（先要哪块、走到哪了、主线是什么）。格式与现状账同构（`## 阶段名` 一节一阶段 + 裸字段行 status/target/目标 + 条目 `- <relpath>[ — 备注]`，阶段顺序=文件顺序）；首版三阶段骨架（v1 收口 doing / v1.1 远端与云 / v2 治理与规模，20 条目 relpath 全核实）。**进度不落盘**——渲染时 `cockpitPhaseProgress` 从现状账派生（含「未入账」灰桶），账本永不漂。
