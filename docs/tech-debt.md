@@ -1089,3 +1089,7 @@
 - 🟡 **计费闭环沙盒 E2E 未验证(归统一真机 QA)** — 2026-07-05 补齐了 iOS IAP 购买流(`PurchaseSheet.swift`)、402 余额不足→充值卡片、低额 banner、board 计费页 + `board-billing.ts` 端点、packs 配置化(`billing-packs.ts` KV 覆盖)。全部代码/typecheck/xcodebuild/vitest 绿,但**未跑沙盒真机 E2E**:ASC IAP 产品 + RevenueCat 项目/key/webhook secret + Polar product 尚未建(见交付回复的用户后台清单),`revenueCatKey` 仍空→购买入口显示「内购未配置」禁用态。填完 key 后需一次沙盒购买 E2E:购买→RC webhook→pnc_ledger 入账→WalletDO 余额刷新→sheet 成功态,以及 board grant/claw-back 打真实用户。归入统一设备 QA 批次。
 
 - 🟢 **messages.ts 402 未走 jsonError 信封** — `messages.ts:1363` `insufficientBalanceResponse` 返回 bespoke `{ error: 'insufficient_balance', ... }`(非 `{ error: { code } }` typed 信封,违反 http-error 约定)。iOS 侧 `presentSendFailure` 现靠子串 `insufficient_balance` 检测容错,但正解是把该 402 迁到 `jsonError(c, 402, 'insufficient_balance', {detail})` 并让 iOS 走 `APIError.code` 分支。迁移时需同步核 SSE `.error` 事件里 402 消息体的形状。
+
+## 2026-07-11 CC-P4 runner 接 hub（`feat/crew-runner-hub`）
+
+- 🟢 **同一 crew 会开两条 hub WebSocket（waker + relay 各一）** — `CrewMailboxWaker`（登录态 run 的 @ 唤醒,`CrewSessionRunner.ensureMailboxWaker` 懒建）与 `CrewRelayAgent`（白板双向搬运,CC-P4 起每个绑定 crew 常驻一条）各自持有独立的 `CrewRealtimeClient` 连同一个 `conv:<remoteId>` hub。根因是 `CrewRealtimeClient.events` 是单消费者 `AsyncStream`（一个 continuation,只能被一个 for-await 消费）,无法直接共享。DO 侧 hibernatable socket 成本 ~0、客户端每 crew 最多 2 条,量级无害;但如果后续第三个订阅方出现（如 UI 直接订 hub）,应先把 client 改成多播（per-subscriber continuation 或 Combine multicast）再挂,不要开第三条连接。
