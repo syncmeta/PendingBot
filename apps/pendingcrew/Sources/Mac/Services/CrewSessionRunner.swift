@@ -113,6 +113,7 @@ final class CrewSessionRunner: ObservableObject {
         let crewId = run.crewId
         run.stop()
         teardownMailboxWakerIfIdle(crewId: crewId)
+        teardownPermissionRelay(sessionId: run.sessionId)
     }
 
     /// 移除指定 run（仍在跑则先停）。被移除的是选中项时，回退选最后一个。
@@ -126,6 +127,38 @@ final class CrewSessionRunner: ObservableObject {
             selectedRunId = runs.last?.runID
         }
         teardownMailboxWakerIfIdle(crewId: crewId)
+        teardownPermissionRelay(sessionId: run.sessionId)
+    }
+
+    // MARK: - permission over WS（#204）
+
+    /// 每个登录态 run 一条 permission relay：本地待审批 → SessionProxyDO
+    /// permission.request 实时推给远端 viewer；viewer 的 allow/deny 经 WS
+    /// 回来 → 解本地 hook 阻塞；本地先答的 → mirror 到服务端 decide。
+    /// BYOK / local-only run（无 server session 行）不建。
+    private var permissionRelays: [String: SessionPermissionRelay] = [:]
+
+    /// 登录态 run 起好后由 call site 调（同 `ensureMailboxWaker` 的时机与
+    /// 依赖：device-grant token + baseURL）。幂等 —— 已有 relay 则 no-op。
+    func ensurePermissionRelay(
+        crewId: String, sessionId: String, api: PendingCrewAPI, baseURL: URL, token: String
+    ) {
+        guard permissionRelays[sessionId] == nil else { return }
+        let client = SessionProxyClient(
+            baseURL: baseURL, sessionId: sessionId, role: .runner, token: token)
+        let relay = SessionPermissionRelay(
+            crewId: crewId, sessionId: sessionId, client: client,
+            mirrorDecide: { serverRequestId, decision in
+                // best-effort 一次性 mirror：失败只影响远端卡片的即时清除，
+                // 远端仍可自行决定（服务端 RPC 幂等冲突回 409，不炸）。
+                try? await api.decidePermissionRequest(id: serverRequestId, decision: decision)
+            })
+        permissionRelays[sessionId] = relay
+        relay.start()
+    }
+
+    private func teardownPermissionRelay(sessionId: String) {
+        permissionRelays.removeValue(forKey: sessionId)?.stop()
     }
 
     // MARK: - session 自我配置（set_session_profile；#455）

@@ -389,6 +389,19 @@ struct PendingCrewAPI {
         return resp.ok
     }
 
+    /// `POST /v1/permission-requests/:id/decide` — decide a T4.3 permission
+    /// request. Runner-side use: mirror a locally-answered approval to the
+    /// server row so remote viewers' pending cards clear (#204). The endpoint
+    /// resolves the deciding user from the device grant's granting user.
+    func decidePermissionRequest(id: String, decision: String) async throws {
+        struct Body: Encodable { let decision: String }
+        struct Response: Decodable {}
+        let _: Response = try await post(
+            path: "v1/permission-requests/\(id)/decide",
+            body: Body(decision: decision)
+        )
+    }
+
     // MARK: - Crew interactions (T4.5 ask_human / 人在回路)
 
     /// `GET /v1/sessions/:sessionId/interactions` — list this session's pending
