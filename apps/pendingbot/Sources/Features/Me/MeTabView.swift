@@ -31,7 +31,7 @@ enum MeSection: String, Hashable, CaseIterable, Identifiable {
 ///   • iPhone(compact):菜单是落地第一页,点条目 push 对应详情。
 ///   • iPad/Mac(壳三列):菜单是中间列表列,点条目右栏出详情(中列写
 ///     selection、右栏读 selection)。
-/// 头像重 roll(`ProfileBootstrapView`,依赖 PhotosUI)用 `#if os(iOS)` 围起;
+/// 头像重 roll(`ProfileBootstrapView`)两端可用:iOS 全屏 cover、macOS sheet;
 /// 「退出登录 / 注销账号」是列表里的动作行(确认弹窗),不进详情列;
 /// 「设置」在 macOS 是 `SettingsLink`(开 ⌘, 独立窗口),不占详情列。
 struct MeTabView: View {
@@ -97,20 +97,27 @@ struct MeTabView: View {
         .platformTabBarVisibility(path.isEmpty)
     }
 
-    /// Wraps a root view with the tab's shared chrome — the reroll cover
-    /// (iOS-only), the error alert, and the sign-out / delete-account
+    /// Wraps a root view with the tab's shared chrome — the reroll surface
+    /// (iOS cover / macOS sheet), the error alert, and the sign-out / delete-account
     /// confirmation dialog. Pulled out of `body` so the Mac shell's list
     /// column and the iPhone push root carry the same actions regardless
     /// of which SwiftUI container hosts them.
     @ViewBuilder
     private func chrome(_ content: some View) -> some View {
         content
-            // 头像/昵称重roll 页(ProfileBootstrapView)是 iOS-only(PhotosUI +
-            // 横向分页),Mac 端没有该编辑面 —— cover 整体 iOS 限定。
+            // 头像/昵称重roll 页(ProfileBootstrapView 已跨平台,Mac onboarding
+            // 同款)。呈现容器分平台:iOS 全屏 cover;macOS 没有 fullScreenCover,
+            // 走 sheet + 最小尺寸(卡片轮播需要横向空间)。
             #if os(iOS)
             .fullScreenCover(isPresented: $showRandomize) {
                 ProfileBootstrapView(allowsBack: true)
                     .environmentObject(AccountStore.shared)
+            }
+            #else
+            .sheet(isPresented: $showRandomize) {
+                ProfileBootstrapView(allowsBack: true)
+                    .environmentObject(AccountStore.shared)
+                    .frame(minWidth: 680, minHeight: 620)
             }
             #endif
             .alert("出错", isPresented: Binding(
@@ -191,14 +198,12 @@ struct MeTabView: View {
                 VStack(spacing: 28) {
                     profileHeader
                         .contentShape(Rectangle())
-                        // 点头像进重roll 页 —— iOS-only(ProfileBootstrapView
-                        // 是 iOS 限定);macOS 上头像是纯展示,不可点。
-                        #if os(iOS)
+                        // 点头像进重roll 页(ProfileBootstrapView 跨平台;
+                        // iOS 全屏 cover / macOS sheet,见 chrome())。
                         .onTapGesture {
                             showRandomize = true
                             Haptics.tap()
                         }
-                        #endif
 
                     VStack(spacing: 0) {
                         navRow(.addFriendMethods)

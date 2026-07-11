@@ -5,10 +5,10 @@ import Foundation
 //
 // The single seam for persisting the signed-in user's own profile row
 // (display name + avatar attachment + the `custom_fields` knobs the random-roll
-// onboarding stamps). Both the iOS onboarding/edit surface
-// (`Features/Onboarding/ProfileBootstrapView`) and the macOS `MacProfileEditView`
-// drive this one method instead of each open-coding the same
-// `.from("users").update(...)` write.
+// onboarding stamps). The shared onboarding/edit surface
+// (`Features/Onboarding/ProfileBootstrapView`, cross-platform — iOS cover +
+// macOS onboarding/sheet) drives this one method instead of open-coding the
+// `.from("users").update(...)` write per platform.
 //
 // Why a direct supabase UPDATE and not `/v1/me/profile`:
 // the worker's `PATCH /v1/me/profile` (apps/edge/src/routes/me.ts) only accepts

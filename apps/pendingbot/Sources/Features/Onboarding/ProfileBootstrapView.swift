@@ -1,5 +1,6 @@
 import SwiftUI
 import PhotosUI
+import UniformTypeIdentifiers
 
 /// Random-name + random-avatar onboarding step. Shown right after first
 /// sign-in (when the user hasn't set a profile yet) and re-openable from
@@ -379,6 +380,11 @@ private struct CustomizeSheet: View {
     @State private var pickerItem: PhotosPickerItem?
     @State private var uploading = false
     @State private var uploadError: String?
+    #if os(macOS)
+    /// macOS 额外的「选择文件」路径 —— PhotosPicker 只见 Photos 图库,Mac 用户
+    /// 的图多在文件系统里,补一个 .fileImporter 入口(同消息 tab 发文件的做法)。
+    @State private var showFileImporter = false
+    #endif
 
     var body: some View {
         NavigationStack {
@@ -472,6 +478,22 @@ private struct CustomizeSheet: View {
                 guard let item else { return }
                 Task { await loadPicked(item) }
             }
+            #if os(macOS)
+            Button {
+                showFileImporter = true
+            } label: {
+                actionChip(systemImage: "folder", label: "选择文件")
+            }
+            .buttonStyle(.plain)
+            .fileImporter(
+                isPresented: $showFileImporter,
+                allowedContentTypes: [.image]
+            ) { result in
+                if case .success(let url) = result {
+                    Task { await loadFile(url) }
+                }
+            }
+            #endif
             Button {
                 customImageData = nil
                 customAttachmentId = nil
@@ -508,6 +530,25 @@ private struct CustomizeSheet: View {
         customImageData = data
         await uploadAvatar(data: data, mime: "image/jpeg")
     }
+
+    #if os(macOS)
+    /// File-importer path (macOS): read the security-scoped URL into Data
+    /// for instant preview, then upload — same seam as `loadPicked`. MIME
+    /// derived from the extension, mirroring the chat file-ingest path.
+    private func loadFile(_ url: URL) async {
+        uploadError = nil
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        guard let data = try? Data(contentsOf: url) else {
+            uploadError = "读取图片失败"
+            return
+        }
+        customImageData = data
+        let mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType
+            ?? "image/jpeg"
+        await uploadAvatar(data: data, mime: mime)
+    }
+    #endif
 
     /// POST /v1/upload (no conversationId — avatar isn't tied to a conv).
     /// Stores the returned id in the binding so the parent's save() can
