@@ -3,7 +3,11 @@ import Foundation
 
 /// edge 信箱同步代理（接合 v2 block 3 relay）。
 ///
-/// 对所有 `remoteConversationId != nil` 的本地 crew 跑 5s 轮询双向搬运：
+/// 对所有 `remoteConversationId != nil` 的本地 crew 跑双向搬运。拉取侧
+/// **hub 推送优先**（CC-P4）：每个绑定 crew 开一条 `CrewRealtimeClient` 连
+/// `conv:<remoteId>` hub，`.changed` 帧 → 立即拉该 crew（`CrewHubPullCoalescer`
+/// 保证同 crew 单飞、事件风暴合并成一次补拉）。5s 轮询保留作兜底 —— 覆盖
+/// hub 断线/重连窗口的拉取补漏，且上行推送侧本就不经 hub：
 /// - **拉**：`GET /v1/crews/:remoteId/messages?since=<relayCursor>` →
 ///   过滤掉 Mac 自己推上去的（`relay.origin == mac_relay`）和已同步过的
 ///   （按 edge message id 幂等）→ 写进本地白板（带 edge 侧发送者名字、
@@ -35,6 +39,13 @@ final class CrewRelayAgent: ObservableObject {
     private let crewStore: LocalCrewStore
     private let whiteboard: LocalWhiteboardStore
 
+    /// hub 订阅（CC-P4）：本地 crewId → 远端 conv hub 的 WS 客户端 / 事件泵 /
+    /// 拉取合并器。与 relay 绑定集合的对账挂在已有的 5s tick 上（绑定变化低频，
+    /// 心跳级对账足够；断线重连由 client 自身的 capped 退避负责）。
+    private var hubClients: [String: CrewRealtimeClient] = [:]
+    private var hubPumps: [String: Task<Void, Never>] = [:]
+    private var hubCoalescers: [String: CrewHubPullCoalescer] = [:]
+
     init(crewStore: LocalCrewStore? = nil, whiteboard: LocalWhiteboardStore? = nil) {
         self.crewStore = crewStore ?? .shared
         self.whiteboard = whiteboard ?? .shared
@@ -57,6 +68,7 @@ final class CrewRelayAgent: ObservableObject {
     func stop() {
         timer?.invalidate()
         timer = nil
+        reconcileHubConnections(bindings: [])   // 关掉全部 hub 订阅
     }
 
     // MARK: - Tick
@@ -65,12 +77,72 @@ final class CrewRelayAgent: ObservableObject {
         guard !ticking else { return }
         ticking = true
         defer { ticking = false }
+        // hub 对账放 auth guard 前 —— 退出登录时把已开的 hub 连接收干净。
+        let bindings = (appModel?.isAuthenticated == true) ? crewStore.listRelayBindings() : []
+        reconcileHubConnections(bindings: bindings)
         guard let appModel, appModel.isAuthenticated,
               let api = try? appModel.loggedAPIClient() else { return }
-        for binding in crewStore.listRelayBindings() {
+        for binding in bindings {
             await pull(binding, api: api)
             await push(binding, api: api)
         }
+    }
+
+    // MARK: - hub 订阅（CC-P4：远端消息推送 → 立即拉，5s 轮询降为兜底）
+
+    /// 与 relay 绑定集合对账 hub 连接：新绑定开 socket + 事件泵，解绑/登出关掉。
+    /// 幂等，挂在每个 tick 上。无 device-grant 凭据（imageAuth nil）时视同无绑定。
+    private func reconcileHubConnections(bindings: [LocalCrewRelayBinding]) {
+        let auth = appModel?.imageAuth
+        let byId = Dictionary(bindings.map { ($0.crewId, $0.remoteConversationId) },
+                              uniquingKeysWith: { a, _ in a })
+        let desired: Set<String> = auth == nil ? [] : Set(byId.keys)
+        let diff = CrewRelayHubLogic.reconcile(desired: desired, connected: Set(hubClients.keys))
+        for crewId in diff.close {
+            hubPumps[crewId]?.cancel(); hubPumps[crewId] = nil
+            hubCoalescers[crewId] = nil
+            if let client = hubClients.removeValue(forKey: crewId) {
+                Task { await client.close() }
+            }
+        }
+        guard let auth else { return }
+        for crewId in diff.open {
+            guard let remoteId = byId[crewId] else { continue }
+            let client = CrewRealtimeClient(
+                baseURL: auth.baseURL, crewId: remoteId, token: auth.token)
+            hubClients[crewId] = client
+            Task { await client.connect() }
+            hubPumps[crewId] = Task { [weak self] in
+                for await event in await client.events {
+                    if Task.isCancelled { return }
+                    if case .changed = event {
+                        await self?.hubPull(crewId: crewId)
+                    }
+                }
+            }
+        }
+    }
+
+    /// hub 事件触发的即时拉取。合并器保证同 crew 单飞；飞行期间的事件合并成
+    /// 结束后一次补拉（拉取按游标取增量，一次补拉覆盖全部积压）。
+    /// 与 5s tick 的 pull 并发也安全：`known` 集合在网络返回后才读、追加是
+    /// 同步段，重复条目会被幂等去重；`?since` 本就是闭区间语义。
+    private func hubPull(crewId: String) async {
+        var c = hubCoalescers[crewId] ?? CrewHubPullCoalescer()
+        let start = c.shouldStart()
+        hubCoalescers[crewId] = c
+        guard start else { return }
+        repeat {
+            if let appModel, appModel.isAuthenticated,
+               let api = try? appModel.loggedAPIClient(),
+               let binding = crewStore.relayBinding(for: crewId) {
+                await pull(binding, api: api)
+            }
+            var done = hubCoalescers[crewId] ?? CrewHubPullCoalescer()
+            let again = done.didFinish()
+            hubCoalescers[crewId] = done
+            if !again { break }
+        } while true
     }
 
     /// 拉：edge 新条目 → 本地白板。
