@@ -393,10 +393,10 @@ struct MacWelcomeView: View {
 
     private var appleButton: some View {
         Button { Task { await vm.beginApple() } } label: {
-            brandPillContent(logo: appleLogoImage, text: "Apple", textColor: .white)
+            brandPillContent(logo: appleLogoImage, text: "Apple", textColor: Theme.Palette.onApplePill)
                 .frame(maxWidth: .infinity)
                 .frame(height: 48)
-                .background(Capsule().fill(.black))
+                .background(Capsule().fill(Theme.Palette.applePill))
                 .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
         }
         .buttonStyle(.plain)
@@ -408,7 +408,7 @@ struct MacWelcomeView: View {
             brandPillContent(
                 logo: AnyView(Image("GoogleG").resizable().scaledToFit()),
                 text: "Google",
-                textColor: Color(red: 0.18, green: 0.18, blue: 0.20)
+                textColor: Theme.Palette.googleInk
             )
             .frame(maxWidth: .infinity)
             .frame(height: 48)
@@ -437,7 +437,7 @@ struct MacWelcomeView: View {
         } label: {
             if showingQRLogin {
                 glyph
-                    .foregroundStyle(Color.white)
+                    .foregroundStyle(Theme.Palette.onAccent)
                     .background(Capsule().fill(Theme.Palette.accent))
                     .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
             } else {
@@ -460,7 +460,7 @@ struct MacWelcomeView: View {
                 Image("AppleSignInLogo")
                     .resizable()
                     .renderingMode(.template)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.Palette.onApplePill)
                     .scaledToFit()
             )
         } else {
@@ -468,7 +468,7 @@ struct MacWelcomeView: View {
                 Image(systemName: "applelogo")
                     .resizable()
                     .scaledToFit()
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.Palette.onApplePill)
             )
         }
     }

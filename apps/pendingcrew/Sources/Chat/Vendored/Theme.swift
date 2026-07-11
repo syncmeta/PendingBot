@@ -83,6 +83,16 @@ enum Theme {
         /// white would wash out against jade.
         static let onAccent = Color.adaptive(light: 0xFFFFFF, dark: 0x0E2A20)
 
+        /// Sign-in-with-Apple pill fill. Apple's branding rule: black button
+        /// on light UI, white button on dark UI (a black pill would sink into
+        /// the near-black canvas).
+        static let applePill   = Color.adaptive(light: 0x000000, dark: 0xFFFFFF)
+        /// Logo + label sitting ON `applePill` — the inverse of the fill.
+        static let onApplePill = Color.adaptive(light: 0xFFFFFF, dark: 0x000000)
+        /// "Google" label on the glass pill. Light: Google's dark-grey text;
+        /// dark: their official dark-theme text grey (#E3E3E3).
+        static let googleInk   = Color.adaptive(light: 0x2E2E33, dark: 0xE3E3E3)
+
         /// Destructive / error fg — terracotta. Was 12 scattered `0xB14B3C`
         /// literals; centralised so dark mode lifts them in one place.
         static let danger   = Color.adaptive(light: 0xB14B3C, dark: 0xE08D7A)

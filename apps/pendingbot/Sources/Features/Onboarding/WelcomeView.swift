@@ -327,10 +327,10 @@ struct WelcomeView: View {
     /// through the cross-platform `AppleSignIn` helper.
     private var appleButton: some View {
         Button { Task { await vm.beginApple() } } label: {
-            brandPillContent(logo: appleLogoImage, text: "Apple", textColor: .white)
+            brandPillContent(logo: appleLogoImage, text: "Apple", textColor: Theme.Palette.onApplePill)
                 .frame(maxWidth: .infinity)
                 .frame(height: 52)
-                .background(Capsule().fill(.black))
+                .background(Capsule().fill(Theme.Palette.applePill))
                 .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
         }
         .buttonStyle(.plain)
@@ -344,7 +344,7 @@ struct WelcomeView: View {
             brandPillContent(
                 logo: AnyView(Image("GoogleG").resizable().scaledToFit()),
                 text: "Google",
-                textColor: Color(red: 0.18, green: 0.18, blue: 0.20)
+                textColor: Theme.Palette.googleInk
             )
             .frame(maxWidth: .infinity)
             .frame(height: 52)
@@ -364,7 +364,7 @@ struct WelcomeView: View {
                 Image("AppleSignInLogo")
                     .resizable()
                     .renderingMode(.template)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.Palette.onApplePill)
                     .scaledToFit()
             )
         } else {
@@ -372,7 +372,7 @@ struct WelcomeView: View {
                 Image(systemName: "applelogo")
                     .resizable()
                     .scaledToFit()
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.Palette.onApplePill)
             )
         }
     }
