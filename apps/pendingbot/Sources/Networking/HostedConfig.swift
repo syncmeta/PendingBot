@@ -127,13 +127,11 @@ enum HostedConfig {
             }
         }
 
-        /// RevenueCat public SDK key for the Apple app (`appl_…`). Empty
-        /// until the RevenueCat account is provisioned — identity wiring is
-        /// in place but dormant (no IAP products yet). See tech-debt.
+        /// RevenueCat public SDK key for the Apple app (`appl_…`).
         var revenueCatKey: String {
             switch self {
             case .dev:    return ""
-            case .remote: return ""
+            case .remote: return "appl_OHplTtFSfcqsgKJvjZajkelEOJo"
             }
         }
     }
