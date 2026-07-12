@@ -1,6 +1,8 @@
 # PendingBot / PendingCrew 进度账本 (Progress Ledger)
 
-**最近对账：2026-07-11**（in_progress 批量收口 + 生产 edge 补部署；对照实际代码 / 迁移 / git，不是看 task 标记）
+**最近对账：2026-07-12**（驾驶舱期望段书本目录树合 main；对照实际代码 / 迁移 / git，不是看 task 标记）
+
+> **2026-07-12 驾驶舱期望段改书本目录（`feat/cockpit-book-toc` 2 commit，task #474，spec 2026-07-11-cockpit-book-toc-design）**：用户「不要文件夹图标、像 VSCode 紧凑、目录像书的章有章内容」→ CockpitExpectation 重画:目录树去图标只留 chevron+文字（22pt 行高/12.5pt/章 semibold+节尾现状色点）;目录可选中,章正文**只认该目录 README.md**（用户拍板,无则占位、UI 不合成）;根 README 当全书序（未选中默认渲）。Mac build 绿;GUI 活验归 #443（新增场景:章/节选中切换+README 渲染）。注:handbook 子目录目前均无 README.md,点章多为占位——补章引言归期望账（人写）。
 
 > **2026-07-11 in_progress 批量收口（用户「做完 in_progress 的」，3 分支合 main + 1 次生产部署 + 2 条对账关闭）**：
 > - **⚠️ 悬账清掉：生产 edge worker 补部署**（version `12dd4297`，7-05 drop 旧列后线上 500 的端点恢复，`/v1/me/subject` 冒烟回规范 401）。首跑被 Docker 未启动挡（容器构建步），`orb start` 后全绿。**task #464 关**。
