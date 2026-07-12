@@ -316,19 +316,51 @@ struct CreateBotSheet: View {
 
     private func loadPresets() async {
         presetsError = nil
+        // Instant paint from the last successful fetch while the network
+        // refresh is in flight — same stale-while-revalidate shape as
+        // ModelCatalog. A fresh fetch below overwrites both list and disk.
+        if presets.isEmpty, let cached = Self.readPresetsCache() {
+            presets = cached
+            if selectedPresetSlugs.isEmpty {
+                selectedPresetSlugs = Set(cached.filter(\.default_selected).map(\.slug))
+            }
+        }
         do {
             let loaded = try await APIClient().modelPresets()
             presets = loaded
-            // Seed the multi-select from the board-marked defaults — only on
-            // the first successful load, so a manual toggle isn't clobbered
-            // by a retry.
-            if !presetsLoaded {
+            Self.writePresetsCache(loaded)
+            // Reconcile the selection against the fresh list: keep what's
+            // there (cache-seeded or hand-toggled) minus presets that no
+            // longer exist; reseed from the board defaults only when
+            // nothing survives.
+            let live = Set(loaded.map(\.slug))
+            selectedPresetSlugs = selectedPresetSlugs.intersection(live)
+            if selectedPresetSlugs.isEmpty {
                 selectedPresetSlugs = Set(loaded.filter(\.default_selected).map(\.slug))
             }
             presetsLoaded = true
         } catch {
             presetsError = (error as? APIError)?.errorDescription ?? error.localizedDescription
         }
+    }
+
+    /// Disk cache of the last successful `GET /v1/model-presets` response.
+    private static let presetsCacheURL: URL? = {
+        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+        return dir?.appendingPathComponent("model_presets.json")
+    }()
+
+    private static func readPresetsCache() -> [ModelPreset]? {
+        guard let url = presetsCacheURL,
+              let data = try? Data(contentsOf: url),
+              let rows = try? JSONDecoder().decode([ModelPreset].self, from: data),
+              !rows.isEmpty else { return nil }
+        return rows
+    }
+
+    private static func writePresetsCache(_ rows: [ModelPreset]) {
+        guard let url = presetsCacheURL, let data = try? JSONEncoder().encode(rows) else { return }
+        try? data.write(to: url, options: .atomic)
     }
 
     // ── Create ───────────────────────────────────────────────────────────
