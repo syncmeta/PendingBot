@@ -1093,3 +1093,7 @@
 ## 2026-07-11 CC-P4 runner 接 hub（`feat/crew-runner-hub`）
 
 - 🟢 **同一 crew 会开两条 hub WebSocket（waker + relay 各一）** — `CrewMailboxWaker`（登录态 run 的 @ 唤醒,`CrewSessionRunner.ensureMailboxWaker` 懒建）与 `CrewRelayAgent`（白板双向搬运,CC-P4 起每个绑定 crew 常驻一条）各自持有独立的 `CrewRealtimeClient` 连同一个 `conv:<remoteId>` hub。根因是 `CrewRealtimeClient.events` 是单消费者 `AsyncStream`（一个 continuation,只能被一个 for-await 消费）,无法直接共享。DO 侧 hibernatable socket 成本 ~0、客户端每 crew 最多 2 条,量级无害;但如果后续第三个订阅方出现（如 UI 直接订 hub）,应先把 client 改成多播（per-subscriber continuation 或 Combine multicast）再挂,不要开第三条连接。
+
+## 2026-07-12 计费 webhook 环境区分（RC/Polar 接线收尾时发现）
+
+- 🟡 **RC/Polar webhook 不区分 sandbox/production 环境,测试单入真钱包** — `billing-webhooks.ts` 两条路径都不检查环境字段(RC `event.environment==='SANDBOX'`、Polar sandbox org 走独立 webhook 但当前 POLAR_SERVER 本就指 sandbox),sandbox 测试购买会往真实 subject 的 pnc_ledger/WalletDO 入账。pre-launch 单环境阶段是有意为之(方便真单验证),但**上线前必须**:① RC 路径按 `environment` 分流(SANDBOX 只记日志或打标记不入账,或入账时 `raw` 里已有环境可查);② Polar 切 production org + token 后删 sandbox webhook;③ 清掉验证期的测试入账(蚕庄 +6.75 polar / +13.5 iap 测试单)。
