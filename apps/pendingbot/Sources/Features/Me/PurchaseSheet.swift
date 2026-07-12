@@ -7,8 +7,9 @@ import RevenueCat
 /// (`/v1/billing/revenuecat/webhook`) → recordCreditIn → WalletDO。所以购买成功
 /// 后本 sheet 只轮询刷新 `/v1/me/wallet/v2`,等 webhook 到账后余额自然更新。
 ///
-/// appUserID 已由 Telemetry.identify(subjectId) 绑成我们的 user id(= webhook 里
-/// ev.app_user_id 解析出的 subjectId),两端对齐 —— 本 sheet 不再重复设置。
+/// appUserID 由 Telemetry.identify(Account.id) 绑成 **auth.users.id**（不是
+/// subject id）；webhook 侧把 ev.app_user_id 经 subjects.user_id 查表映射回
+/// user_account 的 subject id 再入账 —— 本 sheet 不再重复设置。
 ///
 /// key 空(RevenueCat 未配置)时 `Purchases.isConfigured == false`:入口显示禁用
 /// "内购未配置",不静默隐藏也不崩。

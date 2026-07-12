@@ -161,6 +161,40 @@ billingWebhookRoutes.post('/polar/webhook', async (c) => {
 // 鉴权:RevenueCat 无签名,只有共享密钥 Authorization 头 → 常量时间比对。
 // ============================================================
 
+/** RC 侧 supabase 查询的最小面(便于单测注入 mock)。 */
+export interface RcSubjectLookup {
+  from(table: string): {
+    select(cols: string): {
+      eq(col: string, v: string): {
+        eq(col: string, v: string): { maybeSingle(): Promise<{ data: { id: string } | null }> }
+        maybeSingle(): Promise<{ data: { id: string } | null }>
+      }
+    }
+  }
+}
+
+/**
+ * RC `app_user_id` → subject id。iOS Telemetry.identify 绑的是 **auth.users.id**
+ * (Account.id),不是 subject id —— 先查 user_account subject 映射;查不到再按
+ * subject id 直用兜底(防未来 app 侧改绑成 subject id)。匿名 id 直接放弃。
+ */
+export async function resolveRcSubjectId(
+  supa: RcSubjectLookup,
+  appUserId: unknown,
+): Promise<string | undefined> {
+  if (typeof appUserId !== 'string' || !appUserId || appUserId.startsWith('$RCAnonymousID:')) {
+    return undefined;
+  }
+  const { data: byUser } = await supa
+    .from('subjects').select('id')
+    .eq('user_id', appUserId).eq('kind', 'user_account')
+    .maybeSingle();
+  if (byUser?.id) return byUser.id;
+  const { data: bySubject } = await supa
+    .from('subjects').select('id').eq('id', appUserId).maybeSingle();
+  return bySubject?.id ?? undefined;
+}
+
 billingWebhookRoutes.post('/revenuecat/webhook', async (c) => {
   const expected = c.env.REVENUECAT_WEBHOOK_AUTH;
   if (!expected) return jsonError(c, 501, 'webhook_not_configured');
@@ -182,7 +216,8 @@ billingWebhookRoutes.post('/revenuecat/webhook', async (c) => {
   if (!ev) return jsonError(c, 400, 'invalid_json');
 
   const supa = serviceClient(c.env);
-  const subjectId: string | undefined = ev.app_user_id;
+  // 结构收窄:PostgrestBuilder 是 thenable 而非 Promise,与 mock 接缝的最小面不严格相容。
+  const subjectId = await resolveRcSubjectId(supa as unknown as RcSubjectLookup, ev.app_user_id);
   const pack = ev.product_id ? await resolvePack(c.env, 'iap_ios', String(ev.product_id)) : null;
   if (!subjectId || !pack) return c.json({ ok: true, skipped: 'no_subject_or_pack' });
 
