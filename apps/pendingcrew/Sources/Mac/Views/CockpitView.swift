@@ -385,62 +385,107 @@ private struct CockpitDashboard: View {
     }
 }
 
-// MARK: - 期望(handbook 目录树浏览)
+// MARK: - 期望(handbook 书本目录浏览)
 
+/// 期望段 = 书本目录:左树像书目录(无图标、紧凑、章 semibold / 节 regular、节尾现状色点),
+/// 右栏翻到哪章/哪节看哪页 —— 章(目录)的正文只认该目录下的 README.md(spec 2026-07-11),
+/// 根 README.md 当"全书序"(未选中时默认渲)。
 private struct CockpitExpectation: View {
     let data: CockpitData
     @Binding var selectedNodeID: String?
     let nav: (CockpitNav) -> Void
 
     var body: some View {
-        CockpitSplit(leftWidth: 280) {
+        CockpitSplit(leftWidth: 260) {
             List(selection: $selectedNodeID) {
                 OutlineGroup(data.handbookTree, children: \.childrenOrNil) { node in
-                    Label(node.name, systemImage: node.isPage ? "doc.text" : "folder.fill")
-                        .foregroundStyle(node.isPage ? Theme.Palette.ink : Theme.Palette.inkMuted)
-                        .font(node.isPage ? .body : .body.weight(.medium))
+                    tocRow(node)
                 }
             }
             .listStyle(.sidebar)
+            .environment(\.defaultMinListRowHeight, 22)
         } right: {
             pageDetail
         }
     }
 
+    /// 书目录行:章 semibold、节 regular;节尾缀同 relpath 现状条的状态色点(纯展示,不判 drift)。
+    private func tocRow(_ node: HandbookNode) -> some View {
+        HStack(spacing: 6) {
+            Text(node.name)
+                .font(.system(size: 12.5, weight: node.isPage ? .regular : .semibold))
+                .foregroundStyle(Theme.Palette.ink)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            if node.isPage, let topic = data.topics.first(where: { $0.expectationRelpath == node.id }) {
+                Circle().fill(CockpitUI.color(topic.status))
+                    .frame(width: 6, height: 6)
+                    .help("现状:\(topic.status)")
+            }
+        }
+    }
+
     @ViewBuilder private var pageDetail: some View {
-        if let id = selectedNodeID, let n = node(id, in: data.handbookTree), n.isPage {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    // 页头并排现状:同一 relpath 的现状条状态(对账一眼读)。
-                    if let topic = data.topics.first(where: { $0.expectationRelpath == id }) {
-                        Button { nav(.topic(id)) } label: {
-                            HStack(spacing: 8) {
-                                Text("现状").font(.caption.weight(.semibold)).foregroundStyle(Theme.Palette.inkMuted)
-                                StatusBadge(raw: topic.status)
-                                Text(topic.summary).font(.caption).foregroundStyle(Theme.Palette.ink).lineLimit(1)
-                                Spacer(minLength: 0)
-                                Image(systemName: "chevron.right").font(.caption2).foregroundStyle(Theme.Palette.inkMuted)
-                            }
-                            .padding(10)
-                            .background(Theme.Palette.surfaceMuted, in: RoundedRectangle(cornerRadius: 8))
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
+        if let id = selectedNodeID, let n = node(id, in: data.handbookTree) {
+            if n.isPage {
+                pageBody(relpath: id)
+            } else {
+                chapterBody(n)
+            }
+        } else {
+            // 全书序:根 README.md;没有就退回引导文案。
+            if let body = CockpitLoader.readExpectation(handbookDir: data.handbookDir, relpath: "README") {
+                article { MarkdownText(text: body, variant: .article) }
+            } else {
+                placeholder("从左边目录选一章或一节")
+            }
+        }
+    }
+
+    /// 节(页)正文:页头并排现状 + markdown。
+    private func pageBody(relpath id: String) -> some View {
+        article {
+            // 页头并排现状:同一 relpath 的现状条状态(对账一眼读)。
+            if let topic = data.topics.first(where: { $0.expectationRelpath == id }) {
+                Button { nav(.topic(id)) } label: {
+                    HStack(spacing: 8) {
+                        Text("现状").font(.caption.weight(.semibold)).foregroundStyle(Theme.Palette.inkMuted)
+                        StatusBadge(raw: topic.status)
+                        Text(topic.summary).font(.caption).foregroundStyle(Theme.Palette.ink).lineLimit(1)
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right").font(.caption2).foregroundStyle(Theme.Palette.inkMuted)
                     }
-                    if let body = CockpitLoader.readExpectation(handbookDir: data.handbookDir, relpath: id) {
-                        MarkdownText(text: body, variant: .article)
-                    } else {
-                        Text("(读不到 docs/handbook/\(id).md)")
-                            .font(.caption).foregroundStyle(Theme.Palette.inkMuted)
-                    }
+                    .padding(10)
+                    .background(Theme.Palette.surfaceMuted, in: RoundedRectangle(cornerRadius: 8))
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+            }
+            if let body = CockpitLoader.readExpectation(handbookDir: data.handbookDir, relpath: id) {
+                MarkdownText(text: body, variant: .article)
+            } else {
+                Text("(读不到 docs/handbook/\(id).md)")
+                    .font(.caption).foregroundStyle(Theme.Palette.inkMuted)
+            }
+        }
+    }
+
+    /// 章(目录)正文:只认该目录下的 README.md;没有就一行占位(引言归人写,UI 不合成)。
+    @ViewBuilder private func chapterBody(_ n: HandbookNode) -> some View {
+        if let body = CockpitLoader.readExpectation(handbookDir: data.handbookDir, relpath: "\(n.id)/README") {
+            article { MarkdownText(text: body, variant: .article) }
+        } else {
+            placeholder("本章还没有引言(docs/handbook/\(n.id)/README.md)")
+        }
+    }
+
+    private func article<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) { content() }
                 .padding(18)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .background(Theme.Palette.canvas)
-        } else {
-            placeholder("从左边目录树选一篇期望页")
         }
+        .background(Theme.Palette.canvas)
     }
 
     private func node(_ id: String, in nodes: [HandbookNode]) -> HandbookNode? {
