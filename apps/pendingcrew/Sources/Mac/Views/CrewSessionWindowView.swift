@@ -394,10 +394,10 @@ struct CrewSessionWindowView: View {
         HStack(alignment: .top, spacing: 10) {
             CrewAvatarBadges(sender: sender, size: 30)
             VStack(alignment: .leading, spacing: 2) {
-                // captain 行标题用名字(Captain),不用 taskBrief —— captain 的 taskBrief
-                // 是开场报到 prompt,拿来当标题没意义。worker 仍用首条指令(taskBrief)。
-                Text(run.role == .captain ? run.displayName
-                     : (run.taskBrief.isEmpty ? run.displayName : run.taskBrief))
+                // 主名 = displayName（worker=精简 title、captain=机长）—— 与群聊气泡名
+                // 单一真值,一致且 ≤18 字。次要行仍展示「在干嘛」(latestStep 兜到 taskBrief),
+                // 用户明确要「还能知道在干嘛」,brief 不丢。
+                Text(run.displayName)
                     .font(Theme.Fonts.callout)
                     .foregroundStyle(Theme.Palette.ink)
                     .lineLimit(1)
@@ -431,6 +431,9 @@ struct CrewSessionWindowView: View {
             .last(where: { $0.senderSessionId == run.sessionId }) {
             return last.text
         }
+        // 还没有白板动作 → 退回完整 taskBrief（主名现在是精简 title,brief 挪到这作
+        // 「在干嘛」的详情,别丢）。captain 的 brief 是开场报到 prompt,不拿来当详情。
+        if run.role != .captain, !run.taskBrief.isEmpty { return run.taskBrief }
         return run.status == .running ? "running" : "已退出"
     }
 
@@ -719,22 +722,23 @@ struct CrewSessionWindowView: View {
             // best-effort：渲染失败 nil 不挡 session 启动。
             var codexDevInstructions: String? = nil
             var codexMcp: [String: Any]? = nil
-            // worker session 的白板发送者名：agent 名 + 本地 session id 前缀（与
-            // CrewSessionRun.displayName 同款），让 post_to_crew 写的白板不再裸 uuid。
-            let workerLabel = selectedKind.displayName + " · " + String(localSessionId.prefix(6))
+            // worker session 的显示名 = 精简 title（单一真值）：手动新建没有显式 title,
+            // 从首条 prompt 兜底 derive（≤18 字、剥项目名）。既作 helper --label 白板署名,
+            // 又落到 run.title —— 群聊气泡、成员列表、白板署名三处同一值,不再裸「agent·id6」。
+            let workerTitle = CrewSessionTitle.derive(fromBrief: firstPrompt)
             switch selectedKind {
             case .claudeCode:
                 cfg.appendSystemPromptFile = await renderWorldModelFile(
                     detail: detail, taskBrief: firstPrompt, workdir: workdir, sessionId: localSessionId)
                 let comms = prepareLocalCommsConfig(
-                    crewId: detail.crew.id, sessionId: localSessionId, label: workerLabel)
+                    crewId: detail.crew.id, sessionId: localSessionId, label: workerTitle)
                 cfg.settingsFile = comms.settings
                 cfg.mcpConfigFile = comms.mcp
             case .codex:
                 codexDevInstructions = await renderWorldModelString(
                     detail: detail, taskBrief: firstPrompt, workdir: workdir, sessionId: localSessionId)
                 codexMcp = LocalSessionLaunch.codexMcpServers(
-                    crewId: detail.crew.id, sessionId: localSessionId, label: workerLabel)
+                    crewId: detail.crew.id, sessionId: localSessionId, label: workerTitle)
             }
             try await sessionRunner.start(
                 crewId: detail.crew.id,
@@ -742,6 +746,7 @@ struct CrewSessionWindowView: View {
                 config: cfg,
                 workingDirectory: workdir,
                 taskBrief: firstPrompt,
+                title: workerTitle,
                 serverLink: serverLink,
                 developerInstructions: codexDevInstructions,
                 codexMcpServers: codexMcp

@@ -134,6 +134,8 @@ targets:
       # CrewComposerMentions.swift：composer @ 候选构建/过滤 + @token 解析 +
       # staged 撤销对账 + reply 自动@推导(Phase 6)。纯 Foundation，自包含。
       - path: Sources/Chat/Adapter/CrewComposerMentions.swift
+      # CrewSessionTitle.swift：session 精简标题 clamp/derive（≤18 字、剥项目名）。纯 Foundation。
+      - path: Sources/Chat/Adapter/CrewSessionTitle.swift
       - path: Sources/Mac/Views/Chat/CrewSenderResolver.swift
       # CrewSenderNaming.swift：session/成员显示名兜底 + groupSender factory 收口
       # （纯 Foundation，只依赖 CrewMember/GroupBubbleSender，均已在 bundle）。

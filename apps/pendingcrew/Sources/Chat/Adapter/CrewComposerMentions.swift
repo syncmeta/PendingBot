@@ -196,16 +196,34 @@ enum CrewComposerMentionParser {
     /// their avatar, not by typing. Inserts a single leading space when the
     /// draft is non-empty and doesn't already end with whitespace, then
     /// `@label ` (trailing space so typing continues cleanly). Dedups by mention
-    /// target: if that exact target is already staged, it's a no-op (draft +
-    /// staged unchanged) so hammering the menu doesn't pile up `@X @X @X`.
+    /// target: if that exact target is already staged, it's a no-op (draft
+    /// still reclaimed) so hammering the menu doesn't pile up `@X @X @X`.
+    ///
+    /// Two guards keep this from producing a stray double-`@`:
+    ///  1. **Reclaim a half-open `@<prefix>`** — the user may have typed `@`
+    ///     (opening the picker) and then reached for the avatar instead. That
+    ///     trailing `@`/`@gr` must be dropped before appending, else the result
+    ///     reads `@ @Name` / `@gr @Name`.
+    ///  2. **Normalize the token to a single leading `@`** — an author whose
+    ///     display name itself carries a leading `@` would otherwise make the
+    ///     token `@@Name`.
     static func appendMention(
         _ staged: CrewStagedMention, to draft: String, existing: [CrewStagedMention]
     ) -> (newDraft: String, staged: [CrewStagedMention]) {
-        guard !existing.contains(where: { $0.mention == staged.mention }) else {
-            return (draft, existing)
+        let normalizedToken = "@" + staged.token.drop(while: { $0 == "@" })
+        let normalized = CrewStagedMention(token: normalizedToken, mention: staged.mention)
+        // Reclaim any half-open `@<prefix>` at the tail before we touch the draft
+        // (do this even on the dedup no-op so the stray `@` never lingers).
+        var base = draft
+        if let q = activeQuery(in: base) {
+            let atIndex = base.index(base.startIndex, offsetBy: q.atOffset)
+            base = String(base[base.startIndex..<atIndex])
         }
-        let sep = (draft.isEmpty || draft.last?.isWhitespace == true) ? "" : " "
-        return (draft + sep + staged.token + " ", existing + [staged])
+        guard !existing.contains(where: { $0.mention == normalized.mention }) else {
+            return (base, existing)
+        }
+        let sep = (base.isEmpty || base.last?.isWhitespace == true) ? "" : " "
+        return (base + sep + normalizedToken + " ", existing + [normalized])
     }
 
     /// Collapse a staged list into the de-duplicated `[CrewMention]` to send.

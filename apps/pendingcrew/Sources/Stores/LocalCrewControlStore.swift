@@ -118,10 +118,10 @@ final class LocalCrewControlStore: @unchecked Sendable {
     /// 机长起 worker session：brief 必填（空则忽略）；runner/isolation/model/effort 可选
     /// （model/effort nil = 用对应 CLI 的默认）。
     func enqueueStartSession(crewId: String, brief: String, runner: String?, isolation: Bool?,
-                             model: String? = nil, effort: String? = nil) {
+                             model: String? = nil, effort: String? = nil, title: String? = nil) {
         enqueue(CrewCommand(
             id: UUID().uuidString.lowercased(), crewId: crewId, kind: "start_session",
-            brief: brief, runner: runner, isolation: isolation, title: nil,
+            brief: brief, runner: runner, isolation: isolation, title: title,
             model: model, effort: effort,
             ts: ISO8601DateFormatter().string(from: Date())))
     }

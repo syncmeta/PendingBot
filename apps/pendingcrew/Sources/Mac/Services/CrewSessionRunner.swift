@@ -285,14 +285,10 @@ final class CrewSessionRunner: ObservableObject {
             sessionId: req.sessionId, until: until, senders: req.senders))
         listenerCrew[req.sessionId] = req.crewId
         startListenWatchIfNeeded()
-        // 白板留一行系统回执 —— 人在群里看得见谁在收听（在线感）。
-        let label = runs.first { $0.sessionId == req.sessionId }?.displayName
-            ?? CrewSenderNaming.sessionFallback(req.sessionId)
-        let who = (req.senders?.isEmpty ?? true) ? "" : "，听：\(req.senders!.joined(separator: "、"))"
-        LocalWhiteboardStore.shared.appendSessionMessage(
-            crewId: req.crewId, sessionId: "system",
-            text: "👂 \(label) 开启了群聊收听（至 \(req.until ?? "?")\(who)）——期间群里的广播消息会直接唤醒它。",
-            senderName: "系统")
+        // 不再往白板发「👂 …开启了群聊收听…」系统回执 —— 群消息保持精简,收听是
+        // session 自己的事,发起方的确认由 McpServer listen 的 toolResult 只回本
+        // session（不进白板,用户明确要「只自己看到、不进群」）。登记/投递/到期清理
+        // 都在此之上、独立于这条回执,删掉不影响收听功能。
     }
 
     /// 挂上白板观察（幂等）。进程内 append 走 `changes`（带 crewId）；helper 子进程
@@ -494,6 +490,10 @@ final class CrewSessionRunner: ObservableObject {
         config: SessionConfig,
         workingDirectory: URL,
         taskBrief: String,
+        /// 精简标题（单一真值，见 `CrewSessionRun.title`）。nil = 从 `taskBrief` 兜底
+        /// derive。captain 起 session 时把 `--label` 传的 title 一并透进来，让 run
+        /// 上的 title 与 helper 白板署名逐字一致。
+        title: String? = nil,
         additionalEnv: [String: String] = [:],
         /// 当登录时，caller 备好 server-side session（register host → create →
         /// claim）并把 link 传进来，run 在结束时关掉 server row（让跨端列表能看到
@@ -555,6 +555,7 @@ final class CrewSessionRunner: ObservableObject {
             sessionId: sessionId,
             kind: config.kind,
             taskBrief: taskBrief,
+            title: CrewSessionTitle.resolve(explicit: title, brief: taskBrief),
             workingDirectory: workingDirectory,
             model: config.model,
             effort: config.effort,
@@ -753,7 +754,7 @@ final class CrewSessionRunner: ObservableObject {
     func startForBrief(
         detail: CrewDetail, backend: PendingCrewBackend?, brief: String,
         runnerOverride: LocalCodingAgentKind? = nil, isolation: Bool = false,
-        model: String? = nil, effort: String? = nil
+        model: String? = nil, effort: String? = nil, title: String? = nil
     ) async throws {
         guard let wd = detail.crew.workingDirectory, !wd.isEmpty else {
             throw RunnerError.captainNoWorkingDirectory
@@ -764,7 +765,7 @@ final class CrewSessionRunner: ObservableObject {
         let kind = runnerOverride ?? LocalCodingAgentKind.captainDefault(detail.crew.captainAgentKind)
         try await launchWorker(detail: detail, backend: backend, sessionId: localSessionId,
                                brief: brief, kind: kind, workdir: workdir,
-                               model: model, effort: effort)
+                               model: model, effort: effort, title: title)
     }
 
     /// @ 唤醒一个**已退出**的持久成员：复用原 sessionId 重启（白板读游标 / 成员
@@ -790,17 +791,21 @@ final class CrewSessionRunner: ObservableObject {
             + "「\(member.displayName)」,此前群里的上下文在白板里(每轮自动注入),接着处理这条。"
         try await launchWorker(detail: detail, backend: backend, sessionId: member.sessionId,
                                brief: brief, kind: kind, workdir: workdir,
-                               model: nil, effort: nil, label: member.displayName)
+                               model: nil, effort: nil, title: member.displayName)
     }
 
     /// worker 启动共用体（startForBrief 新起 / restartMember 复用原 id 两条来路）。
-    /// `label` = helper `--label`（post_to_crew 的白板署名）；重启成员传原成员名。
+    /// `title` = 精简标题（单一真值）：既作 helper `--label`（post_to_crew 白板署名），
+    /// 又落到 run.title（群聊/成员列表主名）—— 三处同一值。nil = 从 brief 兜底 derive；
+    /// 重启成员传原成员名以延续身份。
     private func launchWorker(
         detail: CrewDetail, backend: PendingCrewBackend?, sessionId localSessionId: String,
         brief: String, kind: LocalCodingAgentKind, workdir: URL,
-        model: String?, effort: String?, label: String = "补差"
+        model: String?, effort: String?, title: String? = nil
     ) async throws {
         let crewId = detail.crew.id
+        // 精简标题单一真值：显式 title 优先，否则从 brief 兜底。既当 --label 也当 run.title。
+        let resolvedTitle = CrewSessionTitle.resolve(explicit: title, brief: brief)
         // members best-effort：加载失败不挡启动（只是少世界观里的成员名单，与 startCaptain 同策略）。
         let members = (try? await backend?.listCrewMembers(crewId: crewId))?.members ?? []
         var cfg = SessionConfig(kind: kind, model: model, effort: effort, initialPrompt: brief)
@@ -812,7 +817,7 @@ final class CrewSessionRunner: ObservableObject {
                 detail: detail, members: members, taskBrief: brief, workdir: workdir,
                 sessionId: localSessionId, runnerKind: kind, appendPersona: nil)
             let comms = LocalSessionLaunch.prepareLocalCommsConfig(
-                crewId: crewId, sessionId: localSessionId, captain: false, label: label)
+                crewId: crewId, sessionId: localSessionId, captain: false, label: resolvedTitle)
             cfg.settingsFile = comms.settings
             cfg.mcpConfigFile = comms.mcp
         case .codex:
@@ -820,7 +825,7 @@ final class CrewSessionRunner: ObservableObject {
                 detail: detail, members: members, taskBrief: brief, workdir: workdir,
                 sessionId: localSessionId, appendPersona: nil)
             codexMcpServers = LocalSessionLaunch.codexMcpServers(
-                crewId: crewId, sessionId: localSessionId, captain: false, label: label)
+                crewId: crewId, sessionId: localSessionId, captain: false, label: resolvedTitle)
         }
         try await start(
             crewId: crewId,
@@ -828,6 +833,7 @@ final class CrewSessionRunner: ObservableObject {
             config: cfg,
             workingDirectory: workdir,
             taskBrief: brief,
+            title: resolvedTitle,
             developerInstructions: developerInstructions,
             codexMcpServers: codexMcpServers,
             role: .worker
@@ -864,6 +870,11 @@ final class CrewSessionRun: ObservableObject, Identifiable {
     let sessionId: String
     let kind: LocalCodingAgentKind
     let taskBrief: String
+    /// 精简标题（≤18 字、无项目名）——**单一真值**：群聊气泡名 = 成员列表主名 =
+    /// helper `--label` 白板署名，都取它。机长起 session 可经 start_session 传；
+    /// 没传就从 `taskBrief` 兜底 derive（`CrewSessionTitle`）。空 = 用 `displayName`
+    /// 的 kind+id6 兜底（旧行为）。
+    let title: String
     let workingDirectory: URL
     /// 当前生效的 model slug（起 session 时选的，或运行态 `/model` 切换后回写的）。
     /// 运行态切换要能被人面成员卡观察到 → `@Published var`（切换后 `applyProfileChange`
@@ -877,10 +888,11 @@ final class CrewSessionRun: ObservableObject, Identifiable {
     let role: Role
     let startedAt = Date()
 
-    /// 切换条上的短名：captain 直接叫「机长」（与群聊/成员列表统一），worker 用
-    /// agent 名 + session id 前缀。
+    /// 切换条 / 群聊 / 成员列表统一的显示名：captain 直接叫「机长」；worker 优先用
+    /// 精简 `title`（单一真值），没 title 才退回 agent 名 + session id 前缀。
     var displayName: String {
-        role == .captain ? "机长" : kind.displayName + " · " + String(sessionId.prefix(6))
+        if role == .captain { return "机长" }
+        return title.isEmpty ? kind.displayName + " · " + String(sessionId.prefix(6)) : title
     }
 
     /// 后端实现（claude = AgentTerminalSession；codex = app-server，按 kind 分流）。
@@ -924,6 +936,7 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         sessionId: String,
         kind: LocalCodingAgentKind,
         taskBrief: String,
+        title: String = "",
         workingDirectory: URL,
         model: String? = nil,
         effort: String? = nil,
@@ -936,6 +949,8 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         self.sessionId = sessionId
         self.kind = kind
         self.taskBrief = taskBrief
+        // clamp 兜底：无论从哪条来路传进来，落到 run 上的 title 都 ≤18 字、单行。
+        self.title = CrewSessionTitle.clamp(title)
         self.workingDirectory = workingDirectory
         self.model = model
         self.effort = effort
