@@ -1,6 +1,8 @@
 # PendingBot / PendingCrew 进度账本 (Progress Ledger)
 
-**最近对账：2026-07-12**（驾驶舱期望段书本目录树合 main；对照实际代码 / 迁移 / git，不是看 task 标记）
+**最近对账：2026-07-13**（crew 注入近期群聊上下文 + 无@默认给机长合 main；对照实际代码 / 迁移 / git，不是看 task 标记）
+
+> **2026-07-13 crew 注入近期群聊上下文 + 无@默认给机长（`feat/crew-inject-context` 2 commit，task #479+#480）**：用户反馈「被 @ 的 session 要能看到群聊上下文」「无 @ 默认给机长、注入用 IM 式」。项8：新增 `CrewRecentContextRender` 纯渲染器，两注入渲染器（CrewMailboxWakeLogic / CrewLocalMentionInjectLogic 的 renderInjection）各加 `recent` 参数，在「有人@你：」之前前置一块「近期群聊」；**仅对 claude 目标补**（RunState 加 isClaude / waker 判 run.kind==.claudeCode），codex 自带 turn additionalContext 不重复塞。项10：无 mention 的**人发**广播（reply 会自动 @ 故不落此路径）→ 合成 [captain]+imStyle 走现有 captain 唤醒（在跑注入 / 没在跑 startCaptain），注入文本用「名：正文」不套「有人@你」壳；边界靠「只由 composer 人发触发」天然满足——session 广播 / 系统消息不误唤醒机长。macOS build 绿 + xcodebuild test 401 全过（新增 CrewRecentContextRenderTests + 两 logic 测试补 recent 前置 / claude-only / IM 式）。GUI 交互（真机看 claude 醒来带上下文、无@真给机长）归 #443。
 
 > **2026-07-12 驾驶舱期望段改书本目录（`feat/cockpit-book-toc` 2 commit，task #474，spec 2026-07-11-cockpit-book-toc-design）**：用户「不要文件夹图标、像 VSCode 紧凑、目录像书的章有章内容」→ CockpitExpectation 重画:目录树去图标只留 chevron+文字（22pt 行高/12.5pt/章 semibold+节尾现状色点）;目录可选中,章正文**只认该目录 README.md**（用户拍板,无则占位、UI 不合成）;根 README 当全书序（未选中默认渲）。Mac build 绿;GUI 活验归 #443（新增场景:章/节选中切换+README 渲染）。注:handbook 子目录目前均无 README.md,点章多为占位——补章引言归期望账（人写）。
 
