@@ -181,6 +181,30 @@ final class CrewComposerMentionsTests: XCTestCase {
         XCTAssertEqual(r.staged, existing)
     }
 
+    func testAppendMentionReclaimsHalfOpenAt() {
+        // 先敲 @ 触发 picker（draft 末尾是裸 @），再右键头像 → 不该出 "@ @机长"。
+        let staged = CrewStagedMention(token: "@机长", mention: .captain)
+        let r = CrewComposerMentionParser.appendMention(staged, to: "帮我看下 @", existing: [])
+        XCTAssertEqual(r.newDraft, "帮我看下 @机长 ")
+        XCTAssertEqual(r.staged, [staged])
+    }
+
+    func testAppendMentionReclaimsHalfOpenAtWithPrefix() {
+        // 末尾是半开 "@ji"（打了几个字母）→ 截掉再拼，不该出 "@ji @机长"。
+        let staged = CrewStagedMention(token: "@机长", mention: .captain)
+        let r = CrewComposerMentionParser.appendMention(staged, to: "@ji", existing: [])
+        XCTAssertEqual(r.newDraft, "@机长 ")
+        XCTAssertEqual(r.staged, [staged])
+    }
+
+    func testAppendMentionNormalizesDoubleAtFromSelfPrefixedName() {
+        // 作者名自带前导 @（如 relay 远端名）→ token 归一化到单个 @，不出 "@@Name"。
+        let staged = CrewStagedMention(token: "@@Name", mention: .session("s1"))
+        let r = CrewComposerMentionParser.appendMention(staged, to: "", existing: [])
+        XCTAssertEqual(r.newDraft, "@Name ")
+        XCTAssertEqual(r.staged.first?.token, "@Name")
+    }
+
     func testMentionsToSendDeduplicates() {
         let staged = [
             CrewStagedMention(token: "@小绿", mention: .session("s1")),

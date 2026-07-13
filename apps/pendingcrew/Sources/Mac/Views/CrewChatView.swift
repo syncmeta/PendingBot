@@ -282,7 +282,9 @@ struct CrewChatView: View {
     /// target。泛 bot(非机长)无 mention 目标 → nil(不显示 @ 菜单)。id 取值对齐
     /// `CrewChatAdapter.adapt`:session=senderSessionId、human=senderUserId。
     private func avatarMention(_ sender: GroupBubbleSender) -> CrewStagedMention? {
-        let token = "@\(sender.displayName)"
+        // strip 前导 @：作者名自带 @（如 relay 远端名）时不叠成 @@。appendMention 再兜
+        // 底归一化一次，双保险。
+        let token = "@" + sender.displayName.drop(while: { $0 == "@" })
         if sender.isCaptain { return CrewStagedMention(token: token, mention: .captain) }
         if sender.isSession { return CrewStagedMention(token: token, mention: .session(sender.id)) }
         if sender.kind == .user {
