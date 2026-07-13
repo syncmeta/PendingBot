@@ -285,14 +285,10 @@ final class CrewSessionRunner: ObservableObject {
             sessionId: req.sessionId, until: until, senders: req.senders))
         listenerCrew[req.sessionId] = req.crewId
         startListenWatchIfNeeded()
-        // 白板留一行系统回执 —— 人在群里看得见谁在收听（在线感）。
-        let label = runs.first { $0.sessionId == req.sessionId }?.displayName
-            ?? CrewSenderNaming.sessionFallback(req.sessionId)
-        let who = (req.senders?.isEmpty ?? true) ? "" : "，听：\(req.senders!.joined(separator: "、"))"
-        LocalWhiteboardStore.shared.appendSessionMessage(
-            crewId: req.crewId, sessionId: "system",
-            text: "👂 \(label) 开启了群聊收听（至 \(req.until ?? "?")\(who)）——期间群里的广播消息会直接唤醒它。",
-            senderName: "系统")
+        // 不再往白板发「👂 …开启了群聊收听…」系统回执 —— 群消息保持精简,收听是
+        // session 自己的事,发起方的确认由 McpServer listen 的 toolResult 只回本
+        // session（不进白板,用户明确要「只自己看到、不进群」）。登记/投递/到期清理
+        // 都在此之上、独立于这条回执,删掉不影响收听功能。
     }
 
     /// 挂上白板观察（幂等）。进程内 append 走 `changes`（带 crewId）；helper 子进程
