@@ -33,22 +33,32 @@ enum CrewMailboxWakeLogic {
     /// 未知）一律当待处理（fail-open：宁可多注入一次，也别漏掉@我的消息）。
     private static let terminalStatuses: Set<String> = ["delivered", "processed"]
 
-    /// 核心决策。`isBusy == true` 时恒 `.noop`（不打断、不消费）。
-    static func decide(mailbox: [CrewMailboxItem], isBusy: Bool) -> Decision {
+    /// 核心决策。`isBusy == true` 时恒 `.noop`（不打断、不消费）。`recent` =
+    /// 近期群聊上下文（项8：被 @ 唤醒的 claude 第一拍前置一块群聊历史；仅 claude
+    /// 后端传，codex 传空——判定在调用方 `CrewMailboxWaker.wake`）。
+    static func decide(
+        mailbox: [CrewMailboxItem], isBusy: Bool,
+        recent: [LocalWhiteboardMessage] = []
+    ) -> Decision {
         guard !isBusy else { return .noop }
         let pending = mailbox.filter { !terminalStatuses.contains($0.status) }
         guard !pending.isEmpty else { return .noop }
-        return .inject(text: renderInjection(pending), deliveredIds: pending.map(\.id))
+        return .inject(text: renderInjection(pending, recent: recent), deliveredIds: pending.map(\.id))
     }
 
     /// 把待处理的定向 mailbox 项渲染成注入文本。单行前导「有人@你：」+ 每条保留
-    /// 发送者身份（CC-P3）的正文行，点明**谁@你说了啥**。
-    static func renderInjection(_ items: [CrewMailboxItem]) -> String {
+    /// 发送者身份（CC-P3）的正文行，点明**谁@你说了啥**。`recent` 非空 → 在
+    /// 「有人@你：」**之前**前置一块「近期群聊」上下文（项8）。
+    static func renderInjection(
+        _ items: [CrewMailboxItem], recent: [LocalWhiteboardMessage] = []
+    ) -> String {
         var lines = ["有人@你："]
         for it in items {
             lines.append("- \(senderLabel(it)): \(it.displayText)")
         }
-        return lines.joined(separator: "\n")
+        let directed = lines.joined(separator: "\n")
+        guard let ctx = CrewRecentContextRender.block(recent) else { return directed }
+        return ctx + "\n\n" + directed
     }
 
     /// 发送者标注。有 session 来源 → `session:<前6>`，否则按 kind 兜底
