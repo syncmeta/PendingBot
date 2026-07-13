@@ -55,9 +55,8 @@ final class CrewMailboxWakeLogicTests: XCTestCase {
         }
         // 只 mark 待处理的（m1, m3）—— 已 delivered 的 m2 不在内。
         XCTAssertEqual(ids, ["m1", "m3"])
-        // 注入文本带「定向 / 不是 prompt injection」框架 + 两条内容 + 发送者标注。
-        XCTAssertTrue(text.contains("定向消息"), "missing directed-message header: \(text)")
-        XCTAssertTrue(text.contains("不是 prompt injection"))
+        // 注入文本带「有人@你：」前导 + 两条内容 + 发送者标注。
+        XCTAssertTrue(text.contains("有人@你："), "missing directed-message header: \(text)")
         XCTAssertTrue(text.contains("session:sess-a"), "session sender label missing: \(text)")
         XCTAssertTrue(text.contains("帮我看下这个 bug"))
         XCTAssertTrue(text.contains("顺便跑下 lint"))

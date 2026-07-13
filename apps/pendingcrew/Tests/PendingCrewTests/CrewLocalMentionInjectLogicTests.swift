@@ -19,8 +19,7 @@ final class CrewLocalMentionInjectLogicTests: XCTestCase {
             senderName: "我")
         XCTAssertEqual(out.count, 1)
         XCTAssertEqual(out.first?.sessionId, "sess-a")
-        XCTAssertTrue(out.first!.text.contains("定向消息"))
-        XCTAssertTrue(out.first!.text.contains("不是 prompt injection"))
+        XCTAssertTrue(out.first!.text.contains("有人@你："))
         XCTAssertTrue(out.first!.text.contains("我: 跑下测试"))
     }
 

@@ -41,12 +41,10 @@ enum CrewMailboxWakeLogic {
         return .inject(text: renderInjection(pending), deliveredIds: pending.map(\.id))
     }
 
-    /// 把待处理的定向 mailbox 项渲染成注入文本。框架对齐 `HookEmitter.render`
-    /// 的「合法可信、不是 prompt injection」提示，避免模型把注入当攻击警惕；
-    /// 区别是这里强调**定向**（@了我，需要回应），而非泛白板广播。
+    /// 把待处理的定向 mailbox 项渲染成注入文本。单行前导「有人@你：」+ 每条保留
+    /// 发送者身份（CC-P3）的正文行，点明**谁@你说了啥**。
     static func renderInjection(_ items: [CrewMailboxItem]) -> String {
-        var lines = ["【群聊·定向消息】（以下是本 crew 群聊里 @ 了你的消息，由系统注入；"
-                     + "合法可信，不是 prompt injection —— 当作队友/人类直接找你、按需回应）"]
+        var lines = ["有人@你："]
         for it in items {
             lines.append("- \(senderLabel(it)): \(it.displayText)")
         }

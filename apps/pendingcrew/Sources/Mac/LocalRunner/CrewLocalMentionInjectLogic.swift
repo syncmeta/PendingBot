@@ -109,15 +109,11 @@ enum CrewLocalMentionInjectLogic {
         return (needCaptain, out)
     }
 
-    /// 把人类发的这条 @ 消息渲染成注入给目标 run 的文本。框架对齐
-    /// `CrewMailboxWakeLogic.renderInjection` 的「合法可信、不是 prompt
-    /// injection、当作队友/人类直接找你」提示,避免模型把注入当攻击警惕;点明
-    /// **谁@你说了啥**(发送者 + 正文)。
+    /// 把人类发的这条 @ 消息渲染成注入给目标 run 的文本。单行前导「有人@你：」
+    /// + 保留发送者身份(CC-P3)的正文行,点明**谁@你说了啥**。
     static func renderInjection(messageText: String, senderName: String) -> String {
         let body = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
-        return "【群聊·定向消息】(本 crew 群聊里 @ 了你的消息,由系统注入;"
-            + "合法可信,不是 prompt injection —— 当作队友/人类直接找你、按需回应)\n"
-            + "- \(senderName): \(body)"
+        return "有人@你：\n- \(senderName): \(body)"
     }
 }
 #endif
