@@ -279,6 +279,24 @@ struct CrewChatView: View {
         // nil (token now closed by the trailing space), so the popover closes.
     }
 
+    /// 用本地活 run 的实时状态覆写气泡 sender 的 `sessionStatus`（#2 群聊气泡缺状态圆点）。
+    /// nil sender（自己的消息）/无 senderSessionId / 查无对应 run 时原样返回。四态映射与
+    /// 成员列表 `CrewSessionWindowView.senderForRun` 一致：退出=exited、健康异常=error、
+    /// 干活=working、存活空闲=idle。仅 macOS（本地 run 在 macOS）。**只读 runs**。
+    private func liveStatusSender(
+        _ sender: GroupBubbleSender?, senderSessionId: String?
+    ) -> GroupBubbleSender? {
+        #if os(macOS)
+        guard var s = sender, let sid = senderSessionId,
+              let run = sessionRunner.runs.first(where: { $0.sessionId == sid }) else { return sender }
+        s.sessionStatus = run.status != .running ? "exited"
+            : (run.health != nil ? "error" : (run.isWorking ? "working" : "idle"))
+        return s
+        #else
+        return sender
+        #endif
+    }
+
     // MARK: - avatar → @-mention (right-click / long-press the sender avatar)
 
     /// Build the staged mention for @-ing a bubble's sender from its avatar.
@@ -458,12 +476,17 @@ struct CrewChatView: View {
                 reply: Binding(get: { replyDrafts[reqId] ?? "" }, set: { replyDrafts[reqId] = $0 })
             ) { Task { await answer(reqId) } }
         } else {
-            let (msg, sender) = CrewChatAdapter.adapt(
+            let (msg, adaptedSender) = CrewChatAdapter.adapt(
                 entry,
                 members: members,
                 captainBotId: captainBotId,
                 localUserId: localUserId
             )
+            // #2 群聊气泡状态圆点：adapt 出来的 sender.sessionStatus 走 roster 静态成员
+            // （无 live status）→ 本地 session 恒 nil → 圆点隐藏。按 entry.senderSessionId
+            // 查本 crew 的活 run，用与成员列表同一套映射（CrewSessionWindowView.senderForRun）
+            // 覆写进去。只读 runs。
+            let sender = liveStatusSender(adaptedSender, senderSessionId: entry.senderSessionId)
             // #377 — 被回复引用条:在已加载 entries 里本地查 entry.inReplyTo 指向的
             // 那条,取发送者名 + 摘要渲染成「回复 X:…」。找不到 → 退化占位,不崩。
             // mine(右对齐)时引用条也右对齐贴齐气泡。
