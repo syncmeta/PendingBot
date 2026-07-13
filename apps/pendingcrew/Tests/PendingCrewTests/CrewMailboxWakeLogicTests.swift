@@ -82,5 +82,30 @@ final class CrewMailboxWakeLogicTests: XCTestCase {
         XCTAssertTrue(text.contains("机长: c"))
         XCTAssertTrue(text.contains("bot: b"))
     }
+
+    // MARK: - 项8：近期群聊上下文前置
+
+    func testRecentContextPrependedBeforeDirectedHeader() {
+        let recent = [
+            LocalWhiteboardMessage(
+                id: "w1", senderKind: "captain", senderUserId: nil, senderSessionId: nil,
+                category: nil, text: "前情提要", createdAt: "2026-07-13T00:00:00Z"),
+        ]
+        let text = CrewMailboxWakeLogic.renderInjection(
+            [item(id: "m1", summary: "帮我看下")], recent: recent)
+        let ctxIdx = text.range(of: "近期群聊：")
+        let dirIdx = text.range(of: "有人@你：")
+        XCTAssertNotNil(ctxIdx, text)
+        XCTAssertNotNil(dirIdx, text)
+        XCTAssertTrue(ctxIdx!.lowerBound < dirIdx!.lowerBound, "近期群聊应前置于「有人@你」之前")
+        XCTAssertTrue(text.contains("机长: 前情提要"), text)
+    }
+
+    func testEmptyRecentKeepsBareDirectedText() {
+        // recent 缺省 → 与旧行为一致，不加上下文块。
+        let text = CrewMailboxWakeLogic.renderInjection([item(id: "m1", summary: "x")])
+        XCTAssertFalse(text.contains("近期群聊："))
+        XCTAssertTrue(text.hasPrefix("有人@你："))
+    }
 }
 #endif

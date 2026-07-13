@@ -85,7 +85,13 @@ final class CrewMailboxWaker {
             NSLog("[CrewMailboxWaker] inbox \(run.sessionId) failed: \(error.localizedDescription)")
             return
         }
-        switch CrewMailboxWakeLogic.decide(mailbox: inbox.mailbox, isBusy: run.backend.isBusy) {
+        // 项8:被 @ 唤醒的 claude 第一拍前置近期群聊上下文;codex 每轮 turn 自带
+        // 未读白板 additionalContext,别重复塞 → 传空。
+        let recent: [LocalWhiteboardMessage] = run.kind == .claudeCode
+            ? Array(LocalWhiteboardStore.shared.list(crewId: crewId).suffix(15))
+            : []
+        switch CrewMailboxWakeLogic.decide(
+            mailbox: inbox.mailbox, isBusy: run.backend.isBusy, recent: recent) {
         case .noop:
             return
         case let .inject(text, deliveredIds):
