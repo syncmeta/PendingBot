@@ -334,7 +334,7 @@ final class CrewStore: ObservableObject {
                 sessionSpawnRequests.append(SessionSpawnRequest(
                     crewId: cmd.crewId, brief: cmd.brief,
                     runner: cmd.runner, isolation: cmd.isolation ?? false,
-                    model: cmd.model, effort: cmd.effort))
+                    model: cmd.model, effort: cmd.effort, title: cmd.title))
             case "set_profile":
                 guard let sid = cmd.sessionId else { break }
                 profileChangeRequests.append(SessionProfileChangeRequest(
@@ -510,4 +510,6 @@ struct SessionSpawnRequest: Equatable {
     var model: String? = nil
     /// thinking effort；nil = CLI 默认。
     var effort: String? = nil
+    /// 机长传的精简 title（≤18 字概括，作 session 显示名）；nil = 从 brief 兜底。
+    var title: String? = nil
 }

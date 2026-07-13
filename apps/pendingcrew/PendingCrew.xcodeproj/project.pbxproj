@@ -53,6 +53,7 @@
 		30AC0D6B888542C7558094A8 /* CrewListenLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42F31D2E3BD084EEFE454085 /* CrewListenLogicTests.swift */; };
 		320E6F3BA540DEC23C81B541 /* CrewComposerMentionsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4E6A0DAA702E21E6FB3928A /* CrewComposerMentionsTests.swift */; };
 		336192C555B6417C3568CEF8 /* CrewChatMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED731B9FBC4FCAABA1696C82 /* CrewChatMessage.swift */; };
+		33FA0D66934AC286CE4AB3AB /* CrewSessionTitleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C3630D87A90241260230DF8 /* CrewSessionTitleTests.swift */; };
 		37A084E5A00B2FFA3D718C47 /* crew-captain.zh.md in Resources */ = {isa = PBXBuildFile; fileRef = 776119CB43783D02F23AD06E /* crew-captain.zh.md */; };
 		37E9586B5C65BBD58EB74F3C /* PlatformImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13BBB95F39A5DDA90728B897 /* PlatformImage.swift */; };
 		38D9D397475247C56DE16511 /* RemoteSessionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5C2B69B1686D74FA04F261B /* RemoteSessionsView.swift */; };
@@ -63,6 +64,7 @@
 		40649BA4D6DC43A89405B527 /* CrewSessionsSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08C9AC5381653074150AFC8F /* CrewSessionsSnapshot.swift */; };
 		41773DF5BECD5A77434018FA /* CrewSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 051E45F99057FB8295F991DA /* CrewSummary.swift */; };
 		42DDC2B1BF5646CC11389700 /* FamilyCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC9681AF707411D904F2A950 /* FamilyCredentialStore.swift */; };
+		4473033266C2699EC7237D7F /* CrewSessionTitle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 933A5868B64D471EDCBE2896 /* CrewSessionTitle.swift */; };
 		455CDF65E099EAF95CDCB358 /* CrewLoginExchange.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79A72EA93DFADA5C2FFF1954 /* CrewLoginExchange.swift */; };
 		470D540DFCC76B8234C1258A /* InMemoryAuthStorageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5908EBD3AB592D0B2DDF6C53 /* InMemoryAuthStorageTests.swift */; };
 		47999E599AF8C4DC363E6FFF /* CockpitRoadmapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B58FDB03CAE29769929979F2 /* CockpitRoadmapView.swift */; };
@@ -229,6 +231,7 @@
 		D9D094DE3C39F9662B62B800 /* SessionConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69B4AFC537A8402CC846122F /* SessionConfig.swift */; };
 		DA3CE896EF189D908601BC97 /* McpHelperMain.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAB87EC5A9ACD37C7A2B09A0 /* McpHelperMain.swift */; };
 		DB5E8EF842BE046EF73A04B6 /* FamilyCredentialCodecTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2149FC638592E569F9CAE10E /* FamilyCredentialCodecTests.swift */; };
+		DD26C49162F8B4638CFE0C5A /* CrewSessionTitle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 933A5868B64D471EDCBE2896 /* CrewSessionTitle.swift */; };
 		DE2D546CDC41AF2190ED48EE /* session-world-model.zh.md in Resources */ = {isa = PBXBuildFile; fileRef = 87F000A18A5E886FA706EC9B /* session-world-model.zh.md */; };
 		DE7E6AD7E1FBFD63657A6BF6 /* Subject.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCB0A9A2B511BAA8446CF9A4 /* Subject.swift */; };
 		DEFB49BB11DC799D2544D97B /* DeviceIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1507798CBA5E3C31D801C08A /* DeviceIdentity.swift */; };
@@ -287,6 +290,7 @@
 		08C7D3AFEE8F6C3E6596F75D /* WelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeView.swift; sourceTree = "<group>"; };
 		08C9AC5381653074150AFC8F /* CrewSessionsSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewSessionsSnapshot.swift; sourceTree = "<group>"; };
 		0A1CE57B2DC05BB140D205C1 /* PendingAttachment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingAttachment.swift; sourceTree = "<group>"; };
+		0C3630D87A90241260230DF8 /* CrewSessionTitleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewSessionTitleTests.swift; sourceTree = "<group>"; };
 		0CE071C18780F51F195B101C /* CaptainTemplateEditorSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptainTemplateEditorSheet.swift; sourceTree = "<group>"; };
 		0E3D5A6F8A84FAAF37EEC934 /* McpServerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = McpServerTests.swift; sourceTree = "<group>"; };
 		0E5A7C63B37740B3B978DBBA /* McpServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = McpServer.swift; sourceTree = "<group>"; };
@@ -386,6 +390,7 @@
 		904E7226BC285C21F3C1652F /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		929BC3329566D029E1403A56 /* AgentQuota.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentQuota.swift; sourceTree = "<group>"; };
 		92B4FFD76B026D94E642C541 /* HookEmitter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HookEmitter.swift; sourceTree = "<group>"; };
+		933A5868B64D471EDCBE2896 /* CrewSessionTitle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewSessionTitle.swift; sourceTree = "<group>"; };
 		937DEE031D3D9DA550B8AFCA /* SessionBackend.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionBackend.swift; sourceTree = "<group>"; };
 		93DA9768EAC8FDEA68375D5D /* CrewWelcomeViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewWelcomeViewModel.swift; sourceTree = "<group>"; };
 		9450E68B7E2E3E57819F7A77 /* MathRendering.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MathRendering.swift; sourceTree = "<group>"; };
@@ -563,6 +568,7 @@
 				ED731B9FBC4FCAABA1696C82 /* CrewChatMessage.swift */,
 				4EBBC0FD77A92946510682E6 /* CrewComposerMentions.swift */,
 				04BEFDC570344C36FF6489B0 /* CrewSenderNaming.swift */,
+				933A5868B64D471EDCBE2896 /* CrewSessionTitle.swift */,
 				E042008387A9E1B1B2C97A52 /* GroupBubbleSender.swift */,
 				0A1CE57B2DC05BB140D205C1 /* PendingAttachment.swift */,
 				B85FDABD0C0A7910C75C39C8 /* PendingComposerAttachment.swift */,
@@ -790,6 +796,7 @@
 				AA3FBED08E2034A2109B0D37 /* CrewMailboxWakeLogicTests.swift */,
 				34017164BC4AFAA13A7AC997 /* CrewRealtimeClientTests.swift */,
 				449915257B6A7A1C5057BA06 /* CrewRelayHubLogicTests.swift */,
+				0C3630D87A90241260230DF8 /* CrewSessionTitleTests.swift */,
 				13510F0FBBDAD9CE10A6205D /* CrewStatusAggregationTests.swift */,
 				AE6F92E29D0F75205A70C821 /* CrewStoreChildDepthTests.swift */,
 				2149FC638592E569F9CAE10E /* FamilyCredentialCodecTests.swift */,
@@ -1110,6 +1117,7 @@
 				150753A283AED885C8D1A588 /* CrewSenderNaming.swift in Sources */,
 				5A4B3F20021A2BB44D06D629 /* CrewSenderResolver.swift in Sources */,
 				FEE0191AC90276DAE288B646 /* CrewSessionRunner.swift in Sources */,
+				4473033266C2699EC7237D7F /* CrewSessionTitle.swift in Sources */,
 				2DFC3899F9816634824C1EFF /* CrewSessionWindowView.swift in Sources */,
 				40649BA4D6DC43A89405B527 /* CrewSessionsSnapshot.swift in Sources */,
 				B6B9A37DAD1876D809A488B6 /* CrewSettingsView.swift in Sources */,
@@ -1239,6 +1247,8 @@
 				5034E5718BF25004385C5444 /* CrewRelayHubLogicTests.swift in Sources */,
 				D5179853AF9BB5D1B45A9DB2 /* CrewSenderNaming.swift in Sources */,
 				0AAF49CB9DD82576D2EA5482 /* CrewSenderResolver.swift in Sources */,
+				DD26C49162F8B4638CFE0C5A /* CrewSessionTitle.swift in Sources */,
+				33FA0D66934AC286CE4AB3AB /* CrewSessionTitleTests.swift in Sources */,
 				86E46A5C093139E0A21F4732 /* CrewSessionsSnapshot.swift in Sources */,
 				EE40EDF6F4804CB2803CA1E3 /* CrewStatusAggregation.swift in Sources */,
 				D3F098906956CE0F7660C354 /* CrewStatusAggregationTests.swift in Sources */,

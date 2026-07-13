@@ -190,11 +190,12 @@ final class McpServer {
                 ])
                 tools.append([
                     "name": "start_session",
-                    "description": "（机长专用）在当前 crew 里起一个 worker session 去干一件明确的编码任务。brief 写清要干什么。runner 默认随本 crew（不填即可），可填 \"claude\"/\"codex\" 覆盖。isolation 默认 false（与你共享 crew 目录）；只有当这件事会大改文件、想隔离到独立 worktree 时才传 true。model/effort 可选：按任务难度配置——简单机械活给低 effort/轻模型省额度，难活给高 effort；不填用该 CLI 默认。起完 worker 会自己报到，你在群聊看得到。",
+                    "description": "（机长专用）在当前 crew 里起一个 worker session 去干一件明确的编码任务。brief 写清要干什么。title 可选但强烈建议：一句 ≤18 字、不带项目名的任务概括——它是这个 session 在群聊气泡和成员列表里的显示名（不传就从 brief 兜底截断，可能不够精简）。runner 默认随本 crew（不填即可），可填 \"claude\"/\"codex\" 覆盖。isolation 默认 false（与你共享 crew 目录）；只有当这件事会大改文件、想隔离到独立 worktree 时才传 true。model/effort 可选：按任务难度配置——简单机械活给低 effort/轻模型省额度，难活给高 effort；不填用该 CLI 默认。起完 worker 会自己报到，你在群聊看得到。",
                     "inputSchema": [
                         "type": "object",
                         "properties": [
                             "brief": ["type": "string", "description": "要这个 session 干的明确任务。"],
+                            "title": ["type": "string", "description": "可选：≤18 字、无项目名的任务概括，作 session 群聊/成员列表显示名。不填从 brief 兜底。"],
                             "runner": ["type": "string", "enum": ["claude", "codex"]],
                             "isolation": ["type": "boolean"],
                             "model": ["type": "string", "description": "可选：模型别名/slug。claude 常用 \"opus\"/\"sonnet\"/\"haiku\"；codex 如 \"gpt-5-codex\"。不填=CLI 默认。"],
@@ -350,6 +351,10 @@ final class McpServer {
             guard isCaptain else { return toolResult(id: id, text: "ERROR: 仅机长可用") }
             let brief = ((args["brief"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !brief.isEmpty else { return toolResult(id: id, text: "ERROR: brief 不能为空") }
+            // 可选精简 title：单行折叠 + trim；空则 nil，app 侧从 brief 兜底 derive。clamp 归 app。
+            let title = (args["title"] as? String)
+                .map { $0.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+                .flatMap { $0.isEmpty ? nil : $0 }
             let runner = (args["runner"] as? String).flatMap { ["claude", "codex"].contains($0) ? $0 : nil }
             let isolation = args["isolation"] as? Bool
             // model/effort 透传字符串：有效值归 CLI 管（起不来会经 lastStartError 浮出），
@@ -361,8 +366,8 @@ final class McpServer {
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
                 .flatMap { $0.isEmpty || $0.contains(" ") ? nil : $0 }
             control.enqueueStartSession(crewId: crewId, brief: brief, runner: runner,
-                                        isolation: isolation, model: model, effort: effort)
-            return toolResult(id: id, text: "已安排起 session：\(brief)。它起来后会在群聊报到。")
+                                        isolation: isolation, model: model, effort: effort, title: title)
+            return toolResult(id: id, text: "已安排起 session：\(title ?? brief)。它起来后会在群聊报到。")
         case "get_quota":
             let url = quotaDirectory.appendingPathComponent("quota.json")
             guard let data = try? Data(contentsOf: url),
