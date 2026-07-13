@@ -239,7 +239,11 @@ struct CrewChatView: View {
             $0.memberKind == "code_session" ? $0.codeSessionId : nil
         })
         let runMembers: [CrewMember] = sessionRunner.runs
-            .filter { $0.status == .running && $0.role != .captain && !known.contains($0.sessionId) }
+            // 只取**本 crew** 的 run —— sessionRunner.runs 持有本机所有 crew 的 run,
+            // 不按 crewId 滤会把别的 crew 的 session 混进本群 @ 候选(#7)。roster 那半
+            // 走 listCrewMembers(crewId) 本就 crew-scoped。
+            .filter { $0.crewId == crewId && $0.status == .running
+                      && $0.role != .captain && !known.contains($0.sessionId) }
             .map { run in
                 CrewMember(
                     id: run.sessionId, memberKind: "code_session", userId: nil, botId: nil,
