@@ -179,11 +179,13 @@ final class CrewSessionRunner: ObservableObject {
         }
         switch run.kind {
         case .claudeCode:
-            if let m = req.model { run.send("/model \(m)") }
+            if let m = req.model { run.send("/model \(m)"); run.model = m }
             if let e = req.effort {
                 if req.model != nil { try? await Task.sleep(nanoseconds: 700_000_000) }
-                run.send("/effort \(e)")
+                run.send("/effort \(e)"); run.effort = e
             }
+            // 回写 run.model/effort（@Published）→ 成员卡即时反映当前配置。MCP 自切
+            // 与人面切换都经此路径,UI 显示保持一致。
         case .codex:
             LocalWhiteboardStore.shared.appendSessionMessage(
                 crewId: req.crewId, sessionId: "system",
@@ -555,6 +557,7 @@ final class CrewSessionRunner: ObservableObject {
             taskBrief: taskBrief,
             workingDirectory: workingDirectory,
             model: config.model,
+            effort: config.effort,
             permissionModeOverride: config.permissionMode,
             backend: backend,
             serverLink: serverLink,
@@ -862,8 +865,12 @@ final class CrewSessionRun: ObservableObject, Identifiable {
     let kind: LocalCodingAgentKind
     let taskBrief: String
     let workingDirectory: URL
-    /// 用户起 session 时选的 model slug。Run-level metadata，UI 展示用。
-    let model: String?
+    /// 当前生效的 model slug（起 session 时选的，或运行态 `/model` 切换后回写的）。
+    /// 运行态切换要能被人面成员卡观察到 → `@Published var`（切换后 `applyProfileChange`
+    /// 回写这里，MCP 自切与人面切换共用同一回写路径）。nil = 对应 CLI 默认。
+    @Published var model: String?
+    /// 当前生效的 thinking effort 档位（同 `model`，运行态切换后回写）。nil = CLI 默认。
+    @Published var effort: String?
     /// Spec v2 §10 — session-level override for permission_mode（informational）。
     let permissionModeOverride: String?
     /// captain / worker 角色（切换条展示 + captain 置顶）。
@@ -919,6 +926,7 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         taskBrief: String,
         workingDirectory: URL,
         model: String? = nil,
+        effort: String? = nil,
         permissionModeOverride: String? = nil,
         backend: any SessionBackend,
         serverLink: CrewSessionServerLink? = nil,
@@ -930,6 +938,7 @@ final class CrewSessionRun: ObservableObject, Identifiable {
         self.taskBrief = taskBrief
         self.workingDirectory = workingDirectory
         self.model = model
+        self.effort = effort
         self.permissionModeOverride = permissionModeOverride
         self.backend = backend
         self.serverLink = serverLink

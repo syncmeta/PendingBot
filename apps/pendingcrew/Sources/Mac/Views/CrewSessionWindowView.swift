@@ -304,15 +304,27 @@ struct CrewSessionWindowView: View {
     @ViewBuilder
     private func memberRow(_ item: MemberRowItem) -> some View {
         if let run = item.run {
-            // session 行：富行 —— 头像 + 名 + 简介 + 最新一步动作，点进终端。
-            Button {
-                sessionRunner.select(run.runID)
-                sessionRunner.viewingTerminal = true
-            } label: {
-                sessionRowContent(sender: item.sender, run: run)
+            // session 行：富行 —— 头像 + 名 + 简介 + 最新一步动作，点进终端；
+            // 尾部挂 model/effort 查看 + 切换控件（本任务，claude 可切、codex 置灰）。
+            HStack(spacing: 6) {
+                Button {
+                    sessionRunner.select(run.runID)
+                    sessionRunner.viewingTerminal = true
+                } label: {
+                    sessionRowContent(sender: item.sender, run: run)
+                }
+                .buttonStyle(.plain)
+                .help("打开这个 session 的终端")
+                SessionProfileControl(run: run) { model, effort in
+                    Task {
+                        await sessionRunner.applyProfileChange(
+                            SessionProfileChangeRequest(
+                                crewId: run.crewId, sessionId: run.sessionId,
+                                model: model, effort: effort))
+                    }
+                }
+                .padding(.trailing, 8)
             }
-            .buttonStyle(.plain)
-            .help("打开这个 session 的终端")
         } else if item.sender.isCaptain {
             // captain 没在跑:点头像即进入它的 session —— 没在跑就当场起一个再进。
             // 用户定调:不要常驻/自动起,只要「点头像就进 session」;这条是纯点击触发,
@@ -1056,6 +1068,85 @@ private struct SessionRunContentView: View {
             .padding(.vertical, 3)
             .background(color.opacity(0.15), in: Capsule())
             .foregroundStyle(color)
+    }
+}
+
+/// 成员卡上的运行态 model/effort 查看 + 切换控件（本任务）。
+///
+/// - **claude**：一个 `Menu`（模型段 + 思考强度段），一两下点到即切；选中经
+///   `onSwitch` 走 `applyProfileChange`（与 MCP 自切同一路径，切完回写 run →
+///   本控件即时更新）。
+/// - **codex**：中途不支持切换（model 绑 thread、effort 绑启动参数）——只读
+///   展示 + 置灰，`help` 说明改配置该走 `start_session` 另起，与
+///   `applyProfileChange` 的 codex 分支一致。
+///
+/// `@ObservedObject` 观察 run —— 切换回写 `run.model` / `run.effort` 后本控件
+/// 刷新（父 view 只 `@EnvironmentObject` 持 runner，订不到嵌套 run 的
+/// `@Published`，见本文件头注「必须分两层」）。
+private struct SessionProfileControl: View {
+    @ObservedObject var run: CrewSessionRun
+    /// 只带**改动的那一个**（另一个传 nil），避免误发未变的档位。
+    let onSwitch: (_ model: String?, _ effort: String?) -> Void
+
+    private var label: String {
+        let m = run.model ?? "默认"
+        if let e = run.effort, !e.isEmpty { return "\(m) · \(e)" }
+        return m
+    }
+
+    var body: some View {
+        switch run.kind {
+        case .claudeCode:
+            Menu {
+                Section("模型") {
+                    ForEach(SessionLaunchOptions.models(for: .claudeCode), id: \.self) { m in
+                        Button {
+                            if m != run.model { onSwitch(m, nil) }
+                        } label: {
+                            if m == run.model { Label(m, systemImage: "checkmark") }
+                            else { Text(m) }
+                        }
+                    }
+                }
+                Section("思考强度") {
+                    ForEach(SessionLaunchOptions.efforts(for: .claudeCode), id: \.self) { e in
+                        Button {
+                            if e != run.effort { onSwitch(nil, e) }
+                        } label: {
+                            if e == run.effort { Label(e, systemImage: "checkmark") }
+                            else { Text(e) }
+                        }
+                    }
+                }
+            } label: {
+                pill(active: true)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .disabled(run.status != .running)
+            .help("切换本 session 的模型 / 思考强度（claude 立即生效）")
+        case .codex:
+            pill(active: false)
+                .help("codex 不支持中途切换 model/effort（model 绑 thread、effort 绑启动参数）——换配置请让机长 start_session 另起一个 session")
+        }
+    }
+
+    private func pill(active: Bool) -> some View {
+        HStack(spacing: 3) {
+            Text(label).lineLimit(1)
+            if active {
+                Image(systemName: "chevron.up.chevron.down").font(.system(size: 8))
+            }
+        }
+        .font(Theme.Fonts.caption2)
+        .foregroundStyle(Theme.Palette.inkMuted)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(Theme.Palette.surfaceMuted)
+        )
+        .opacity(active ? 1 : 0.6)
     }
 }
 #endif
