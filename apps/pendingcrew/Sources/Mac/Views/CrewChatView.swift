@@ -635,9 +635,21 @@ struct CrewChatView: View {
     /// 决策 → 对命中的 run send」的 IO 编排。仅 macOS（本地 run 在 macOS）。
     private func injectMentionedLocalRuns(mentions: [CrewMention], text: String) {
         #if os(macOS)
+        // 项10:人发的、无具体 @ 的群消息 → 默认当 @机长 处理,且注入文本用 IM 式
+        // 「名：正文」(不套「有人@你」壳,因为不是定向 @)。只兜底真广播(mentions
+        // 为空);带 reply 会自动 @ 原发送者故非空,不落此路径。这里的 send() 只在
+        // 人类经 composer 发送时触发 → 天然满足「人发的」边界(session 广播 / 系统
+        // 消息不走此路径,不会误唤醒机长)。
+        let defaultToCaptain = mentions.isEmpty
+        let effectiveMentions = defaultToCaptain ? [CrewMention.captain] : mentions
+
+        // 项8:近期群聊上下文(仅前置给 claude 目标)。刚发的这条已 append 到白板末尾,
+        // dropLast 去掉它避免和定向/IM 正文重复。
+        let recent = Array(LocalWhiteboardStore.shared.list(crewId: crewId).dropLast().suffix(15))
         let runStates: [CrewLocalMentionInjectLogic.RunState] = sessionRunner.runs
             .filter { $0.status == .running }
-            .map { .init(sessionId: $0.sessionId, isBusy: $0.backend.isBusy) }
+            .map { .init(sessionId: $0.sessionId, isBusy: $0.backend.isBusy,
+                         isClaude: $0.kind == .claudeCode) }
         // @机长 → captain 是本地 run(role==.captain),解析出它的 sessionId 让决策核心
         // 一视同仁按 session 唤醒(#1:之前 .captain 被忽略 → @机长 机长不醒)。
         // 限本 crew —— 多 crew 各自跑机长时别把别群的机长当目标。
@@ -645,8 +657,8 @@ struct CrewChatView: View {
             .first { $0.crewId == crewId && $0.role == .captain && $0.status == .running }?
             .sessionId
         let injections = CrewLocalMentionInjectLogic.decide(
-            mentions: mentions, runs: runStates, messageText: text, senderName: "我",
-            captainSessionId: captainSessionId)
+            mentions: effectiveMentions, runs: runStates, messageText: text, senderName: "我",
+            captainSessionId: captainSessionId, recent: recent, imStyle: defaultToCaptain)
         for inj in injections {
             sessionRunner.runs
                 .first { $0.sessionId == inj.sessionId && $0.status == .running }?
@@ -655,7 +667,8 @@ struct CrewChatView: View {
         // @ 目标没在跑 → 真拉起来（用户点名:「@某个人就要能唤醒它」,不能只留白板）。
         // 机长 → startCaptain(带 wakeText 开场);已退成员 → restartMember(复用原
         // sessionId,白板游标延续)。detail 走 backend 现拉(本视图没挂 CrewStore)。
-        wakeAbsentMentionTargets(mentions: mentions, text: text)
+        // 无 @ 默认给机长时同样兜底拉起没在跑的机长(项10)。
+        wakeAbsentMentionTargets(mentions: effectiveMentions, text: text)
         #endif
     }
 

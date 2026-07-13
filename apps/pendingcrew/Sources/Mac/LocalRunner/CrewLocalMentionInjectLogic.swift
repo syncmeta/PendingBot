@@ -25,10 +25,14 @@ import Foundation
 enum CrewLocalMentionInjectLogic {
 
     /// 一个本地 run 的决策所需快照。`sessionId` 用来跟 `@session` mention 的
-    /// targetId 配对;`isBusy` 来自 `SessionBackend.isBusy`。
+    /// targetId 配对;`isBusy` 来自 `SessionBackend.isBusy`;`isClaude` = 后端是否
+    /// claude(`run.kind == .claudeCode`)——仅 claude 目标前置近期群聊上下文(项8),
+    /// codex 每轮 turn 自带未读白板 additionalContext,别重复塞。默认 false 兼容
+    /// 旧调用方 / 单测。
     struct RunState: Equatable {
         let sessionId: String
         let isBusy: Bool
+        var isClaude: Bool = false
     }
 
     /// 一条注入指令:给 `sessionId` 对应的 run `send(text)`。
@@ -47,12 +51,19 @@ enum CrewLocalMentionInjectLogic {
     /// (本地没在跑 captain)则忽略。broadcast / human 一律忽略(见类型注释)。
     ///
     /// 同一目标被 @ 多次 → 去重,只注入一次。
+    ///
+    /// `recent` = 近期群聊上下文(项8):仅前置给 **claude** 目标(`RunState.isClaude`),
+    /// 在定向文本之前渲染一块「近期群聊」;codex 目标不塞。
+    /// `imStyle` = IM 式渲染(项10):无具体 @ 的默认给机长时,注入文本用「名:正文」
+    /// 而**不套**「有人@你：」壳(因为不是定向 @)。
     static func decide(
         mentions: [CrewMention],
         runs: [RunState],
         messageText: String,
         senderName: String,
-        captainSessionId: String? = nil
+        captainSessionId: String? = nil,
+        recent: [LocalWhiteboardMessage] = [],
+        imStyle: Bool = false
     ) -> [Injection] {
         // 目标 session id 集合(保序去重)。@session → 目标 sessionId;
         // @captain → captain 本地 run 的 sessionId(调用方解析后传入)。
@@ -70,11 +81,14 @@ enum CrewLocalMentionInjectLogic {
         guard !targets.isEmpty else { return [] }
 
         let runBySession = Dictionary(runs.map { ($0.sessionId, $0) }, uniquingKeysWith: { a, _ in a })
-        let text = renderInjection(messageText: messageText, senderName: senderName)
 
         var out: [Injection] = []
         for sid in targets {
             guard let run = runBySession[sid], !run.isBusy else { continue }
+            // 近期群聊上下文只前置给 claude 目标(项8);codex 传空。
+            let text = renderInjection(
+                messageText: messageText, senderName: senderName,
+                recent: run.isClaude ? recent : [], imStyle: imStyle)
             out.append(Injection(sessionId: sid, text: text))
         }
         return out
@@ -109,11 +123,20 @@ enum CrewLocalMentionInjectLogic {
         return (needCaptain, out)
     }
 
-    /// 把人类发的这条 @ 消息渲染成注入给目标 run 的文本。单行前导「有人@你：」
-    /// + 保留发送者身份(CC-P3)的正文行,点明**谁@你说了啥**。
-    static func renderInjection(messageText: String, senderName: String) -> String {
+    /// 把人类发的这条消息渲染成注入给目标 run 的文本。
+    ///   * 定向 @(默认):单行前导「有人@你：」+ 保留发送者身份(CC-P3)的正文行。
+    ///   * `imStyle`(项10 无 @ 默认给机长):IM 式「发送者：正文」,不套「有人@你」壳。
+    /// `recent` 非空 → 在定向/IM 文本**之前**前置一块「近期群聊」上下文(项8)。
+    static func renderInjection(
+        messageText: String, senderName: String,
+        recent: [LocalWhiteboardMessage] = [], imStyle: Bool = false
+    ) -> String {
         let body = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
-        return "有人@你：\n- \(senderName): \(body)"
+        let directed = imStyle
+            ? "\(senderName)：\(body)"
+            : "有人@你：\n- \(senderName): \(body)"
+        guard let ctx = CrewRecentContextRender.block(recent) else { return directed }
+        return ctx + "\n\n" + directed
     }
 }
 #endif
