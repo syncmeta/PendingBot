@@ -45,7 +45,7 @@ struct CrewSessionServerLink: Sendable {
 /// local coding agent 跑动的 view-side 视图模型（chunk2 T1：多 run 并存）。
 ///
 /// 每次 `start(...)` 起一个新 `CrewSessionRun` 追加进 `runs` 并选中——旧 run
-/// **不再**被自动停掉，N 个 session 并行各自跑各自的 PTY；上限 6 个 running。
+/// **不再**被自动停掉，N 个 session 并行各自跑各自的 PTY，无并发上限。
 /// 右栏 session 切换条（T2）靠 `selectedRunId` 决定哪个 run 在前台。
 ///
 /// 每个 run 内嵌一个真 PTY 终端（`AgentTerminalSession`），跑交互式
@@ -124,9 +124,6 @@ final class CrewSessionRunner: ObservableObject {
         viewingTerminal = st.viewingTerminal
         isComposingNew = st.isComposingNew
     }
-
-    /// 同时 running 的 session 上限（资源护栏）。
-    static let maxConcurrentRuns = 6
 
     /// 事件驱动唤醒（Phase 4b）：**一个 crew 一个 waker**，该 crew 上的多个登录态
     /// run 共用一条 hub 连接。登录态 run 启动时 `ensureMailboxWaker` 懒建，最后一个
@@ -550,10 +547,6 @@ final class CrewSessionRunner: ObservableObject {
         /// captain / worker 角色标记（session 切换条展示 + captain 置顶）。
         role: CrewSessionRun.Role = .worker
     ) async throws {
-        // 0. 并发上限护栏 —— running 的 run 不超过 maxConcurrentRuns。
-        guard runs.filter({ $0.status == .running }).count < Self.maxConcurrentRuns else {
-            throw RunnerError.tooManySessions
-        }
         // 1. 校验工具可用 + resolve 可执行路径
         guard let executable = LocalCodingAgentExecutable.resolve(config.kind) else {
             throw RunnerError.toolNotInstalled(kind: config.kind)
@@ -703,15 +696,12 @@ final class CrewSessionRunner: ObservableObject {
 
     enum RunnerError: LocalizedError {
         case toolNotInstalled(kind: LocalCodingAgentKind)
-        case tooManySessions
         case captainNoWorkingDirectory
 
         var errorDescription: String? {
             switch self {
             case .toolNotInstalled(let kind):
                 return "未在 PATH 中找到 \(kind.binaryName)，请先安装 \(kind.displayName) CLI。"
-            case .tooManySessions:
-                return "同时运行的 session 已达上限（6），先停掉一些再开。"
             case .captainNoWorkingDirectory:
                 return "这个 crew 没有工作目录 —— 在建 crew 时设置后再启动 Captain。"
             }

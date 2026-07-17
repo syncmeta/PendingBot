@@ -217,10 +217,6 @@ final class CrewRelayAgent: ObservableObject {
             NSLog("[CrewRelayAgent] task_request \(req.remoteId) skipped: no sessionRunner injected")
             return
         }
-        guard runner.runs.filter({ $0.status == .running }).count < CrewSessionRunner.maxConcurrentRuns else {
-            await reportBack("📥 任务已收到，但本机同时运行的 session 已满（\(CrewSessionRunner.maxConcurrentRuns)）—— 先停掉一些再重新发一次指令。")
-            return
-        }
         guard let wd = b.workingDirectory, !wd.isEmpty else {
             await reportBack("📥 任务已收到，但这个 crew 没有工作目录 —— 在 Mac 上设置后重新发一次指令。")
             return
