@@ -93,7 +93,19 @@ struct MacThreePaneView: View {
             crewStore.sessionSpawnRequests = []
             Task {
                 for req in reqs {
-                    guard let detail = crewStore.details[req.crewId] else { continue }
+                    // detail 缓存只在 UI 打开过该 crew 后才有 —— app 刚启动时为空，
+                    // 不现拉就丢请求（曾静默吞掉整批机长派工）。对齐
+                    // executeCreateChildCrew：缓存 miss 就 refreshDetail，仍拿不到才
+                    // fail-loud 落白板。
+                    if crewStore.details[req.crewId] == nil {
+                        await crewStore.refreshDetail(req.crewId)
+                    }
+                    guard let detail = crewStore.details[req.crewId] else {
+                        crewStore.postSystemNotice(
+                            crewId: req.crewId,
+                            text: "⚠️ 起 session 失败：拉不到这个 crew 的详情，brief 已丢弃：\(req.brief.prefix(60))…")
+                        continue
+                    }
                     let kind: LocalCodingAgentKind? = req.runner.flatMap {
                         $0 == "claude" ? .claudeCode : ($0 == "codex" ? .codex : nil)
                     }

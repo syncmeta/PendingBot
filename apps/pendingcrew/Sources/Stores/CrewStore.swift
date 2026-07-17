@@ -457,7 +457,7 @@ final class CrewStore: ObservableObject {
     /// "系统消息" API —— 复用 `appendSessionMessage`（senderKind "session"），
     /// `senderName` 标成「系统」区分于真实 session/机长发言，`sessionId` 用固定
     /// 哨兵值（不对应任何真实 session，纯展示用）。
-    private func postSystemNotice(crewId: String, text: String) {
+    func postSystemNotice(crewId: String, text: String) {
         LocalWhiteboardStore.shared.appendSessionMessage(
             crewId: crewId, sessionId: "system", text: text, senderName: "系统")
     }
