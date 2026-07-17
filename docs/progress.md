@@ -1,6 +1,12 @@
 # PendingBot / PendingCrew 进度账本 (Progress Ledger)
 
-**最近对账：2026-07-13**（crew 注入近期群聊上下文 + 无@默认给机长合 main；对照实际代码 / 迁移 / git，不是看 task 标记）
+**最近对账：2026-07-17**（机组群聊体验批次收口 #478/#481/#482 三分支合 main；对照实际代码 / 迁移 / git，不是看 task 标记）
+
+> **2026-07-17 机组群聊体验批次收口（3 隔离 worktree 并行，task #478/#481/#482 全 completed，机长派工+对账）**：
+> - **#481 切 crew 不串 session**（ff 合 `76076fe0`）：右栏打开的 session/模式改 per-crew 记忆，切 crew 存旧恢新；别的 crew 后台起的 session 不再抢当前 crew 前台。Mac build 绿。
+> - **#482 session 详情 UI 精修 7 点**（ff 合 `09dae9f4`，全在 CrewSessionWindowView）：头像栏 52→64pt+头像余量、伪终端左右 12pt 留白、选中框圆角矩形（浅色=sidebar 浅绿/深色=白 12% 透明）、去星标、去 running badge、停止钮红圆纯符号、输入框分家（claude 在跑隐藏走终端直接交互、codex 用群聊同款 ComposerView 胶囊、新建/退出保留原 composer）。Mac build 绿。
+> - **#478 每 crew 人类 Todo 列表**（--no-ff 合 `2887de9c`）：LocalTodoStore（`<crewId>.todos.json`，#N 自增，只人类能加）+ MCP `respond_todo` 工具（全 session 可用，追加式回应+状态推进 待办→进行中→完成）+ 右栏成员列表下方 TodoInspectorPanel（人类加条目自动发群消息「To do +1: #N xxx」并唤醒机长认领；机器人回应缩进实时显示，跨进程目录监听免轮询）。Mac build + 全量测试绿。
+> - 至此机组群聊体验批 7 项（#476/#477/#478/#479/#480/#481/#482）全合 main；**GUI 活验统一归 #443**（新增场景：per-crew session 记忆、详情精修像素、todo 面板加条目→群消息→respond_todo 回应链路）。原口头提过的「prompt 教学」无任务条目，待用户确认所指后另立。
 
 > **2026-07-13 crew 注入近期群聊上下文 + 无@默认给机长（`feat/crew-inject-context` 2 commit，task #479+#480）**：用户反馈「被 @ 的 session 要能看到群聊上下文」「无 @ 默认给机长、注入用 IM 式」。项8：新增 `CrewRecentContextRender` 纯渲染器，两注入渲染器（CrewMailboxWakeLogic / CrewLocalMentionInjectLogic 的 renderInjection）各加 `recent` 参数，在「有人@你：」之前前置一块「近期群聊」；**仅对 claude 目标补**（RunState 加 isClaude / waker 判 run.kind==.claudeCode），codex 自带 turn additionalContext 不重复塞。项10：无 mention 的**人发**广播（reply 会自动 @ 故不落此路径）→ 合成 [captain]+imStyle 走现有 captain 唤醒（在跑注入 / 没在跑 startCaptain），注入文本用「名：正文」不套「有人@你」壳；边界靠「只由 composer 人发触发」天然满足——session 广播 / 系统消息不误唤醒机长。macOS build 绿 + xcodebuild test 401 全过（新增 CrewRecentContextRenderTests + 两 logic 测试补 recent 前置 / claude-only / IM 式）。GUI 交互（真机看 claude 醒来带上下文、无@真给机长）归 #443。
 
