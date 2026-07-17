@@ -22,6 +22,7 @@ struct CrewSessionWindowView: View {
     @EnvironmentObject private var sessionRunner: CrewSessionRunner
     @EnvironmentObject private var appModel: AppModel
     @EnvironmentObject private var crewStore: CrewStore
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var draft = ""
     @State private var starting = false
@@ -118,7 +119,7 @@ struct CrewSessionWindowView: View {
             .padding(.vertical, 10)
             .help("返回成员列表")
             ScrollView {
-                LazyVStack(spacing: 8) {
+                LazyVStack(spacing: 6) {
                     ForEach(memberRowItems) { railAvatar($0) }
                     // 新建 session 占位 —— composing 时高亮,代表"正在建的那个 session"。
                     Button {
@@ -129,13 +130,15 @@ struct CrewSessionWindowView: View {
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(Theme.Palette.inkMuted)
                             .frame(width: 34, height: 34)
-                            .background(
-                                Circle().fill(sessionRunner.isComposingNew
-                                              ? Theme.Palette.accentBg : .clear))
                             .overlay(
                                 Circle().strokeBorder(
                                     Theme.Palette.inkMuted.opacity(0.4),
                                     style: StrokeStyle(lineWidth: 1.5, dash: [3, 2])))
+                            .padding(8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(sessionRunner.isComposingNew
+                                          ? railSelectionColor : .clear))
                     }
                     .buttonStyle(.plain)
                     .help("起一个新 session")
@@ -143,16 +146,25 @@ struct CrewSessionWindowView: View {
                 .padding(.vertical, 8)
             }
         }
-        .frame(width: 52)
+        .frame(width: 64)
+    }
+
+    /// 头像栏选中框底色：浅色 = sidebar 选中 crew 同款很浅绿（accentBg）；
+    /// 深色 = 很浅的白灰（白低透明）—— 深色下 accentBg 偏「绿盒子」太重。
+    private var railSelectionColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.12) : Theme.Palette.accentBg
     }
 
     @ViewBuilder
     private func railAvatar(_ item: MemberRowItem) -> some View {
         let isSelected = item.run != nil
             && item.run?.runID == sessionRunner.selectedRunId && !sessionRunner.isComposingNew
+        // 选中态 = 圆角矩形框（不是圆）——头像四周留 8pt 呼吸,框距栏边 7pt。
         let av = CrewAvatarBadges(sender: item.sender, size: 34)
-            .padding(3)
-            .background(Circle().fill(isSelected ? Theme.Palette.accentBg : .clear))
+            .padding(8)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(isSelected ? railSelectionColor : .clear))
         if let run = item.run {
             Button { sessionRunner.select(run.runID) } label: { av }
                 .buttonStyle(.plain)
@@ -175,8 +187,18 @@ struct CrewSessionWindowView: View {
             } else {
                 idleState
             }
-            Divider()
-            composer
+            // 底部输入按态分家：claude 在跑 = 不给（真终端本身可交互，双输入框
+            // 反而歧义）；codex 在跑 = 群聊同款输入胶囊（transcript 不可直接打字）；
+            // 新建 / 已退出 = 原 composer（kind/model/effort picker + 首条指令）。
+            if isContinuing {
+                if sessionRunner.current?.kind == .codex {
+                    codexComposer
+                        .background(Theme.Palette.canvas)
+                }
+            } else {
+                Divider()
+                composer
+            }
         }
     }
 
@@ -608,6 +630,25 @@ struct CrewSessionWindowView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    /// codex 续聊输入框 —— 照搬群聊的 ComposerView 输入胶囊（附件功能关掉：
+    /// 消息注入的是 codex 会话，不走群聊附件通道）。发送 = 注入当前 run。
+    private var codexComposer: some View {
+        ComposerView(
+            input: $draft,
+            pending: .constant([]),
+            photoItems: .constant([]),
+            cameraImage: .constant(nil),
+            showFileImporter: .constant(false),
+            showPhotoPicker: .constant(false),
+            showCamera: .constant(false),
+            canSend: !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            onSend: { Task { await send() } },
+            isStreaming: false,
+            showsAttachments: false,
+            placeholder: "继续对 agent 说…"
+        )
+    }
+
     private var composer: some View {
         VStack(spacing: 4) {
             if let localError {
@@ -1002,9 +1043,13 @@ private struct SessionRunContentView: View {
             header
             Divider()
             if let term = run.agentTerminalSession {
+                // 左右留白：终端网格自绘不透明底,贴边显得挤。padding 区用
+                // Theme.canvas 补色 —— AgentTerminalView.applyTheme 的底色就是
+                // 对齐 canvas 的(浅 #FFFFFF/深 #161512),缝是隐形的。
                 AgentTerminalView(session: term)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color(nsColor: .textBackgroundColor))
+                    .padding(.horizontal, 12)
+                    .background(Theme.Palette.canvas)
             } else if let codex = run.backend as? CodexAppServerBackend {
                 CodexTranscriptView(transcript: codex.transcript)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1015,9 +1060,6 @@ private struct SessionRunContentView: View {
     @ViewBuilder
     private var header: some View {
         HStack(spacing: 10) {
-            Image(systemName: run.role == .captain ? "star.fill"
-                  : (run.kind == .claudeCode ? "sparkles" : "wand.and.stars"))
-                .foregroundStyle(.tint)
             VStack(alignment: .leading, spacing: 2) {
                 // captain 的标题就是「机长」(与群聊/成员列表统一);副标题给 agent
                 // 类型(看得出底层是 codex/claude)。worker:标题 agent 类型,副标题
@@ -1033,16 +1075,23 @@ private struct SessionRunContentView: View {
                 }
             }
             Spacer()
-            statusBadge(run.status, exitCode: run.exitCode)
+            // running 不挂 badge（在跑是常态,头像状态点已表达）；退出态才显结果。
+            if run.status != .running {
+                statusBadge(run.status, exitCode: run.exitCode)
+            }
             if run.status == .running {
-                Button(role: .destructive) {
+                // 停止 = 圆形纯符号按钮,无文字。
+                Button {
                     run.stop()
                 } label: {
-                    Label("停止", systemImage: "stop.fill")
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 22, height: 22)
+                        .background(Circle().fill(.red))
                 }
-                .controlSize(.small)
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
+                .buttonStyle(.plain)
+                .help("停止这个 session")
             }
         }
         .padding(.horizontal, 12)
