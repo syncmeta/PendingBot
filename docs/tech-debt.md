@@ -1107,3 +1107,7 @@
 ## 2026-07-17 spawn 被并发上限拒绝无任何可见回执（机长实遇）
 
 - 🟡 **start_session 排队成功≠真起来,pre-flight 拒绝(超并发上限/工具未装)不冒泡** — 机长连派 3 个 worker(#484-486),MCP 面回「已安排起 session」,实际 drain 时被 `maxConcurrentRuns=6` pre-flight guard 拒掉,群聊/白板/机长信箱零回执,机长与用户都以为在跑,直到点名才发现。cap 本身 #486 已拆,但 **spawn 失败静默** 的模式还在:`startForBrief` 其他 throw 路径(claude/codex 未安装、worktree 创建失败等)同样只 throw 不回执。**根治**:MacRootView/CrewStore drain spawn 队列的 catch 里,把失败原因往对应 crew 白板发一条系统消息(@captain),对齐 create_child_crew 的失败回执模式。
+
+## 2026-07-18 模型选择重构（#485）
+
+- 🟢 **claude 模型友好显示名的版本号是手维护的静默漂移点** — `SessionLaunchOptions.displayName(for:)` 把稳定别名映射成带版本的显示名（fable→Fable 5、opus→Opus 4.8、sonnet→Sonnet 5、haiku→Haiku 4.5）。传给 CLI/MCP 的仍是裸别名（CLI 解析到当代最新），所以功能不会坏——但 claude code 换代后 UI 显示的版本号会悄悄失真（比如 CLI 的 `opus` 已解析到 4.9 而 UI 仍显示 Opus 4.8），没有任何报错。升级 claude CLI 后需顺手核对这张映射表。
