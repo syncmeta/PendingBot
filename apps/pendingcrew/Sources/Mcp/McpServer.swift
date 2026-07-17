@@ -26,11 +26,14 @@ final class McpServer {
     /// quota.json 所在目录（app 的 `QuotaCenter` 定时写、`get_quota` 工具读）。
     /// 与 store/approvals/control 同 `--dir`。
     let quotaDirectory: URL
+    /// 人类 Todo 列表（task #478）。机器人经 `respond_todo` 追加回应 + 推进状态；
+    /// 新增条目只有人类能做（app 面板），MCP 不暴露新增。与 store 同 `--dir`。
+    let todos: LocalTodoStore
 
     init(store: LocalWhiteboardStore, approvals: LocalApprovalStore, control: LocalCrewControlStore,
          crewId: String, sessionId: String,
          isCaptain: Bool = false, sessionLabel: String? = nil,
-         quotaDirectory: URL? = nil) {
+         quotaDirectory: URL? = nil, todos: LocalTodoStore? = nil) {
         self.store = store
         self.approvals = approvals
         self.control = control
@@ -39,6 +42,7 @@ final class McpServer {
         self.isCaptain = isCaptain
         self.sessionLabel = sessionLabel
         self.quotaDirectory = quotaDirectory ?? LocalWhiteboardStore.defaultDirectory
+        self.todos = todos ?? LocalTodoStore()
     }
 
     /// 处理一行 JSON-RPC。返回应答 JSON 字符串；通知（无 id / `notifications/*`）→ nil。
@@ -134,6 +138,20 @@ final class McpServer {
                                         "description": "只听这些发送者：\"human\"/\"captain\"/session id（或前 6 位）。不填=全部。"],
                             "off": ["type": "boolean", "description": "true=停止收听。"],
                         ],
+                    ],
+                ],
+                [
+                    "name": "respond_todo",
+                    "description": "回应本 crew 人类 Todo 列表的某个条目（右栏 Todo 面板）。**追加式**：每次调用追加一条回应，不覆盖旧回应；可同时用 status 推进条目状态（待办 pending → 进行中 in_progress → 完成 completed）。人类加条目时群里会出现「To do +1: #N …」——看到后用这个工具认领/回应，number 填那个 N。每个条目都该尽快有机器人回应；status 只在真有进展时才给（开始做→in_progress，做完验证过→completed）。",
+                    "inputSchema": [
+                        "type": "object",
+                        "properties": [
+                            "number": ["type": "integer", "description": "条目编号（群消息「To do +1: #N」里的 N）。"],
+                            "response": ["type": "string", "description": "回应内容（认领/进展/结果，一两句说清）。"],
+                            "status": ["type": "string", "enum": ["pending", "in_progress", "completed"],
+                                       "description": "可选：把条目状态推进到这个值。不填=只回应不动状态。"],
+                        ],
+                        "required": ["number", "response"],
                     ],
                 ],
                 [
@@ -422,6 +440,35 @@ final class McpServer {
                                   senders: (senders?.isEmpty ?? true) ? nil : senders, off: false)
             let who = (senders?.isEmpty ?? true) ? "全部成员" : senders!.joined(separator: "、")
             return toolResult(id: id, text: "已开启群聊收听至 \(until)（听：\(who)）。期间无定向 @ 的新消息和 @ 你的消息会注入唤醒你；到期自动停。现在正常结束你的回合等消息即可，不要空转轮询。")
+        case "respond_todo":
+            // 人类 Todo 的机器人回应（task #478）：追加式回应 + 可选状态推进。
+            // number 收 Int/Double 两种形状（JSON 数字经 JSONSerialization 可能是
+            // 任一种）。找不到 #N 时把当前列表带在错误里 —— agent 不用另一个工具
+            // 就能自纠。
+            let number = (args["number"] as? Int) ?? (args["number"] as? Double).map(Int.init)
+            let response = ((args["response"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let number, number >= 1 else {
+                return toolResult(id: id, text: "ERROR: number 需为正整数（群消息「To do +1: #N」里的 N）。")
+            }
+            guard !response.isEmpty else {
+                return toolResult(id: id, text: "ERROR: response 不能为空。")
+            }
+            let status = (args["status"] as? String)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+                .flatMap { $0.isEmpty ? nil : $0 }
+            if let status, !LocalTodoStore.validStatuses.contains(status) {
+                return toolResult(id: id, text: "ERROR: status 只能是 pending / in_progress / completed。")
+            }
+            guard let updated = todos.respond(crewId: crewId, number: number, sessionId: sessionId,
+                                              senderName: sessionLabel, text: response,
+                                              newStatus: status) else {
+                let rows = todos.list(crewId: crewId).map {
+                    "#\($0.number) [\(LocalTodoItem.statusLabel($0.status))] \($0.text)"
+                }
+                return toolResult(id: id, text: "ERROR: 找不到 Todo #\(number)。当前列表：\n"
+                                  + (rows.isEmpty ? "（空）" : rows.joined(separator: "\n")))
+            }
+            return toolResult(id: id, text: "已回应 Todo #\(number)（状态：\(LocalTodoItem.statusLabel(updated.status))）。")
         case "set_session_profile":
             let model = (args["model"] as? String)
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }

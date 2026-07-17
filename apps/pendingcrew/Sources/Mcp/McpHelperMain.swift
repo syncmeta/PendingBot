@@ -31,7 +31,8 @@ enum McpHelperMain {
             let server = McpServer(store: store, approvals: LocalApprovalStore(directory: dir),
                                    control: LocalCrewControlStore(directory: dir),
                                    crewId: crewId, sessionId: sessionId, isCaptain: captain,
-                                   sessionLabel: label)
+                                   sessionLabel: label,
+                                   todos: LocalTodoStore(directory: dir))
             while let line = readLine(strippingNewline: true) {
                 if let out = server.handleLine(line) {
                     print(out)

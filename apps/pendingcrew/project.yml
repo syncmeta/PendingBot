@@ -94,6 +94,8 @@ targets:
       - path: Sources/Stores/LocalWhiteboardStore.swift
       # 待审批/待决策 store（ask 工具 + 权限 hook 用），同自包含。
       - path: Sources/Stores/LocalApprovalStore.swift
+      # 人类 Todo 列表 store（respond_todo 工具 + 右栏面板数据层），同自包含。
+      - path: Sources/Stores/LocalTodoStore.swift
       # crew-naming（2026-06-17）：控制通道 store（机长 rename_crew 写待改名）+
       # LocalCrewStore（setTitle/地名兜底）+ PlaceNames（地名池）。均自包含 Foundation；
       # PlaceNames 读 Bundle.main，测试 bundle 无 crewground_places.txt → 回落 ["Atlantis"]，
