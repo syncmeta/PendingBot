@@ -14,9 +14,9 @@ import Combine
 ///
 /// **非 `@MainActor`**：helper CLI（非 main-actor）要用。app 侧只从 `@MainActor`
 /// 调（LocalBackend / CrewChatView），不跨 actor 传实例。`@unchecked Sendable`：
-/// 实例状态全 `let`（不可变），共享可变资源是磁盘文件 —— **app 与 helper 并发读写
-/// 同一 JSON 有 read-modify-write 竞态（last-write-wins 偶丢消息）**，v1 单用户低频
-/// 可接受，已记 tech-debt，后续上 append-only log / 文件锁。
+/// 实例状态全 `let`（不可变），共享可变资源是磁盘文件 —— app 与 helper 并发
+/// read-modify-write 由 `<crewId>.lock` 上的 flock 互斥（#483；此前 last-write-wins
+/// 真丢过历史）。更彻底的单写者模型（helper 投递意图文件、app 代理写）另记 tech-debt。
 ///
 /// 不依赖 PendingBot/edge —— 是 PendingCrew 开源核心的一部分。
 final class LocalWhiteboardStore: @unchecked Sendable {
@@ -100,12 +100,12 @@ final class LocalWhiteboardStore: @unchecked Sendable {
 
     /// 列出某 crew 的全部白板消息（按写入顺序）。文件缺失 → 空。
     func list(crewId: String) -> [LocalWhiteboardMessage] {
-        load(crewId: crewId)
+        withFileLock(crewId) { loadLocked(crewId) }
     }
 
     /// 该 `afterId` **之后**的消息（读未读用）。afterId=nil 或找不到 → 返回全部。
     func entries(crewId: String, afterId: String?) -> [LocalWhiteboardMessage] {
-        let all = load(crewId: crewId)
+        let all = list(crewId: crewId)
         guard let afterId, let idx = all.firstIndex(where: { $0.id == afterId }) else { return all }
         return Array(all.suffix(from: all.index(after: idx)))
     }
@@ -167,23 +167,24 @@ final class LocalWhiteboardStore: @unchecked Sendable {
         text: String,
         createdAt: String
     ) {
-        let rows = load(crewId: crewId)
-        guard !rows.contains(where: { $0.relayRemoteId == remoteId }) else { return }
-        append(crewId: crewId, LocalWhiteboardMessage(
-            id: UUID().uuidString.lowercased(),
-            senderKind: senderKind,
-            senderUserId: nil,
-            senderSessionId: nil,
-            category: nil,
-            text: text,
-            createdAt: createdAt,
-            relayRemoteId: remoteId,
-            senderDisplayName: senderDisplayName))
+        withFileLock(crewId) {
+            guard !loadLocked(crewId).contains(where: { $0.relayRemoteId == remoteId }) else { return }
+            appendLocked(crewId: crewId, LocalWhiteboardMessage(
+                id: UUID().uuidString.lowercased(),
+                senderKind: senderKind,
+                senderUserId: nil,
+                senderSessionId: nil,
+                category: nil,
+                text: text,
+                createdAt: createdAt,
+                relayRemoteId: remoteId,
+                senderDisplayName: senderDisplayName))
+        }
     }
 
     /// 该 crew 已从 relay 同步进来的 edge message id 集合（拉取去重用）。
     func relayRemoteIds(crewId: String) -> Set<String> {
-        Set(load(crewId: crewId).compactMap(\.relayRemoteId))
+        Set(list(crewId: crewId).compactMap(\.relayRemoteId))
     }
 
     // MARK: - Persistence
@@ -193,19 +194,80 @@ final class LocalWhiteboardStore: @unchecked Sendable {
         directory.appendingPathComponent("\(crewId).json")
     }
 
-    private func load(crewId: String) -> [LocalWhiteboardMessage] {
-        guard let data = try? Data(contentsOf: fileURL(crewId)) else { return [] }
-        return (try? JSONDecoder().decode([LocalWhiteboardMessage].self, from: data)) ?? []
+    /// 跨进程互斥（#483 ③）：flock 一个 sidecar 锁文件 `<crewId>.lock`。app 与各
+    /// helper 子进程的 read-modify-write 都在锁内做，last-write-wins 竞态消除。
+    /// flock 对同进程内不同 fd 也互斥 —— 只在 public 入口拿一次，锁内一律走
+    /// `*Locked` 变体，不嵌套。锁文件打不开（目录不可写等极端情况）退化为无锁执行。
+    private func withFileLock<T>(_ crewId: String, _ body: () -> T) -> T {
+        let lockURL = directory.appendingPathComponent("\(crewId).lock")
+        let fd = open(lockURL.path, O_CREAT | O_WRONLY, 0o644)
+        guard fd >= 0 else { return body() }
+        defer { close(fd) }
+        flock(fd, LOCK_EX)
+        defer { flock(fd, LOCK_UN) }
+        return body()
+    }
+
+    /// 锁内读。逐条 lenient 解码（#483 ②）：数组元素坏一条丢一条，不连坐；
+    /// 外层 JSON 本身解析不了（半截写入 / 乱码）→ fail-loud 归档重建（#483 ①），
+    /// 绝不再「(try? decode) ?? []」把整板静默当空 —— 那正是 2026-07-17 历史
+    /// 被下一次 append 清掉的病根。
+    private func loadLocked(_ crewId: String) -> [LocalWhiteboardMessage] {
+        let url = fileURL(crewId)
+        guard let data = try? Data(contentsOf: url) else { return [] }
+        guard let rows = try? JSONDecoder().decode([FailableMessage].self, from: data) else {
+            return quarantineCorruptFileLocked(crewId: crewId, url: url)
+        }
+        return rows.compactMap(\.message)
+    }
+
+    /// 整文件解码失败：损坏字节先归档成 `<crewId>.json.corrupt-<unix毫秒>`（同目录，
+    /// 人工可找回），再以「一条系统警示」重建白板 —— 群里看得到出过事，且下一次
+    /// append 合并的是警示而不是空数组。警示消息复用 `CrewStore.postSystemNotice`
+    /// 的形态（senderKind "session" + sessionId "system" + senderName "系统"），
+    /// 渲染端零改动。
+    private func quarantineCorruptFileLocked(crewId: String, url: URL) -> [LocalWhiteboardMessage] {
+        let ts = UInt64(Date().timeIntervalSince1970 * 1000)
+        let archive = directory.appendingPathComponent("\(crewId).json.corrupt-\(ts)")
+        try? FileManager.default.moveItem(at: url, to: archive)
+        let warning = LocalWhiteboardMessage(
+            id: UUID().uuidString.lowercased(),
+            senderKind: "session",
+            senderUserId: nil,
+            senderSessionId: "system",
+            category: nil,
+            text: "⚠️ 白板文件损坏、无法解析，损坏内容已归档为 \(archive.lastPathComponent)"
+                + "（whiteboards 目录），本板从这条警示重新开始。",
+            createdAt: ISO8601DateFormatter().string(from: Date()),
+            senderName: "系统")
+        if let data = try? JSONEncoder().encode([warning]) {
+            try? data.write(to: url, options: .atomic)
+        }
+        return [warning]
     }
 
     private func append(crewId: String, _ msg: LocalWhiteboardMessage) {
-        var rows = load(crewId: crewId)
+        withFileLock(crewId) { appendLocked(crewId: crewId, msg) }
+    }
+
+    /// 锁内追加：重读-合并-写。load 与 write 之间没有别的写者能插进来（flock）。
+    private func appendLocked(crewId: String, _ msg: LocalWhiteboardMessage) {
+        var rows = loadLocked(crewId)
         rows.append(msg)
         guard let data = try? JSONEncoder().encode(rows) else { return }
         try? data.write(to: fileURL(crewId), options: .atomic)
         // 单一写入漏斗 —— 所有 public append 变体都经此，发一个变更信号即覆盖全部
         // （人类发送 / session 进展 / relay 搬入）。订阅方按 crewId 过滤。
         changes.send(crewId)
+    }
+}
+
+/// 逐条 lenient 解码壳（#483 ②）：元素解码失败吞成 `nil`（丢那一条），不让单条
+/// 坏消息把整个数组解码失败连坐成空板。新旧 schema 混跑时只丢真坏的。
+private struct FailableMessage: Decodable {
+    let message: LocalWhiteboardMessage?
+    init(from decoder: Decoder) throws {
+        message = try? LocalWhiteboardMessage(from: decoder)
     }
 }
 
