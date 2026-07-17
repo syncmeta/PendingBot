@@ -30,9 +30,6 @@ struct CrewSessionWindowView: View {
     /// composer 里给「新 worker session」选的 agent kind。初值从 crew 的
     /// `captainAgentKind` 派生（见 `.onAppear` / `.onChange`），crew 没记 → `.codex`。
     @State private var selectedKind: LocalCodingAgentKind = .codex
-    /// 新建 session 的模型/effort 覆盖；nil = 对应 CLI 默认（composer 两个 picker）。
-    @State private var selectedModel: String?
-    @State private var selectedEffort: String?
 
     // MARK: - 成员列表模式 state（自轮询白板 + roster，与中栏各拉各的）
 
@@ -181,7 +178,14 @@ struct CrewSessionWindowView: View {
                 idleState
             } else if let run = sessionRunner.current {
                 // `.id(run.runID)` 强制换 run 时整个终端视图重建。
-                SessionRunContentView(run: run)
+                SessionRunContentView(run: run) { model, effort in
+                    Task {
+                        await sessionRunner.applyProfileChange(
+                            SessionProfileChangeRequest(
+                                crewId: run.crewId, sessionId: run.sessionId,
+                                model: model, effort: effort))
+                    }
+                }
                     .id(run.runID)
                 SessionApprovalCardsView(crewId: run.crewId, sessionId: run.sessionId)
             } else {
@@ -189,7 +193,8 @@ struct CrewSessionWindowView: View {
             }
             // 底部输入按态分家：claude 在跑 = 不给（真终端本身可交互，双输入框
             // 反而歧义）；codex 在跑 = 群聊同款输入胶囊（transcript 不可直接打字）；
-            // 新建 / 已退出 = 原 composer（kind/model/effort picker + 首条指令）。
+            // 新建 / 已退出 = 原 composer（runner picker + 首条指令；model/effort
+            // 建后在终端页头部选，#485）。
             if isContinuing {
                 if sessionRunner.current?.kind == .codex {
                     codexComposer
@@ -333,7 +338,8 @@ struct CrewSessionWindowView: View {
     private func memberRow(_ item: MemberRowItem) -> some View {
         if let run = item.run {
             // session 行：富行 —— 头像 + 名 + 简介 + 最新一步动作，点进终端；
-            // 尾部挂 model/effort 查看 + 切换控件（本任务，claude 可切、codex 置灰）。
+            // 尾部挂**只读** model/effort pill（纯展示 —— 切换入口在终端页头部，
+            // 成员列表不做选择，#485）。
             HStack(spacing: 6) {
                 Button {
                     sessionRunner.select(run.runID)
@@ -343,15 +349,8 @@ struct CrewSessionWindowView: View {
                 }
                 .buttonStyle(.plain)
                 .help("打开这个 session 的终端")
-                SessionProfileControl(run: run) { model, effort in
-                    Task {
-                        await sessionRunner.applyProfileChange(
-                            SessionProfileChangeRequest(
-                                crewId: run.crewId, sessionId: run.sessionId,
-                                model: model, effort: effort))
-                    }
-                }
-                .padding(.trailing, 8)
+                SessionProfileReadonlyPill(run: run)
+                    .padding(.trailing, 8)
             }
         } else if item.sender.isCaptain {
             // captain 没在跑:点头像即进入它的 session —— 没在跑就当场起一个再进。
@@ -663,38 +662,15 @@ struct CrewSessionWindowView: View {
             }
             HStack(spacing: 8) {
                 if !isContinuing {
+                    // 只选 runner —— model/effort 不在建前选（用户定调「建 session
+                    // 后选」，#485）：claude 建好后在终端页头部切；codex 不支持中途
+                    // 切换，属已知取舍（要指定配置让机长 start_session 带参另起）。
                     Picker("", selection: $selectedKind) {
                         Text("Claude Code").tag(LocalCodingAgentKind.claudeCode)
                         Text("Codex").tag(LocalCodingAgentKind.codex)
                     }
                     .labelsHidden()
                     .frame(width: 130)
-                    .disabled(starting)
-                    .onChange(of: selectedKind) { _, _ in
-                        // 两家的模型别名/effort 档位不同，切 runner 就回默认，防带错档。
-                        selectedModel = nil
-                        selectedEffort = nil
-                    }
-                    // 模型 / effort：nil = 该 CLI 默认。选项按 runner 分家 ——
-                    // claude 用稳定别名(CLI 解析到当代最新)，effort 档位两家不同
-                    // (claude: low…max；codex: minimal…high，见 SessionConfig)。
-                    Picker("", selection: $selectedModel) {
-                        Text("默认模型").tag(String?.none)
-                        ForEach(SessionLaunchOptions.models(for: selectedKind), id: \.self) { m in
-                            Text(m).tag(String?.some(m))
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(width: 110)
-                    .disabled(starting)
-                    Picker("", selection: $selectedEffort) {
-                        Text("默认 effort").tag(String?.none)
-                        ForEach(SessionLaunchOptions.efforts(for: selectedKind), id: \.self) { e in
-                            Text(e).tag(String?.some(e))
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(width: 110)
                     .disabled(starting)
                 }
                 TextField(isContinuing ? "继续对 agent 说…（⌘↩ 发送）" : "下第一条指令开始…",
@@ -756,8 +732,7 @@ struct CrewSessionWindowView: View {
         let serverLink: CrewSessionServerLink? = nil
         if let sid = serverLink?.sessionId { handledSessionIds.insert(sid) }
         do {
-            var cfg = SessionConfig(kind: selectedKind, model: selectedModel,
-                                    effort: selectedEffort, initialPrompt: firstPrompt)
+            var cfg = SessionConfig(kind: selectedKind, initialPrompt: firstPrompt)
             // isolation=on → 独立 worktree;off → crew 共享目录（spec §8/§11）。
             let workdir = SessionWorkspace.resolve(
                 crewDirectory: dir, isolation: cfg.isolation, hint: firstPrompt)
@@ -1043,6 +1018,8 @@ private struct SessionBarItemView: View {
 /// `AgentTerminalView`（真终端），codex 显示 `CodexTranscriptView`（结构化 transcript）。
 private struct SessionRunContentView: View {
     @ObservedObject var run: CrewSessionRun
+    /// 终端页头部切换控件的回调（→ `applyProfileChange`）。只带改动的那一个档位。
+    let onSwitchProfile: (_ model: String?, _ effort: String?) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1081,6 +1058,10 @@ private struct SessionRunContentView: View {
                 }
             }
             Spacer()
+            // model/effort 查看 + 切换（#485：切换入口在这，成员列表只读）。
+            // claude 点开即切（走 applyProfileChange，与 MCP 自切同路径）；
+            // codex 只读置灰 + help 提示另起 session。
+            SessionProfileControl(run: run, onSwitch: onSwitchProfile)
             // running 不挂 badge（在跑是常态,头像状态点已表达）；退出态才显结果。
             if run.status != .running {
                 statusBadge(run.status, exitCode: run.exitCode)
@@ -1131,28 +1112,64 @@ private struct SessionRunContentView: View {
     }
 }
 
-/// 成员卡上的运行态 model/effort 查看 + 切换控件（本任务）。
+/// session 当前 model/effort 的展示 label：「模型 · effort」，模型走友好名
+/// （Fable 5 / Opus 4.8 …，见 `SessionLaunchOptions.displayName`），未收录值原样。
+private func profileLabel(model: String?, effort: String?) -> String {
+    let m = model.map(SessionLaunchOptions.displayName(for:)) ?? "默认"
+    if let e = effort, !e.isEmpty { return "\(m) · \(e)" }
+    return m
+}
+
+/// model/effort 的小 pill（成员行只读展示与终端页切换控件共用同一视觉）。
+private struct SessionProfilePillLabel: View {
+    let text: String
+    /// false = 只读/置灰（成员行、codex），true = 可点（claude 切换菜单的 label）。
+    let active: Bool
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Text(text).lineLimit(1)
+            if active {
+                Image(systemName: "chevron.up.chevron.down").font(.system(size: 8))
+            }
+        }
+        .font(Theme.Fonts.caption2)
+        .foregroundStyle(Theme.Palette.inkMuted)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(Theme.Palette.surfaceMuted)
+        )
+        .opacity(active ? 1 : 0.6)
+    }
+}
+
+/// 成员行尾部的**只读** model/effort pill —— 纯展示，无菜单/点击（用户定调：
+/// 成员列表不做选择入口，切换在 session 详情/终端页里做）。
+/// `@ObservedObject` 观察 run —— 切换（终端页/MCP 自切）回写 `run.model` /
+/// `run.effort` 后这里即时刷新（父 view 订不到嵌套 run 的 `@Published`）。
+private struct SessionProfileReadonlyPill: View {
+    @ObservedObject var run: CrewSessionRun
+
+    var body: some View {
+        SessionProfilePillLabel(
+            text: profileLabel(model: run.model, effort: run.effort), active: false)
+    }
+}
+
+/// 终端页头部的运行态 model/effort 查看 + 切换控件。
 ///
 /// - **claude**：一个 `Menu`（模型段 + 思考强度段），一两下点到即切；选中经
 ///   `onSwitch` 走 `applyProfileChange`（与 MCP 自切同一路径，切完回写 run →
-///   本控件即时更新）。
+///   本控件即时更新）。菜单显示友好名，`onSwitch` 传出的仍是裸别名。
 /// - **codex**：中途不支持切换（model 绑 thread、effort 绑启动参数）——只读
 ///   展示 + 置灰，`help` 说明改配置该走 `start_session` 另起，与
 ///   `applyProfileChange` 的 codex 分支一致。
-///
-/// `@ObservedObject` 观察 run —— 切换回写 `run.model` / `run.effort` 后本控件
-/// 刷新（父 view 只 `@EnvironmentObject` 持 runner，订不到嵌套 run 的
-/// `@Published`，见本文件头注「必须分两层」）。
 private struct SessionProfileControl: View {
     @ObservedObject var run: CrewSessionRun
     /// 只带**改动的那一个**（另一个传 nil），避免误发未变的档位。
     let onSwitch: (_ model: String?, _ effort: String?) -> Void
-
-    private var label: String {
-        let m = run.model ?? "默认"
-        if let e = run.effort, !e.isEmpty { return "\(m) · \(e)" }
-        return m
-    }
 
     var body: some View {
         switch run.kind {
@@ -1163,8 +1180,9 @@ private struct SessionProfileControl: View {
                         Button {
                             if m != run.model { onSwitch(m, nil) }
                         } label: {
-                            if m == run.model { Label(m, systemImage: "checkmark") }
-                            else { Text(m) }
+                            let name = SessionLaunchOptions.displayName(for: m)
+                            if m == run.model { Label(name, systemImage: "checkmark") }
+                            else { Text(name) }
                         }
                     }
                 }
@@ -1179,34 +1197,18 @@ private struct SessionProfileControl: View {
                     }
                 }
             } label: {
-                pill(active: true)
+                SessionProfilePillLabel(
+                    text: profileLabel(model: run.model, effort: run.effort), active: true)
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
             .disabled(run.status != .running)
             .help("切换本 session 的模型 / 思考强度（claude 立即生效）")
         case .codex:
-            pill(active: false)
+            SessionProfilePillLabel(
+                text: profileLabel(model: run.model, effort: run.effort), active: false)
                 .help("codex 不支持中途切换 model/effort（model 绑 thread、effort 绑启动参数）——换配置请让机长 start_session 另起一个 session")
         }
-    }
-
-    private func pill(active: Bool) -> some View {
-        HStack(spacing: 3) {
-            Text(label).lineLimit(1)
-            if active {
-                Image(systemName: "chevron.up.chevron.down").font(.system(size: 8))
-            }
-        }
-        .font(Theme.Fonts.caption2)
-        .foregroundStyle(Theme.Palette.inkMuted)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
-        .background(
-            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                .fill(Theme.Palette.surfaceMuted)
-        )
-        .opacity(active ? 1 : 0.6)
     }
 }
 #endif
