@@ -20,13 +20,13 @@ struct CaptainTemplateEditorSheet: View {
     var onCreated: (CaptainTemplate) -> Void
 
     @State private var name: String = ""
-    @State private var model: String = "anthropic/claude-opus-4-7"
+    @State private var model: String = "anthropic/claude-opus-4-8"
     @State private var systemPrompt: String = ""
 
     /// 三个 provider 各放一个常用 model 作为预设。手填也允许(可以覆盖)。
     private let presetModels = [
-        "anthropic/claude-opus-4-7",
-        "anthropic/claude-sonnet-4-5",
+        "anthropic/claude-opus-4-8",
+        "anthropic/claude-sonnet-5",
         "openai/gpt-4o-mini",
         "openai/gpt-4o",
         "google/gemini-2.0-flash",
