@@ -1097,3 +1097,7 @@
 ## 2026-07-12 计费 webhook 环境区分（RC/Polar 接线收尾时发现）
 
 - 🟡 **RC/Polar webhook 不区分 sandbox/production 环境,测试单入真钱包** — `billing-webhooks.ts` 两条路径都不检查环境字段(RC `event.environment==='SANDBOX'`、Polar sandbox org 走独立 webhook 但当前 POLAR_SERVER 本就指 sandbox),sandbox 测试购买会往真实 subject 的 pnc_ledger/WalletDO 入账。pre-launch 单环境阶段是有意为之(方便真单验证),但**上线前必须**:① RC 路径按 `environment` 分流(SANDBOX 只记日志或打标记不入账,或入账时 `raw` 里已有环境可查);② Polar 切 production org + token 后删 sandbox webhook;③ 清掉验证期的测试入账(蚕庄 +6.75 polar / +13.5 iap 测试单)。
+
+## 2026-07-17 crew 白板历史被清空（用户实遇数据丢失,机长排查）
+
+- 🔴 **LocalWhiteboardStore 解码失败静默清空整个白板 + 多进程 RMW 竞态,已造成一次真实历史丢失** — 2026-07-17 21:00 前后「机组群聊体验」crew 的白板历史全部消失,磁盘文件只剩 13:03Z 之后的 4 条。两个机制叠加:① `LocalWhiteboardStore.load()`(`Sources/Stores/LocalWhiteboardStore.swift:196-198`)用 `(try? decode) ?? []`——文件里**任何一条**消息解码失败(schema 演进加了新必填字段、或半截写入)整个白板即视为空,下一次 `append()` 就以「空数组+新消息」原子重写文件,历史永久丢失且无任何声响;② 文件头注释(`:18`)自己承认的已知竞态:多进程(app + 各 session 的 MCP helper)对同一 JSON read-modify-write、last-write-wins,新旧二进制混跑(app 重启换新构建、遗留 helper 进程还在写)时窗口放大。**根治方向**:load 失败改 fail-loud(损坏文件先 `.corrupt-<ts>` 归档再重建,别静默吞)+ 逐条 lenient 解码(坏一条丢一条,不连坐)+ 写入走文件锁或单写者(app 进程代理写,helper 只投递意图文件——todo/rename/spawn 通道已是这个模式,白板 append 是唯一例外)。修复任务 #483。
