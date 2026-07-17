@@ -80,10 +80,49 @@ final class CrewSessionRunner: ObservableObject {
     /// 成功启动或下一次尝试开始时清空。
     @Published var lastStartError: String?
 
-    /// 前台 run：选中的那个；没选中（或选中的已被移除）时回退最后一个。
+    /// 前台 run：选中的那个；没选中（或选中的已被移除）时回退最后一个 ——
+    /// 回退只在前台 crew 内找,不越 crew 顶出别人的终端（#481）。
     /// 保留这个名字让既有 call site（composer / auto-claim）继续编译。
     var current: CrewSessionRun? {
-        runs.first { $0.runID == selectedRunId } ?? runs.last
+        if let sel = runs.first(where: { $0.runID == selectedRunId }) { return sel }
+        if let crewId = activeCrewId { return runs.last { $0.crewId == crewId } }
+        return runs.last
+    }
+
+    // MARK: - per-crew 右栏选中态（#481）
+
+    /// 右栏当前对应的 crew（`MacThreePaneView` 在 `selectedCrewId` 变化时经
+    /// `switchCrew` 同步）。`start()` 用它判断新 run 属不属于前台 crew。
+    private(set) var activeCrewId: String?
+
+    /// 单个 crew 记住的右栏 UI 态：打开着哪个 session、终端还是成员列表、新建态。
+    private struct PaneState {
+        var selectedRunId: UUID?
+        var viewingTerminal = false
+        var isComposingNew = false
+    }
+
+    /// 每个 crew 各自的右栏态 —— 切 crew 存旧恢新，互不串。
+    private var paneStates: [String: PaneState] = [:]
+
+    /// 切 crew（#481）：把右栏选中态存回旧 crew，恢复新 crew 自己记住的那份。
+    /// 记住的 run 已被移除时退回成员列表默认态（不 fallback 到别的 crew 的 run）。
+    func switchCrew(from oldCrewId: String?, to newCrewId: String?) {
+        guard oldCrewId != newCrewId else { return }
+        if let old = oldCrewId {
+            paneStates[old] = PaneState(selectedRunId: selectedRunId,
+                                        viewingTerminal: viewingTerminal,
+                                        isComposingNew: isComposingNew)
+        }
+        activeCrewId = newCrewId
+        var st = newCrewId.flatMap { paneStates[$0] } ?? PaneState()
+        if let rid = st.selectedRunId,
+           !runs.contains(where: { $0.runID == rid && $0.crewId == newCrewId }) {
+            st = PaneState()
+        }
+        selectedRunId = st.selectedRunId
+        viewingTerminal = st.viewingTerminal
+        isComposingNew = st.isComposingNew
     }
 
     /// 同时 running 的 session 上限（资源护栏）。
@@ -124,7 +163,8 @@ final class CrewSessionRunner: ObservableObject {
         if run.status == .running { run.stop() }
         runs.remove(at: idx)
         if selectedRunId == runId {
-            selectedRunId = runs.last?.runID
+            // 回退只在同 crew 内找（#481）—— 别把前台切到另一个 crew 的 run。
+            selectedRunId = runs.last(where: { $0.crewId == crewId })?.runID
         }
         teardownMailboxWakerIfIdle(crewId: crewId)
         teardownPermissionRelay(sessionId: run.sessionId)
@@ -565,10 +605,19 @@ final class CrewSessionRunner: ObservableObject {
             role: role
         )
         // 多 run 并存：追加 + 选中，不动旧 run（每个 run 在切换条上都有自己的
-        // 停止/移除入口，不会变 orphan）。
+        // 停止/移除入口，不会变 orphan）。选中只抢**本 crew**的前台（#481）——
+        // 别的 crew 起的 run（机长唤醒 / start_session / 远程排队）记到它自己的
+        // pane 态里，等用户切过去时选中，不打断当前 crew 的右栏。
         runs.append(run)
-        selectedRunId = run.runID
-        isComposingNew = false
+        if activeCrewId == nil || crewId == activeCrewId {
+            selectedRunId = run.runID
+            isComposingNew = false
+        } else {
+            var st = paneStates[crewId] ?? PaneState()
+            st.selectedRunId = run.runID
+            st.isComposingNew = false
+            paneStates[crewId] = st
+        }
         // 撞额度上限（健康感知首报）→ 自动挂重置唤醒（用户定调:hit limit 才挂钩）。
         run.onUsageLimit = { [weak self] r in self?.autoScheduleQuotaWakeup(for: r) }
         persistSessionsSnapshot()   // 新成员立刻进机长的点名快照

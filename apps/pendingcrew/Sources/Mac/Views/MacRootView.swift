@@ -61,6 +61,11 @@ struct MacThreePaneView: View {
                 }
             }
         }
+        // 每个 crew 记住自己右栏打开的 session（#481）：切 crew 时把选中态存回旧
+        // crew、恢复新 crew 记住的那份 —— 切回来还是原来打开的 session，不串。
+        .onChange(of: crewStore.selectedCrewId) { old, new in
+            sessionRunner.switchCrew(from: old, to: new)
+        }
         // 建 crew 后自动起机长（用户要的零摩擦：新建即启动 + 群里报到，无需手动点
         // 「启动 Captain」）。store 在 createCrew 完成后 set crewId；这里持有
         // sessionRunner，best-effort 拉起后置 nil。
