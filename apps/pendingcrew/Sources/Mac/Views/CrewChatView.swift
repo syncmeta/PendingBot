@@ -50,6 +50,11 @@ struct CrewChatView: View {
     /// composer and carries `reply_to` + an auto-@ on send. nil = not replying.
     @State private var replyTarget: CrewReplyTarget?
 
+    /// Todo 模式（task #487）：composer 的 checklist 钮点亮时，发送 = 创建 Todo
+    /// （LocalTodoStore + 群里「To do +1: #N」提示），发完自动熄灭。仅 macOS
+    /// 启用（todo 数据与机长唤醒都在本机；iOS 侧不传 binding → 按钮不渲染）。
+    @State private var todoMode = false
+
     // MARK: - ComposerView bindings
     /// Forwarded to ComposerView; ChatActionSheet flips this to open
     /// the system document picker (.fileImporter works on iOS 14+ too).
@@ -86,8 +91,21 @@ struct CrewChatView: View {
 
     private var canSend: Bool {
         guard !sending else { return false }
+        // Todo 模式只发文本条目 —— 附件不参与，不给它点亮发送。
+        if todoMode {
+            return !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
         return !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                || !pendingAttachments.isEmpty
+    }
+
+    /// Todo 切换钮只在 macOS 亮出（见 `todoMode`）。
+    private var todoModeBinding: Binding<Bool>? {
+        #if os(macOS)
+        return $todoMode
+        #else
+        return nil
+        #endif
     }
 
     var body: some View {
@@ -201,7 +219,10 @@ struct CrewChatView: View {
                 onSend: { Task { await send() } },
                 isStreaming: false,
                 showsAttachments: true,
-                placeholder: "发消息（@ 某人定向，不 @ = 广播）"
+                placeholder: todoMode
+                    ? "记一条 Todo（发送 = 创建 #N，机器人会来认领）"
+                    : "发消息（@ 某人定向，不 @ = 广播）",
+                todoMode: todoModeBinding
             )
         }
         .onChange(of: draft) { _, newValue in onDraftChange(newValue) }
@@ -586,6 +607,12 @@ struct CrewChatView: View {
     }
 
     private func send() async {
+        #if os(macOS)
+        if todoMode {
+            await sendTodo()
+            return
+        }
+        #endif
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         let toUpload = pendingAttachments
         // Allow attachment-only sends (no text) as long as something is present.
@@ -628,6 +655,34 @@ struct CrewChatView: View {
             loadError = error.localizedDescription
         }
     }
+
+    #if os(macOS)
+    /// Todo 模式发送（task #487；原 TodoInspectorPanel.addTodo 挪来）：走
+    /// `LocalTodoStore` 既有添加路径拿 #N → 群里发「To do +1: #N xxx」（人类
+    /// 身份、无 @）→ 复用下面「无 @ 默认给机长」的注入/拉起路径唤醒机长认领。
+    /// 附件与 @ 不参与（todo 是纯文本条目）；发完自动熄灭回普通聊天模式。
+    private func sendTodo() async {
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, let backend = appModel.backend else { return }
+        sending = true
+        defer { sending = false }
+        let item = LocalTodoStore.shared.add(crewId: crewId, text: text)
+        let message = "To do +1: #\(item.number) \(text)"
+        do {
+            try await backend.postCrewMessage(
+                crewId: crewId, text: message, mentions: [],
+                attachmentIds: [], replyToId: nil)
+            injectMentionedLocalRuns(mentions: [], text: message)
+            draft = ""
+            todoMode = false
+            stagedMentions = []
+            activeMentionQuery = nil
+            await refresh()
+        } catch {
+            loadError = error.localizedDescription
+        }
+    }
+    #endif
 
     /// Local直投唤醒（Phase 6 单元 3）：对每个 `@session` 目标，找到对应的本地
     /// 活跃 run，空闲就直接 `send(...)` 唤醒；busy 不打断。决策抽在

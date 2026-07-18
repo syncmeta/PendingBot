@@ -54,6 +54,10 @@ struct ComposerView: View {
     // PENDINGCREW SHIM: custom placeholder so PendingCrew's crew chat can
     // surface "发消息…（不 @ = 广播给所有 session）" without forking the view.
     var placeholder: String = "发消息…"
+    // PENDINGCREW SHIM (task #487): crew chat 的 Todo 切换按钮。非 nil 时在
+    // "+" 右边渲一个 checklist 圆钮，点亮（true = accent 底白字）后发送 = 创建
+    // Todo（宿主 send 路径分流）。PendingBot 宿主不传 → 不渲染，行为不变。
+    var todoMode: Binding<Bool>? = nil
 
     @State private var showActions = false
     // Plain Bool, not @FocusState: the actual first responder is the
@@ -98,6 +102,27 @@ struct ComposerView: View {
                         .floatingComposerSurface(shape: Circle())
                 }
                 .buttonStyle(.plain)
+                }
+
+                // PENDINGCREW SHIM (task #487): Todo 切换钮 —— 点亮态复用发送钮的
+                // accent 圆底白字语言，读作「当前发送 = 创建 Todo」。
+                if let todoMode {
+                    Button {
+                        Haptics.tap()
+                        todoMode.wrappedValue.toggle()
+                    } label: {
+                        Image(systemName: "checklist")
+                            .font(Theme.Fonts.glyph(size: 16, weight: .medium))
+                            .foregroundStyle(todoMode.wrappedValue ? .white : Theme.Palette.inkMuted)
+                            .frame(width: 38, height: 38)
+                            .background {
+                                if todoMode.wrappedValue { Circle().fill(Theme.Palette.accent) }
+                            }
+                            .floatingComposerSurface(shape: Circle())
+                            .animation(.easeInOut(duration: 0.18), value: todoMode.wrappedValue)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Todo 模式：点亮后发送 = 记一条 Todo")
                 }
 
                 if let onTask {

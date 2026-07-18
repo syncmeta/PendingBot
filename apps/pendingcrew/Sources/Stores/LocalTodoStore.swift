@@ -1,10 +1,11 @@
 import Foundation
 import Combine
 
-/// 每 crew 一个人类 Todo 列表（task #478，右栏 inspector 面板的数据层）。
+/// 每 crew 一个人类 Todo 列表（task #478；#487 后列表在驾驶舱 CrewTodoPanel，
+/// 新增入口在群聊 composer 的 Todo 模式）。
 ///
 /// 每 crew 一个 JSON：`<dir>/<crewId>.todos.json` = `[LocalTodoItem]`。
-/// - **只有人类能加条目**：唯一的新增入口是 `add`（app 侧 TodoInspectorPanel 调用）；
+/// - **只有人类能加条目**：唯一的新增入口是 `add`（CrewChatView 的 Todo 模式发送调用）；
 ///   MCP 侧不暴露任何新增工具，机器人加不了。
 /// - **机器人只能回应**：helper 的 `respond_todo` 走 `respond` —— **追加式**回应
 ///   （每次追加一条，绝不覆盖旧回应），可顺带推进状态：
