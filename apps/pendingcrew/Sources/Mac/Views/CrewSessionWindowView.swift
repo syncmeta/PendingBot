@@ -331,21 +331,17 @@ struct CrewSessionWindowView: View {
     @ViewBuilder
     private func memberRow(_ item: MemberRowItem) -> some View {
         if let run = item.run {
-            // session 行：富行 —— 头像 + 名 + 简介 + 最新一步动作，点进终端；
-            // 尾部挂**只读** model/effort pill（纯展示 —— 切换入口在终端页头部，
-            // 成员列表不做选择，#485）。
-            HStack(spacing: 6) {
-                Button {
-                    sessionRunner.select(run.runID)
-                    sessionRunner.viewingTerminal = true
-                } label: {
-                    sessionRowContent(sender: item.sender, run: run)
-                }
-                .buttonStyle(.plain)
-                .help("打开这个 session 的终端")
-                SessionProfileReadonlyPill(run: run)
-                    .padding(.trailing, 8)
+            // session 行：富行 —— 头像 + 名 + 简介 + 最新一步动作，点进终端。
+            // 只读 model/effort pill 收在 sessionRowContent 里、与最新一步动作同一行
+            // （落在选中框内，不再浮在框外右侧 —— 切换入口仍只在终端页头部，#485/#489）。
+            Button {
+                sessionRunner.select(run.runID)
+                sessionRunner.viewingTerminal = true
+            } label: {
+                sessionRowContent(sender: item.sender, run: run)
             }
+            .buttonStyle(.plain)
+            .help("打开这个 session 的终端")
         } else if item.sender.isCaptain {
             // captain 没在跑:点头像即进入它的 session —— 没在跑就当场起一个再进。
             // 用户定调:不要常驻/自动起,只要「点头像就进 session」;这条是纯点击触发,
@@ -422,10 +418,16 @@ struct CrewSessionWindowView: View {
                     .font(Theme.Fonts.callout)
                     .foregroundStyle(Theme.Palette.ink)
                     .lineLimit(1)
-                Text(latestStep(for: run))
-                    .font(Theme.Fonts.caption)
-                    .foregroundStyle(Theme.Palette.inkMuted)
-                    .lineLimit(1)
+                // 最新一步动作 + 只读 model/effort pill 同一行：pill 靠右端，
+                // 和「在干嘛」共处选中框内（#489）。
+                HStack(spacing: 6) {
+                    Text(latestStep(for: run))
+                        .font(Theme.Fonts.caption)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    SessionProfileReadonlyPill(run: run)
+                }
             }
             Spacer(minLength: 0)
         }
