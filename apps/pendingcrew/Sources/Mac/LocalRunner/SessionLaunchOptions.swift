@@ -20,15 +20,16 @@ enum SessionLaunchOptions {
         }
     }
 
-    /// 别名 → UI 友好显示名（带版本）。传给 CLI/MCP 的仍是裸别名，只有人面
-    /// 展示走这里。版本号是手维护的（CLI 解析别名到哪代这里看不见）——换代要
-    /// 记得同步，漂移记录见 docs/tech-debt.md。未收录的值（codex 系 / 手填）原样返回。
+    /// 别名 → UI 友好显示名（**只标系列、不标版本号**）。传给 CLI/MCP 的仍是裸
+    /// 别名，只有人面展示走这里。刻意不带版本号：别名本就交给 CLI 解析到当代最新
+    /// （`/model opus` 同款语义），UI 硬编「4.8」这类数字会过时，系列名则永不漂移。
+    /// 未收录的值（codex 系 / 手填）原样返回。
     static func displayName(for model: String) -> String {
         switch model {
-        case "fable":  return "Fable 5"
-        case "opus":   return "Opus 4.8"
-        case "sonnet": return "Sonnet 5"
-        case "haiku":  return "Haiku 4.5"
+        case "fable":  return "Fable"
+        case "opus":   return "Opus"
+        case "sonnet": return "Sonnet"
+        case "haiku":  return "Haiku"
         default:       return model
         }
     }
