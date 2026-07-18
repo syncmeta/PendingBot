@@ -229,12 +229,6 @@ struct CrewSessionWindowView: View {
                         Divider()
                     }
                     memberSection
-                    // 人类 Todo 面板（task #478）：只有人加得了条目，机器人经
-                    // respond_todo 回应并推进状态。
-                    if let crewId = crewStore.selectedDetail?.crew.id {
-                        Divider()
-                        TodoInspectorPanel(crewId: crewId)
-                    }
                 }
             }
         }

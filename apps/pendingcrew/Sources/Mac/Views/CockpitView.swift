@@ -28,7 +28,8 @@ struct CockpitView: View {
     @State private var spawnNotice: String?       // 控制半边:派 session 的反馈(成功/失败)
 
     enum Segment: String, CaseIterable, Identifiable {
-        case dashboard = "总览", roadmap = "路线", expectation = "期望", state = "现状", tasks = "任务"
+        case dashboard = "总览", roadmap = "路线", expectation = "期望", state = "现状", tasks = "任务",
+             todo = "Todo"
         var id: String { rawValue }
         var icon: String {
             switch self {
@@ -37,6 +38,7 @@ struct CockpitView: View {
             case .expectation: return "doc.text.magnifyingglass"
             case .state: return "checklist"
             case .tasks: return "square.stack.3d.up"
+            case .todo: return "checklist.checked"
             }
         }
     }
@@ -97,7 +99,11 @@ struct CockpitView: View {
     // MARK: 分段路由
 
     @ViewBuilder private var content: some View {
-        if let data {
+        if segment == .todo {
+            // Todo 数据在 LocalTodoStore（app 数据目录），不依赖工作目录的三本账 ——
+            // data 为 nil（crew 没配三本账）也照常渲染。
+            todoSegment
+        } else if let data {
             switch segment {
             case .dashboard:
                 CockpitDashboard(data: data, detail: crewStore.selectedDetail, nav: handleNav,
@@ -113,11 +119,31 @@ struct CockpitView: View {
                 CockpitTasks(data: data, selectedTaskID: $selectedTaskID,
                              scopeCrewIds: taskScopeOnly ? scopeCrewIds : nil,
                              scopeOnly: $taskScopeOnly, scopeName: scopeName, nav: handleNav)
+            case .todo:
+                EmptyView()   // 上面已拦，不走 data 分支
             }
         } else {
             emptyState(crewStore.selectedDetail == nil
                 ? "选一个 crew 看它的驾驶舱"
                 : "此 crew 的工作目录里没有三本账(docs/handbook · state · tasks)。\n让某个 crew 的工作目录指向带这三本账的仓库(比如大绿豆自己),驾驶舱就渲染真数据。")
+        }
+    }
+
+    // MARK: Todo 段（task #487：人类 Todo 列表从右栏 inspector 挪入）
+
+    /// per-crew 作用域与驾驶舱一致（都跟着侧栏选中的 crew 走），不需要按 crew 分组。
+    /// 新增入口在群聊 composer 的 Todo 按钮，这里只看。
+    @ViewBuilder private var todoSegment: some View {
+        if let crewId = crewStore.selectedDetail?.crew.id ?? crewStore.selectedCrewId {
+            ScrollView {
+                CrewTodoPanel(crewId: crewId)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: 640, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } else {
+            emptyState("选一个 crew 看它的 Todo")
         }
     }
 
