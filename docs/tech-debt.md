@@ -1111,3 +1111,13 @@
 ## 2026-07-18 模型选择重构（#485）
 
 - 🟢 **claude 模型友好显示名的版本号是手维护的静默漂移点** — `SessionLaunchOptions.displayName(for:)` 把稳定别名映射成带版本的显示名（fable→Fable 5、opus→Opus 4.8、sonnet→Sonnet 5、haiku→Haiku 4.5）。传给 CLI/MCP 的仍是裸别名（CLI 解析到当代最新），所以功能不会坏——但 claude code 换代后 UI 显示的版本号会悄悄失真（比如 CLI 的 `opus` 已解析到 4.9 而 UI 仍显示 Opus 4.8），没有任何报错。升级 claude CLI 后需顺手核对这张映射表。
+
+
+### 🟡 Swift 侧复刻 claude 默认模型解析 — 未覆盖全解析链，随 claude 版本可能漂移
+- **发现**: 2026-07-18 · `fix/model-label-tidy`（#489 第4点「显示实际在用的模型、不糊『默认』」）
+- **位置**: `apps/pendingcrew/Sources/Mac/LocalRunner/SessionLaunchOptions.swift` `defaultModel(for:projectDir:)`；接线点 `Sources/Mac/Services/CrewSessionRunner.swift` `start()`（config.model 为 nil 时解析后显式落）。
+- **背景/用户定的纪律**: 用户要 UI 显示 session 实际在跑的模型，不许再糊「默认」。claude CLI **没有固定内置默认**——实际默认取决于用户配置（本机 `~/.claude/settings.json` model="opus"）。正解=启动总带明确 `--model`（run.model 永不为 nil），显示即真实。机长定调选「运行时解析用户真实默认」而非硬钉 sonnet（硬钉会把 opus 静默降 sonnet=改行为，本项目红线）。
+- **问题**: Swift 里只复刻了 claude 解析链的**主干**：`ANTHROPIC_MODEL` env → 项目 `.claude/settings.local.json` → 项目 `.claude/settings.json` → 用户 `~/.claude/settings.json` 的 `model` 字段；读不到兜底 `sonnet` + fail-loud 日志。**没覆盖**的层：企业 managed-settings（`/Library/Application Support/ClaudeCode/managed-settings.json`）、`--settings` 文件里的 model、以及 claude 未来可能改的解析优先级。若我方解析出的值与 claude 实际会用的值**不一致**，`--model` 会**覆盖**掉 claude 本会用的模型 → 反而改变行为（与「显示=实际」初衷相悖）。
+- **影响**: 常见场景（settings.json 里一个具体别名如 opus/sonnet）行为一致、显示正确；边角场景（managed policy 决定模型、或 settings.json model 为 "default" 智能路由值）可能出现「显示≠实际」或轻微行为漂移。codex 侧只读 `~/.codex/config.toml` 顶层 `model = "..."`，读不到就保持 nil（显示仍退「默认」）——codex 复杂 TOML 解析是**尾巴**，未做。
+- **建议**: ① 若 claude 官方给出「查询当前会话已解析模型」的接口/命令，改用它取代复刻（根治漂移）；② 否则补齐 managed-settings 层 + 关注 claude changelog 里模型解析规则变化；③ codex 顶层 model 读不出时的「默认」显示是已知缺口，等有需求再补完整 TOML 解析。
+- **状态**: 待办（主干场景已工作，编译绿；漂移风险低频、边角）。

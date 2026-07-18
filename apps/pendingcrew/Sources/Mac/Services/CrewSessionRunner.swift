@@ -547,6 +547,14 @@ final class CrewSessionRunner: ObservableObject {
         /// captain / worker 角色标记（session 切换条展示 + captain 置顶）。
         role: CrewSessionRun.Role = .worker
     ) async throws {
+        // 没显式选 model → 解析一个具体默认别名显式落进 config（argv 带 --model、
+        // run.model 永不为 nil）：显示=实际跑的模型，不再糊「默认」(#489)。codex 若
+        // 读不到 ~/.codex/config.toml 的 model 仍为 nil（保持 CLI 默认）。
+        var config = config
+        if config.model == nil {
+            config.model = SessionLaunchOptions.defaultModel(
+                for: config.kind, projectDir: workingDirectory)
+        }
         // 1. 校验工具可用 + resolve 可执行路径
         guard let executable = LocalCodingAgentExecutable.resolve(config.kind) else {
             throw RunnerError.toolNotInstalled(kind: config.kind)
