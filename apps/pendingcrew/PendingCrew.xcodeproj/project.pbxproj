@@ -36,6 +36,7 @@
 		2222CD346AE6B98B6FA421DD /* GitWorktreeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF8FE15162B5E527F4765346 /* GitWorktreeService.swift */; };
 		229AB9E4ED3AA7757C607159 /* LocalWhiteboardStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E09E12D071816B5362AD7626 /* LocalWhiteboardStore.swift */; };
 		22A27AC631B26380BC3108D2 /* LocalCodingAgentExecutable.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DCD41EF4DF79F9A7C1794CD /* LocalCodingAgentExecutable.swift */; };
+		244E9BE5225D0776F9FA160E /* TerminalScrollbarOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 721790C0E5E7715BB3ABE620 /* TerminalScrollbarOverlay.swift */; };
 		24CDCE5F04BE62E9B9D73194 /* CrewRecentContextRender.swift in Sources */ = {isa = PBXBuildFile; fileRef = 386CB624A9BF3A3EEE171092 /* CrewRecentContextRender.swift */; };
 		25AC7BA931D930FCF15DE33C /* CodexAppServerBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48B9D9CAD7BB70350DE579B3 /* CodexAppServerBackend.swift */; };
 		2616F98BBCE262F8ACBA9D1F /* session-world-model.en.md in Resources */ = {isa = PBXBuildFile; fileRef = 38F5E570088DE41977747A62 /* session-world-model.en.md */; };
@@ -379,6 +380,7 @@
 		6A12EB1BACBB13838365C685 /* DeviceLogin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceLogin.swift; sourceTree = "<group>"; };
 		6C09067E3C1637408FEED8F2 /* PendingCrewApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingCrewApp.swift; sourceTree = "<group>"; };
 		6FFA131E8A46E341E75F7A01 /* CrewSessionWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewSessionWindowView.swift; sourceTree = "<group>"; };
+		721790C0E5E7715BB3ABE620 /* TerminalScrollbarOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalScrollbarOverlay.swift; sourceTree = "<group>"; };
 		7328186C8B9131242BB8C719 /* LocalWhiteboardStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalWhiteboardStoreTests.swift; sourceTree = "<group>"; };
 		76C210B9708141CE1293B918 /* PromptTemplateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptTemplateTests.swift; sourceTree = "<group>"; };
 		776119CB43783D02F23AD06E /* crew-captain.zh.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "crew-captain.zh.md"; sourceTree = "<group>"; };
@@ -657,6 +659,7 @@
 				23CBE414E3726AB27DCA90AA /* FirstLaunchDisclosureView.swift */,
 				D1A9FCA930C6487C96B9A211 /* MacRootView.swift */,
 				B5C2B69B1686D74FA04F261B /* RemoteSessionsView.swift */,
+				721790C0E5E7715BB3ABE620 /* TerminalScrollbarOverlay.swift */,
 				9ABEE3B03309EFFAD6BBB583 /* Chat */,
 			);
 			path = Views;
@@ -1216,6 +1219,7 @@
 				69326FB0AECEA6EACFBA3A2E /* SessionUnreadStore.swift in Sources */,
 				20910C5E08E0D1DDD4323FA5 /* SessionWorkspace.swift in Sources */,
 				DE7E6AD7E1FBFD63657A6BF6 /* Subject.swift in Sources */,
+				244E9BE5225D0776F9FA160E /* TerminalScrollbarOverlay.swift in Sources */,
 				753A896490E889FD365136E1 /* Theme.swift in Sources */,
 				2B8D801218F8A38E3D2BD3FB /* ThemeCrewExtras.swift in Sources */,
 				F076F99607729FFC30FE647C /* UserAvatar.swift in Sources */,

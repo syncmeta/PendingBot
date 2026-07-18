@@ -1025,6 +1025,11 @@ private struct SessionRunContentView: View {
                 // 对齐 canvas 的(浅 #FFFFFF/深 #161512),缝是隐形的。
                 AgentTerminalView(session: term)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    // 外置 overlay 滚动条：叠在终端 trailing（padding 之前）那条 SwiftTerm
+                    // 预留的 ~15pt 空当里，取代被藏掉的内部条，不压最右列字符。
+                    .overlay(alignment: .trailing) {
+                        TerminalScrollbarOverlay(session: term)
+                    }
                     .padding(.horizontal, 12)
                     .background(Theme.Palette.canvas)
             } else if let codex = run.backend as? CodexAppServerBackend {
