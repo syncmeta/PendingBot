@@ -4,9 +4,10 @@ import Foundation
 /// 把本 session **未读**的 crew 白板消息包成 claude hook 的 `additionalContext`，
 /// 每个工具调用后由 claude 经 `--settings` 拉 `pendingcrew-mcp hook` 触发。
 ///
-/// 读未读用 per-session 游标文件 `<cursorDir>/<crewId>.<sessionId>.cursor`（存 last
-/// delivered message id）。emit 后游标推进到最后一条，避免重复注入；不同 session
-/// 各有独立游标。
+/// 读未读用 per-session 游标 `<cursorDir>/<crewId>.<sessionId>.cursor`（存 last
+/// delivered message id），游标 IO 抽在 `WhiteboardCursor` —— 与**唤醒/提及注入**路
+/// （`CrewMailboxWaker` 登录态、`CrewChatView` 本地直投）共用同一份真值，一条消息
+/// 对某 session **至多注入一次**（hook 路与唤醒路不重复）。emit 后推进游标到最后一条。
 ///
 /// ⚠️ additionalContext 带"白板合法可信"提示 —— Spike 2 实测模型会把 hook 注入
 /// 内容当**疑似 prompt injection** 警惕，必须明示这是 crew 的正常群聊。
@@ -16,9 +17,13 @@ struct HookEmitter {
     let sessionId: String
     let cursorDir: URL
 
+    private var cursor: WhiteboardCursor {
+        WhiteboardCursor(directory: cursorDir, crewId: crewId, sessionId: sessionId)
+    }
+
     /// 有未读 → 返回 hook JSON 字符串（并推进游标）；无未读 → nil（不注入）。
     func emitAndAdvance() -> String? {
-        let unread = store.entries(crewId: crewId, afterId: readCursor())
+        let unread = cursor.unread(in: store)
         guard let last = unread.last else { return nil }
         let json: [String: Any] = ["hookSpecificOutput": [
             "hookEventName": "PostToolUse",
@@ -26,7 +31,7 @@ struct HookEmitter {
         ]]
         guard let data = try? JSONSerialization.data(withJSONObject: json),
               let s = String(data: data, encoding: .utf8) else { return nil }
-        writeCursor(last.id)
+        cursor.advance(to: last.id, in: store)
         return s
     }
 

@@ -151,7 +151,7 @@ final class CrewLocalMentionInjectLogicTests: XCTestCase {
             mentions: [.session("claude-run"), .session("codex-run")],
             runs: [run("claude-run", busy: false, claude: true),
                    run("codex-run", busy: false, claude: false)],
-            messageText: "看下", senderName: "我", recent: recent)
+            messageText: "看下", senderName: "我", recent: { _ in recent })
         let byId = Dictionary(uniqueKeysWithValues: out.map { ($0.sessionId, $0.text) })
         XCTAssertTrue(byId["claude-run"]!.contains("近期群聊："), byId["claude-run"]!)
         XCTAssertTrue(byId["claude-run"]!.contains("机长: 前情提要"))
@@ -161,7 +161,7 @@ final class CrewLocalMentionInjectLogicTests: XCTestCase {
     func testRecentContextPrependedBeforeDirected() {
         let out = CrewLocalMentionInjectLogic.decide(
             mentions: [.session("a")], runs: [run("a", busy: false, claude: true)],
-            messageText: "跑测试", senderName: "我", recent: [wbMsg("user", "早")])
+            messageText: "跑测试", senderName: "我", recent: { _ in [wbMsg("user", "早")] })
         let t = out.first!.text
         XCTAssertTrue(t.range(of: "近期群聊：")!.lowerBound < t.range(of: "有人@你：")!.lowerBound)
     }
@@ -183,7 +183,7 @@ final class CrewLocalMentionInjectLogicTests: XCTestCase {
         let out = CrewLocalMentionInjectLogic.decide(
             mentions: [.captain], runs: [run("cap", busy: false, claude: true)],
             messageText: "在吗", senderName: "小明",
-            captainSessionId: "cap", recent: [wbMsg("user", "早")], imStyle: true)
+            captainSessionId: "cap", recent: { _ in [wbMsg("user", "早")] }, imStyle: true)
         let t = out.first!.text
         XCTAssertTrue(t.hasPrefix("近期群聊："), t)
         XCTAssertTrue(t.hasSuffix("小明：在吗"), t)

@@ -698,9 +698,18 @@ struct CrewChatView: View {
         let defaultToCaptain = mentions.isEmpty
         let effectiveMentions = defaultToCaptain ? [CrewMention.captain] : mentions
 
-        // 项8:近期群聊上下文(仅前置给 claude 目标)。刚发的这条已 append 到白板末尾,
-        // dropLast 去掉它避免和定向/IM 正文重复。
-        let recent = Array(LocalWhiteboardStore.shared.list(crewId: crewId).dropLast().suffix(15))
+        // 项8/#490:近期群聊上下文(仅前置给 claude 目标)改从**每个目标 session 自己的
+        // 未读游标**取,不再所有目标共用「白板最近 15 条」把已注入过的历史重发。先给每个
+        // 在跑的 claude run 备好未读(刚 append 的这条在尾部),渲染时 dropLast 去掉它避免
+        // 和定向/IM 正文重复,再 .suffix(15) 兜上限;注入后把该 session 游标推进到刚发
+        // 的这条(见下面 send 循环),hook 路不再重复注入。
+        let store = LocalWhiteboardStore.shared
+        let cursorDir = LocalWhiteboardStore.defaultDirectory
+        var unreadBySession: [String: [LocalWhiteboardMessage]] = [:]
+        for r in sessionRunner.runs where r.status == .running && r.kind == .claudeCode {
+            unreadBySession[r.sessionId] = WhiteboardCursor(
+                directory: cursorDir, crewId: crewId, sessionId: r.sessionId).unread(in: store)
+        }
         let runStates: [CrewLocalMentionInjectLogic.RunState] = sessionRunner.runs
             .filter { $0.status == .running }
             .map { .init(sessionId: $0.sessionId, isBusy: $0.backend.isBusy,
@@ -713,11 +722,20 @@ struct CrewChatView: View {
             .sessionId
         let injections = CrewLocalMentionInjectLogic.decide(
             mentions: effectiveMentions, runs: runStates, messageText: text, senderName: "我",
-            captainSessionId: captainSessionId, recent: recent, imStyle: defaultToCaptain)
+            captainSessionId: captainSessionId,
+            recent: { sid in Array((unreadBySession[sid] ?? []).dropLast().suffix(15)) },
+            imStyle: defaultToCaptain)
         for inj in injections {
-            sessionRunner.runs
-                .first { $0.sessionId == inj.sessionId && $0.status == .running }?
-                .send(inj.text)
+            guard let run = sessionRunner.runs
+                .first(where: { $0.sessionId == inj.sessionId && $0.status == .running })
+            else { continue }
+            run.send(inj.text)
+            // #490:claude 目标注入后推进游标到刚 append 的这条(该 session 未读尾),
+            // 让 hook 路不再重复注入它;codex 走自己的 turn provider 游标,不在此推进。
+            if run.kind == .claudeCode, let last = unreadBySession[inj.sessionId]?.last {
+                WhiteboardCursor(directory: cursorDir, crewId: crewId, sessionId: inj.sessionId)
+                    .advance(to: last.id, in: store)
+            }
         }
         // @ 目标没在跑 → 真拉起来（用户点名:「@某个人就要能唤醒它」,不能只留白板）。
         // 机长 → startCaptain(带 wakeText 开场);已退成员 → restartMember(复用原

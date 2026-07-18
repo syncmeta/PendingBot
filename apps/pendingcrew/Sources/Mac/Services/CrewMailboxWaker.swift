@@ -87,15 +87,27 @@ final class CrewMailboxWaker {
         }
         // 项8:被 @ 唤醒的 claude 第一拍前置近期群聊上下文;codex 每轮 turn 自带
         // 未读白板 additionalContext,别重复塞 → 传空。
-        let recent: [LocalWhiteboardMessage] = run.kind == .claudeCode
-            ? Array(LocalWhiteboardStore.shared.list(crewId: crewId).suffix(15))
+        // #490:近期上下文改从**共用游标**取未读(而非固定 suffix(15) 重发已注入过的
+        // 历史),再 .suffix(15) 兜个上限;注入后推进同一游标,hook 路不再重复注入。
+        let store = LocalWhiteboardStore.shared
+        let cursor = WhiteboardCursor(
+            directory: LocalWhiteboardStore.defaultDirectory,
+            crewId: crewId, sessionId: run.sessionId)
+        let unread: [LocalWhiteboardMessage] = run.kind == .claudeCode
+            ? cursor.unread(in: store)
             : []
+        let recent = Array(unread.suffix(15))
         switch CrewMailboxWakeLogic.decide(
             mailbox: inbox.mailbox, isBusy: run.backend.isBusy, recent: recent) {
         case .noop:
             return
         case let .inject(text, deliveredIds):
             run.send(text)
+            // 注入了近期上下文(仅 claude 非空)→ 推进游标到最后一条未读,避免下一次
+            // hook / 唤醒重复注入这段(定向 @ 正文由 mailbox mark-delivered 单独去重)。
+            if let last = unread.last {
+                cursor.advance(to: last.id, in: store)
+            }
             do {
                 _ = try await api.markInboxDelivered(sessionId: run.sessionId, itemIds: deliveredIds)
             } catch {
