@@ -305,11 +305,17 @@ final class McpServer {
             // 阻塞 long-poll 人类/captain 答复（spec ask-approval §3/§5）。
             let reqId = approvals.raise(crewId: crewId, kind: "decision", sessionId: sessionId, summary: question)
             // 通知半边（spec §6「PendingCrew 只做通知+列表+答复」）：把问题贴到本地群聊白板，
-            // 人类/captain 在 crew chat 就看得见有个待决策（v1 降级 reporter；真正的「专门
-            // reporter session 思考后 @人类」属 chunk 2）。答复仍走待办列表（approvals）。
+            // 并 **@ 到能处理的人** —— 决策 captain-first，@captain 让机长优先看到来答；同时
+            // @human 兜底（人默认不进 session 详情，全靠群里这条 @ 才会注意到、去待办列表答）。
+            // captain 自己发起 ask 时不 @ 自己（去重），只 @human。答复仍走待办列表（approvals）。
+            let askMentions: [LocalWhiteboardMention] = isCaptain
+                ? [LocalWhiteboardMention(kind: "human", targetId: nil)]
+                : [LocalWhiteboardMention(kind: "human", targetId: nil),
+                   LocalWhiteboardMention(kind: "captain", targetId: nil)]
             store.appendSessionMessage(crewId: crewId, sessionId: sessionId,
-                                       text: "🔔 待决策：\(question)\n（请在 PendingCrew 待办列表里答复）",
+                                       text: "🔔 待决策：\(question)\n（去 PendingCrew 待办列表答复）",
                                        category: "question", senderName: sessionLabel,
+                                       mentions: askMentions,
                                        senderKind: isCaptain ? "captain" : "session")
             return toolResult(id: id, text: awaitReply(reqId: reqId))
         case "answer_decision":

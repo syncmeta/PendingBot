@@ -672,12 +672,15 @@ final class CrewSessionRunner: ObservableObject {
             let board = LocalWhiteboardStore(directory: dir)
             let reqId = approvals.raise(
                 crewId: crewId, kind: "permission", sessionId: sessionId, summary: summary)
-            // 通知半边（与 McpPermissionHook 一致）：贴本地群聊白板，人类在 crew chat
-            // 看得见有新审批请求。
+            // 通知半边（与 McpPermissionHook 一致）：贴本地群聊白板 + **@ 到能处理的人**。
+            // 审批只有人类能 allow/deny → @human 是主（人默认不进 session 详情，靠群里这条
+            // @ 才会注意到、去详情审批卡处理）；@captain 兜底让机长知道有 session 卡在审批。
             board.appendSessionMessage(
                 crewId: crewId, sessionId: sessionId,
-                text: "🔔 待审批：\(summary)\n（请在 PendingCrew 待审批列表里 allow / deny）",
-                category: "question")
+                text: "🔔 待审批：\(summary)\n（去该 session 详情的审批卡 allow / deny）",
+                category: "question",
+                mentions: [LocalWhiteboardMention(kind: "human", targetId: nil),
+                           LocalWhiteboardMention(kind: "captain", targetId: nil)])
             // long-poll：0.5s 一拍，最多等 ~30min 后保守判 deny（防 turn 永久挂）。
             let pollInterval: UInt64 = 500_000_000 // 0.5s
             let maxWaits = 3600

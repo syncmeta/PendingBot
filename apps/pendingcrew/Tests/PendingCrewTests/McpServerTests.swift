@@ -150,8 +150,28 @@ final class McpServerTests: XCTestCase {
         }
         let r = s.handleLine(#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ask","arguments":{"question":"选 A 还是 B?"}}}"#)
         XCTAssertTrue(r?.contains("选 A") ?? false, "ask 应拿到答复返回")
-        XCTAssertTrue(s.store.list(crewId: "c").contains { $0.text.contains("🔔 待决策") && $0.text.contains("选 A 还是 B?") },
-                      "ask 应往白板贴一条待决策通知")
+        let note = s.store.list(crewId: "c").first { $0.text.contains("🔔 待决策") && $0.text.contains("选 A 还是 B?") }
+        XCTAssertNotNil(note, "ask 应往白板贴一条待决策通知")
+        // #491：worker 的 ask 通知要 @ 到能处理的人 —— @human（人默认不进详情）+ @captain（决策
+        // captain-first）。不 @ 到人 = 静默广播，没人会被唤醒/注意到。
+        XCTAssertEqual(Set(note?.mentions?.map(\.kind) ?? []), ["human", "captain"],
+                       "worker ask 通知应 @human + @captain")
+    }
+
+    // #491：captain 自己发起 ask 时不 @ 自己（去重）—— 只 @human，避免机长 @ 自己的噪音/自唤醒。
+    func testCaptainAskMentionsHumanOnly() {
+        let s = server(tempDir(), isCaptain: true)
+        DispatchQueue.global().async {
+            for _ in 0..<500 {
+                if let it = s.approvals.pending(crewId: "c").first {
+                    s.approvals.answer(crewId: "c", id: it.id, reply: "ok"); break
+                }
+                Thread.sleep(forTimeInterval: 0.01)
+            }
+        }
+        _ = s.handleLine(#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ask","arguments":{"question":"要不要上线?"}}}"#)
+        let note = s.store.list(crewId: "c").first { $0.text.contains("🔔 待决策") }
+        XCTAssertEqual(note?.mentions?.map(\.kind), ["human"], "captain 的 ask 只 @human，不 @ 自己")
     }
 
     // MARK: - answer_decision（机长专用，chunk2 T4）

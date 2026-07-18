@@ -76,8 +76,12 @@ final class McpPermissionHookTests: XCTestCase {
         _ = h.handle(#"{"tool_name":"mcp__computer-use__left_click","tool_input":{"command":"click"},"session_id":"s"}"#,
                      pollInterval: 0.01, maxWaits: 0)
         let msgs = board.list(crewId: "c")
-        XCTAssertTrue(msgs.contains { $0.text.contains("🔔 待审批") && $0.text.contains("mcp__computer-use__left_click") },
-                      "gate 命中应往白板贴一条待审批通知")
+        let note = msgs.first { $0.text.contains("🔔 待审批") && $0.text.contains("mcp__computer-use__left_click") }
+        XCTAssertNotNil(note, "gate 命中应往白板贴一条待审批通知")
+        // #491：审批通知要 @ 到能处理的人 —— @human（只有人类能 allow/deny，且默认不进详情）
+        // + @captain（兜底让机长知道有 session 卡在审批）。不 @ = 静默广播，没人会去处理。
+        XCTAssertEqual(Set(note?.mentions?.map(\.kind) ?? []), ["human", "captain"],
+                       "审批通知应 @human + @captain")
     }
 
     func testNonGatedToolPostsNoNotification() {

@@ -51,10 +51,14 @@ final class McpPermissionHook {
         // 归档用**本地** sessionId（self.sessionId），不是 stdin 里 claude 的 session_id。
         let summary = permissionSummary(toolName: toolName, toolInput: obj["tool_input"])
         let reqId = approvals.raise(crewId: crewId, kind: "permission", sessionId: sessionId, summary: summary)
-        // 通知半边（spec §6）：贴到本地群聊白板，人类在 crew chat 看得见有新审批请求。
+        // 通知半边（spec §6）：贴到本地群聊白板 + **@ 到能处理的人**。审批只有人类能
+        // allow/deny，所以 @human 是主（人默认不进 session 详情，全靠群里这条 @ 才会注意到、
+        // 去详情里的审批卡处理）；@captain 兜底让机长知道有 session 卡在审批、可催人。
         board?.appendSessionMessage(crewId: crewId, sessionId: sessionId,
-                                    text: "🔔 待审批：\(summary)\n（请在 PendingCrew 待审批列表里 allow / deny）",
-                                    category: "question")
+                                    text: "🔔 待审批：\(summary)\n（去该 session 详情的审批卡 allow / deny）",
+                                    category: "question",
+                                    mentions: [LocalWhiteboardMention(kind: "human", targetId: nil),
+                                               LocalWhiteboardMention(kind: "captain", targetId: nil)])
         let decision = awaitDecision(reqId: reqId, pollInterval: pollInterval, maxWaits: maxWaits)
         return hookOutput(decision: decision, toolName: toolName)
     }
