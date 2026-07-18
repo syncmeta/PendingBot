@@ -1,5 +1,6 @@
 #if os(macOS)
 import Foundation
+import AppKit
 import SwiftTerm
 
 /// 一个内嵌真终端的 coding-agent 会话：在 PTY 里跑交互式 claude/codex(自动审批)。
@@ -18,6 +19,47 @@ final class ActivityTerminalView: LocalProcessTerminalView {
         super.dataReceived(slice: slice)
         lastOutputAt = Date()
         onData?(slice)
+    }
+
+    // MARK: - 外置 overlay 滚动条支撑
+
+    /// 终端滚动位置变化回调（外置 overlay 条据此刷新 knob）。
+    /// `userInitiated` 区分「用户滚轮/拖动」与「输出自动滚屏」——只有前者才淡入显示条，
+    /// 后者只静默同步几何，避免 agent 持续输出时条一直闪。
+    var onScroll: ((_ userInitiated: Bool) -> Void)?
+
+    /// SwiftTerm 每次 yDisp 变化都会调这里（用户滚 + 输出自动滚都算）。`scrollWheel` 在
+    /// SwiftTerm 里非 open、外部模块不可 override，故不能直接标记「用户滚轮」；改用启发式：
+    /// 输出驱动的自动滚屏总是紧跟一拍 `dataReceived`（lastOutputAt≈now），而用户滚轮/触控板
+    /// 在空闲期滚动时最近没有 PTY 输出。>0.2s 没收到输出 = 判为用户主动 → 点亮条。
+    override func scrolled(source terminal: Terminal, yDisp: Int) {
+        super.scrolled(source: terminal, yDisp: yDisp)
+        let userInitiated = Date().timeIntervalSince(lastOutputAt) > 0.2
+        onScroll?(userInitiated)
+    }
+
+    /// SwiftTerm 内部那条焊死的 NSScroller —— 外置 overlay 条取代它，这里把它藏了。
+    /// 网格宽度已扣掉 scrollerWidth（`getEffectiveWidth`），藏掉后右侧那条 ~15pt 空当
+    /// 正好留给 overlay，且不占字。scroller 在 `setupScroller()` 里 addSubview，时机不定，
+    /// 故 didAddSubview 抓一次 + 外部可再 sweep 一次兜底。
+    private var didHideNativeScroller = false
+    override func didAddSubview(_ subview: NSView) {
+        super.didAddSubview(subview)
+        if subview is NSScroller {
+            subview.isHidden = true
+            didHideNativeScroller = true
+        }
+    }
+
+    /// 兜底扫一遍 subviews 藏掉 NSScroller；返回是否已确认藏到（供 fail-loud 用）。
+    @discardableResult
+    func hideNativeScroller() -> Bool {
+        if didHideNativeScroller { return true }
+        if let native = subviews.compactMap({ $0 as? NSScroller }).first {
+            native.isHidden = true
+            didHideNativeScroller = true
+        }
+        return didHideNativeScroller
     }
 }
 
@@ -40,6 +82,21 @@ final class AgentTerminalSession: ObservableObject, SessionBackend {
     var healthPublisher: Published<CrewSessionHealth?>.Publisher { $health }
     private let healthScanner = SessionHealthScanner()
     private var busyTimer: Timer?
+
+    /// 外置 overlay 滚动条的几何 + 用户主动信号（SwiftUI `TerminalScrollbarOverlay` 观察）。
+    /// 全部取自 SwiftTerm 公开滚动接口，语义：position/thumbSize 都是 0…1。
+    struct ScrollState: Equatable {
+        /// 是否可滚（有回滚历史且非 alternate buffer）——决定 overlay 是否挂出。
+        var canScroll = false
+        /// viewport 相对位置 0(最顶)…1(最底)。
+        var position: Double = 0
+        /// knob 占轨道的比例 0…1（= SwiftTerm `scrollThumbsize`/knobProportion）。
+        var thumbSize: Double = 1
+        /// 单调递增计数：每次「用户主动滚动」bump 一次。overlay 据此触发淡入 + 重置
+        /// 自动隐藏计时；输出自动滚屏不 bump，条不会因 agent 持续吐字一直闪。
+        var userScrollTick: Int = 0
+    }
+    @Published private(set) var scrollState = ScrollState()
 
     private final class Delegate: NSObject, LocalProcessTerminalViewDelegate {
         var onExit: ((Int32?) -> Void)?
@@ -81,11 +138,49 @@ final class AgentTerminalSession: ObservableObject, SessionBackend {
             environment: envArr,
             currentDirectory: workdir
         )
+        // 终端滚动（用户滚 + 输出自动滚）→ 刷新外置条几何。userInitiated 决定是否点亮。
+        terminalView.onScroll = { [weak self] userInitiated in
+            guard let self else { return }
+            MainActor.assumeIsolated { self.refreshScrollState(userInitiated: userInitiated) }
+        }
         // 0.6s 轮询输出活跃度 → 翻 isBusy。定时器在 main runloop 触发(init 是
         // @MainActor)；[weak self] 不成环，exit/stop/deinit 时 invalidate。
         busyTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.recomputeWorking() }
+            MainActor.assumeIsolated {
+                self?.recomputeWorking()
+                // canScroll/thumbSize 会因输出增长而变，但只在 yDisp 变化时才有 scrolled
+                // 回调；顶到底持续吐字时 yDisp 每行都动能覆盖，静止但 buffer 变化的边角用
+                // 轮询兜一层（非用户主动，只同步几何不点亮）。
+                self?.refreshScrollState(userInitiated: false)
+            }
         }
+        // 内部 scroller 兜底隐藏 + fail-loud：didAddSubview 一般已抓到；若 SwiftTerm 换了
+        // 布局（不再用 NSScroller / 私有结构变），这里大声报，别让它静默贴右缘压字。
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            guard let self else { return }
+            if !self.terminalView.hideNativeScroller() {
+                assertionFailure("SwiftTerm 内部 NSScroller 未找到——外置滚动条方案需复核 SwiftTerm 布局")
+                NSLog("[AgentTerminalSession] 警告：未能隐藏 SwiftTerm 内部滚动条，右缘可能压字")
+            }
+        }
+    }
+
+    /// 从 SwiftTerm 公开接口重算外置条几何；仅在变化时发布，避免输出流时高频 @Published。
+    private func refreshScrollState(userInitiated: Bool) {
+        let next = ScrollState(
+            canScroll: terminalView.canScroll,
+            position: terminalView.scrollPosition,
+            thumbSize: Double(terminalView.scrollThumbsize),
+            userScrollTick: scrollState.userScrollTick + (userInitiated ? 1 : 0)
+        )
+        if next != scrollState { scrollState = next }
+    }
+
+    /// overlay 拖动/点击 → 驱动 SwiftTerm 滚到 0…1 位置，并立即回刷几何（算用户主动）。
+    func scrollTerminal(toPosition position: Double) {
+        terminalView.scroll(toPosition: max(0, min(1, position)))
+        refreshScrollState(userInitiated: true)
     }
 
     /// 干活中 = 仍 running 且最近 1s 内还有 PTY 输出。
