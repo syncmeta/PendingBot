@@ -1,5 +1,17 @@
 # PendingBot — workflow conventions
 
+> **2026-08-17 · PendingCrew 已拆走，不在本仓库。** 它现在是独立仓库
+> `syncmeta/PendingCrew`（本机 `~/Untitled/Pendingname/PendingCrew`，注意大小写）。
+> 本仓库里原来的 `apps/pendingcrew/` 已删除；在这儿找不到 crew 的代码是正常的。
+>
+> **本仓库当前是 2026-07-18 的状态**（`e8245441`）。7-18 之后到 8-15 的提交随本地
+> monorepo 被误删而丢失，只能靠会话记录 / 线上 Supabase 迁移原文 / 已部署的 worker
+> 逐块重建 —— 见桌面 `PendingBot-loss-20260815/`。读到任何"某某已完成"的旧结论时，
+> 先在代码里核实它是否真的还在树上。
+>
+> **教训（已成硬规矩）**：`main` 落后远端一个月是这次损失的直接放大器；
+> 小单元提交后尽快推 origin，别再攒一个月。
+
 This file is auto-loaded by every Claude Code session in this repo. Use it together with the user's memory (which already covers worktree-per-session, auto-commit on small units, auto-push of non-main branches, leaving other worktrees' dirty files alone, and the rebase/merge recipes).
 
 ## Branch model
