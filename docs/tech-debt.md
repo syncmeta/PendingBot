@@ -1138,3 +1138,22 @@
 - **问题**: 第二段固定补零到 5 位（`20683.07431`）。TN2420 给的合法例子是 `1` / `1.1` / `1.10000` 这类，**没有出现过零填充的段**，所以「ASC 怎么解析 `07431`」严格说没有例子背书。
 - **为什么仍然这么做**: 补零让「按整数解」和「按字符串解」得出的先后**一致**（`07431 < 10000` 整数成立，`"0…" < "1…"` 字符串也成立）；不补零就只剩整数解一条路能对。我们无法确知每个消费方怎么解析，补零是两头都不出错的那个选择。真出问题的表现是同日第二版被判成不递增 —— 会被防倒退闸当场拦下，不会静默发错版。
 - **状态**: 待办（下一次同日发两版时即可实证）。
+
+## 2026-08-18 计费门禁排查（用户被「余额不足」锁死）
+
+### 🔴 个人钱包的主体键两侧不一致 — 入账记 `subjects.id`、门禁读 auth user id
+- **发现**: 2026-08-18 · crew「充值不生效」诊断（用户实际被锁在门外，不是理论风险）
+- **位置**: `apps/edge/src/lib/billing.ts:getBalanceGateState`、`apps/edge/src/billing/usage-gate.ts:resolveBillingSubjectId`、`apps/edge/src/lib/sandbox.ts:resolveSandboxBillingSubjectId`、`apps/edge/src/routes/me.ts:175/236`、`apps/edge/src/billing/group-wallet.ts`（个人认缴侧）、`apps/edge/src/routes/board-billing.ts:resolveUserId`、`apps/edge/src/lib/billing-grant.ts:grantSignupBonus`
+- **问题**: `pnc_ledger.subject_id` 有外键 `-> pendingbot.subjects(id)`，**入账在结构上只可能记在 `subjects.id`**（充值 webhook 的 `resolveRcSubjectId`、signup 赠送、board 发放全部落在这里，Polar customer 的 `external_id` 同步为该值）。但个人侧的门禁/扣费用的是 `c.var.userId` = auth JWT `sub` = `auth.users.id`（`packages/identity/src/middleware.ts:32`），经 `wallet.gate(env, userId)` 路由到 `idFromName(auth user id)` 的另一个 WalletDO。两个键从不相交 → 那个 DO 冷启动向 Polar 查同名 customer 查不到，余额恒为 0 → `thresholdState='exhausted'` → 闸永久关闭，**充多少钱都无效**。
+- **为什么没被早发现**: `usage-gate.ts` 里写着「subjects and user ids share the WalletDO key space」——这条注释是错的前提，且没有任何测试或断言守护它；余额为 0 时的表现是「正常拒绝」而不是报错，整条链路静默。
+- **连带**: 仓库现有的 `board-billing.ts` 发放路径传 `users.id` 当 subject，按上述外键**会直接违反 FK**（线上部署的版本已自行改成 subject id，仓库这份没有）。
+- **状态**: 修复中 — `fix/wallet-subject-key`，方向是把个人钱包键统一到 `subjects.id`（入账侧被外键钉死，只能门禁侧对齐）。
+
+### 🔴 线上 worker 比仓库新，任何一次 deploy 都是静默回滚
+- **发现**: 2026-08-18 · 同上排查
+- **位置**: `apps/edge`（部署动作 `bun --filter='@pendingbot/edge' run deploy`）
+- **问题**: 生产 worker 最后一次部署是 **2026-08-09**（version `0b5d1f2f-1f55-4768-bdf8-de6372b523d9`），而仓库因 2026-08-15 的本地 monorepo 误删只恢复到 **2026-07-18**。7-18→8-09 之间的 edge 改动**只存在于线上**，仓库里没有。上面那条 FK 违反就是实证：线上代码与仓库代码在同一处的行为不同。
+- **影响**: 从仓库跑一次 deploy 就会把生产回滚约三周，**没有任何提示**。PendingCrew 依赖的 edge 接口可能一并倒退。
+- **缓解**: Cloudflare 保留历史版本，`npx wrangler rollback 0b5d1f2f-1f55-4768-bdf8-de6372b523d9 --env production` 可原样退回。但这是事后补救，不是护栏。
+- **建议**: ① deploy 脚本加一道前置断言（比对线上 version 的部署时间与本地 HEAD 时间，倒退则要求显式 `--force`）；② 或先把线上 bundle 取回来与仓库 diff，把丢失的那批改动补回仓库，从根上消除倒退。
+- **状态**: 待办（2026-08-18 本次部署由用户明确授权接受回滚代价）。
