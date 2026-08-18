@@ -96,11 +96,14 @@ settings 改 `project.yml` 然后 `xcodegen` 重新生成，别手动改
    If in the main worktree on `main`, create a short-lived branch or
    worktree first. Do not edit the build number directly on `main`.
 
-2. **Bump the iOS build number** in `apps/pendingbot/project.yml`
-   (`CURRENT_PROJECT_VERSION` under `settings.base`). Then regen:
+2. **Set the iOS build number — 用脚本，别手工填**：
    ```sh
-   (cd apps/pendingbot && xcodegen)
+   scripts/release/ios-build-number.sh --apply
    ```
+   它算出 UTC 时间戳、跟 App Store Connect 上已有的最高 build 号核对（不倒退
+   才放行）、写进 `apps/pendingbot/project.yml` 并跑 `xcodegen`。规则和背景见
+   下面的 [iOS build 号](#ios-build-号--utc-时间戳--防倒退闸)。
+
    Keep `MARKETING_VERSION` unchanged unless the user explicitly asks
    for a version bump. **Scaffold 阶段** `CODE_SIGNING_ALLOWED=NO` 仍在
    project.yml 里；正式 archive 需要先把这两行删掉再 regen，或者用
@@ -165,6 +168,99 @@ Known warning: uploads may print
 `exportArchive Upload Symbols Failed` for `WebRTC.framework` missing a
 matching dSYM. This does not block TestFlight install or processing; it
 only means WebRTC framework crash logs may lack readable symbols.
+
+### iOS build 号 — UTC 时间戳 + 防倒退闸
+
+**规则：`CFBundleVersion` = `date -u +%Y%m%d%H%M`（如 `202608180940`）。
+不从 git 历史算，不手工填。**
+
+#### 为什么不是 commit 数
+
+曾经是。2026-08-11 上传的 `0.1.0 (3571)` 就是 `git rev-list --count HEAD`。
+后来本地 monorepo 丢失、从落后一个月的 origin 重新拉回来，提交数掉到
+**3178** —— build 号**倒退 393**。App Store Connect 要求同一
+`MARKETING_VERSION` 下 build 号严格递增，所以照旧做法**从新仓库一版都发不
+出去**。
+
+根因不是「数字太小」，是 **build 号从 git 历史算，而历史正是会丢的那样东西**
+（那次事故文件全活着，死的只有历史）。UTC 时间戳天生单调、不依赖仓库状态，
+从 tarball / 浅克隆 / 重建过的仓库构建都对。
+
+PendingCrew（macOS/Sparkle）同期同病、同样改成 UTC 时间戳，两个产品用同一格式。
+
+#### 格式合法性（Apple 官方，不是印象）
+
+- [TN2420](https://developer.apple.com/library/archive/technotes/tn2420/_index.html)：
+  > "The value for a version number or build number must consist only of '.'s
+  > and numbers and must begin and end with a number. ... Version numbers and
+  > build numbers may have up to three components separated by periods. The
+  > total number of characters in your version number or in your build number
+  > cannot exceed eighteen characters."
+- 现行 [`CFBundleVersion`](https://developer.apple.com/documentation/bundleresources/information-property-list/cfbundleversion) 文档：
+  > "a machine-readable string composed of one to three period-separated
+  > integers ... can only contain numeric characters (0-9) and periods."
+
+`202608180940`：12 字符（限 18）✓、1 段（限 3）✓、纯数字 ✓、首尾是数字 ✓。
+
+TN2420 还有一条值得记住：**iOS 允许换 `MARKETING_VERSION` 后重用 build 号，
+macOS 不允许（必须跨版本单调递增）**。PendingBot 的 iOS 和 macOS 是同一个
+target、同一个 bundle id、共用同一个 `CURRENT_PROJECT_VERSION`，所以防倒退闸
+取的是**跨版本的全局最高 build 号**，直接满足更严的那条。
+
+#### 备用格式 `YYYYMMDD.HHMM`，以及什么时候切
+
+12 位单段 ≈ 2.03×10¹¹，**超过 32 位整数**。文档只约束字符数、不约束数值宽度，
+ASC 内部 parser 用多宽的整数没有公开说法 —— 这是本方案唯一没被文档证明的假设。
+失败模式很温和：**上传那一步就炸，不会有任何东西到用户手上**。
+
+真撞上（ASC 拒收 12 位 build 号）就切备用格式，改一个环境变量：
+
+```sh
+BUILD_NUMBER_FORMAT=dotted scripts/release/ios-build-number.sh --apply
+```
+
+产出 `20260818.0940` —— 两段，每段都远小于 2^31，逐段比较序不变（同日看
+`HHMM`、跨日看 `YYYYMMDD`），且首段 `20260818` 仍远大于历史上的 3571。
+
+**切换是单向的，别搞反**：逐段比较下 `20260818.…` 的首段 20260818 **小于**
+`202608180940`。所以
+
+- `plain → dotted` 只在**还没有任何 plain build 被 ASC 收下**时可行（被拒的
+  那次不算落地，ASC 上的最高值仍是 3571）。一旦有 plain build 进过 ASC，这条
+  路就永久关死，防倒退闸会正确地拒绝 —— 那时只能改 `MARKETING_VERSION` 另起
+  一条 release train。
+- `dotted → plain` 永远安全（数值变大）。
+
+所以**真撞上 ASC 拒收 12 位，当场就切 dotted，别攒着**。
+
+#### 防倒退闸
+
+`scripts/release/asc_highest_build.py` 直接问 App Store Connect 要当前最高
+build 号，`ios-build-number.sh` 拿它跟这次算出的值逐段比，不严格递增就拒绝
+发版。
+
+**这道闸 fail closed：取不到数据就停，绝不当成「没有历史版本」放行。** 这是
+照着 PendingCrew 那边踩的坑反过来设计的 —— 他们的 Sparkle 脚本用
+`curl -fsS ... || true` 拉 appcast，「拉取失败」和「首发、feed 里还没有版本」
+长得一模一样，网络抖一下防倒退就静默失效。
+
+但 fail closed 也不能做成「Apple 抖一下就发不了版」，所以分了两类：
+
+| 情形 | 行为 |
+|---|---|
+| 4xx（鉴权失败、请求写错、app 记录不存在），429 除外 | 立刻停，重试无用 |
+| 网络不通 / 超时 / 5xx / 429 | 退避重试 3 次（2s/5s/15s），仍不行才停 |
+| API 通、app 记录存在、确实一个 build 都没有 | 视为真·首发，返回 `0` |
+
+闸报错**不是绕过它的信号**，是「现在没法核实」：等 ASC 恢复再发，或先手工在
+App Store Connect 网页上确认最高 build 号。
+
+#### 凭据
+
+`asc_highest_build.py` 按 `ASC_KEY_ID` / `ASC_ISSUER_ID` / `ASC_KEY_PATH`
+取凭据，环境变量优先，否则读 `~/.appstoreconnect/pendingbot.env`（一行一个
+`KEY=value`，本机已配好，600 权限）。`.p8` 本身不进仓库、不进日志。
+签 JWT 需要 PyJWT（`/usr/bin/python3 -m pip install --user pyjwt`）。
 
 ---
 

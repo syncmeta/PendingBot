@@ -1121,3 +1121,21 @@
 - **影响**: 常见场景（settings.json 里一个具体别名如 opus/sonnet）行为一致、显示正确；边角场景（managed policy 决定模型、或 settings.json model 为 "default" 智能路由值）可能出现「显示≠实际」或轻微行为漂移。codex 侧只读 `~/.codex/config.toml` 顶层 `model = "..."`，读不到就保持 nil（显示仍退「默认」）——codex 复杂 TOML 解析是**尾巴**，未做。
 - **建议**: ① 若 claude 官方给出「查询当前会话已解析模型」的接口/命令，改用它取代复刻（根治漂移）；② 否则补齐 managed-settings 层 + 关注 claude changelog 里模型解析规则变化；③ codex 顶层 model 读不出时的「默认」显示是已知缺口，等有需求再补完整 TOML 解析。
 - **状态**: 待办（主干场景已工作，编译绿；漂移风险低频、边角）。
+
+## 2026-08-18 iOS build 号改 UTC 时间戳（发版被仓库重建拦死后）
+
+### 🟡 12 位单段 build 号是否被 App Store Connect 接受 —— 只有文档支持，没有实证
+- **发现**: 2026-08-18 · `chore/release-build-number`（跟 PendingCrew 机长 4-1 联合定方案）
+- **位置**: `scripts/release/ios-build-number.sh`（`BUILD_NUMBER_FORMAT=plain` 分支）、`docs/deploy.md` 的「iOS build 号」一节。
+- **背景**: 原来 build 号 = `git rev-list --count HEAD`。本地 monorepo 丢失后从落后一个月的 origin 重拉，提交数 3571 → 3178，**build 号倒退 393**，ASC 会拒收，从新仓库一版都发不出去。根因是 build 号从 git 历史算，而历史正是会丢的那样东西。改成 UTC 时间戳 `YYYYMMDDHHMM`。
+- **问题**: `202608180940` 是 12 位单 component ≈ 2.03×10¹¹，**超过 32 位整数**。TN2420 只约束「≤3 段、≤18 字符、纯数字」，现行 `CFBundleVersion` 文档只说「one to three period-separated integers」——**都没有说每段的数值宽度上限**。ASC 内部 parser 用多宽的整数没有公开说法，本方案在这一点上只有文档支持、没有实证。
+- **影响**: 低。失败模式温和且早——真不接受的话，**上传那一步就炸，不会有任何东西到用户手上**。已备好备用格式 `BUILD_NUMBER_FORMAT=dotted`（`20260818.0940`，两段，每段远小于 2^31），文档写清了切换是单向的：`plain → dotted` 只在还没有 plain build 落地 ASC 时可行（被拒的那次不算落地），一旦有 plain build 进过 ASC 就只能改 `MARKETING_VERSION` 另起 release train；`dotted → plain` 永远安全。
+- **关闭条件**: 下一次 TestFlight 上传成功（ASC 收下一个 12 位 build 号）即可关。真被拒就当场切 dotted 并把本条改成「已证伪，plain 不可用」。
+- **状态**: 待办（等下一次真上传证实/证伪）。
+
+### 🟢 防倒退闸依赖 `/usr/bin/python3` + PyJWT，不在仓库依赖清单里
+- **发现**: 2026-08-18 · 同上
+- **位置**: `scripts/release/asc_highest_build.py`
+- **问题**: 给 ASC API 签 ES256 JWT 需要 PyJWT，当前靠本机 `/usr/bin/python3`（3.9.6）里恰好装着的 2.12.1。仓库没有任何地方声明这个依赖，换机器/重装系统即失效。缺失时脚本 fail loud 并打印安装命令，不会静默放行——所以是 🟢 不是 🟡。
+- **建议**: 换机器时按报错装 `pyjwt` 即可；真嫌烦可以改成用 `openssl` 做 ES256（DER→raw r‖s 转换），换来零 Python 依赖。当前一台开发机的规模不值得。
+- **状态**: 待办（低优先）。
