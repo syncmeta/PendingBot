@@ -34,6 +34,10 @@ settings:
     # -34018。headless 无证书构建仍会回落 ad-hoc(仅编译校验用,不影响 GUI 构建)。
     "CODE_SIGN_IDENTITY[sdk=macosx*]": "Apple Development"
     MARKETING_VERSION: "0.1.0"
+    # 占位符。发版时由 scripts/release/ios-build-number.sh --apply 覆盖成 UTC
+    # 时间戳(YYYYMMDDHHMM)。**别手工填** —— 以前是手工填 + 拿 commit 数当值,
+    # 仓库重建后提交数从 3571 掉到 3178,build 号倒退、ASC 直接拒收。
+    # 详见 docs/deploy.md 的「iOS build 号 — UTC 时间戳 + 防倒退闸」一节。
     CURRENT_PROJECT_VERSION: "1"
 packages:
   GRDB:
