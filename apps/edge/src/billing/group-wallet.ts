@@ -13,12 +13,23 @@
 //   - 退款 群侧     = reduceCredits + 手写 pnc_ledger refund 行(不用 recordRefund:
 //                     它按 ledger 可用夹,而 ledger 不含群消费,会超退)。
 //   - 退款 用户侧   = credit-in(recordCreditIn 幂等)+ wallet.credit。
+//
+// 键的约定(别混):群主体 subjectId 本来就是 subjects.id;但
+// group_contributions.contributor_user_id / group_pledges.user_id 存的是
+// **auth user id**(外键指向 users)。凡是要碰某个成员的**个人钱包 / Polar
+// customer / pnc_ledger** 的地方,都要先经 subject-key 解析成其 user_account
+// subject id —— 直接拿 user id 去 wallet.* 会落到一个永远空的 DO。
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Env } from '../types';
 import type { PolarClient } from './polar-client';
 import { wallet } from './wallet-client';
 import { computeShareNow } from './share-index';
 import { recordCreditIn } from '../lib/billing-polar';
+import {
+  findUserWalletSubjectId,
+  resolveSubjectUserId,
+  resolveUserWalletSubjectId,
+} from './subject-key';
 import { billingEnabled } from '../lib/feature-flags';
 
 type Supa = SupabaseClient<any, any, any>;
@@ -32,7 +43,7 @@ export interface ContributeParams {
   supa: Supa;
   om: PolarClient;
   subjectId: string; // 群 subject(= Polar customer external_id)
-  contributorUserId: string; // 出资人(= 其个人 Polar external_id)
+  contributorUserId: string; // 出资人的 **auth user id**(个人钱包键由 subject-key 解析)
   pncMicros: number;
 }
 
@@ -50,19 +61,22 @@ export async function contributeToGroup(p: ContributeParams): Promise<Contribute
   const amount = Math.trunc(p.pncMicros);
   if (!Number.isFinite(amount) || amount <= 0) return { ok: false, reason: 'invalid_amount' };
 
+  // 出资人的个人钱包键 = 其 user_account subject id(不是 auth user id)。
+  const contributorSubjectId = await resolveUserWalletSubjectId(supa, contributorUserId);
+
   // 1. 余额门禁:转账不允许透支。
-  const gate = await wallet.gate(env, contributorUserId);
+  const gate = await wallet.gate(env, contributorSubjectId);
   if (gate.balanceMicros < amount) return { ok: false, reason: 'insufficient_balance' };
 
   const cid = crypto.randomUUID();
 
   // 2. 扣出资人(usage:Polar + DO 缓存)。dedupeId 绑 contribution id,防重投。
-  await om.reportUsage(contributorUserId, amount, {
+  await om.reportUsage(contributorSubjectId, amount, {
     category: 'group_topup',
     dedupeId: `gtopup-out:${cid}`,
     metadata: { subject_id: subjectId },
   });
-  await wallet.debit(env, contributorUserId, amount, {
+  await wallet.debit(env, contributorSubjectId, amount, {
     category: 'group_topup',
     dedupeId: `gtopup-out:${cid}`,
     meta: { subject_id: subjectId },
@@ -176,15 +190,17 @@ export async function refundContributorFromGroup(p: RefundParams): Promise<Refun
     });
 
     // 4b. 用户侧入账(credit-in 幂等 + Polar grant)+ DO 缓存。
+    //     键是出资人的 user_account subject(pnc_ledger 外键 + Polar external_id)。
+    const contributorSubjectId = await resolveUserWalletSubjectId(supa, contributorUserId);
     await recordCreditIn(supa, om, {
-      subjectId: contributorUserId,
+      subjectId: contributorSubjectId,
       kind: 'topup',
       source: 'group_refund',
       externalRef: rid,
       pncMicros: refundMicros,
-      raw: { refunded_from_subject_id: subjectId },
+      raw: { refunded_from_subject_id: subjectId, contributor_user_id: contributorUserId },
     });
-    await wallet.credit(env, contributorUserId, refundMicros);
+    await wallet.credit(env, contributorSubjectId, refundMicros);
 
     // 4c. 池减(share_index 不变)。
     await supa.rpc('apply_group_refund', { p_subject_id: subjectId, p_refund_micros: refundMicros });
@@ -320,11 +336,20 @@ export async function clawbackFromGroups(
   env: Env,
   supa: Supa,
   om: PolarClient,
-  userId: string,
+  contributorSubjectId: string,
   amountMicros: number,
 ): Promise<{ clawedMicros: number }> {
   let remaining = Math.trunc(amountMicros);
   if (!Number.isFinite(remaining) || remaining <= 0) return { clawedMicros: 0 };
+
+  // 调用方(Polar / RevenueCat webhook)手上是**个人 subject id**,而
+  // group_contributions.contributor_user_id 存的是 auth user id —— 反查一跳。
+  // 查不到就没法确定注资归属:返回 0 并留日志,由调用方全额退个人(不静默漏冲)。
+  const userId = await resolveSubjectUserId(supa, contributorSubjectId);
+  if (!userId) {
+    console.error('[group-wallet.clawbackFromGroups] subject → user unresolved', contributorSubjectId);
+    return { clawedMicros: 0 };
+  }
 
   const { data: rows } = await supa
     .from('group_contributions')
@@ -364,9 +389,17 @@ export async function clawbackFromGroups(
 // 分账份额 + 群消费分账(实缴池衰减 + 认缴个人钱包直扣)
 // ============================================================
 
+export interface PledgeStake {
+  /** 成员的 auth user id(group_pledges.user_id;用于 meta / dedupe / 展示)。 */
+  userId: string;
+  /** 该成员的个人钱包键(user_account subject id;wallet.* 只认这个)。 */
+  subjectId: string;
+  stakeMicros: number;
+}
+
 export interface GroupStakes {
   poolStake: number; // 实缴池余额(群 WalletDO)
-  pledgeStakes: { userId: string; stakeMicros: number }[]; // 认缴 min(pledge, 余额)
+  pledgeStakes: PledgeStake[]; // 认缴 min(pledge, 余额)
   total: number; // S = 池 + Σ认缴
 }
 
@@ -379,11 +412,18 @@ export async function resolveGroupStakes(
   const poolGate = await wallet.gate(env, subjectId);
   const poolStake = Math.max(0, poolGate.balanceMicros);
   const pledges = await getActivePledges(supa, subjectId);
-  const pledgeStakes: { userId: string; stakeMicros: number }[] = [];
+  const pledgeStakes: PledgeStake[] = [];
   for (const pl of pledges) {
-    const g = await wallet.gate(env, pl.userId);
+    // 认缴份额读的是该成员的个人钱包 —— 键是其 user_account subject。解析不到
+    // 就把这份认缴当 0(该成员不参与分摊)并报错级日志:不猜键、不静默用 user id。
+    const memberSubjectId = await findUserWalletSubjectId(supa, pl.userId);
+    if (!memberSubjectId) {
+      console.error('[group-wallet.resolveGroupStakes] pledge member subject unresolved', subjectId, pl.userId);
+      continue;
+    }
+    const g = await wallet.gate(env, memberSubjectId);
     const stake = Math.max(0, Math.min(pl.pledgeMicros, g.balanceMicros));
-    if (stake > 0) pledgeStakes.push({ userId: pl.userId, stakeMicros: stake });
+    if (stake > 0) pledgeStakes.push({ userId: pl.userId, subjectId: memberSubjectId, stakeMicros: stake });
   }
   const total = poolStake + pledgeStakes.reduce((s, x) => s + x.stakeMicros, 0);
   return { poolStake, pledgeStakes, total };
@@ -515,8 +555,9 @@ export async function settleGroupSpend(p: SettleGroupParams): Promise<void> {
     const portion = Math.round((spend * m.stakeMicros) / total);
     if (portion <= 0) continue;
     try {
-      await wallet.debit(env, m.userId, portion, {
+      await wallet.debit(env, m.subjectId, portion, {
         category: p.category,
+        // dedupe 键沿用 userId,格式不变(改了会让在途重投绕过幂等重复扣款)。
         dedupeId: `${p.dedupeId}:pledge:${m.userId}`,
         meta: { ...(p.meta ?? {}), group_subject_id: subjectId, via: 'pledge' },
       });
@@ -568,16 +609,17 @@ export async function withdrawFromGroup(p: WithdrawParams): Promise<{ withdrawnM
   });
   await om.reduceCredits(subjectId, withdrawn, { source: 'group_withdraw', dedupeId: `gwd-out:${rid}` });
   await wallet.debit(env, subjectId, withdrawn, { category: 'group_withdraw', dedupeId: `gwd-out:${rid}` });
-  // 用户侧入账(credit-in 幂等 + DO 缓存)。
+  // 用户侧入账(credit-in 幂等 + DO 缓存)。键是取出人的 user_account subject。
+  const userSubjectId = await resolveUserWalletSubjectId(supa, userId);
   await recordCreditIn(supa, om, {
-    subjectId: userId,
+    subjectId: userSubjectId,
     kind: 'topup',
     source: 'group_withdraw',
     externalRef: rid,
     pncMicros: withdrawn,
-    raw: { withdrawn_from_subject_id: subjectId },
+    raw: { withdrawn_from_subject_id: subjectId, contributor_user_id: userId },
   });
-  await wallet.credit(env, userId, withdrawn);
+  await wallet.credit(env, userSubjectId, withdrawn);
 
   return { withdrawnMicros: withdrawn };
 }

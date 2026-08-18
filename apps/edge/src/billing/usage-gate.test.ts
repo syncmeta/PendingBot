@@ -137,8 +137,10 @@ describe('availableForSubject (群聚合认缴)', () => {
       group_pledges: [
         { subject_id: 'grp', user_id: 'bob', pledge_pnc_micros: 40 * PNC, status: 'active' },
       ],
+      // 认缴成员的个人钱包按其 user_account subject 读,不是 auth user id。
+      subjects: [{ id: 'bob-sub', user_id: 'bob', kind: 'user_account' }],
     });
-    const w: FakeWallet = { calls: [], balances: { grp: 60 * PNC, bob: 100 * PNC } };
+    const w: FakeWallet = { calls: [], balances: { grp: 60 * PNC, 'bob-sub': 100 * PNC } };
     const env = makeFakeEnv(db, { wallet: w });
     const supa = serviceClient(env);
     const { availableForSubject } = await import('./usage-gate');
