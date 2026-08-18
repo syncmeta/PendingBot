@@ -9,6 +9,7 @@ import {
   RedemptionError,
 } from '../lib/billing';
 import { wallet } from '../billing/wallet-client';
+import { resolveUserWalletSubjectId } from '../billing/subject-key';
 import { grantSignupBonus, creditRedemptionToPolar } from '../lib/billing-grant';
 import { billingEnabled } from '../lib/feature-flags';
 import { safeWaitUntil } from '../lib/safe-wait-until';
@@ -168,15 +169,29 @@ meRoutes.get('/wallet/v2', async (c) => {
   const userJwt = c.var.userJwt!;
   const supa = userClient(c.env, userJwt);
 
+  // 钱包与账本的主体键 = 该用户的 user_account subject id(**不是** auth user id):
+  // pnc_ledger.subject_id 外键指向 subjects,入账只可能落在它上面。见
+  // billing/subject-key.ts。解析不到就明确 404 —— 返回 0 余额会把"钱不见了"
+  // 这件事伪装成"你没钱"。
+  let subjectId: string;
+  try {
+    subjectId = await resolveUserWalletSubjectId(supa, userId);
+  } catch (err) {
+    console.error('[me/wallet/v2] wallet subject unresolved', userId, err);
+    return jsonError(c, 404, 'subject_not_found', {
+      message: '没有找到你的个人主体,请稍后重试',
+    });
+  }
+
   // 余额/阈值:WalletDO(Polar 缓存,强一致,计费 P2)—— 不再读 billing-v2 packs
   // 求和(packs 已退役,不再被扣减,会显示过期值)。账本明细:pnc_ledger(入账/退款
   // 审计;RLS 仅本人)。packs 字段保留为空数组以兼容旧客户端解码。
   const [gate, ledgerResult] = await Promise.all([
-    wallet.gate(c.env, userId),
+    wallet.gate(c.env, subjectId),
     supa
       .from('pnc_ledger')
       .select('id, kind, source, delta_pnc_micros, created_at')
-      .eq('subject_id', userId)
+      .eq('subject_id', subjectId)
       .order('created_at', { ascending: false })
       .limit(20),
   ]);
