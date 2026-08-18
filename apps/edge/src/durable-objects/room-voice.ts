@@ -12,7 +12,8 @@ import {
   splitRealtimeUsage,
   type VoiceTurnUsage,
 } from '../lib/voice-metering';
-import { wallet, walletSubjectKey, type WalletOwner } from '../billing/wallet-client';
+import { wallet, type WalletOwner } from '../billing/wallet-client';
+import { resolveWalletSubjectKey } from '../billing/subject-key';
 import { settleGroupSpend } from '../billing/group-wallet';
 import { usdToPncMicros } from '../billing/pnc';
 import { roomMediaToken } from './room-voice-context';
@@ -1149,7 +1150,15 @@ export class RoomVoiceDO {
     // flush to Polar. The legacy billing-v2 settleUsage/packs path is gone.
     const owner = await this.resolveVoiceBillingOwner(supa, ctx);
     if (!owner) return;
-    const subjectId = walletSubjectKey(owner);
+    // 钱包路由键:群主体原样,个人解析成其 user_account subject id
+    // (见 billing/subject-key.ts)。解析不到就不计费 + 报错级日志 —— 不猜键。
+    let subjectId: string;
+    try {
+      subjectId = await resolveWalletSubjectKey(supa, owner);
+    } catch (err) {
+      console.error('[room-voice] billing subject unresolved — call left unbilled', ctx.roomId, err);
+      return;
+    }
 
     // One-shot at finalize → a stable dedupeId per call instance keeps the
     // debit idempotent under any re-entry / retry.

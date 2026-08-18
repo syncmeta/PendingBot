@@ -33,17 +33,17 @@ export interface DebitOpts {
   meta?: Record<string, unknown>;
 }
 
-// 责任主体 → WalletDO 路由键。每个 subject(group→responsible_subject_id,
-// 个人→userId)对应一个 WalletDO(`idFromName(key)`)。credit/debit 必须用同
-// 一键才会命中同一 DO。映射与 billing-v2 的 owner→余额列一致(user→userId,
-// subject→subjectId),保证退役 settleUsage 后门禁路由不变。见架构定案 §8。
+// 责任主体 → WalletDO 路由键。**路由键一律是 `pendingbot.subjects.id`**:
+// 群 = responsible_subject_id,个人 = 该用户的 user_account subject id。
+// credit/debit/gate 必须用同一键才会命中同一 DO,而入账侧被 pnc_ledger 的外键
+// 钉死在 subjects.id,所以门禁/扣费侧只能对齐过来。
+//
+// 同步版的 `walletSubjectKey`(kind='user' 时直接返回 userId)已删:那是 2026-08-18
+// 计费事故的根 —— 个人钱包被路由到 auth user id 那个永远空的 DO。要拿路由键请用
+// `billing/subject-key.ts` 的 `resolveWalletSubjectKey`(异步,要查 subjects)。
 export type WalletOwner =
   | { kind: 'user'; userId: string }
   | { kind: 'subject'; subjectId: string };
-
-export function walletSubjectKey(owner: WalletOwner): string {
-  return owner.kind === 'user' ? owner.userId : owner.subjectId;
-}
 
 export const wallet = {
   /** 调用前门禁:读余额 + 阈值(不扣)。 */
