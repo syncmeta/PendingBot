@@ -3,6 +3,7 @@ import { serviceClient } from '../lib/supabase';
 import { getModelRole } from '../lib/model-roles';
 import { computeVoiceCost, resolveRoute } from '../llm/router';
 import { wallet } from '../billing/wallet-client';
+import { resolveUserWalletSubjectId } from '../billing/subject-key';
 import { usdToPncMicros } from '../billing/pnc';
 import { endRealtimeSession, REALTIME_HANG_UP_TOOL } from '../lib/realtime-sessions';
 import {
@@ -448,8 +449,17 @@ export class RealtimeMeterDO {
     // billing-v2 AUDIT_QUEUE settle + getBalanceGateState gate are gone.
     const vendorCostUsd = computeVoiceCost(route?.modelToCall, turnUsage);
     if (vendorCostUsd != null && vendorCostUsd > 0) {
+      // 个人钱包键 = 该用户的 user_account subject id,不是 auth user id
+      // (见 billing/subject-key.ts)。解析不到就这一轮不计费 + 报错级日志。
+      let subjectId: string;
       try {
-        const res = await wallet.debit(this.env, ctx.userId, usdToPncMicros(vendorCostUsd), {
+        subjectId = await resolveUserWalletSubjectId(supa, ctx.userId);
+      } catch (err) {
+        console.error('[realtime-meter] billing subject unresolved — turn left unbilled', ctx.userId, err);
+        return;
+      }
+      try {
+        const res = await wallet.debit(this.env, subjectId, usdToPncMicros(vendorCostUsd), {
           category: 'voice_tokens',
           dedupeId: `${ctx.sessionId}:${turnIndex}`,
           meta: {

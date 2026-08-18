@@ -2,6 +2,7 @@ import type { SupabaseClient } from './supabase';
 import type { Env } from '../types';
 import { billingEnabled } from './feature-flags';
 import { wallet } from '../billing/wallet-client';
+import { resolveUserWalletSubjectId } from '../billing/subject-key';
 
 // Billing layer (P0). All schema changes ship in 0033_billing.sql /
 // 0034_billing_admin_rpcs.sql. This module is the single point that knows
@@ -74,16 +75,26 @@ export async function getBalanceGateState(
   _opts?: { readBalanceWhenDisabled?: boolean },
 ): Promise<BalanceGateState> {
   // WalletDO authoritative (计费 P2). The pre-call gate reads the user's
-  // strong-consistent WalletDO cached balance (one DO per subject; here
-  // subject = the user's own id for the 1v1/bot path — group convs skip
-  // this gate entirely) and blocks only when EXHAUSTED (≤ 0) — design §7
-  // hard-stop. `balance_credits` carries PNC micros (the field name is
-  // v1-legacy; callers branch on `allowed` + surface the number).
-  // WalletDO is the cache, so no extra KV layer here.
-  void supa;
+  // strong-consistent WalletDO cached balance and blocks only when
+  // EXHAUSTED (≤ 0) — design §7 hard-stop. `balance_credits` carries PNC
+  // micros (the field name is v1-legacy; callers branch on `allowed` +
+  // surface the number). WalletDO is the cache, so no extra KV layer here.
+  //
+  // 钱包主体键 = 该用户的 user_account subject id(**不是** auth user id):
+  // 充值/赠送只可能记在 subject 上(pnc_ledger 外键),用 user id 会落到另一个
+  // 空 DO,变成"充多少都余额耗尽"。见 billing/subject-key.ts。
+  let subjectId: string;
+  try {
+    subjectId = await resolveUserWalletSubjectId(supa, userId);
+  } catch (err) {
+    // 解析不到主体 = 我们不知道该读哪个钱包。明确 fail-open(放行)并 **报错级**
+    // 日志:静默当成 0 余额正是 2026-08-18 事故的形态,绝不再犯。
+    console.error('[billing.getBalanceGateState] wallet subject unresolved, fail-open', userId, err);
+    return { balance_credits: 0, min_threshold: 0, allowed: true };
+  }
   let micros: number;
   try {
-    ({ balanceMicros: micros } = await wallet.gate(env, userId));
+    ({ balanceMicros: micros } = await wallet.gate(env, subjectId));
   } catch (err) {
     // A WalletDO read failure must NOT hard-stop a paying user. Fail open
     // (allow) — the post-call debit + DO overdraft floor still bound spend.

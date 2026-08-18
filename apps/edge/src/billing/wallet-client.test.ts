@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { wallet, walletSubjectKey } from './wallet-client';
+import { wallet } from './wallet-client';
 
 function fakeEnv(reply: unknown) {
   const fetchMock = vi.fn().mockResolvedValue(
@@ -52,11 +52,5 @@ describe('wallet-client', () => {
   });
 });
 
-describe('walletSubjectKey', () => {
-  it('uses userId for a user owner', () => {
-    expect(walletSubjectKey({ kind: 'user', userId: 'u1' })).toBe('u1');
-  });
-  it('uses subjectId for a subject owner (group wallet)', () => {
-    expect(walletSubjectKey({ kind: 'subject', subjectId: 'sub_grp' })).toBe('sub_grp');
-  });
-});
+// walletSubjectKey 已删(个人钱包键必须经 subjects 解析,不能同步硬映射);
+// 路由键的用例见 billing/subject-key.test.ts 的 resolveWalletSubjectKey。

@@ -32,6 +32,7 @@ import {
 import { recordCreditIn, recordRefund } from '../lib/billing-polar';
 import { polarFromEnv } from '../billing/polar-client';
 import { wallet } from '../billing/wallet-client';
+import { findUserWalletSubjectId } from '../billing/subject-key';
 import { pncToMicros } from '../billing/pnc';
 import type { AppBindings, Env } from '../types';
 
@@ -123,18 +124,33 @@ boardBillingRoutes.put('/packs', async (c) => {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// 按 q(user id UUID 或 email)解析出 subject_id(= users.id)。找不到返回 null。
+/**
+ * 按 q(user id UUID 或 email)解析出这个人 —— 同时给出 **auth user id**(展示/审计用)
+ * 和 **个人钱包主体键 subjectId**(= user_account subject id,钱包/账本/Polar 都用它)。
+ * 两者是不同的 uuid:`pnc_ledger.subject_id` 外键指向 subjects,拿 users.id 当 subject
+ * 写会直接违反外键;查余额拿 users.id 也只会读到一个空 WalletDO。
+ * 查无此人 → null;查到人但没有 user_account 主体 → { subjectId: null },由路由 404。
+ */
 async function resolveUserId(
   supa: ReturnType<typeof serviceClient>,
   q: string,
-): Promise<{ userId: string; email: string | null } | null> {
+): Promise<{ userId: string; email: string | null; subjectId: string | null } | null> {
   const query = supa.from('users').select('id, email');
   const { data } = UUID_RE.test(q)
     ? await query.eq('id', q).maybeSingle()
     : await query.eq('email', q.trim().toLowerCase()).maybeSingle();
   const row = data as { id?: string; email?: string | null } | null;
   if (!row?.id) return null;
-  return { userId: row.id, email: row.email ?? null };
+  return {
+    userId: row.id,
+    email: row.email ?? null,
+    subjectId: await findUserWalletSubjectId(supa, row.id),
+  };
+}
+
+/** 查到人但没有个人主体:明确 404 + 日志,绝不退化成"余额 0 / 发到 user id 上"。 */
+function noSubject(hit: { userId: string }): void {
+  console.error('[board/billing] wallet subject unresolved', hit.userId);
 }
 
 boardBillingRoutes.get('/wallet', async (c) => {
@@ -144,11 +160,15 @@ boardBillingRoutes.get('/wallet', async (c) => {
   const supa = serviceClient(c.env);
   const hit = await resolveUserId(supa, q);
   if (!hit) return jsonError(c, 404, 'not_found', { message: '查无此用户' });
+  if (!hit.subjectId) {
+    noSubject(hit);
+    return jsonError(c, 404, 'subject_not_found', { message: '该用户没有个人主体(user_account subject)' });
+  }
 
   let balanceMicros = 0;
   let thresholdState = 'unknown';
   try {
-    const gate = await wallet.gate(c.env, hit.userId);
+    const gate = await wallet.gate(c.env, hit.subjectId);
     balanceMicros = gate.balanceMicros;
     thresholdState = gate.thresholdState;
   } catch (err) {
@@ -158,7 +178,7 @@ boardBillingRoutes.get('/wallet', async (c) => {
   const { data: ledger } = await supa
     .from('pnc_ledger')
     .select('id, kind, source, external_ref, delta_pnc_micros, created_at')
-    .eq('subject_id', hit.userId)
+    .eq('subject_id', hit.subjectId)
     .order('created_at', { ascending: false })
     .limit(30);
 
@@ -197,6 +217,11 @@ boardBillingRoutes.post('/grant', async (c) => {
   const supa = serviceClient(c.env);
   const hit = await resolveUserId(supa, q);
   if (!hit) return jsonError(c, 404, 'not_found', { message: '查无此用户' });
+  if (!hit.subjectId) {
+    noSubject(hit);
+    return jsonError(c, 404, 'subject_not_found', { message: '该用户没有个人主体(user_account subject),无法发放' });
+  }
+  const subjectId = hit.subjectId;
 
   if (!c.env.POLAR_ACCESS_TOKEN || !c.env.POLAR_PNC_METER_ID) {
     return jsonError(c, 501, 'polar_not_configured', {
@@ -211,23 +236,23 @@ boardBillingRoutes.post('/grant', async (c) => {
   try {
     if (pnc > 0) {
       const { applied } = await recordCreditIn(supa, om, {
-        subjectId: hit.userId,
+        subjectId,
         kind: 'admin',
         source: 'admin',
         externalRef,
         pncMicros: micros,
         raw: { reason, actor: c.var.boardEmail ?? null },
       });
-      if (applied) await wallet.credit(c.env, hit.userId, micros).catch(() => undefined);
+      if (applied) await wallet.credit(c.env, subjectId, micros).catch(() => undefined);
     } else {
       const { clampedMicros } = await recordRefund(supa, om, {
-        subjectId: hit.userId,
+        subjectId,
         source: 'admin',
         externalRef,
         pncMicros: micros,
         raw: { reason, actor: c.var.boardEmail ?? null },
       });
-      if (clampedMicros > 0) await wallet.credit(c.env, hit.userId, -clampedMicros).catch(() => undefined);
+      if (clampedMicros > 0) await wallet.credit(c.env, subjectId, -clampedMicros).catch(() => undefined);
     }
   } catch (err) {
     return jsonError(c, 500, 'database_error', { detail: String(err) });

@@ -10,6 +10,7 @@ import type { Env } from '../types';
 import { polarFromEnv } from '../billing/polar-client';
 import { recordCreditIn } from './billing-polar';
 import { wallet } from '../billing/wallet-client';
+import { resolveUserWalletSubjectId } from '../billing/subject-key';
 import { billingEnabled } from './feature-flags';
 import { MICROS_PER_PNC } from '../billing/pnc';
 
@@ -108,12 +109,24 @@ export async function grantSignupBonus(
   userId: string,
 ): Promise<void> {
   if (!(await billingEnabled(env)) || !polarReady(env)) return;
+  // 幂等键**格式不变**:线上已有 `signup:<auth user id>` 的历史行,改成 subject id
+  // 会让老用户被重复发放。变的只是钱记在谁名下(subject_id)。
   const externalRef = `signup:${userId}`;
+  // 入账主体 = 该用户的 user_account subject:pnc_ledger.subject_id 与
+  // welcome_bonus_grants.subject_id 都有外键指向 subjects,写 auth user id 会直接
+  // 违反外键;Polar customer 的 external_id 也是这个键。见 billing/subject-key.ts。
+  let subjectId: string;
+  try {
+    subjectId = await resolveUserWalletSubjectId(svcSupa, userId);
+  } catch (err) {
+    console.error('[billing-grant.grantSignupBonus] wallet subject unresolved, skip', userId, err);
+    return;
+  }
   try {
     const { data: existing } = await svcSupa
       .from('pnc_ledger')
       .select('id')
-      .eq('subject_id', userId)
+      .eq('subject_id', subjectId)
       .eq('source', 'signup')
       .eq('external_ref', externalRef)
       .maybeSingle();
@@ -122,19 +135,19 @@ export async function grantSignupBonus(
     if (!email) return; // 没邮箱建不了 customer;下次再试
     // 防 +别名/点号薅羊毛(#252):按规范化邮箱去重。先原子认领该规范化邮箱的
     // 名额,被占(同一真实信箱已领过)则直接跳过发放。
-    const claimed = await claimWelcomeBonus(svcSupa, normalizeEmail(email), userId);
+    const claimed = await claimWelcomeBonus(svcSupa, normalizeEmail(email), subjectId);
     if (!claimed) return; // 该规范化邮箱的 welcome 名额已被占,跳过
     const micros = SIGNUP_BONUS_PNC * MICROS_PER_PNC;
     const om = polar(env);
-    await om.ensureCustomer(userId, email);
+    await om.ensureCustomer(subjectId, email);
     const r = await recordCreditIn(svcSupa, om, {
-      subjectId: userId,
+      subjectId,
       kind: 'admin',
       source: 'signup',
       externalRef,
       pncMicros: micros,
     });
-    if (r.applied) await wallet.credit(env, userId, micros).catch(() => undefined);
+    if (r.applied) await wallet.credit(env, subjectId, micros).catch(() => undefined);
   } catch (err) {
     console.warn('[billing-grant.grantSignupBonus] failed (best-effort)', (err as Error)?.message);
   }
@@ -155,16 +168,20 @@ export async function creditRedemptionToPolar(
 ): Promise<number> {
   const micros = Math.max(0, Math.trunc(creditsPnd)) * PND_TO_PNC_MICROS;
   if (micros <= 0 || !polarReady(env)) return micros;
+  // 入账主体 = user_account subject(同 grantSignupBonus)。解析不到就抛 ——
+  // 这是"钱进来"的路径,兑换码已被 billing_redeem 标记 used,静默吞掉等于吃掉用户
+  // 的码;抛出去让调用方 500,用户可重试(recordCreditIn 按 code id 幂等)。
+  const subjectId = await resolveUserWalletSubjectId(svcSupa, userId);
   const email = await fetchEmail(svcSupa, userId);
   const om = polar(env);
-  if (email) await om.ensureCustomer(userId, email);
+  if (email) await om.ensureCustomer(subjectId, email);
   await recordCreditIn(svcSupa, om, {
-    subjectId: userId,
+    subjectId,
     kind: 'redemption',
     source: 'redemption',
     externalRef: codeId,
     pncMicros: micros,
   });
-  await wallet.credit(env, userId, micros).catch(() => undefined);
+  await wallet.credit(env, subjectId, micros).catch(() => undefined);
   return micros;
 }

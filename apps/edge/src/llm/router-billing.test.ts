@@ -105,11 +105,12 @@ describe('persistAuditMessage WalletDO billing owner resolution', () => {
     expect(debit?.subjectId).toBe('subject-2');
   });
 
-  it('debits the initiating user for a 1v1 (no conversation subject)', async () => {
+  it('1v1 扣的是发起用户的 user_account subject 钱包(不是 auth user id)', async () => {
     const db = makeFakeDb({
       conversations: [
         { id: 'conv-1', conversation_type: 'user_bot', responsible_subject_id: null },
       ],
+      subjects: [{ id: 'user-9-sub', user_id: 'user-9', kind: 'user_account' }],
     });
     const w = freshWallet();
 
@@ -119,8 +120,34 @@ describe('persistAuditMessage WalletDO billing owner resolution', () => {
     );
 
     const debit = w.calls.find((c) => c.path === '/debit');
-    expect(debit?.subjectId).toBe('user-9');
+    expect(debit?.subjectId).toBe('user-9-sub');
     expect(debit?.body.category).toBe('llm_tokens');
+    const auditRow = db.inserts.find((i) => i.table === 'audit_log')?.row;
+    expect(auditRow?.metadata).toMatchObject({
+      billing_target_kind: 'user',
+      billing_subject_id: 'user-9-sub',
+    });
+  });
+
+  it('主体解析不到 → 回合照常落库、不扣费、报错级日志(不猜一个键去扣)', async () => {
+    const db = makeFakeDb({
+      conversations: [
+        { id: 'conv-1', conversation_type: 'user_bot', responsible_subject_id: null },
+      ],
+      subjects: [],
+    });
+    const w = freshWallet();
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await persistAuditMessage(
+      makeFakeEnv(db, { wallet: w }),
+      auditMessage({ taskType: 'reply', userId: 'ghost-user' }),
+    );
+
+    expect(w.calls.find((c) => c.path === '/debit')).toBeUndefined();
+    expect(err).toHaveBeenCalled();
+    const auditRow = db.inserts.find((i) => i.table === 'audit_log')?.row;
+    expect(auditRow?.billing_status).toBe('free');
   });
 
   it('debits each web-tool call with a namespaced dedupeId', async () => {

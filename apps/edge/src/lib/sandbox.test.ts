@@ -39,14 +39,22 @@ const conversationTypeMock = vi.fn(
     responsible_subject_id: null,
   }),
 );
+// subjects 表:auth user id → 个人钱包主体键(user_account subject id)。
+// 个人钱包一律按 subjects.id 路由,见 billing/subject-key.ts。
+const subjectRowMock = vi.fn((): { id: string } | null => ({ id: 'user-42-sub' }));
 vi.mock('./supabase', () => ({
   serviceClient: () => ({
-    from: () => ({
-      select: () => ({
-        eq: () => ({
-          maybeSingle: async () => ({ data: conversationTypeMock() }),
-        }),
-      }),
+    from: (table: string) => ({
+      select: () => {
+        const chain = {
+          eq: () => chain,
+          maybeSingle: async () => ({
+            data: table === 'subjects' ? subjectRowMock() : conversationTypeMock(),
+            error: null,
+          }),
+        };
+        return chain;
+      },
     }),
   }),
 }));
@@ -139,8 +147,8 @@ describe('Cloudflare sandbox wrapper', () => {
         meter: { userId: 'user-42' },
       });
 
-      // gate ran with the resolved subject (1v1 → userId) BEFORE runCode
-      expect(gateMock).toHaveBeenCalledWith(env, 'user-42');
+      // gate ran with the resolved subject (1v1 → 该用户的 user_account subject) BEFORE runCode
+      expect(gateMock).toHaveBeenCalledWith(env, 'user-42-sub');
       // gate ran before runCode (compare invocation order)
       expect(gateMock.mock.invocationCallOrder[0]).toBeLessThan(
         runCodeMock.mock.invocationCallOrder[0],
@@ -148,7 +156,7 @@ describe('Cloudflare sandbox wrapper', () => {
       // debit fired with the sandbox_runtime category + a per-run dedupeId
       expect(debitMock).toHaveBeenCalledTimes(1);
       const [, subjectArg, pncArg, optsArg] = debitMock.mock.calls[0];
-      expect(subjectArg).toBe('user-42');
+      expect(subjectArg).toBe('user-42-sub');
       expect(pncArg).toBeGreaterThan(0);
       expect(optsArg.category).toBe('sandbox_runtime');
       expect(optsArg.dedupeId).toMatch(/^sandbox:conv-1:\d+$/);
@@ -164,6 +172,22 @@ describe('Cloudflare sandbox wrapper', () => {
 
       expect(runCodeMock).not.toHaveBeenCalled();
       expect(debitMock).not.toHaveBeenCalled();
+    });
+
+    it('个人主体解析不到:不 gate 不扣费,留报错级日志(不拿 user id 当钱包键)', async () => {
+      subjectRowMock.mockReturnValueOnce(null);
+      const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      runCodeMock.mockResolvedValueOnce({
+        logs: { stdout: ['ok\n'], stderr: [] },
+        results: [],
+        executionCount: 1,
+      });
+
+      await runPython(env, 'conv-1', 'print("ok")', { meter: { userId: 'ghost-user' } });
+
+      expect(gateMock).not.toHaveBeenCalled();
+      expect(debitMock).not.toHaveBeenCalled();
+      expect(err).toHaveBeenCalled();
     });
 
     it('群会话:pre-gate 读群 subject + 扣费走 settleGroupSpend(非直接 wallet.debit)', async () => {
