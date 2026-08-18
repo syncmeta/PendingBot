@@ -1157,3 +1157,11 @@
 - **缓解**: Cloudflare 保留历史版本，`npx wrangler rollback 0b5d1f2f-1f55-4768-bdf8-de6372b523d9 --env production` 可原样退回。但这是事后补救，不是护栏。
 - **建议**: ① deploy 脚本加一道前置断言（比对线上 version 的部署时间与本地 HEAD 时间，倒退则要求显式 `--force`）；② 或先把线上 bundle 取回来与仓库 diff，把丢失的那批改动补回仓库，从根上消除倒退。
 - **状态**: 待办（2026-08-18 本次部署由用户明确授权接受回滚代价）。
+
+### 🟡 `recordCreditIn` → `wallet.credit` 之间存在 WalletDO 冷启动重复计数窗口
+- **发现**: 2026-08-18 · `fix/wallet-subject-key`（机长在评审主体键修复时指出，本分支**不动**）
+- **位置**: `apps/edge/lib/billing-polar.ts:recordCreditIn`（先 `om.grantCredits` 打 Polar）+ 各调用方随后的 `wallet.credit(env, subjectId, delta)`（`billing-grant.ts`、`board-billing.ts`、`billing-webhooks.ts:pushWalletCredit`、`group-wallet.ts`）；叠加点在 `apps/edge/src/durable-objects/wallet.ts` 的 `ensureInit`（冷启动向 Polar 拉初始余额）。
+- **问题**: 入账是「先写 Polar，再给 WalletDO 叠一个 delta」两步。若目标 DO 恰好在这两步之间冷启动，`ensureInit` 从 Polar 拉到的初始余额**已经含这笔**，随后的 `credit(delta)` 会再叠一次 → 该笔额度被计两遍。Polar 侧约 10s 最终一致，所以这是竞态窗口，不是必现。
+- **影响**: 方向是「多给钱」而不是「锁死用户」，且 WalletDO 的稀疏对账（alarm → `applyAbsolute`）最终会把余额拉回 Polar 的绝对值，所以是 🟡 不是 🔴。与本次「充值不生效」无关（那条是键不一致，方向相反）。
+- **建议**: 让入账走绝对值而非增量 —— 入账后直接 `wallet.applyAbsolute(env, subjectId, polarBalance)`（Polar customer.state_changed 已经是这个形态），或在 DO 内给 credit 带上与 `ensureInit` 同一批次的版本号做去重。
+- **状态**: 待办（刻意不在 `fix/wallet-subject-key` 里动 —— 那个分支是解封用户的路径，混进无关的钱路改动会放大回滚风险）。
