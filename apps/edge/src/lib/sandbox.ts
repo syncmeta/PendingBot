@@ -3,6 +3,7 @@ import type { Env } from '../types';
 import type { SupabaseClient } from './supabase';
 import { serviceClient } from './supabase';
 import { wallet } from '../billing/wallet-client';
+import { resolveUserWalletSubjectId } from '../billing/subject-key';
 import { settleGroupSpend } from '../billing/group-wallet';
 import { usdToPncMicros } from '../billing/pnc';
 
@@ -80,11 +81,19 @@ export interface CodeRunResult {
 /// Returns null only when there's no resolvable owner at all — in that
 /// case the caller skips gate + debit ("can't attribute → don't bill")
 /// rather than guessing.
+export interface SandboxBillingTarget {
+  /// 付钱的主体 —— **总是 subjects.id**(群责任主体,或个人的 user_account subject)。
+  subjectId: string;
+  /// 'subject' = 群责任主体(走 settleGroupSpend 分账);'user' = 个人钱包直扣。
+  /// 别再用 "subjectId !== userId" 反推群/个人:键统一到 subjects.id 后那个判断恒真。
+  kind: 'subject' | 'user';
+}
+
 export async function resolveSandboxBillingSubjectId(
   supa: SupabaseClient,
   conversationId: string,
   fallbackUserId: string | null,
-): Promise<string | null> {
+): Promise<SandboxBillingTarget | null> {
   const { data } = await supa
     .from('conversations')
     .select('conversation_type, responsible_subject_id')
@@ -105,7 +114,9 @@ export async function resolveSandboxBillingSubjectId(
     // temporary_group / crew it lives on temporary_group_meta (matching
     // router.ts). Prefer the conversations column, fall back to meta.
     const fromConv = row?.responsible_subject_id;
-    if (typeof fromConv === 'string' && fromConv.length > 0) return fromConv;
+    if (typeof fromConv === 'string' && fromConv.length > 0) {
+      return { subjectId: fromConv, kind: 'subject' };
+    }
 
     const { data: meta } = await supa
       .from('temporary_group_meta')
@@ -113,13 +124,26 @@ export async function resolveSandboxBillingSubjectId(
       .eq('conversation_id', conversationId)
       .maybeSingle();
     const fromMeta = meta?.responsible_subject_id;
-    if (typeof fromMeta === 'string' && fromMeta.length > 0) return fromMeta;
+    if (typeof fromMeta === 'string' && fromMeta.length > 0) {
+      return { subjectId: fromMeta, kind: 'subject' };
+    }
     // Group-family conv with no responsible subject set: can't attribute.
-    return fallbackUserId && fallbackUserId.length > 0 ? fallbackUserId : null;
+    return resolvePersonalSubject(supa, fallbackUserId);
   }
 
   // 1v1 / system / unknown: bill the initiating user's own wallet.
-  return fallbackUserId && fallbackUserId.length > 0 ? fallbackUserId : null;
+  return resolvePersonalSubject(supa, fallbackUserId);
+}
+
+/// 个人钱包键 = 该用户的 user_account subject id(**不是** auth user id):
+/// 入账被 pnc_ledger 外键钉死在 subjects.id,用 user id 会落到另一个空 DO。
+/// 见 billing/subject-key.ts。解析不到就抛,由调用方 fail-open + 记日志。
+async function resolvePersonalSubject(
+  supa: SupabaseClient,
+  userId: string | null,
+): Promise<SandboxBillingTarget | null> {
+  if (!userId || userId.length === 0) return null;
+  return { subjectId: await resolveUserWalletSubjectId(supa, userId), kind: 'user' };
 }
 
 /// Run Python in this conversation's sandbox. State does NOT persist
@@ -151,11 +175,11 @@ export async function runPython(
   } = {},
 ): Promise<CodeRunResult> {
   // Resolve billing subject once up front (used by both gate and debit).
-  let subjectId: string | null = null;
+  let target: SandboxBillingTarget | null = null;
   if (opts.meter?.userId) {
     const supa = serviceClient(env);
     try {
-      subjectId = await resolveSandboxBillingSubjectId(
+      target = await resolveSandboxBillingSubjectId(
         supa,
         conversationId,
         opts.meter.userId,
@@ -163,11 +187,13 @@ export async function runPython(
     } catch (err) {
       // Resolution failure must not silently bypass the gate; but it also
       // shouldn't hard-fail the tool on a transient DB blip. Log + skip
-      // billing for this run (degrade to "can't attribute → don't bill").
-      console.warn('[sandbox] billing subject resolution failed', conversationId, err);
-      subjectId = null;
+      // billing for this run (degrade to "can't attribute → don't bill")。
+      // 报错级:宁可这一跑不计费,也不拿一个猜的键去 gate/扣。
+      console.error('[sandbox] billing subject resolution failed', conversationId, opts.meter?.userId ?? null, err);
+      target = null;
     }
   }
+  const subjectId = target?.subjectId ?? null;
 
   // PRE-EXECUTION GATE. Only when we have a subject to charge.
   if (subjectId) {
@@ -212,9 +238,10 @@ export async function runPython(
         // Don't log the code itself — sensitive. Only the shape.
         code_chars: code.length,
       };
-      // 群会话(subjectId 解析为责任 subject,≠ 发起人 userId)走 settleGroupSpend
-      // (实缴池衰减 + 认缴成员个人钱包直扣);个人(subjectId===userId)直扣其钱包。
-      const isGroup = !!opts.meter?.userId && subjectId !== opts.meter.userId;
+      // 群会话(解析到责任 subject)走 settleGroupSpend(实缴池衰减 + 认缴成员
+      // 个人钱包直扣);个人直扣其钱包。按解析结果的 kind 判断 —— 两侧键都是
+      // subjects.id,不能再靠 "≠ userId" 反推。
+      const isGroup = target?.kind === 'subject';
       const charge = isGroup
         ? settleGroupSpend({ env, supa: serviceClient(env), subjectId, spendMicros: pncMicros, category: 'sandbox_runtime', dedupeId, meta })
         : wallet.debit(env, subjectId, pncMicros, { category: 'sandbox_runtime', dedupeId, meta }).then(() => undefined);
