@@ -1147,7 +1147,9 @@
 - **问题**: `pnc_ledger.subject_id` 有外键 `-> pendingbot.subjects(id)`，**入账在结构上只可能记在 `subjects.id`**（充值 webhook 的 `resolveRcSubjectId`、signup 赠送、board 发放全部落在这里，Polar customer 的 `external_id` 同步为该值）。但个人侧的门禁/扣费用的是 `c.var.userId` = auth JWT `sub` = `auth.users.id`（`packages/identity/src/middleware.ts:32`），经 `wallet.gate(env, userId)` 路由到 `idFromName(auth user id)` 的另一个 WalletDO。两个键从不相交 → 那个 DO 冷启动向 Polar 查同名 customer 查不到，余额恒为 0 → `thresholdState='exhausted'` → 闸永久关闭，**充多少钱都无效**。
 - **为什么没被早发现**: `usage-gate.ts` 里写着「subjects and user ids share the WalletDO key space」——这条注释是错的前提，且没有任何测试或断言守护它；余额为 0 时的表现是「正常拒绝」而不是报错，整条链路静默。
 - **连带**: 仓库现有的 `board-billing.ts` 发放路径传 `users.id` 当 subject，按上述外键**会直接违反 FK**（线上部署的版本已自行改成 subject id，仓库这份没有）。
-- **状态**: 修复中 — `fix/wallet-subject-key`，方向是把个人钱包键统一到 `subjects.id`（入账侧被外键钉死，只能门禁侧对齐）。
+- **状态**: ✅ **已修 2026-08-18** — `fix/wallet-subject-key`（合 main，**待部署**）。新增唯一解析器 `apps/edge/src/billing/subject-key.ts`（auth user id ⇄ `subjects.id`，命中缓存、未命中不缓存），个人钱包的每一处读写都改经它：门禁 `getBalanceGateState` / `resolveBillingSubjectId`、扣费 `router.persistAuditMessage`、沙盒、`/me/wallet/v2`、`board-billing` 查/发、`grantSignupBonus` + `creditRedemptionToPolar`、群钱包的注资/退款/认缴份额/认缴分账/部分取出、语音 `realtime-meter` + `room-voice`。解析失败一律**明确 fail-open + `console.error`**（门禁放行、该笔不计费），不再静默变成 0 余额；写入侧（board 发放、/me 钱包）直接 404 fail-loud。`walletSubjectKey`（同步把 `kind='user'` 硬映射成 userId）整个删除——它就是这条债的根，留着会被再次误用。幂等键 `external_ref` 格式**未改**（线上已有 `signup:<auth user id>` 历史行，改格式=重复发放）。TDD：每处先写失败测试；edge 全量 663→ 全绿 + typecheck 0。
+  - **顺带修掉的同类问题**：① `sandbox.ts` 用 `subjectId !== userId` 反推「群会话」——键统一后该判断恒真，会把个人消费误路由进 `settleGroupSpend`，改为解析器显式返回 `kind`；② `clawbackFromGroups` 的入参本就是调用方给的**个人 subject id**，却拿去按 `group_contributions.contributor_user_id`（auth user id）查注资 → 线上查不到任何行，链式退款静默冲 0（注资进群 → 退购买款 → 群里的钱还在），改为反查一跳。
+  - **未覆盖**：`realtime-meter` / `room-voice` 两个 Durable Object 内的调用点仓库里没有测试脚手架，只有 typecheck + 解析器自身的单测保护，改动是机械替换。
 
 ### 🔴 线上 worker 比仓库新，任何一次 deploy 都是静默回滚
 - **发现**: 2026-08-18 · 同上排查
