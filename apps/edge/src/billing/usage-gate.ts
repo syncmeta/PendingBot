@@ -21,17 +21,21 @@ import { thresholdOf } from '../durable-objects/wallet';
 import { InsufficientBalanceError } from '../lib/billing';
 import { billingEnabled } from '../lib/feature-flags';
 import { wallet } from './wallet-client';
+import { resolveUserWalletSubjectId } from './subject-key';
 import { resolveGroupStakes } from './group-wallet';
 
 export type { ThresholdState } from '../durable-objects/wallet';
 
 export interface BillingTarget {
-  /// The subject that pays. For groups/temp-groups/crew this is the
-  /// responsible_subject_id; for 1v1/system it's the user id (subjects and
-  /// user ids share the WalletDO key space — one DO per idFromName(id)).
+  /// The subject that pays — **always a `pendingbot.subjects.id`**. Groups /
+  /// temp-groups / crew use the conversation's responsible_subject_id; 1v1 /
+  /// system resolve the initiating user to their user_account subject
+  /// (billing/subject-key.ts). Never an auth user id: 入账被 pnc_ledger 的外键
+  /// 钉死在 subjects.id,门禁用 user id 就会落到另一个空 WalletDO。
   subjectId: string;
   /// 'subject' when resolved to a conversation responsibility subject;
-  /// 'user' when it fell back to the initiating user. Audit metadata uses this.
+  /// 'user' when it fell back to the initiating user's own subject. Audit
+  /// metadata uses this, and 群/个人 的扣费路径按它分叉。
   kind: 'subject' | 'user';
 }
 
@@ -48,6 +52,8 @@ export interface BillingTarget {
  *
  * Returns null only when neither a conversation subject nor a userId is
  * available (a system/bot-only turn with no billable owner — left unbilled).
+ * 抛 `WalletSubjectUnresolvedError` when 有 userId 但解析不出其 user_account
+ * subject —— 调用方须显式 fail-open 并记日志,**不许**回退成 user id。
  *
  * Note the two-source split is deliberate: conversations.responsible_subject_id
  * is backfilled from the conv's own user_id for 1v1s, so for temp-group/crew
@@ -83,7 +89,9 @@ export async function resolveBillingSubjectId(
     // Group-shaped conv with no responsibility subject set: fall through to
     // the initiating user rather than leaving the turn ungated/unbilled.
   }
-  if (ctx.userId) return { subjectId: ctx.userId, kind: 'user' };
+  if (ctx.userId) {
+    return { subjectId: await resolveUserWalletSubjectId(supa, ctx.userId), kind: 'user' };
+  }
   return null;
 }
 
@@ -125,7 +133,9 @@ export async function gateConversation(
     }
     return null;
   } catch (e) {
-    console.warn('[gateConversation] fail-open', (e as Error)?.message);
+    // 含主体解析失败:明确 fail-open(放行)+ **报错级**日志。静默当 0 余额
+    // 就是这次计费事故的形态,不许再出现。
+    console.error('[gateConversation] fail-open', ctx.userId ?? null, (e as Error)?.message);
     return null;
   }
 }

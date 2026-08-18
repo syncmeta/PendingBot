@@ -8,6 +8,12 @@ import {
 } from './billing';
 import type { SupabaseClient } from './supabase';
 import type { Env } from '../types';
+import {
+  makeFakeClient,
+  makeFakeDb,
+  makeFakeEnv,
+  type FakeWallet,
+} from '../../tests/_helpers/fake-supabase';
 
 // Minimal Env stub for tests that call requireBalance. The MEMORY KV
 // always misses, forcing the balance/threshold reads to fall through
@@ -97,7 +103,12 @@ function walletEnv(balanceMicros: number): Env {
     },
   } as any;
 }
-const noSupa = {} as SupabaseClient;
+// 门禁要把 auth user id 解析成 user_account subject id 才知道读哪个 WalletDO
+// (个人钱包主体键统一,见 billing/subject-key.ts),所以 supa 不再是可有可无的。
+const subjectDb = makeFakeDb({
+  subjects: [{ id: 'u1-sub', user_id: 'u1', kind: 'user_account' }],
+});
+const noSupa = makeFakeClient(subjectDb) as unknown as SupabaseClient;
 
 describe('requireBalance (WalletDO gate)', () => {
   it('snapshot reports WalletDO micros, threshold 0, allowed when positive', async () => {
@@ -149,6 +160,30 @@ describe('requireBalance (WalletDO gate)', () => {
       min_threshold: 0,
       allowed: true,
     });
+  });
+});
+
+describe('getBalanceGateState 主体键(个人钱包统一到 subjects.id)', () => {
+  it('读的是该用户 user_account subject 的钱包,不是 auth user id 那个', async () => {
+    const db = makeFakeDb({
+      subjects: [{ id: 'sub-x', user_id: 'user-x', kind: 'user_account' }],
+    });
+    const w: FakeWallet = { calls: [], balances: { 'sub-x': 70_000_000, 'user-x': 0 } };
+    const env = makeFakeEnv(db, { wallet: w });
+    const r = await getBalanceGateState(env, makeFakeClient(db) as unknown as SupabaseClient, 'user-x');
+    expect(r).toEqual({ balance_credits: 70_000_000, min_threshold: 0, allowed: true });
+    expect(w.calls.map((c) => c.subjectId)).toEqual(['sub-x']);
+  });
+
+  it('解析不到主体 → fail-open + 记日志(绝不静默判成余额耗尽)', async () => {
+    const db = makeFakeDb({ subjects: [] });
+    const w: FakeWallet = { calls: [], balances: {} };
+    const env = makeFakeEnv(db, { wallet: w });
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const r = await getBalanceGateState(env, makeFakeClient(db) as unknown as SupabaseClient, 'user-y');
+    expect(r.allowed).toBe(true);
+    expect(w.calls).toEqual([]); // 没去碰任何钱包
+    expect(err).toHaveBeenCalled();
   });
 });
 

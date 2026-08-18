@@ -400,10 +400,21 @@ export async function persistAuditMessage(
   // responsible_subject_id pool wallet; else the initiating user). Same
   // resolver the pre-call gate uses, so gate-subject and debit-subject
   // never drift.
-  const billingTarget = await resolveBillingSubjectId(supa, {
-    conversationId: opts.conversationId,
-    userId: opts.userId,
-  });
+  // 解析失败(拿不到个人 user_account subject)→ 本回合不计费,并留报错级日志。
+  // 宁可漏一笔账,也不猜一个键去扣 —— 扣到错的 DO 就是把钱记在无人认领的钱包上。
+  let billingTarget: Awaited<ReturnType<typeof resolveBillingSubjectId>> = null;
+  try {
+    billingTarget = await resolveBillingSubjectId(supa, {
+      conversationId: opts.conversationId,
+      userId: opts.userId,
+    });
+  } catch (err) {
+    console.error(
+      '[persistAuditMessage] billing subject unresolved — turn left unbilled',
+      opts.userId ?? null,
+      (err as Error)?.message,
+    );
+  }
   const hasBillableTarget = billingTarget != null;
 
   // audit_log.billing_status is now a v1-legacy column kept only as turn
