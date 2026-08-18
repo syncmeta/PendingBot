@@ -100,9 +100,9 @@ settings 改 `project.yml` 然后 `xcodegen` 重新生成，别手动改
    ```sh
    scripts/release/ios-build-number.sh --apply
    ```
-   它算出 UTC 时间戳、跟 App Store Connect 上已有的最高 build 号核对（不倒退
+   它算出纪元日时间戳、跟 App Store Connect 上已有的最高 build 号核对（不倒退
    才放行）、写进 `apps/pendingbot/project.yml` 并跑 `xcodegen`。规则和背景见
-   下面的 [iOS build 号](#ios-build-号--utc-时间戳--防倒退闸)。
+   下面的 [iOS build 号](#ios-build-号--纪元日时间戳--防倒退闸)。
 
    Keep `MARKETING_VERSION` unchanged unless the user explicitly asks
    for a version bump. **Scaffold 阶段** `CODE_SIGNING_ALLOWED=NO` 仍在
@@ -128,7 +128,14 @@ settings 改 `project.yml` 然后 `xcodegen` 重新生成，别手动改
    /usr/libexec/PlistBuddy -c 'Set :destination upload' /private/tmp/PendingBot-ExportUpload.plist
    ```
 
-5. **Archive Release for iPhoneOS**:
+5. **Archive Release for iPhoneOS**. 先跑一句断言，别白跑一次 archive：
+   ```sh
+   scripts/release/ios-build-number.sh --check
+   ```
+   写进 project.yml 的 build 号是**一次性快照**，绕过第 2 步直接 archive 时它
+   不会自己更新（占位符 `"1"` 会被 ASC 拒收）。`--check` 把这个失败提前到
+   archive 之前。
+
    ```sh
    xcodebuild archive \
      -project apps/pendingbot/PendingBot.xcodeproj \
@@ -169,10 +176,10 @@ Known warning: uploads may print
 matching dSYM. This does not block TestFlight install or processing; it
 only means WebRTC framework crash logs may lack readable symbols.
 
-### iOS build 号 — UTC 时间戳 + 防倒退闸
+### iOS build 号 — 纪元日时间戳 + 防倒退闸
 
-**规则：`CFBundleVersion` = `date -u +%Y%m%d%H%M`（如 `202608180940`）。
-不从 git 历史算，不手工填。**
+**规则：`CFBundleVersion` = `<自 1970-01-01 起的天数>.<当天已过的秒数，补零到 5 位>`
+（如 `20683.07431`）。不从 git 历史算，不手工填。**
 
 #### 为什么不是 commit 数
 
@@ -183,10 +190,67 @@ only means WebRTC framework crash logs may lack readable symbols.
 出去**。
 
 根因不是「数字太小」，是 **build 号从 git 历史算，而历史正是会丢的那样东西**
-（那次事故文件全活着，死的只有历史）。UTC 时间戳天生单调、不依赖仓库状态，
-从 tarball / 浅克隆 / 重建过的仓库构建都对。
+（那次事故文件全活着，死的只有历史）。从时钟派生的时间戳天生单调、不依赖仓库
+状态，从 tarball / 浅克隆 / 重建过的仓库构建都对。
 
-PendingCrew（macOS/Sparkle）同期同病、同样改成 UTC 时间戳，两个产品用同一格式。
+PendingCrew（macOS/Sparkle）同期同病、同期同改，两个产品用同一编码。
+
+#### 为什么是纪元日，为什么第二段是「当天第几秒」
+
+**这三条理由必须留在文档里**，否则以后一定有人嫌 `20683.07431` 看不懂就改掉。
+
+**可读性是有意放弃的。** 这是个机器用的单调标识，不是给人看的日期；要人看
+的日期在别处（脚本输出的可读时间、TestFlight 的 What to Test）。
+
+**① 为什么不是可读的 `YYYYMMDDHHMM`（`202608180940`）—— 32 位整数**
+
+| 编码 | 例 | 数量级 | 2^31 = 2147483647 |
+|---|---|---|---|
+| `YYYYMMDDHHMM` | `202608180940` | 2.03×10¹¹ | **超了** |
+| `date -u +%s` | `1787018157` | 1.79×10⁹ | 以内，但见 ② |
+| **纪元日** | **`20683`** | **2.07×10⁴** | **小五个数量级 ✓** |
+
+下面引的两份 Apple 文档只约束「≤3 段、≤18 字符、纯数字」，**从不提每段的
+数值宽度上限**。所以 12 位那个方案里，「ASC 内部 parser 吃不吃得下超 2^31 的
+单段」只能靠真上传去赌。不赌。
+
+**② 为什么不是 Unix 秒（`1787018157`）—— 2038，以及它会把门焊死**
+
+Unix 秒数值本身安全，但 **2038-01-19 03:14:07 UTC 之后越过 2^31**，同一类
+风险只是推迟了十二年。纪元日要到公元 590 万年才够得着。
+
+更硬的一条是**不关门**：纪元日是所有候选里最小的，以后真想改主意，
+`20683` → `20260818`（`YYYYMMDD`）→ `1787018157`（Unix 秒）**逐级都是增**，
+防倒退闸都放行；反过来任何一步都是减，**永远切不回去**。先上最小的那个，
+等于把以后改主意的余地留着。（先上 Unix 秒就把门焊死了。）
+
+**③ 为什么第二段是秒数，不是「今天第几版」—— 外部状态**
+
+第二段（`0..86399`）只为一件事：同一天要发第二版。用序号就需要外部状态 ——
+要么人记着填（忘了就撞号，而撞号的后果是发版被拒或更新静默推不出去），要么
+每次构建去线上问一遍（把能不能构建绑死在网络上）。秒数纯从时钟算，零外部
+状态，同日天生递增。**发版号依赖外部状态**正是这轮要拆掉的东西。
+
+**第二段固定补零到 5 位，别去掉。** 补零之后「按整数解」和「按字符串解」
+得出的先后**一致**：`07431 < 10000` 整数成立，字符串比 `"0…" < "1…"` 也成立。
+不补零就只剩整数解一条路能对（`"7431"` 字符串比 `"700"` 反而小）。我们无法
+确知每个消费方怎么解析这一段，补零让两种解法都不会把同日先后弄反。
+
+#### 怎么把 build 号换回时间
+
+脚本每次都会把可读时间打到 stderr：
+
+```
+20683.07431
+build 20683.07431 = 2026-08-18 02:03:51Z（ASC 当前最高: 3571）
+```
+
+**发版时把这行抄进 TestFlight 的 What to Test。** 事后反查任意一个
+`<天>.<秒>`：
+
+```sh
+date -u -r $(( 20683 * 86400 + 7431 ))   # → Tue Aug 18 02:03:51 UTC 2026
+```
 
 #### 格式合法性（Apple 官方，不是印象）
 
@@ -200,38 +264,24 @@ PendingCrew（macOS/Sparkle）同期同病、同样改成 UTC 时间戳，两个
   > "a machine-readable string composed of one to three period-separated
   > integers ... can only contain numeric characters (0-9) and periods."
 
-`202608180940`：12 字符（限 18）✓、1 段（限 3）✓、纯数字 ✓、首尾是数字 ✓。
+`20683.07431`：11 字符（限 18）✓、2 段（限 3）✓、纯数字 ✓、首尾是数字 ✓。
 
 TN2420 还有一条值得记住：**iOS 允许换 `MARKETING_VERSION` 后重用 build 号，
 macOS 不允许（必须跨版本单调递增）**。PendingBot 的 iOS 和 macOS 是同一个
 target、同一个 bundle id、共用同一个 `CURRENT_PROJECT_VERSION`，所以防倒退闸
 取的是**跨版本的全局最高 build 号**，直接满足更严的那条。
 
-#### 备用格式 `YYYYMMDD.HHMM`，以及什么时候切
+#### 没有「备用格式」，这是有意的
 
-12 位单段 ≈ 2.03×10¹¹，**超过 32 位整数**。文档只约束字符数、不约束数值宽度，
-ASC 内部 parser 用多宽的整数没有公开说法 —— 这是本方案唯一没被文档证明的假设。
-失败模式很温和：**上传那一步就炸，不会有任何东西到用户手上**。
+曾经留过一个（`BUILD_NUMBER_FORMAT=dotted`），实测后删了。原因是一个结构性
+的坑：**备用格式想接在主格式后面用，就得比主格式大**，而任何「更安全所以
+数值更小」的编码天生做不到 —— 第一个主格式 build 一旦落地 ASC，那个备用就
+永远切不过去，留着只会让人在真出事时白试一轮。环境变量还认，但会 fail loud
+报废弃，不会静默给你默认格式。
 
-真撞上（ASC 拒收 12 位 build 号）就切备用格式，改一个环境变量：
-
-```sh
-BUILD_NUMBER_FORMAT=dotted scripts/release/ios-build-number.sh --apply
-```
-
-产出 `20260818.0940` —— 两段，每段都远小于 2^31，逐段比较序不变（同日看
-`HHMM`、跨日看 `YYYYMMDD`），且首段 `20260818` 仍远大于历史上的 3571。
-
-**切换是单向的，别搞反**：逐段比较下 `20260818.…` 的首段 20260818 **小于**
-`202608180940`。所以
-
-- `plain → dotted` 只在**还没有任何 plain build 被 ASC 收下**时可行（被拒的
-  那次不算落地，ASC 上的最高值仍是 3571）。一旦有 plain build 进过 ASC，这条
-  路就永久关死，防倒退闸会正确地拒绝 —— 那时只能改 `MARKETING_VERSION` 另起
-  一条 release train。
-- `dotted → plain` 永远安全（数值变大）。
-
-所以**真撞上 ASC 拒收 12 位，当场就切 dotted，别攒着**。
+真正一直可用的 escape hatch 是上面提过的那条：**iOS 允许换
+`MARKETING_VERSION` 后重用 build 号**。万一哪天 ASC 对当前编码有意见，正解是
+升 `MARKETING_VERSION` 另起一条 release train，不是在 build 号编码上找花样。
 
 #### 防倒退闸
 

@@ -1122,20 +1122,19 @@
 - **建议**: ① 若 claude 官方给出「查询当前会话已解析模型」的接口/命令，改用它取代复刻（根治漂移）；② 否则补齐 managed-settings 层 + 关注 claude changelog 里模型解析规则变化；③ codex 顶层 model 读不出时的「默认」显示是已知缺口，等有需求再补完整 TOML 解析。
 - **状态**: 待办（主干场景已工作，编译绿；漂移风险低频、边角）。
 
-## 2026-08-18 iOS build 号改 UTC 时间戳（发版被仓库重建拦死后）
-
-### 🟡 12 位单段 build 号是否被 App Store Connect 接受 —— 只有文档支持，没有实证
-- **发现**: 2026-08-18 · `chore/release-build-number`（跟 PendingCrew 机长 4-1 联合定方案）
-- **位置**: `scripts/release/ios-build-number.sh`（`BUILD_NUMBER_FORMAT=plain` 分支）、`docs/deploy.md` 的「iOS build 号」一节。
-- **背景**: 原来 build 号 = `git rev-list --count HEAD`。本地 monorepo 丢失后从落后一个月的 origin 重拉，提交数 3571 → 3178，**build 号倒退 393**，ASC 会拒收，从新仓库一版都发不出去。根因是 build 号从 git 历史算，而历史正是会丢的那样东西。改成 UTC 时间戳 `YYYYMMDDHHMM`。
-- **问题**: `202608180940` 是 12 位单 component ≈ 2.03×10¹¹，**超过 32 位整数**。TN2420 只约束「≤3 段、≤18 字符、纯数字」，现行 `CFBundleVersion` 文档只说「one to three period-separated integers」——**都没有说每段的数值宽度上限**。ASC 内部 parser 用多宽的整数没有公开说法，本方案在这一点上只有文档支持、没有实证。
-- **影响**: 低。失败模式温和且早——真不接受的话，**上传那一步就炸，不会有任何东西到用户手上**。已备好备用格式 `BUILD_NUMBER_FORMAT=dotted`（`20260818.0940`，两段，每段远小于 2^31），文档写清了切换是单向的：`plain → dotted` 只在还没有 plain build 落地 ASC 时可行（被拒的那次不算落地），一旦有 plain build 进过 ASC 就只能改 `MARKETING_VERSION` 另起 release train；`dotted → plain` 永远安全。
-- **关闭条件**: 下一次 TestFlight 上传成功（ASC 收下一个 12 位 build 号）即可关。真被拒就当场切 dotted 并把本条改成「已证伪，plain 不可用」。
-- **状态**: 待办（等下一次真上传证实/证伪）。
+## 2026-08-18 iOS build 号改纪元日时间戳（发版被仓库重建拦死后）
 
 ### 🟢 防倒退闸依赖 `/usr/bin/python3` + PyJWT，不在仓库依赖清单里
-- **发现**: 2026-08-18 · 同上
+- **发现**: 2026-08-18 · `chore/build-number-epoch`
 - **位置**: `scripts/release/asc_highest_build.py`
-- **问题**: 给 ASC API 签 ES256 JWT 需要 PyJWT，当前靠本机 `/usr/bin/python3`（3.9.6）里恰好装着的 2.12.1。仓库没有任何地方声明这个依赖，换机器/重装系统即失效。缺失时脚本 fail loud 并打印安装命令，不会静默放行——所以是 🟢 不是 🟡。
+- **背景**: 原来 build 号 = `git rev-list --count HEAD`。本地 monorepo 丢失后从落后一个月的 origin 重拉，提交数 3571 → 3178，**build 号倒退 393**，ASC 会拒收。改成从时钟派生的纪元日时间戳 `<天>.<秒>`，并补上这个仓库一直缺的防倒退闸。
+- **问题**: 给 ASC API 签 ES256 JWT 需要 PyJWT，当前靠本机 `/usr/bin/python3`（3.9.6）里恰好装着的 2.12.1。仓库没有任何地方声明这个依赖，换机器/重装系统即失效。缺失时脚本 fail loud 并打印安装命令，不会静默放行 —— 所以是 🟢 不是 🟡。
 - **建议**: 换机器时按报错装 `pyjwt` 即可；真嫌烦可以改成用 `openssl` 做 ES256（DER→raw r‖s 转换），换来零 Python 依赖。当前一台开发机的规模不值得。
 - **状态**: 待办（低优先）。
+
+### 🟢 build 号第二段的前导零没有 Apple 官方例子背书
+- **发现**: 2026-08-18 · 同上（PendingCrew 机长 4-1 提出）
+- **位置**: `scripts/release/ios-build-number.sh`（`printf '%d.%05d'`）
+- **问题**: 第二段固定补零到 5 位（`20683.07431`）。TN2420 给的合法例子是 `1` / `1.1` / `1.10000` 这类，**没有出现过零填充的段**，所以「ASC 怎么解析 `07431`」严格说没有例子背书。
+- **为什么仍然这么做**: 补零让「按整数解」和「按字符串解」得出的先后**一致**（`07431 < 10000` 整数成立，`"0…" < "1…"` 字符串也成立）；不补零就只剩整数解一条路能对。我们无法确知每个消费方怎么解析，补零是两头都不出错的那个选择。真出问题的表现是同日第二版被判成不递增 —— 会被防倒退闸当场拦下，不会静默发错版。
+- **状态**: 待办（下一次同日发两版时即可实证）。
