@@ -225,6 +225,57 @@ describe('会话级 patch 写穿', () => {
   });
 });
 
+describe('线上遗留的 unknown 占位行', () => {
+  /** 手工造一行 2026-08-19 之前那种半成品(标题空、bot 空、type='unknown')。 */
+  async function seedLegacyPlaceholder(env: Env) {
+    await env.USER_PROJECTION.get(
+      env.USER_PROJECTION.idFromName(alice) as unknown as DurableObjectId,
+    ).fetch('https://user-projection.do/ingest-conversation', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        row: { conv_id: convId, type: 'unknown', updated_at: '2026-08-19T01:00:00+00:00' },
+      }),
+    });
+  }
+
+  it('下一次会话级写穿会把它换成完整的一行(自愈)', async () => {
+    const env = await makeProjectionEnv(seedDb());
+    await seedLegacyPlaceholder(env);
+    expect((await listFor(env, alice)).rows[0]!.type).toBe('unknown');
+
+    const { patchConversationProjection } = await import(
+      '../src/lib/projection-writethrough'
+    );
+    await patchConversationProjection(env, convId, { updated_at: '2026-08-19T07:00:00.000Z' });
+
+    const row = (await listFor(env, alice)).rows[0]!;
+    expect(row.type).toBe('user_bot');
+    expect(row.bot_id).toBe(botId);
+    expect(row.title).toBe('打招呼');
+  });
+
+  it('下一次未读写穿也会把它换掉', async () => {
+    const env = await makeProjectionEnv(seedDb());
+    await seedLegacyPlaceholder(env);
+
+    const { projectUnreadRow } = await import('../src/lib/projection-writethrough');
+    await projectUnreadRow(env, {
+      user_id: alice,
+      conversation_id: convId,
+      unread_count: 1,
+      last_message_preview: '你好呀',
+      last_message_at: '2026-08-19T06:00:00+00:00',
+    });
+
+    const row = (await listFor(env, alice)).rows[0]!;
+    expect(row.type).toBe('user_bot');
+    expect(row.title).toBe('打招呼');
+    expect(row.unread).toBe(1);
+    expect(row.last_msg_preview).toBe('你好呀');
+  });
+});
+
 describe('未读 / 预览 写穿', () => {
   it('未读行 → 列表拿到未读数、预览和最后活跃时间', async () => {
     const env = await makeProjectionEnv(seedDb());

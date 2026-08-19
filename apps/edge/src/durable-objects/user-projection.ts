@@ -51,6 +51,14 @@ export interface IngestConversationInput {
 }
 
 /**
+ * 历史遗留的占位类型。2026-08-19 之前,participants 写穿会落一行
+ * `type:'unknown'` 的半成品,等一个永远不来的"随后补全"。新代码不再产生它,
+ * 但**线上已有的 DO 里还躺着这种行** —— 所以把它当作"这一行不算数":任何
+ * 局部更新落在它上面都报 found:false,让写穿层去补读真会话行把它换掉。
+ */
+const PLACEHOLDER_TYPE = 'unknown';
+
+/**
  * patchConversation 的入参 —— 只盖给出的列,其余保留。`conv_id` 由参数带,
  * `type`/`updated_at` 可省(省则沿用行里现值)。
  */
@@ -250,7 +258,8 @@ export class UserProjectionDO {
    */
   patchConversation(convId: string, patch: ConversationPatch): boolean {
     const existing = this.readRow(convId);
-    if (!existing) return false;
+    // 行不存在,或者行是历史遗留的占位半成品 → 都当"没有这一行"处理。
+    if (!existing || existing.type === PLACEHOLDER_TYPE) return false;
     this.ingestConversation({
       ...patch,
       conv_id: convId,
@@ -284,7 +293,7 @@ export class UserProjectionDO {
     updatedAt?: string | null,
   ): boolean {
     const existing = this.readRow(convId);
-    if (!existing) return false;
+    if (!existing || existing.type === PLACEHOLDER_TYPE) return false;
     const rev = this.bumpRev();
     const nextPreview = preview === undefined ? existing.last_msg_preview : preview;
     const nextUpdatedAt = updatedAt
