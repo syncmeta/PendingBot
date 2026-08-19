@@ -1286,8 +1286,14 @@
 - **位置**: `apps/pendingbot/Sources/Components/BubbleTextSelection.swift`（新增）+ `BubbleView.swift` / `MarkdownText.swift` 的三个调用点
 - **背景**: PendingCrew 从**人类机器上的真实 hang 报告**里定位到 `.textSelection(.enabled)` 常开这条热点（0.1.7 卡 68.68s，主线程 4/11 采样在 `SelectionOverlay.updateNSView → -[NSTextField setAttributedStringValue:]`），改成悬停接力。PendingBot 有同样的常开写法，已同步改掉。
 - **要记的是这个**: **那 68.68s 是 PendingCrew 的数字，不是 PendingBot 的。** 本仓库没有对应的 Instruments/hang 采样，采纳这条的理由是「macOS 上每段可选中文字背后挂一个真 NSTextField、且逐帧全量 `updateNSView`」这个**机制**本身，以及「改法不减功能」。别在任何地方把 crew 的秒数写成 PendingBot 的收益。
-- **未验证的部分**: 划选是否跟手、悬停切换时会不会闪、按住拖到气泡外继续划是否连贯 —— 这三样只有真 GUI 看得出，挂在 #2 的人工 QA 尾巴上。iOS 分支恒为 `true`，行为逐字未变，不需要验。
-- **状态**: 待办（等一次 Mac GUI QA 确认无退化后可关）。
+- **⚠️ 人工 QA 尾巴（本条未验证，合 main 时明确挂账）**: 机长要求「改完确认文本选择没退化」，但这只有真开 Mac 窗口用鼠标划才验得了，编译绿证明不了。按纪律 worker 不自主起图形程序验证，已在群里 @human 等批准，**在此之前本条只有编译绿这一道保护**。
+  具体要人验这四项（macOS，跑一版含本改动的构建）：
+  1. 鼠标在一条气泡上划选正文 → 能选中；⌘C → 剪贴板拿到选中的那段（不是整条）。
+  2. 代码块内划选 + 复制同样可用（`ChatCodeBlock` 那处也换成了按需挂载）。
+  3. 按住鼠标从气泡内拖到气泡**外面**继续划 —— 选中不应中途被拆（归属接力刻意不在 hover-exit 时交还，就是为了这个）。
+  4. 指针在多条气泡间快速来回移动 → 不应看到闪烁或选中态跳变。
+  iOS 分支恒为 `true`，行为逐字未变，**不需要验**。
+- **状态**: 待办（① 上面四项人工 QA 未做；② 量级未实测。两项都清掉才可关）。
 
 ### 🟢 会话消息列表一次全量塞进视图树，没有渲染窗口
 - **发现**: 2026-08-19 · 同上（对照 PendingCrew 的 `CrewChatWindow`）
