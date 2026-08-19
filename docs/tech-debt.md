@@ -1167,3 +1167,29 @@
 - **影响**: 方向是「多给钱」而不是「锁死用户」，且 WalletDO 的稀疏对账（alarm → `applyAbsolute`）最终会把余额拉回 Polar 的绝对值，所以是 🟡 不是 🔴。与本次「充值不生效」无关（那条是键不一致，方向相反）。
 - **建议**: 让入账走绝对值而非增量 —— 入账后直接 `wallet.applyAbsolute(env, subjectId, polarBalance)`（Polar customer.state_changed 已经是这个形态），或在 DO 内给 credit 带上与 `ensureInit` 同一批次的版本号做去重。
 - **状态**: 待办（刻意不在 `fix/wallet-subject-key` 里动 —— 那个分支是解封用户的路径，混进无关的钱路改动会放大回滚风险）。
+
+## 2026-08-19 会话列表读投影排查（Mac 端一直画 17 小时前的旧数据）
+
+### 🔴 边缘会话列表投影只剩一条喂养通道 — `conversations` 从未接线、`user_unread_counts` 已被删
+- **发现**: 2026-08-19 · `fix/macos-conv-list-refresh`（用户实际看到错误界面，不是理论风险）
+- **位置**: `apps/edge/src/lib/projection-writethrough.ts`（`ProjectionTable` 声明 4 张表）、`supabase/migrations/20260516073714_realtime_webhooks.sql`（建触发器）、`supabase/migrations/20260529043410_message_sequence_read_receipts.sql:165`（删掉 `user_unread_counts` 上那条）、消费端 `apps/pendingbot/Sources/Networking/ConversationFetch.swift`
+- **问题**: `UserProjectionDO`（会话列表 + 未读的边缘投影）设计上由 4 张表的 Database Webhook 喂养。线上实际接线（`pg_trigger` 实查）只有 **`messages` + `conversation_participants`** 两条：
+  - **`conversations` 的触发器从未创建过**。20260516073714 建的是 messages / bot_lookbacks / group_continue_requests / conversation_participants / user_unread_counts / scroll_runs 六张，**不含 `conversations`**；2026-06-07 的读投影方案（`projectConversation`）把它写进了 `ProjectionTable`，但没有配套迁移补触发器。→ 会话的 **title / bot_id / conversation_type / updated_at 永远进不了投影**。
+  - **`user_unread_counts` 的触发器在 20260529043410 被显式 DROP**（注释：「Edge now publishes user-level state after message writes」）。那是 5-29，早于 6-07 的读投影方案；`projectUnread` 因此**从落地那天起就是死代码**，边缘也没有任何其他地方调 `/ingest-unread`。→ **last_message_preview / unread_count 永远进不了投影**。
+- **后果（用户可见）**: 新建会话时 `conversation_participants` 的写穿只建一个**占位行**（`projectParticipant` 里 `type:'unknown'`，注释写着「等 conversations webhook 随后补全」）。补全永远不来，于是这行**永久**停在空壳态，客户端列表读到「新对话 / 还没有消息 / 名字胶囊 `—`（琥珀色，因为 bot_id 空 → 认不出这是 private bot）/ 时间停在加入会话那一刻」，点进去会话头部读「未命名」。**三端同病**（iOS / iPad / macOS 走同一条 `ConversationFetch.list()`），重启 App 与换新客户端都无效。DO 冷启动的 `backfill()` 只从 Supabase 整批读一次，所以**投影建立之前就存在的老会话看起来正常**，只有之后新建/变更的会话烂掉 —— 这正是「只有最新那条会话不对」这种迷惑现象的来源。
+- **实证**: 线上 `pg_trigger` 直查（触发器清单）；`notify_realtime()` 函数体确认 webhook 目标是 `/v1/realtime-internal/notify`；用户 2026-08-19 截图与库中真值（title=「打招呼」、bot=Cricklewood、11 条消息、updated_at 刚刚）逐字段对得上占位行的四个空。
+- **建议**（需产品/架构拍板，两条路互斥）: ① 补一条迁移把 `conversations` 的 `realtime_notify` 建上、并把 `user_unread_counts` 那条恢复 —— 最快，但等于回退 5-29 那个「减少 per-recipient 扇出」的决定；② 按 5-29 的原意，让边缘在写消息 / 读回执之后**自己**调 `/ingest-conversation` + `/ingest-unread`（写穿点已在 `bot-reply` / 消息路由里），DB 触发器保持删除 —— 与既有意图一致，工作量大些。**不要只做客户端兜底**：那只是不画错，投影仍然是空的，读卸载等于白做。
+- **状态**: 待办（真因已定位，修法待拍板）。客户端侧的 fail-loud 兜底已在 `fix/macos-conv-list-refresh` 落地（见下条）。
+
+### 🟡 客户端对边缘投影**照单全收**，把一次投影缺口放大成永久错误显示
+- **发现**: 2026-08-19 · 同上
+- **位置**: `apps/pendingbot/Sources/Networking/ConversationFetch.swift:list()`
+- **问题**: edge-first 读只有两道闸——请求抛错、以及「全量返回空」——才回落 Supabase 正典查询。**返回了行、但行本身是半成品**这一档没有任何识别，于是投影的空壳行被原样画进界面，而且刷新多少次都一样。read-offload 的「iron rule」写的是「命中不到就留空,下次刷新补」，但当喂养通道本身断了，**「下次刷新」永远不会补**，这条 iron rule 在断链场景下就是静默画错。
+- **状态**: ✅ **已修 2026-08-19**（`fix/macos-conv-list-refresh`）—— 认投影自己的占位标记 `type == "unknown"`：出现即判定投影不完整，`log.warning` fail-loud 后回落 Supabase 正典查询。副作用是上面那条 🔴 修好之前，会话列表实质上不再走边缘读卸载（正确性优先于那次 round-trip）。
+
+### 🟡 `conversations.round_count` 跟不上真实消息数，会让自动起标题失灵
+- **发现**: 2026-08-19 · 机长在排查上述显示 bug 时顺带查到（本分支不修）
+- **位置**: `pendingbot.conversations.round_count` 的维护路径；消费方 `apps/edge` 的 title-runner 触发条件（`rc === 1 || rc % 3 === 0`）
+- **问题**: 线上有多条老会话 `round_count = 0` 但实际有 8~9 条消息（Lorem / Sit / Amet 那几只）。round_count 明显没跟上消息数。
+- **影响**: 它是 title-runner 的**唯一触发依据**，失准 → 自动改名在这些会话上永不触发（`0 % 3 === 0` 虽然为真，但计数不再前进就不会有下一次触发边沿）。与本次显示 bug 无关。
+- **状态**: 待办（刻意不在本分支修 —— 与会话列表投影是两条独立链路）。

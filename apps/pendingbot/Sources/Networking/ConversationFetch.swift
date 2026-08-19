@@ -112,13 +112,30 @@ enum ConversationFetch {
         // behaviour; the app never regresses on an edge hiccup.
         do {
             let edge = try await APIClient().fetchConversationsFromEdge()
-            let mapped = await EdgeReadSource.mapConversationRows(edge.rows)
-            if !mapped.isEmpty {
-                return mapped
+            // 占位行闸(fail-loud)。`type == "unknown"` 是投影自己的最小行标
+            // 记:`conversation_participants` 的写穿在成员加入时先建一行只有
+            // conv_id + 加入时间的空壳,标题 / bot_id / 预览全空,等
+            // `conversations` 行的写穿随后补全(见 edge 的
+            // lib/projection-writethrough.ts `projectParticipant`)。补全没到
+            // 时这行会**永久**停在空壳态,而客户端若照单全收,就把一次投影
+            // 缺口放大成永久错误显示 —— 列表读「新对话 / 还没有消息 / 名字
+            // 胶囊 —」、会话头部读「未命名」,且刷新多少次都不会变
+            // (2026-08-19 线上就是这个状态:`conversations` 的 webhook 触发器
+            // 从未建过,`user_unread_counts` 的在 20260529043410 被删)。
+            // 空壳行 = 投影不完整,与下面"可疑空全量"同一语义:回落 Supabase
+            // 正典查询取权威值,宁可多一次round-trip 也不画错。
+            let placeholders = edge.rows.filter { $0.type == "unknown" }.count
+            if placeholders > 0 {
+                log.warning("edge conversations projection returned \(placeholders, privacy: .public) placeholder row(s) of \(edge.rows.count, privacy: .public) — falling back to Supabase")
+            } else {
+                let mapped = await EdgeReadSource.mapConversationRows(edge.rows)
+                if !mapped.isEmpty {
+                    return mapped
+                }
+                // Empty full fetch is suspicious (a logged-in user normally has
+                // at least one conv); fall back to Supabase to confirm rather
+                // than paint a blank list on a cold/partial projection.
             }
-            // Empty full fetch is suspicious (a logged-in user normally has at
-            // least one conv); fall back to Supabase to confirm rather than
-            // paint a blank list on a cold/partial projection.
         } catch {
             log.warning("edge conversations fetch failed, falling back to Supabase: \(error.localizedDescription, privacy: .public)")
         }
