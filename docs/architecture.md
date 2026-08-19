@@ -591,14 +591,162 @@ KV 无 TTL 是唯一缓冲。而 `LANGFUSE_WEBHOOK_SECRET` 线上没设，webhoo
   （宁可漏计费也不误锁用户），代价是 WalletDO 挂掉时消费无上限。
 
 > **余额不足返回 402 `{error:'insufficient_balance', balance_credits, min_threshold}`
-> —— 又一处不走统一信封的地方。** 这直接导致客户端只能做子串匹配（见 §8）。
+> —— 又一处不走统一信封的地方。** 这直接导致客户端只能做子串匹配（见 §9）。
 
 用量落 `pendingbot.audit_log`（一行 = 一个逻辑回合，`auditId = turnId`，兼作幂等键）
 + 子表 `audit_web_tool_calls`。真账本是 `pnc_ledger`。
 
 ---
 
-## 8. 客户端 ↔ 边缘的契约：最脆的一环
+## 8. Bot 的构成：配置 / 人格 / 记忆
+
+### 8.1 反直觉的前提：`bots` 表里没有人格字段
+
+线上 `pendingbot.bots` 的全部列就这些：
+`id / slug / display_name / model_id / output_mode / is_active / config / created_at /
+updated_at / creator_id / visibility / voice_call_enabled / model_provider / tz /
+responsible_subject_id`。
+
+**没有 persona、没有 system_prompt、没有任何设定文本。** 唯一的自由字段 `config` jsonb
+线上几乎是空的（20 只 bot 里只有 2 只有内容，且只是 `modelPool`）。
+
+所以：**bot 的"我是谁"不是作者写死的，是从记忆里长出来的。**
+这是这个产品最关键的一个设计选择，理解 bot 的一切都要从这里出发。
+
+配置面真正可调的只有：叫什么、用哪个模型（`model_id` + `model_provider`）、
+输出是分气泡还是整段（`output_mode`）、时区、公有还是私有、开不开语音、谁付钱。
+
+### 8.2 人格 = 一次提示词拼装
+
+`llm/builder.ts` 把提示词拼成**两段**，分界线是缓存断点。
+
+**稳定人格前缀**（`buildStablePersona`，`llm/builder.ts:557-600`），按这个顺序：
+
+| 顺序 | 段落 | 来源 |
+|---|---|---|
+| 1 | 平台提示词 | Langfuse（按场景取 `system` / `voice` / `group-voice`）|
+| 2 | 你的名字 | `bots.display_name` —— 注释写明"是事实不是人格，放在靠前让它能回答'你叫什么'而不用现编" |
+| 3 | 时区 | `bots.tz` |
+| 4 | 输出模式指令 | Langfuse `output-mode-bubble` / `-single`；**语音场景整段丢掉**（语音没有分气泡的概念）|
+| 5 | ① 我怎么看我自己 | Honcho 表征（无记忆时回落 Langfuse `identity-quest`）|
+| 6 | ② 我怎么读这个人 | Honcho 表征（**仅 1v1**）|
+| 7 | ④ 这个人眼中的我 | Honcho 表征（**仅 1v1**）|
+| 8 | 社交图谱技能 | Langfuse `bot-social-graph`（常开）|
+| 9 | 订阅的技能 | `skills` × `skill_subscriptions` |
+| 10 | 我对这个用户的私人笔记 | bot 自己写的（见 8.3）|
+| 11 | 我跟 ta 的对话备忘 | bot 自己写的（见 8.3）|
+
+**每回合都变的易变段**（`buildVolatileContext`，`llm/builder.ts:605-622`）：
+附件清单、上一轮查证笔记、社交圈统计、待回传的 `ask_friend` 答复、进行中的转问。
+
+**为什么要分两段**：稳定段放在缓存断点**之前**（Anthropic 的缓存断点每 4 轮滑动一次，
+`llm/builder.ts:141-165`），易变段挂在当轮 user turn 上 —— 这样每回合的变化不会冲掉
+人格部分的提示词缓存。这是省钱也省延迟的设计，不是随手排的顺序。
+
+### 8.3 记忆：七样东西，各有各的写入方和生命周期
+
+```mermaid
+flowchart TB
+    subgraph 塞进提示词的["塞进提示词的（bot 被动拿到）"]
+        direction TB
+        M1["① 四份心智理论表征<br/>Honcho 生成 · 边缘 KV 缓存"]
+        M2["② bot 写给自己的私人笔记<br/>每个用户一份"]
+        M3["③ 对话备忘<br/>每个会话一份"]
+        M4["④ 上一轮的查证笔记<br/>一次性，用完自己扔"]
+        M5["⑤ 社交圈快照<br/>每回合现算"]
+        M6["⑥ 附件清单<br/>图片摘要 + 文件列表"]
+    end
+    subgraph 按需查的["⑦ 按需回忆（bot 主动调工具）"]
+        T1["search_chat_history<br/>按关键词/时间段回查本会话原文"]
+        T2["query_user_memory<br/>直接问 Honcho"]
+    end
+    M1 -.稳定段.-> P["系统提示词"]
+    M2 -.稳定段.-> P
+    M3 -.稳定段.-> P
+    M4 -.易变段.-> P
+    M5 -.易变段.-> P
+    M6 -.易变段.-> P
+    T1 --> R["agent 循环里现取"]
+    T2 --> R
+```
+
+#### ① 四份"心智理论"表征（不是一份）
+
+Honcho 按 **观察者 × 被观察者** 给出四份，各自一个 KV 命名空间
+（`lib/memory.ts:15-35`，键名即出处）：
+
+| 键 | 是什么 | 作用域 | 注入时机 |
+|---|---|---|---|
+| `bot:<botId>` | ① bot 的**全局自我模型** | 跨所有用户 = bot 的身份 | 总是 |
+| `botview:<botId>:<userId>` | ② bot 对这个人的**局部**模型 | 这一对专属，跨双方所有会话汇聚 | 仅 1v1 |
+| `user:<userId>` | ③ 用户的全局自我模型 | 透明度 UI + 自聊 | — |
+| `userview:<userId>:<botId>` | ④ 这个人眼中的 bot | 这一对专属 | 仅 1v1 |
+
+**①和④会分歧，而那个落差正是设计意图**（`lib/memory.ts:27-29` 的注释原话：
+"lets the bot see itself through the user's eyes, which can diverge from its own self-image"）。
+
+②④ 只在常规 1v1 注入 —— 群里没有单一的"你"，自聊时 bot ≡ user。
+**全新 bot 没有 ① 时，回落 Langfuse 的 `identity-quest` 提示词**，让它自己去探索"我是谁"
+（`llm/builder.ts:179-187`）。
+
+每份的结构是 `Memory{ card, representation, syncedAt, lastCoveredMessageId }`，
+进提示词的是 `representation`。
+
+#### ② bot 写给自己的私人笔记（每个用户一份）
+
+存在 `skills` 表（`bot_id` + `user_id` 定位），KV 缓存 1 小时。
+生成方式：**bot 用自己的模型**拉本会话最近 30 条非 log 消息 + 上一版笔记，
+写出新一版 —— 提示词原文写着"不是日记、不是总结，是「下次跟 ta 互动我自己要记得什么」…
+对方永远看不到这份笔记。语气放松，写给自己看"，600 字以内
+（`lib/memory.ts:237-300`，`taskType: 'bot_note'`）。
+
+#### ③ 对话备忘 chat-memo（每个会话一份）
+
+同样存 `skills` 表（`bot_id` + `conversation_id`，`user_id` 为 null）。
+拉最近 40 条 + 上一版，记两样：**哪个时间段大概聊了什么** + **印象深刻的原文摘录（带时间）**，
+约 2KB。定位写得很清楚：**给"未来的自己"做索引**，配合 `search_chat_history` 工具回查原文，
+所以备忘本身"做索引和点睛就行，不必逐字"。接近上限时提示词要求它自己压缩更早的时间段、
+删掉重复摘录、合并相邻话题（`lib/memory.ts:380-440`）。
+
+#### ④ 上一轮的查证笔记（lookback）
+
+`bot_lookbacks` 表（`conversation_id` + `bot_id` + `body_md` + `active`）。
+上一轮自己查证的结论带在身上，注入时附一条规则：
+**用完了就在回复末尾写 `[DROP_LOOKBACK]`**，系统替它抹掉这一行并把该笔记退役
+（`llm/builder.ts:417-430`）。这是少见的"让模型自己管理自己记忆生命周期"的设计。
+
+#### ⑤ 社交圈快照 / ⑥ 附件清单
+
+社交圈每回合现算：几个人类好友、在几个群、最近几个名字、自己公有还是私有
+（公有才有 `ask_friend` 工具）。附件清单是历史图片的摘要+标签、文件列表，
+带 8 位短 ID 供模型调 `read_attachment` 取详情。
+
+#### ⑦ 两个"按需回忆"的工具
+
+前六样是**塞给它的**，这两样是**它自己去查的**：
+
+- `search_chat_history` —— 按关键词或时间段回查**当前这个会话**的原文
+- `query_user_memory` —— 直接问 Honcho。查的是 **bot 对 user 的局部表征**
+  （`botPeer.chat(query, {target: userPeer})`），不是 user 的全局表征 —— 把答案锁在这一对里。
+  **群聊里额外加 session scope**，防止把 1v1 私聊内容泄进群（`lib/honcho.ts:64-68`）。
+
+### 8.4 三个值得记住的机制
+
+**刷新是懒的，不是每轮刷。** 只在客户端本地上下文窗口**要滑过**某些消息时才触发 ——
+也就是"这些话再不记就没人看见了"的那一刻（客户端传 `oldestContextMessageId` 作水位）。
+且跑在 `waitUntil` 里，**热路径从不阻塞 Honcho**（`lib/memory.ts:36` 注释原话）。
+失败全部吞掉、保留旧值，下次同区间重试。
+
+**撤回的消息被明确排除。** 三处生成记忆的地方都带 `.neq('status','deleted')` ——
+用户撤回了，模型就必须忘掉（`lib/memory.ts:133-135`、`:262`、`:402`）。
+
+**缓存分三层 TTL**：Honcho 表征无 TTL（靠懒刷新覆盖）、私记与备忘 1 小时、
+订阅技能 5 分钟（因为技能订阅是 iOS 直连数据库改的，worker 没有写入钩子，
+只能靠短 TTL 兜住陈旧度，`lib/persona-cache.ts:21-28`）。
+
+---
+
+## 9. 客户端 ↔ 边缘的契约：最脆的一环
 
 统一错误信封 `{error:{code, message?, detail?}}` 是**约定**，但有三处破口，
 且它们恰好覆盖了最常见的失败：
@@ -626,7 +774,7 @@ if rawText.contains("insufficient_balance") { showInsufficientBalance = true }
 
 ---
 
-## 9. 外部服务依赖
+## 10. 外部服务依赖
 
 本 crew 的 21-5 已经做过一份 26 家服务的逐家取证盘点（证据来源：代码 + `wrangler secret/kv/r2/queues/containers/deployments list` + 线上 Supabase 只读 SQL + 公开端点实测），
 明细在 `docs/progress.md` 顶部与 `docs/state/shared.md`。这里只把它接进架构：
@@ -666,12 +814,12 @@ flowchart LR
 
 ---
 
-## 10. 边界在哪
+## 11. 边界在哪
 
 | 边界 | 谁负责 | 越界的代价 |
 |---|---|---|
 | **客户端 ↔ Postgres 直连** | RLS 是唯一防线 | RLS 写错 = 直接数据泄漏。目前 80/80 开、17 张直读表核过没敞口 |
-| **客户端 ↔ 边缘** | 类型化错误信封 + JWT | 信封破口已致客户端做子串匹配（§8）|
+| **客户端 ↔ 边缘** | 类型化错误信封 + JWT | 信封破口已致客户端做子串匹配（§9）|
 | **边缘 ↔ Postgres** | 边缘手工复刻 RLS（`route-authz.ts` + 投影授权门）| 无测试守护，DB 改策略边缘不会知道（§2.3）|
 | **DB 正典 ↔ 边缘投影** | DB 触发器写正典，边缘 DO 是读缓存 | 混淆两者会得出"会话列表归边缘"的错误结论（§6）|
 | **仓库 ↔ 线上** | 迁移账本 + wrangler 配置 | 已经漂了：4 条迁移、schema.ts、secrets、feature flags（§2.1、§2.2）|
@@ -679,7 +827,7 @@ flowchart LR
 
 ---
 
-## 11. 结构性风险清单（架构视角）
+## 12. 结构性风险清单（架构视角）
 
 `docs/tech-debt.md` 已有完整条目，这里只按架构面归类、指出哪些是**同一个病根的不同症状**。
 
@@ -730,12 +878,12 @@ flowchart LR
   同一秒的标题级联走 OpenRouter 腿（自报成本）就有值。
 
 **即：现在走原生 provider 腿的对话，是在计费开着的情况下一分钱扣不到。**
-修法是给生产设 `CF_AIG_TOKEN`（AI Gateway Logs 读权限）—— 但**在设它之前，先把 §11-D 那条
+修法是给生产设 `CF_AIG_TOKEN`（AI Gateway Logs 读权限）—— 但**在设它之前，先把 §12-D 那条
 "只扫 100 条日志"的规模坑一起看**，否则量一上来又会变成队列反复重试。
 
 ---
 
-## 12. 本次发现的文档漂移（该修的）
+## 13. 本次发现的文档漂移（该修的）
 
 | 文档 | 问题 |
 |---|---|
@@ -751,7 +899,7 @@ flowchart LR
 
 ---
 
-## 13. 这份文档是怎么得出来的
+## 14. 这份文档是怎么得出来的
 
 四个只读 worker 并行摸客户端 / 边缘 / 数据库 / 对话链路，各自产出带 `文件:行` 出处的笔记，
 由机长汇总并**裁定冲突**。全程只读：没有改任何代码、没有写数据库（只跑 SELECT）、没有部署。
@@ -764,7 +912,7 @@ flowchart LR
    **数据库面正确**（§6）。
 2. **计费开关到底开没开** —— 三份笔记都读 `wrangler.jsonc` 说"关"。
    裁定：读 `feature-flags.ts` 确认语义是 KV override 优先，再实读线上 KV
-   `cfg:feature-flags` = `{"langfuse":true,"billing":true}`。**三份笔记都错，计费是开着的**（§11）。
+   `cfg:feature-flags` = `{"langfuse":true,"billing":true}`。**三份笔记都错，计费是开着的**（§12）。
 3. **迁移账本差额** —— 数据库面报"线上 212 / 本地 208"。
    裁定：机长独立跑双向 `comm` 对账复核，结论一致（§2.1）。
 
