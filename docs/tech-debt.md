@@ -1179,7 +1179,13 @@
 - **后果（用户可见）**: 新建会话时 `conversation_participants` 的写穿只建一个**占位行**（`projectParticipant` 里 `type:'unknown'`，注释写着「等 conversations webhook 随后补全」）。补全永远不来，于是这行**永久**停在空壳态，客户端列表读到「新对话 / 还没有消息 / 名字胶囊 `—`（琥珀色，因为 bot_id 空 → 认不出这是 private bot）/ 时间停在加入会话那一刻」，点进去会话头部读「未命名」。**三端同病**（iOS / iPad / macOS 走同一条 `ConversationFetch.list()`），重启 App 与换新客户端都无效。DO 冷启动的 `backfill()` 只从 Supabase 整批读一次，所以**投影建立之前就存在的老会话看起来正常**，只有之后新建/变更的会话烂掉 —— 这正是「只有最新那条会话不对」这种迷惑现象的来源。
 - **实证**: 线上 `pg_trigger` 直查（触发器清单）；`notify_realtime()` 函数体确认 webhook 目标是 `/v1/realtime-internal/notify`；用户 2026-08-19 截图与库中真值（title=「打招呼」、bot=Cricklewood、11 条消息、updated_at 刚刚）逐字段对得上占位行的四个空。
 - **建议**（需产品/架构拍板，两条路互斥）: ① 补一条迁移把 `conversations` 的 `realtime_notify` 建上、并把 `user_unread_counts` 那条恢复 —— 最快，但等于回退 5-29 那个「减少 per-recipient 扇出」的决定；② 按 5-29 的原意，让边缘在写消息 / 读回执之后**自己**调 `/ingest-conversation` + `/ingest-unread`（写穿点已在 `bot-reply` / 消息路由里），DB 触发器保持删除 —— 与既有意图一致，工作量大些。**不要只做客户端兜底**：那只是不画错，投影仍然是空的，读卸载等于白做。
-- **状态**: 待办（真因已定位，修法待拍板）。客户端侧的 fail-loud 兜底已在 `fix/macos-conv-list-refresh` 落地（见下条）。
+- **状态**: ✅ **已修 2026-08-19**（`fix/edge-projection-writethrough`）—— 走的是**方案 ②**（边缘自推，不补触发器；机长明确拍板不回退 5-29 那个成本决定）。落地内容：
+  - `projectParticipant` **不再写 `type:'unknown'` 占位行**。加入会话时自己 service-role 补读一次 `conversations` 行，落一条完整的列表行；读不到就**什么都不写**并打 `[projection][write-through-failed]`。「一个永远等不到补全的占位行，比没有这一行更糟」——它会让读方以为数据已经有了。
+  - 新增三个边缘自推入口（`lib/projection-writethrough.ts`）：`syncConversationProjection`（完整重同步）、`patchConversationProjection`（局部推进，**缺行时自动回落完整 sync**，所以任何路径都补不出半成品）、`projectUnreadRow`（未读 + 预览 + 最后活跃时间）。
+  - 接线三处：`unread-state.notifyConversationUnreadState`（这正是 5-29 撤触发器时承诺的「改由边缘自己发」，一直没接上的那一半）、`title-runner`（标题写完自己推）、`routes/messages.ts` 两处轮次收尾（`round_count` / `updated_at`；新会话第一轮那处顺带承担补齐）。
+  - `UserProjectionDO.ingestConversation` 改成「缺省即保留」的合并写入 —— 旧实现无条件覆盖 `last_msg_preview`，任何一次会话级写穿都会把列表预览清空；`updated_at` 改为取 max，避免两个喂养源乱序到达让「最后活跃」倒流。
+  - **写投影失败不再静默**：DO RPC 现在检查 `res.ok`，所有失败统一打 `[projection][write-through-failed]`（可 grep / 可挂告警）。这个 bug 能活两个多月，正是因为通道断了从来没有人喊过一声。
+  - **验证**：`bun --filter='@pendingbot/edge' run typecheck` 绿；`vitest run` 78 文件 / 672 用例全绿，其中新增 `tests/projection-writethrough.test.ts`（10 例）+ `tests/title-projection.test.ts`（runTitle 端到端 → 投影里就是新标题），用真 DO（node:sqlite 背 `storage.sql`）跑完整写穿链路。**尚未部署验真**（部署另议）。
 
 ### 🟡 客户端对边缘投影**照单全收**，把一次投影缺口放大成永久错误显示
 - **发现**: 2026-08-19 · 同上
@@ -1187,6 +1193,7 @@
 - **问题**: edge-first 读只有两道闸——请求抛错、以及「全量返回空」——才回落 Supabase 正典查询。**返回了行、但行本身是半成品**这一档没有任何识别，于是投影的空壳行被原样画进界面，而且刷新多少次都一样。read-offload 的「iron rule」写的是「命中不到就留空,下次刷新补」，但当喂养通道本身断了，**「下次刷新」永远不会补**，这条 iron rule 在断链场景下就是静默画错。
 - **状态**: ⚠️ **已加临时闸，不等于已修好**（`fix/macos-conv-list-refresh`，2026-08-19）—— 认投影自己写下的占位标记 `type == "unknown"`（不用「标题空就回落」这类启发式，那会误伤真·还没起名的会话），**按行**判定：占位行走 `supabaseList(ids:)` 用正典查询补齐，其余行照常吃投影，合并后按 `updated_at desc / id asc` 重排回服务端序；补齐失败（网络 / RLS / `!inner` 滤掉无未读行的会话）时保留投影那份空壳，宁可画得难看也不让会话整条消失，两种情况都 `log.warning` fail-loud。
   **这道闸只是让症状不可见** —— 投影里那些行仍然是错的，喂养通道仍然是断的。根治在上面那条 🔴（边缘侧另开的 session 做「写消息 / 改标题时自己更新投影」）。**上面那条关掉之前，本条不算完成。**
+- **闸留不留（2026-08-19 · `fix/edge-projection-writethrough` 回填）**: **保留**，作为纵深防御。上面那条 🔴 已根治 —— 边缘不再产生 `unknown` 占位行，所以这道闸**在正常路径上不会再触发**：既然没有占位行，就没有行走 `supabaseList(ids:)` 补齐，边缘读卸载完整恢复（按行回落这个设计本来也只对占位行收费，现在收费为零）。它从此只在「投影喂养又断了」时充当最后一道 fail-loud 提示；哪天日志里再出现这条 warning，应当当告警看，而不是当正常回落。
 
 ### 🟡 `conversations.round_count` 跟不上真实消息数，会让自动起标题失灵
 - **发现**: 2026-08-19 · 机长在排查上述显示 bug 时顺带查到（本分支不修）
