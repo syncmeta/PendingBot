@@ -614,6 +614,16 @@ export class ConvProjectionDO {
         await this.ensureBackfilled();
         return Response.json({ roster: this.getRoster() });
       }
+      case '/members': {
+        // 投影写穿用:一次拿到 roster + owner —— 会话级变更(标题/轮次/时间戳)
+        // 要扇到"能看见这个会话的每个人",owner 单独算一份(单 owner 会话的
+        // roster 可能只有他自己,也可能为空)。冷启动先回填,否则会漏扇。
+        await this.ensureBackfilled();
+        return Response.json({
+          roster: this.getRoster(),
+          ownerUserId: this.getMeta().owner_user_id || null,
+        });
+      }
       case '/meta': {
         return Response.json({ meta: this.getMeta() });
       }

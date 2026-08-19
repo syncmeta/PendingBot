@@ -50,6 +50,28 @@ export interface IngestConversationInput {
   unread?: number;
 }
 
+/**
+ * patchConversation 的入参 —— 只盖给出的列,其余保留。`conv_id` 由参数带,
+ * `type`/`updated_at` 可省(省则沿用行里现值)。
+ */
+export type ConversationPatch = Partial<Omit<IngestConversationInput, 'conv_id'>>;
+
+/**
+ * 列表排序键的单调合并:取两者中较晚的一个。
+ *
+ * 两个喂养源的时间戳格式不同(Postgres 的 `+00:00` vs 边缘 `toISOString()` 的
+ * `Z`),所以按 Date.parse 的毫秒值比,不按字符串比。任一侧不可解析时以另一侧
+ * 为准;都不可解析则取新值(至少别把行卡死在旧值上)。
+ */
+function maxTimestamp(current: string | null, incoming: string): string {
+  if (!current) return incoming;
+  const a = Date.parse(current);
+  const b = Date.parse(incoming);
+  if (!Number.isFinite(b)) return current;
+  if (!Number.isFinite(a)) return incoming;
+  return b >= a ? incoming : current;
+}
+
 /** meta 表已知键的 patch 形状。未列出的键也允许(自由 KV)。 */
 export interface UserMetaPatch {
   backfilled?: boolean;
@@ -153,106 +175,130 @@ export class UserProjectionDO {
 
   /**
    * 幂等 upsert 一条会话列表行(按 conv_id)。每次写 ++cur_rev 并盖到该行 rev。
-   * unread 未传时保留原值(只更新元数据/预览的场景);新行默认 0。
    *
-   * 标量会话列(bot_id/user_id/feature/round_count/title)用 COALESCE(excluded,
-   * 现值)保留:participant-join 先建最小行(只带 conv_id/type/updated_at),
-   * conversations webhook 随后补全这些列。COALESCE 防 webhook 乱序时最小行的
-   * NULL 把已补全的标量列冲掉(只在 incoming 为非 NULL 时覆盖)。
+   * 合并语义(**缺省 = 保留**,统一在 JS 里做,不再靠 SQL 的 COALESCE):
+   * - 标量会话列(bot_id/user_id/feature/round_count/title)缺省 → 保留现值。
+   *   写穿点可能只带一部分列(例如起标题只带 title),不该把别的列冲成 NULL。
+   * - `last_msg_preview` 缺省 → **保留**现值。旧实现这里是无条件覆盖,导致
+   *   任何一次 conversations 级写穿(不带预览)都会把列表预览清空。
+   * - `unread` 缺省 → 保留现值;新行默认 0。
+   * - `updated_at` 单调不回退(取 max)。列表排序键既被会话行(conversations.
+   *   updated_at)喂,也被消息路径(last_message_at)喂,乱序到达不该让时间倒流。
+   * - `type` 空串/缺省 → 保留现值(投影不再接受占位类型,见
+   *   lib/projection-writethrough.ts 的 syncConversationProjection)。
    */
   ingestConversation(row: IngestConversationInput): void {
+    const existing = this.readRow(row.conv_id);
     const rev = this.bumpRev();
-    const botId = row.bot_id ?? null;
-    const userId = row.user_id ?? null;
-    const feature = row.feature ?? null;
-    const roundCount = row.round_count == null ? null : Math.trunc(row.round_count);
-    const title = row.title ?? null;
-    if (row.unread === undefined) {
-      // 不带 unread:upsert 时保留已存在行的 unread,新行用 0。
-      this.state.storage.sql.exec(
-        `INSERT INTO conversations
-           (conv_id, type, bot_id, user_id, feature, round_count,
-            title, last_msg_preview, updated_at, unread, rev)
-         VALUES (?,?,?,?,?,?,?,?,?,0,?)
-         ON CONFLICT(conv_id) DO UPDATE SET
-           type = excluded.type,
-           bot_id = COALESCE(excluded.bot_id, conversations.bot_id),
-           user_id = COALESCE(excluded.user_id, conversations.user_id),
-           feature = COALESCE(excluded.feature, conversations.feature),
-           round_count = COALESCE(excluded.round_count, conversations.round_count),
-           title = COALESCE(excluded.title, conversations.title),
-           last_msg_preview = excluded.last_msg_preview,
-           updated_at = excluded.updated_at,
-           rev = excluded.rev`,
-        row.conv_id,
-        row.type,
-        botId,
-        userId,
-        feature,
-        roundCount,
-        title,
-        row.last_msg_preview ?? null,
-        row.updated_at,
-        rev,
-      );
-    } else {
-      this.state.storage.sql.exec(
-        `INSERT INTO conversations
-           (conv_id, type, bot_id, user_id, feature, round_count,
-            title, last_msg_preview, updated_at, unread, rev)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?)
-         ON CONFLICT(conv_id) DO UPDATE SET
-           type = excluded.type,
-           bot_id = COALESCE(excluded.bot_id, conversations.bot_id),
-           user_id = COALESCE(excluded.user_id, conversations.user_id),
-           feature = COALESCE(excluded.feature, conversations.feature),
-           round_count = COALESCE(excluded.round_count, conversations.round_count),
-           title = COALESCE(excluded.title, conversations.title),
-           last_msg_preview = excluded.last_msg_preview,
-           updated_at = excluded.updated_at,
-           unread = excluded.unread,
-           rev = excluded.rev`,
-        row.conv_id,
-        row.type,
-        botId,
-        userId,
-        feature,
-        roundCount,
-        title,
-        row.last_msg_preview ?? null,
-        row.updated_at,
-        Math.max(0, Math.trunc(row.unread)),
-        rev,
-      );
-    }
+
+    const type = row.type && row.type.length > 0 ? row.type : (existing?.type ?? 'unknown');
+    const botId = row.bot_id ?? existing?.bot_id ?? null;
+    const userId = row.user_id ?? existing?.user_id ?? null;
+    const feature = row.feature ?? existing?.feature ?? null;
+    const roundCount =
+      row.round_count == null
+        ? (existing?.round_count ?? null)
+        : Math.trunc(row.round_count);
+    const title = row.title ?? existing?.title ?? null;
+    const preview =
+      row.last_msg_preview === undefined
+        ? (existing?.last_msg_preview ?? null)
+        : row.last_msg_preview;
+    const updatedAt = maxTimestamp(existing?.updated_at ?? null, row.updated_at);
+    const unread =
+      row.unread === undefined
+        ? Number(existing?.unread ?? 0)
+        : Math.max(0, Math.trunc(row.unread));
+
+    this.state.storage.sql.exec(
+      `INSERT INTO conversations
+         (conv_id, type, bot_id, user_id, feature, round_count,
+          title, last_msg_preview, updated_at, unread, rev)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)
+       ON CONFLICT(conv_id) DO UPDATE SET
+         type = excluded.type,
+         bot_id = excluded.bot_id,
+         user_id = excluded.user_id,
+         feature = excluded.feature,
+         round_count = excluded.round_count,
+         title = excluded.title,
+         last_msg_preview = excluded.last_msg_preview,
+         updated_at = excluded.updated_at,
+         unread = excluded.unread,
+         rev = excluded.rev`,
+      row.conv_id,
+      type,
+      botId,
+      userId,
+      feature,
+      roundCount,
+      title,
+      preview,
+      updatedAt,
+      unread,
+      rev,
+    );
   }
 
   /**
-   * 更新某会话的未读数 + 预览(红点路径)。会话不存在则忽略(列表里没有的
-   * 会话不该凭未读凭空出现 —— 列表行由 ingestConversation 建立)。
+   * 局部更新一条**已存在**的列表行(边缘写穿的热路径:起标题、轮次/时间戳
+   * 推进)。不带 DB 回读,只盖 patch 里给出的列。
+   *
+   * 返回 false = 该会话在本用户投影里不存在。调用方(writethrough)据此回落
+   * 一次完整 sync(读 conversations 行重建),**绝不**凭空造占位行 —— 那正是
+   * 「会话列表永远补不全」的病根。
    */
-  ingestUnread(convId: string, count: number, preview?: string | null): void {
-    const exists = this.state.storage.sql
-      .exec<{ c: number }>('SELECT COUNT(*) AS c FROM conversations WHERE conv_id = ?', convId)
-      .one();
-    if (Number(exists.c) === 0) return;
+  patchConversation(convId: string, patch: ConversationPatch): boolean {
+    const existing = this.readRow(convId);
+    if (!existing) return false;
+    this.ingestConversation({
+      ...patch,
+      conv_id: convId,
+      type: patch.type ?? existing.type,
+      updated_at: patch.updated_at ?? existing.updated_at,
+    });
+    return true;
+  }
+
+  /** 单行读(内部合并用)。 */
+  private readRow(convId: string): ConversationDbRow | null {
+    const row = this.state.storage.sql
+      .exec('SELECT * FROM conversations WHERE conv_id = ?', convId)
+      .toArray()[0] as unknown as ConversationDbRow | undefined;
+    return row ?? null;
+  }
+
+  /**
+   * 更新某会话的未读数 + 预览 + 列表时间戳(红点路径)。
+   *
+   * 会话不存在则**返回 false**(列表里没有的会话不该凭未读凭空出现 —— 列表行
+   * 由 ingestConversation 建立)。调用方据此回落一次完整 sync,而不是造占位行。
+   *
+   * `updatedAt`(= user_unread_counts.last_message_at)让"最后活跃时间"跟着新
+   * 消息走 —— 会话行的 updated_at 通知已在 2026-05-29 被撤,这里是它的替身。
+   */
+  ingestUnread(
+    convId: string,
+    count: number,
+    preview?: string | null,
+    updatedAt?: string | null,
+  ): boolean {
+    const existing = this.readRow(convId);
+    if (!existing) return false;
     const rev = this.bumpRev();
-    if (preview === undefined) {
-      this.state.storage.sql.exec(
-        'UPDATE conversations SET unread = ?, rev = ? WHERE conv_id = ?',
-        Math.max(0, Math.trunc(count)),
-        rev,
-        convId,
-      );
-    } else {
-      this.state.storage.sql.exec(
-        'UPDATE conversations SET unread = ?, last_msg_preview = ?, rev = ? WHERE conv_id = ?',
-        Math.max(0, Math.trunc(count)),
-        preview,
-        rev,
-        convId,
-      );
-    }
+    const nextPreview = preview === undefined ? existing.last_msg_preview : preview;
+    const nextUpdatedAt = updatedAt
+      ? maxTimestamp(existing.updated_at, updatedAt)
+      : existing.updated_at;
+    this.state.storage.sql.exec(
+      'UPDATE conversations SET unread = ?, last_msg_preview = ?, updated_at = ?, rev = ? WHERE conv_id = ?',
+      Math.max(0, Math.trunc(count)),
+      nextPreview,
+      nextUpdatedAt,
+      rev,
+      convId,
+    );
+    return true;
   }
 
   /** 从列表移除一条会话(退群 / 删会话)。整行消失即"移出列表"。 */
@@ -410,12 +456,20 @@ export class UserProjectionDO {
         return Response.json({ ok: true });
       }
       case '/ingest-unread': {
-        this.ingestUnread(
+        const found = this.ingestUnread(
           String(body.convId ?? ''),
           Math.trunc(Number(body.count ?? 0)),
           body.preview === undefined ? undefined : (body.preview as string | null),
+          body.updatedAt === undefined ? undefined : (body.updatedAt as string | null),
         );
-        return Response.json({ ok: true });
+        return Response.json({ ok: true, found });
+      }
+      case '/patch-conversation': {
+        const found = this.patchConversation(
+          String(body.convId ?? ''),
+          (body.patch as ConversationPatch) ?? {},
+        );
+        return Response.json({ ok: true, found });
       }
       case '/remove-conversation': {
         this.removeConversation(String(body.convId ?? ''));
