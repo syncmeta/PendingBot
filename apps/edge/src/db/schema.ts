@@ -2091,36 +2091,54 @@ export type Database = {
       machine: {
         Row: {
           created_at: string
+          crew_index_digest: string | null
           device_id: string | null
           display_name: string
           fly_machine_id: string | null
           id: string
           kind: string
           last_seen_at: string | null
+          remote_control_enabled: boolean
+          resync_alarmed_at: string | null
+          resync_attempts: number
+          resync_last_at: string | null
+          state_digest: string | null
           status: string | null
           subject_id: string
           updated_at: string
         }
         Insert: {
           created_at?: string
+          crew_index_digest?: string | null
           device_id?: string | null
           display_name: string
           fly_machine_id?: string | null
           id?: string
           kind: string
           last_seen_at?: string | null
+          remote_control_enabled?: boolean
+          resync_alarmed_at?: string | null
+          resync_attempts?: number
+          resync_last_at?: string | null
+          state_digest?: string | null
           status?: string | null
           subject_id: string
           updated_at?: string
         }
         Update: {
           created_at?: string
+          crew_index_digest?: string | null
           device_id?: string | null
           display_name?: string
           fly_machine_id?: string | null
           id?: string
           kind?: string
           last_seen_at?: string | null
+          remote_control_enabled?: boolean
+          resync_alarmed_at?: string | null
+          resync_attempts?: number
+          resync_last_at?: string | null
+          state_digest?: string | null
           status?: string | null
           subject_id?: string
           updated_at?: string
@@ -2135,6 +2153,82 @@ export type Database = {
           },
           {
             foreignKeyName: "machine_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      machine_crew_index: {
+        Row: {
+          attention: boolean
+          crew_number: number | null
+          exposure: string
+          has_working_directory: boolean
+          id: string
+          local_crew_id: string
+          local_updated_at: string | null
+          machine_id: string
+          member_count: number
+          parent_local_crew_ids: string[]
+          revoked_at: string | null
+          session_count: number
+          subject_id: string
+          synced_at: string
+          title: string
+        }
+        Insert: {
+          attention?: boolean
+          crew_number?: number | null
+          exposure: string
+          has_working_directory?: boolean
+          id?: string
+          local_crew_id: string
+          local_updated_at?: string | null
+          machine_id: string
+          member_count?: number
+          parent_local_crew_ids?: string[]
+          revoked_at?: string | null
+          session_count?: number
+          subject_id: string
+          synced_at?: string
+          title: string
+        }
+        Update: {
+          attention?: boolean
+          crew_number?: number | null
+          exposure?: string
+          has_working_directory?: boolean
+          id?: string
+          local_crew_id?: string
+          local_updated_at?: string | null
+          machine_id?: string
+          member_count?: number
+          parent_local_crew_ids?: string[]
+          revoked_at?: string | null
+          session_count?: number
+          subject_id?: string
+          synced_at?: string
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "machine_crew_index_machine_id_fkey"
+            columns: ["machine_id"]
+            isOneToOne: false
+            referencedRelation: "machine"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "machine_crew_index_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "bi_subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "machine_crew_index_subject_id_fkey"
             columns: ["subject_id"]
             isOneToOne: false
             referencedRelation: "subjects"
@@ -3084,6 +3178,42 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      short_links: {
+        Row: {
+          click_count: number
+          created_at: string
+          enabled: boolean
+          expires_at: string | null
+          last_clicked_at: string | null
+          note: string | null
+          slug: string
+          target_url: string
+          updated_at: string
+        }
+        Insert: {
+          click_count?: number
+          created_at?: string
+          enabled?: boolean
+          expires_at?: string | null
+          last_clicked_at?: string | null
+          note?: string | null
+          slug: string
+          target_url: string
+          updated_at?: string
+        }
+        Update: {
+          click_count?: number
+          created_at?: string
+          enabled?: boolean
+          expires_at?: string | null
+          last_clicked_at?: string | null
+          note?: string | null
+          slug?: string
+          target_url?: string
+          updated_at?: string
+        }
+        Relationships: []
       }
       skill_subscriptions: {
         Row: {
