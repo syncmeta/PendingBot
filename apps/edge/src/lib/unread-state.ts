@@ -1,4 +1,5 @@
 import { publishToHub } from './realtime-publish';
+import { projectUnreadRow } from './projection-writethrough';
 import { serviceClient } from './supabase';
 import type { Env } from '../types';
 
@@ -33,15 +34,22 @@ export async function notifyConversationUnreadState(
     return;
   }
 
+  // 两件事一起做:
+  //   1. 推实时增量(连着的客户端立刻更红点/预览)
+  //   2. **写穿边缘会话列表投影** —— user_unread_counts 的 realtime_notify
+  //      触发器在 2026-05-29 被撤时,理由写的就是"改由边缘自己发",但边缘这半
+  //      一直没接上,于是列表投影的未读/预览/最后活跃时间永远停在建行那一刻。
+  //      这里就是那条欠了两个多月的通道。
   await Promise.all(
-    (data ?? []).map((row) =>
+    (data ?? []).flatMap((row) => [
       publishToHub(env, `user:${row.user_id}`, {
         type: 'change',
         table: 'user_unread_counts',
         op: 'update',
         record: row as Record<string, unknown>,
       }),
-    ),
+      projectUnreadRow(env, row as Record<string, unknown>),
+    ]),
   );
 }
 

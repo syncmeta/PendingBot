@@ -10,6 +10,7 @@ import {
 import { ensurePromptOverridesLoaded, getPrompt } from '../llm/prompt-loader';
 import { uuidv7 } from './ids';
 import { getModelRole } from './model-roles';
+import { patchConversationProjection } from './projection-writethrough';
 
 // Title runner — auto-generates a short conversation name by summarizing
 // the first few turns. Fire-and-forget via waitUntil; failure leaves the
@@ -79,10 +80,14 @@ export async function runTitle(input: RunTitleInput): Promise<void> {
     const raw = (completion.choices[0]?.message?.content ?? '').trim();
     const title = raw.replace(/^["'「『]+|["'」』。.！!？?]+$/g, '').slice(0, MAX_TITLE_CHARS);
     if (title) {
+      const updatedAt = new Date().toISOString();
       await supa
         .from('conversations')
-        .update({ title, updated_at: new Date().toISOString() })
+        .update({ title, updated_at: updatedAt })
         .eq('id', conversationId);
+      // conversations 表没有 realtime_notify 触发器 —— 不自己推,这个标题永远
+      // 到不了边缘会话列表投影(客户端就一直显示「新对话」)。
+      await patchConversationProjection(env, conversationId, { title, updated_at: updatedAt });
     }
 
     await enqueueAudit(env, route, {

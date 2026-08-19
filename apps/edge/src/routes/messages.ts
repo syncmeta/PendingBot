@@ -34,6 +34,7 @@ import {
   markConversationReadThroughLatest,
   notifyConversationUnreadState,
 } from '../lib/unread-state';
+import { patchConversationProjection } from '../lib/projection-writethrough';
 import {
   authorizeAttachmentOwnership,
   authorizeBotUse,
@@ -473,16 +474,26 @@ messageRoutes.post('/', async (c) => {
           });
 
           if (result.finalStatus === 'done' && result.bubblesInserted > 0) {
+            const turnUpdatedAt = new Date().toISOString();
             const { data: updatedConv } = await supaService
               .from('conversations')
               .update({
                 round_count: (conv.round_count ?? 0) + 1,
                 last_turn_status: 'done',
-                updated_at: new Date().toISOString(),
+                updated_at: turnUpdatedAt,
               })
               .eq('id', parsed.conversationId)
               .select('round_count')
               .single();
+
+            // conversations 没有 realtime_notify 触发器 —— 轮次/时间戳自己推
+            // 进列表投影,否则列表的"最后活跃"会停在建行那一刻。
+            c.executionCtx.waitUntil(
+              patchConversationProjection(c.env, parsed.conversationId, {
+                round_count: updatedConv?.round_count ?? null,
+                updated_at: turnUpdatedAt,
+              }),
+            );
 
             // If the bot opted to drop the lookbacks (emitted [DROP_LOOKBACK]),
             // mark them inactive. runChatTurn returned the ids it dropped.
@@ -798,14 +809,23 @@ messageRoutes.post('/start', async (c) => {
           producedOutput = metaEmitted || result.bubblesInserted > 0;
 
           if (result.finalStatus === 'done' && result.bubblesInserted > 0) {
+            const firstTurnUpdatedAt = new Date().toISOString();
             await supaService
               .from('conversations')
               .update({
                 round_count: 1,
                 last_turn_status: 'done',
-                updated_at: new Date().toISOString(),
+                updated_at: firstTurnUpdatedAt,
               })
               .eq('id', convId);
+
+            // 新会话第一轮 —— 这一步同时是投影里这条会话行的"补齐"时机:
+            // participants webhook 可能还没落地,patch 落空会自动回落一次
+            // 完整 sync(补读 conversations 行),不会留占位行。
+            await patchConversationProjection(c.env, convId, {
+              round_count: 1,
+              updated_at: firstTurnUpdatedAt,
+            });
 
             // Round 1 — kick off auto-title to replace the random place-name
             // fallback that start_user_bot_turn seeded.
