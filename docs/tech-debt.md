@@ -1185,7 +1185,7 @@
   - 接线三处：`unread-state.notifyConversationUnreadState`（这正是 5-29 撤触发器时承诺的「改由边缘自己发」，一直没接上的那一半）、`title-runner`（标题写完自己推）、`routes/messages.ts` 两处轮次收尾（`round_count` / `updated_at`；新会话第一轮那处顺带承担补齐）。
   - `UserProjectionDO.ingestConversation` 改成「缺省即保留」的合并写入 —— 旧实现无条件覆盖 `last_msg_preview`，任何一次会话级写穿都会把列表预览清空；`updated_at` 改为取 max，避免两个喂养源乱序到达让「最后活跃」倒流。
   - **写投影失败不再静默**：DO RPC 现在检查 `res.ok`，所有失败统一打 `[projection][write-through-failed]`（可 grep / 可挂告警）。这个 bug 能活两个多月，正是因为通道断了从来没有人喊过一声。
-  - **验证**：`bun --filter='@pendingbot/edge' run typecheck` 绿；`vitest run` 78 文件 / 672 用例全绿，其中新增 `tests/projection-writethrough.test.ts`（11 例）+ `tests/title-projection.test.ts`（runTitle 端到端 → 投影里就是新标题），用真 DO（node:sqlite 背 `storage.sql`）跑完整写穿链路。**尚未部署验真**（部署另议）。
+  - **验证**：`bun --filter='@pendingbot/edge' run typecheck` 绿；`vitest run` 78 文件 / 672 用例全绿，其中新增 `tests/projection-writethrough.test.ts`（10 例）+ `tests/title-projection.test.ts`（runTitle 端到端 → 投影里就是新标题），用真 DO（node:sqlite 背 `storage.sql`）跑完整写穿链路。**尚未部署验真**（部署另议）。
 
 ### 🟡 客户端对边缘投影**照单全收**，把一次投影缺口放大成永久错误显示
 - **发现**: 2026-08-19 · 同上
