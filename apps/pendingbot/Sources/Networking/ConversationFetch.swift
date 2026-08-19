@@ -122,11 +122,38 @@ enum ConversationFetch {
             // 胶囊 —」、会话头部读「未命名」,且刷新多少次都不会变
             // (2026-08-19 线上就是这个状态:`conversations` 的 webhook 触发器
             // 从未建过,`user_unread_counts` 的在 20260529043410 被删)。
-            // 空壳行 = 投影不完整,与下面"可疑空全量"同一语义:回落 Supabase
-            // 正典查询取权威值,宁可多一次round-trip 也不画错。
-            let placeholders = edge.rows.filter { $0.type == "unknown" }.count
-            if placeholders > 0 {
-                log.warning("edge conversations projection returned \(placeholders, privacy: .public) placeholder row(s) of \(edge.rows.count, privacy: .public) — falling back to Supabase")
+            // 判据只认服务端自己写下的那个 `unknown` —— 不用「标题空就回落」
+            // 这类启发式,那会误伤真·还没起名的会话。
+            //
+            // 闸是**按行**的:占位行走正典查询补齐,其余行照常吃投影。整张表
+            // 回落会把读卸载白白关掉,而投影本身是对的设计,坏的只是喂养通道。
+            let placeholderIds = edge.rows.filter { $0.type == "unknown" }.map(\.conv_id)
+            let healthy = edge.rows.filter { $0.type != "unknown" }
+            if !placeholderIds.isEmpty {
+                log.warning("edge conversations projection returned \(placeholderIds.count, privacy: .public) placeholder row(s) of \(edge.rows.count, privacy: .public) — repairing those rows from Supabase")
+                let mapped = await EdgeReadSource.mapConversationRows(healthy)
+                // 补齐失败(网络/RLS/`!inner` 把无未读行的会话滤掉)时保留投影
+                // 那份空壳,宁可画得难看也不让会话整条消失。
+                let repaired = (try? await supabaseList(ids: placeholderIds)) ?? []
+                let repairedIds = Set(repaired.map(\.id))
+                let unrepaired = await EdgeReadSource.mapConversationRows(
+                    edge.rows.filter { $0.type == "unknown" && !repairedIds.contains($0.conv_id) }
+                )
+                if repaired.count < placeholderIds.count {
+                    log.warning("repaired only \(repaired.count, privacy: .public)/\(placeholderIds.count, privacy: .public) placeholder row(s); the rest keep the projection stub")
+                }
+                let merged = mapped + repaired + unrepaired
+                if !merged.isEmpty {
+                    // 投影按 updated_at desc / id asc 服务端排序,补齐的行是另一
+                    // 次查询的结果,合并后重排回同一序(与正典查询的 order 一致)。
+                    return merged.sorted { l, r in
+                        let (a, b) = (l.asConversation, r.asConversation)
+                        if a.last_activity_at != b.last_activity_at {
+                            return a.last_activity_at > b.last_activity_at
+                        }
+                        return a.id < b.id
+                    }
+                }
             } else {
                 let mapped = await EdgeReadSource.mapConversationRows(edge.rows)
                 if !mapped.isEmpty {
@@ -141,7 +168,14 @@ enum ConversationFetch {
         }
 
         // ── Supabase fallback (canonical, unchanged) ────────────────────
-        return try await SupabaseStack.shared
+        return try await supabaseList(ids: nil)
+    }
+
+    /// 正典 Supabase 查询。`ids == nil` = 整张列表(冷路径全量回落);给了
+    /// ids 则只补那几条(占位行的按行修补),查询形状完全一致,只多一个
+    /// `in("id", …)` —— 免得两处手抄同一份 select 再漂移。
+    private static func supabaseList(ids: [String]?) async throws -> [ConvListRow] {
+        var query = SupabaseStack.shared
             .from("conversations")
             .select("""
                 id, bot_id, user_id, title, conversation_type, feature, round_count, updated_at,
@@ -150,6 +184,10 @@ enum ConversationFetch {
                 participants:conversation_participants(participant_type, participant_id)
             """)
             .neq("conversation_type", value: "subagent")
+        if let ids, !ids.isEmpty {
+            query = query.in("id", values: ids)
+        }
+        return try await query
             .order("updated_at", ascending: false)
             .order("id", ascending: true)
             .execute()
