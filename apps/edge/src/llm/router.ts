@@ -320,11 +320,24 @@ export async function enqueueAudit(
     try {
       await persistAuditMessage(env, msg);
     } catch (err2) {
-      console.error('[enqueueAudit] inline persist also failed', err2);
+      // Both routes to the ledger are gone. For a failed turn that means
+      // the incident leaves no trace at all — say so loudly with the same
+      // marker the fallback path uses, so the alert still fires.
+      console.error(
+        opts.status === 'error' ? AUDIT_DROPPED_MARKER : '[enqueueAudit]',
+        'inline persist also failed',
+        msg.auditId,
+        err2,
+      );
     }
   }
   return msg.auditId;
 }
+
+// Fixed marker for "a turn's audit row could not be written by either
+// route". Distinct from FALLBACK_EXHAUSTED_MARKER: that one says the LLM
+// call failed, this one says we also failed to record that it failed.
+export const AUDIT_DROPPED_MARKER = '[audit-write-dropped]';
 
 // Thrown by persistAuditMessage when a turn's AI Gateway cost log is
 // not queryable yet (ingestion lag). The queue consumer re-queues the
@@ -423,6 +436,12 @@ export async function persistAuditMessage(
   //   - 'free'    : no billable owner at all (system/bot-only turn)
   //   - 'skipped' : billable owner but zero cost (error / no usage)
   //   - 'billed'  : wallet.debit will charge the owner's WalletDO this turn
+  //
+  // Failed turns (status='error') land on 'free'/'skipped' by construction:
+  // the gateway-cost read above is gated on status==='success', so llmCost
+  // stays null and combinedUsd only ever carries web-tool spend that was
+  // genuinely consumed before the LLM threw. cost_usd stays null on those
+  // rows too, so `sum(cost_usd)` dashboards are unaffected by error rows.
   const initialBilling: 'free' | 'skipped' | 'billed' = !hasBillableTarget
     ? 'free'
     : combinedUsd <= 0
@@ -719,6 +738,85 @@ export function classifyError(err: unknown): {
   return { errorClass: 'unknown', transient: true, message: String(err) };
 }
 
+// Fixed log marker for "every fallback attempt failed". Emitted from the
+// single place that throws FallbackError, so no call site can forget it —
+// grep / alert on this exact string to catch every exhausted LLM turn.
+export const FALLBACK_EXHAUSTED_MARKER = '[llm-fallback-exhausted]';
+
+/// The last real failure behind a FallbackError, flattened. `lastError`
+/// and `routeTrace` have always been on the error object; nobody read
+/// them, so every failure surfaced as the contentless "withFallback
+/// exhausted (N attempts)". This is the one reader.
+export interface FallbackFailure {
+  errorClass: string;
+  /// Upstream error text, already truncated to 200 chars by the trace.
+  message: string;
+  /// null when not even a route could be resolved (no provider reached).
+  providerSlug: string | null;
+  attempts: number;
+}
+
+export function describeFallbackFailure(err: FallbackError): FallbackFailure {
+  const last = err.routeTrace[err.routeTrace.length - 1];
+  return {
+    errorClass: last?.error_class ?? 'unknown',
+    message: last?.error_message ?? '',
+    providerSlug:
+      last && last.provider_slug !== NO_ROUTE_SLUG ? last.provider_slug : null,
+    attempts: err.routeTrace.length,
+  };
+}
+
+const NO_ROUTE_SLUG = '(no-route)';
+
+// The FallbackError message itself carries the real cause: the class and
+// text of the last failed attempt, plus which provider it was talking to.
+// This string is what lands in worker logs AND (via bot-reply's `emit`)
+// in the client's error alert, so "withFallback exhausted (1 attempt)"
+// alone was a dead end for anyone debugging after the fact.
+function fallbackMessage(routeTrace: RouteTraceEntry[]): string {
+  const n = routeTrace.length;
+  const head = `withFallback exhausted (${n} attempt${n === 1 ? '' : 's'})`;
+  const last = routeTrace[n - 1];
+  if (!last) return head;
+  const where = last.provider_slug === NO_ROUTE_SLUG ? 'no route' : last.provider_slug;
+  const detail = last.error_message ? `: ${last.error_message}` : '';
+  return `${head} — last attempt [${where}] ${last.error_class ?? 'unknown'}${detail}`;
+}
+
+/// Audit fields for a failed LLM turn, derived the same way at every
+/// call site. Both branches speak the classifyError vocabulary, so
+/// `select error_class, count(*) from audit_log where status='error'`
+/// groups cleanly regardless of which layer threw.
+///
+///   - FallbackError → the router gave up; route_trace shows every
+///     attempt, `route` is the last one that resolved (null if none did).
+///   - anything else → a throw from the runner body itself (mid-stream,
+///     tool loop, JSON parse). No trace of our own; classify the error.
+export function auditErrorFields(err: unknown): {
+  route: ResolvedRoute | null;
+  errorClass: string;
+  routeTrace: RouteTraceEntry[] | undefined;
+  message: string;
+} {
+  if (err instanceof FallbackError) {
+    const failure = describeFallbackFailure(err);
+    return {
+      route: err.lastRoute,
+      errorClass: failure.errorClass,
+      routeTrace: err.routeTrace,
+      message: failure.message || err.message,
+    };
+  }
+  const cls = classifyError(err);
+  return {
+    route: null,
+    errorClass: cls.errorClass,
+    routeTrace: undefined,
+    message: cls.message.slice(0, 200),
+  };
+}
+
 export async function withFallback<T>(
   supa: SupabaseClient,
   env: Env,
@@ -740,7 +838,7 @@ export async function withFallback<T>(
       const cls = classifyError(err);
       routeTrace.push({
         attempt,
-        provider_slug: '(no-route)',
+        provider_slug: NO_ROUTE_SLUG,
         status: 'no_route',
         error_class: cls.errorClass,
         error_message: cls.message.slice(0, 200),
@@ -777,8 +875,27 @@ export async function withFallback<T>(
     }
   }
 
-  throw new FallbackError(
-    `withFallback exhausted (${routeTrace.length} attempt${routeTrace.length === 1 ? '' : 's'})`,
-    { routeTrace, lastError, lastRoute },
+  // One fixed-marker line per exhausted turn, before the throw — so the
+  // failure is visible in `wrangler tail` / a log alert even on the paths
+  // whose audit write is best-effort. Single JSON payload so a log query
+  // can filter by error_class / provider without regex-ing prose.
+  const last = routeTrace[routeTrace.length - 1];
+  console.error(
+    FALLBACK_EXHAUSTED_MARKER,
+    JSON.stringify({
+      task_type: opts.taskType ?? null,
+      model_slug: opts.modelSlug,
+      attempts: routeTrace.length,
+      error_class: last?.error_class ?? 'unknown',
+      provider: last?.provider_slug ?? null,
+      message: last?.error_message ?? null,
+      route_trace: routeTrace,
+    }),
   );
+
+  throw new FallbackError(fallbackMessage(routeTrace), {
+    routeTrace,
+    lastError,
+    lastRoute,
+  });
 }

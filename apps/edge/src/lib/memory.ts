@@ -4,8 +4,8 @@ import { honchoClient, userPeerId, botPeerId, conversationSessionId } from './ho
 import { serviceClient } from './supabase';
 import { putCachedBotNote, putCachedChatMemo } from './persona-cache';
 import {
+  auditErrorFields,
   enqueueAudit,
-  FallbackError,
   usageFromCompletion,
   withFallback,
 } from '../llm/router';
@@ -344,21 +344,18 @@ async function refreshBotNote(input: RefreshBotNoteInput): Promise<void> {
     await putCachedBotNote(env, botId, userId, newBody).catch(() => undefined);
   } catch (err) {
     console.warn('[memory] refreshBotNote failed', err);
-    if (err instanceof FallbackError) {
-      const supa = serviceClient(env);
-      await enqueueAudit(env, err.lastRoute, {
-        auditId: turnId,
-        userId,
-        conversationId,
-        taskType: 'bot_note',
-        startedAt,
-        status: 'error',
-        errorClass:
-          err.routeTrace[err.routeTrace.length - 1]?.error_class ?? 'unknown',
-        routeTrace: err.routeTrace,
-        metadata: { bot_id: botId, action: 'error' },
-      });
-    }
+    const audit = auditErrorFields(err);
+    await enqueueAudit(env, audit.route, {
+      auditId: turnId,
+      userId,
+      conversationId,
+      taskType: 'bot_note',
+      startedAt,
+      status: 'error',
+      errorClass: audit.errorClass,
+      routeTrace: audit.routeTrace,
+      metadata: { bot_id: botId, action: 'error', error_message: audit.message },
+    });
   }
 }
 
@@ -496,20 +493,17 @@ async function refreshChatMemo(input: RefreshChatMemoInput): Promise<void> {
     await putCachedChatMemo(env, botId, conversationId, raw).catch(() => undefined);
   } catch (err) {
     console.warn('[memory] refreshChatMemo failed', err);
-    if (err instanceof FallbackError) {
-      const supa = serviceClient(env);
-      await enqueueAudit(env, err.lastRoute, {
-        auditId: turnId,
-        conversationId,
-        taskType: 'chat_memo',
-        startedAt,
-        status: 'error',
-        errorClass:
-          err.routeTrace[err.routeTrace.length - 1]?.error_class ?? 'unknown',
-        routeTrace: err.routeTrace,
-        metadata: { bot_id: botId, action: 'error' },
-      });
-    }
+    const audit = auditErrorFields(err);
+    await enqueueAudit(env, audit.route, {
+      auditId: turnId,
+      conversationId,
+      taskType: 'chat_memo',
+      startedAt,
+      status: 'error',
+      errorClass: audit.errorClass,
+      routeTrace: audit.routeTrace,
+      metadata: { bot_id: botId, action: 'error', error_message: audit.message },
+    });
   }
 }
 
