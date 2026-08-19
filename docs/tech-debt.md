@@ -1397,3 +1397,13 @@
 - **影响**: 不影响当前功能（表征确实产出了，说明默认值符合预期），但注释是"我们配了"的口吻，会让后来人以为这是本仓库控制的不变量；哪天 Honcho 改默认值，没人会想到来看这里。
 - **建议**: 要么显式配置并保留注释，要么把注释改成「依赖 Honcho 默认 observe_me 行为」。
 - **状态**: 待办。
+### 🔴 失败回合的 audit 行「代码在写、库里没有」—— 中间那一跳没人验过
+- **发现**: 2026-08-19 · 「失败回合写进账本」session（补 `withFallback` 失败入账时核对现状发现）
+- **位置**: `apps/edge/src/llm/router.ts:enqueueAudit / persistAuditMessage` × `apps/edge/src/index.ts:queue` × CF Queue `pendingbot-audit` / DLQ `pendingbot-audit-dlq`
+- **问题**: 派活时的假设是「没人在 catch 分支里调 `enqueueAudit`」。核对下来**假设不成立** —— title / lookback / bot_note / chat_memo / attachment_summary / attachment_read / message_reply 七条路径从 commit `0ad95451` 起就在失败时写 `status='error'` 的 audit 行（唯一漏的是 `delegate`，本次已补）。但线上 `pendingbot.audit_log` 从建库至今 `status <> 'success'` 的行数是 **0**，同期成功行正常。**也就是说生产者在写、消费者在跑、成功行落得进，唯独失败行一条不落。**
+- **已排除**: 表结构（`status` / `error_class` / `route_trace` 三列俱在，`20260516042918` 明确保留）；`status` 无 CHECK 约束；`billing_status` 的 `skipped`/`free` 在约束白名单内；`persistAuditMessage` 的失败分支不查网关成本、不会抛 `GatewayCostPendingError`。本次新加的 7 例单测已证**代码路径本身是通的**：失败 → 落库 → status/error_class/route_trace 齐全（走的是无 `AUDIT_QUEUE` 绑定时的内联写库分支）。
+- **所以剩下的嫌疑只在队列这一跳**（单测绕过了它）: ① 消息体超 CF Queues 的 128 KB 上限被拒（bot-reply 的 audit 消息带 `promptBody`=完整 prompt，是全仓最大的一条）；② 消息进了 `pendingbot-audit-dlq` 而 DLQ **刻意不消费**（见上面 `fetchGatewayCost` 那条），失败行就永远停在那儿。两者都会让"代码在写、库里没有"同时成立。
+- **怎么定位（一句 SQL + 一次查看就能分辨）**: 先跑 `select status, count(*) from pendingbot.audit_log group by 1;` 确认 0 是真的 0 还是 NULL 混淆；再看 `pendingbot-audit-dlq` 的积压条数与内容。本次已加的 `[audit-write-dropped]` 标记只在"队列和内联写库双双失败"时打，若嫌疑是 ①/②，它不会打 —— 别把它的沉默当成健康。
+- **影响**: 这正是本次派活要根治的病本身。代码侧已补齐，但**"失败一定查得到"这句话在生产尚未成立**，下一次线上报错仍可能只留下 `[llm-fallback-exhausted]` 日志、库里没有行。
+- **机长复核补充（2026-08-19）**: ① 「失败行卡在等网关成本被反复重投」这条嫌疑**已排除** —— `persistAuditMessage` 读成本那段确实只在 `status === 'success'` 时走。② audit 消息里确实带着完整 prompt 和完整回复正文（`promptBody` / `completionBody`，为送 Langfuse 而加，见 #248），是全仓最胖的队列消息，嫌疑 ① 有依据。③ **DLQ 至今没人查成** —— `wrangler queues` 接口连试四次全部超时（同刻 `deployments list` 通，非登录问题），嫌疑 ② 仍挂着，不算已排除。
+- **状态**: 待办 —— 需要一次线上确认（DLQ 积压 + 队列消息大小），不是代码改动能关掉的。本次按边界「不动数据库、不部署」，只做到把代码侧写死并留下证据链。
