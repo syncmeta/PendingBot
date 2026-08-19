@@ -1185,7 +1185,10 @@
   - 接线三处：`unread-state.notifyConversationUnreadState`（这正是 5-29 撤触发器时承诺的「改由边缘自己发」，一直没接上的那一半）、`title-runner`（标题写完自己推）、`routes/messages.ts` 两处轮次收尾（`round_count` / `updated_at`；新会话第一轮那处顺带承担补齐）。
   - `UserProjectionDO.ingestConversation` 改成「缺省即保留」的合并写入 —— 旧实现无条件覆盖 `last_msg_preview`，任何一次会话级写穿都会把列表预览清空；`updated_at` 改为取 max，避免两个喂养源乱序到达让「最后活跃」倒流。
   - **写投影失败不再静默**：DO RPC 现在检查 `res.ok`，所有失败统一打 `[projection][write-through-failed]`（可 grep / 可挂告警）。这个 bug 能活两个多月，正是因为通道断了从来没有人喊过一声。
-  - **验证**：`bun --filter='@pendingbot/edge' run typecheck` 绿；`vitest run` 78 文件 / 672 用例全绿，其中新增 `tests/projection-writethrough.test.ts`（10 例）+ `tests/title-projection.test.ts`（runTitle 端到端 → 投影里就是新标题），用真 DO（node:sqlite 背 `storage.sql`）跑完整写穿链路。**尚未部署验真**（部署另议）。
+  - **验证**：`bun --filter='@pendingbot/edge' run typecheck` 绿；`vitest run` 78 文件 / 672 用例全绿，其中新增 `tests/projection-writethrough.test.ts`（10 例）+ `tests/title-projection.test.ts`（runTitle 端到端 → 投影里就是新标题），用真 DO（node:sqlite 背 `storage.sql`）跑完整写穿链路。
+  - **已部署**（2026-08-19，worker 版本 `88b9f718`）。部署后线上只验到 worker 健康 + `GET /v1/conversations` 路由存活且 fail-closed（无 token → 401）。
+  - ⚠️ **真实链路（新建会话 → 起标题 → 读投影看那一行是否完整）没验成**：需要一个真实登录态的 JWT，而本地拿不到 —— 公开注册被 Turnstile 挡（`captcha_failed`），取 service_role key 的命令被权限分类器拒绝。**这条尾巴留着**：closeout 需要一次真实客户端动作（用户在 app 里发一条消息），或由人给出一个可用 token。**在它验成之前，本条不能算"线上已验证"，只算"已部署 + 单测已证"。**
+  - **遗留占位行会自愈**（`fix/projection-legacy-placeholder-heal`）：线上 DO 里 2026-08-19 之前落下的 `unknown` 行不会自己变好，所以把它当作"这一行不算数"—— 任何局部写穿落在它上面都触发一次完整补读，把整行换掉。用户下次在那个会话里说话即自愈。
 
 ### 🟡 客户端对边缘投影**照单全收**，把一次投影缺口放大成永久错误显示
 - **发现**: 2026-08-19 · 同上
