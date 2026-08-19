@@ -239,6 +239,9 @@ struct ComposerView: View {
                                 .font(Theme.Fonts.body)
                                 .foregroundStyle(.white, .black.opacity(0.55))
                         }
+                        // Without .plain, macOS gives this its default bordered
+                        // chrome — a shadowed rounded slab around the glyph.
+                        .buttonStyle(.plain)
                         .offset(x: 6, y: -6)
                     }
                 }
