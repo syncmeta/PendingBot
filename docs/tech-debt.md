@@ -1205,3 +1205,69 @@
 - **仍未证实的一点**: `polar_synced=false` 有两种成因 —— ① `grantCredits` 真的失败（钱没进 Polar）；② `grantCredits` 成功但随后那句 UPDATE 失败（钱在 Polar，只是标记陈旧）。仅凭数据库分不清，要查 Polar 侧该 customer 的实际余额才能定。判别法：账本四笔合计 100,311,750,000 micros，若 Polar 余额比它少正好 6,750,000 就是成因 ①。
 - **建议**: ① 让幂等对「已插账但未同步」可重入 —— 撞唯一键时先查该行 `polar_synced`，为 false 则继续走 `grantCredits` + 回填标记，而不是直接 `applied:false` 返回；② 加一个扫 `polar_synced=false` 的补偿任务（cron 或 board 按钮），别让这个标记继续只写不读；③ 顺序上考虑先推 Polar 再落账，或落账后立刻排补偿。
 - **状态**: 待办。线上那笔 6.75 PNC 的漏账未补。
+
+## 2026-08-19 外部服务接入盘点（人类 Todo #4，只读）
+
+> 一次性只读盘点（26 家外部服务，代码 + `wrangler secret list` + 线上库 + KV + CF 资源逐家取证）。
+> 下面只记**结构性问题**；分级结论（✅/🟡/❌）已并进 `docs/state/shared.md` 的 `stack/*` 条目。
+
+### 🔴 线上有一条 secret，它的**名字本身就是一个 Daytona token**
+- **发现**: 2026-08-19 · 服务盘点（`wrangler secret list --env production`）
+- **位置**: 生产 worker `pendingbot-edge` 的 secret 列表，条目名 `dtn_9f6640275a194bbf6bda30e4385edc02…`
+- **问题**: 显然是把 token 粘进了 `wrangler secret put` 的 **name** 参数。Cloudflare 加密的是 secret 的**值**，**名字是明文**——任何能列 secret 的凭证（含 CI、任何拿到 wrangler 登录态的 session）都能直接读到这个 token 全文。
+- **影响**: 一个 Daytona API token 事实上处于明文暴露状态。Daytona 已下线（代码零引用），所以**没有功能损失，纯粹是清理 + 吊销**。
+- **建议**: 在 Daytona 侧吊销该 token，然后 `wrangler secret delete` 掉这一条。顺手把同批死 secret 一起清（见下面 🟢 那条）。
+- **状态**: 待办（需要人执行删除/吊销，本次盘点只读不动）。
+
+### 🔴 计费/观测开关有两个真值来源，配置文件与线上相反且读代码看不出来
+- **发现**: 2026-08-19 · 服务盘点（实读线上 KV）
+- **位置**: `apps/edge/wrangler.jsonc`（`env.production.vars.BILLING_ENABLED = "false"`）vs 线上 `MEMORY` KV 的 `cfg:feature-flags`；语义在 `apps/edge/src/lib/feature-flags.ts`（`KV override ?? env 默认`）
+- **问题**: 线上 `cfg:feature-flags` 实际是 `{"langfuse":true,"billing":true}`。也就是说 **`BILLING_ENABLED:"false"` 这行配置在线上不生效**，余额闸 + 扣费是**开着**的。任何人（包括 session）读 `wrangler.jsonc` 会得到与线上**相反**的结论，而 KV 值不在仓库里、不在任何账本里、也没有回写机制。
+- **影响**: 2026-08-18「充多少都提示余额耗尽」的排查里，「计费默认关」是个错误前提。往后每一次涉及计费/Langfuse 的判断都可能踩同一个坑。注意 Sentry 是**例外**（`feature-flags.ts` 文件头解释了原因：错误上报的开关不能依赖 KV），它只认 env，所以三者的判断方式并不统一。
+- **建议**: 至少让 board 的 flags 页把「当前生效值 + 来源（KV / env）」同时显示出来；`wrangler.jsonc` 里那几行注释应改成「默认值，可被 KV override 覆盖，线上真值以 board 为准」，别写成结论。
+- **状态**: 待办。
+
+### 🔴 `recordCreditIn` 的幂等键会把「Polar 回写失败」变成**永久**漏账；`polar_synced` 只写不读
+- **发现**: 2026-08-19 · 服务盘点（`pendingbot.pnc_ledger` 实查）
+- **位置**: `apps/edge/src/lib/billing-polar.ts:32-61` `recordCreditIn`
+- **问题**: 顺序是 ①插影子账（`unique(source, external_ref)`）→ ②`om.grantCredits()` 推 Polar → ③把 `polar_synced` 置 true。若 ② 抛错，① 已经落库；webhook 重投撞唯一键后**直接 `return { applied: false }`，根本走不到 ②**。于是「影子账有、Polar 没有」这个状态**任何重试都修不回来**，`polar_synced=false` 也没有任何清扫任务去捞。
+- **实证**: 线上 `pnc_ledger` 有一条 `source='polar_checkout' / kind='topup'`（2026-07-11 14:16，`external_ref = 2adbcac3-748f-4ae0-82b6-53974f01d2a0`）`polar_synced = false`；其余 3 条（signup 赠送 + 2 笔 admin grant）均为 true。
+- **措辞纪律（29-1 更正，采纳）**: `polar_synced=false` **分不清**两种成因 —— ① `grantCredits` 真失败（钱没进 Polar）；② `grantCredits` 成功但随后那句 UPDATE 失败（钱在 Polar，只是标记陈旧）。光看库分辨不了，所以只能说**疑似漏账**。判别法：账本四笔合计 100,311,750,000 micros，去 Polar 侧查该 customer 余额，**正好少 6,750,000 就是成因 ①**。
+- **更严重的一半（29-1 补充，已复核）**: 全仓库检索 `polar_synced`，**只有 `recordCreditIn` 那一处 `update` 在写它，没有任何地方读**（无 cron、无对账任务、无 board 视图）。字段忠实记下了「这笔没同步」，然后没有人看。
+- **建议**: 幂等分支不能无脑 `applied:false` —— 撞唯一键时应回查该行，`polar_synced=false` 就补推 Polar（`grantCredits` 本身带 `dedupeId`，重推安全）。另外加一个扫 `polar_synced=false` 的定时对账（已有 3 个 cron 槽，账本口径 `pnc_ledger` 就是设计给 reconciliation 的）。
+- **状态**: 待办。已转给「充值不生效」子 crew（29），他们在自己的 tech-debt 里也记了一条并给了同向修法。**顺带核过**：edge 里所有 Polar `externalId` / `externalCustomerId` 的取值点（`billing-webhooks.ts:100/144`、`billing-grant.ts:142/177`、`WalletDO.ensureInit` 冷启动查余额）都用调用方传进来的 subject 键，2026-08-18 主体键统一（线上 `e70ebd79`）之后**没有别处再拿 auth user id 当 Polar external_id**。
+
+### 🟡 `CF_AIG_TOKEN` 从未部署 → AI Gateway 主路径**每一次调用的成本都记不下来**，且是静默的
+- **发现**: 2026-08-19 · 服务盘点
+- **位置**: `apps/edge/src/lib/ai-gateway.ts:61-65`（`if (!token || !account || !gateway) return null`）；消费方 `queue` 消费者 `persistAuditMessage`
+- **问题**: 代码读 `env.CF_AIG_TOKEN`，`wrangler.jsonc` 的注释也把它列为必需，但**部署 secret 列表里没有这一条**。未配置时 `fetchGatewayCost` 直接 `return null`，与「查到了但没有成本」走同一个返回值 —— 没有任何日志、没有告警。
+- **实证**: `audit_log` 最近两条走 Unified Billing 原生透传（`provider_slug: anthropic`）的记录（2026-08-18 04:41、2026-08-19 02:10）`cost_usd = null`、`billing_status = 'skipped'`。走 OpenRouter 的记录因为 provider 自报成本，`cost_usd` 是有值的 —— 所以**这个洞只吃掉主路径（Anthropic / OpenAI / Gemini 原生透传）的成本，OpenRouter 看起来一切正常**，很容易漏判。
+- **影响**: 计费已经开着（见上面那条 🔴），但主路径的每一轮都以 `skipped` 结算 —— 花的钱进不了账，用户也没被扣。这是当前**最大的一笔糊涂账**。
+- **建议**: 补 `wrangler secret put CF_AIG_TOKEN`（需要一个带 "AI Gateway Read" 权限的 CF API token）。同时把「配置缺失」与「查到但无成本」拆成两个返回值，前者至少 `console.warn` 一次。
+- **状态**: 待办（需要人去 CF 建 token）。
+
+### 🟡 MCP 上游拿不到密钥时**静默不带鉴权头**发请求（Exa 实证）
+- **发现**: 2026-08-19 · 服务盘点
+- **位置**: `apps/edge/src/mcp/client.ts:113-121` `resolveAuthHeaders`
+- **问题**: `mcp_servers` 表里 exa 行 `enabled=true / auth_kind='header' / auth_header_name='x-api-key' / secret_ref='EXA_API_KEY'`，但 **`EXA_API_KEY` 不在部署的 secret 列表里**。`resolveAuthHeaders` 取不到值时 `return undefined` —— 不是报错，是**照常连上游、只是不带鉴权头**。于是失败会推迟到 `callTool` 那一刻，以上游 401 的形式出现在一次真实对话中间。
+- **实证**: `pendingbot.audit_web_tool_calls` **0 行**（该表由 `WebToolMeter` 在计费成功时写），即网页搜索/抓取从未成功计过一次。
+- **建议**: 注册表里声明了 `secret_ref` 却解析不到值 → 应当把这台 server 从**广告给模型的工具列表里摘掉**（而不是带着一个注定 401 的工具进 prompt），并 `console.warn`。
+- **状态**: 待办（补 secret 是一步，但静默降级本身该修）。
+
+### 🟡 `LANGFUSE_WEBHOOK_SECRET` 未部署 → 改提示词不会推到边缘，只能等缓存自己过期
+- **发现**: 2026-08-19 · 服务盘点
+- **位置**: `apps/edge/src/routes/langfuse-prompts.ts:61-62`（`if (!secret) return jsonError(c, 501, 'webhook_not_configured')`）
+- **问题**: 代码读 `env.LANGFUSE_WEBHOOK_SECRET`，未部署 → `/prompt-webhook` **恒返 501**。Langfuse 控制台里改一条 prompt 不会推进 `PROMPTS_KV`，只能靠 pull-on-miss 的 30s(L1)/无 TTL(KV) 兜底 —— 而 KV 那层**没有过期**，webhook 才是它的失效通道。实际效果：**改了 prompt 线上可能长期不生效**，而且没有任何提示。
+- **旁证**: `PROMPTS_KV` 里存着 2 个已经从 `PROMPT_NAMES` 删掉的孤儿键（`crew-captain/zh`、`start-crew-tool-result/zh`）—— 正是「只进不出」的形态。
+- **建议**: 配上 secret；或者给 KV 条目加 TTL，让最坏情况有界。
+- **状态**: 待办。
+
+### 🟢 线上残留 14 条代码一行都不读的 secret + 若干孤儿 KV 键
+- **发现**: 2026-08-19 · 服务盘点（`wrangler secret list` ∖ 代码里 `env.X` 的全集）
+- **位置**: 生产 worker secret 列表 / `MEMORY` KV / `PROMPTS_KV`
+- **问题**:
+  - **死 secret（代码零引用，已逐条 grep 确认）**: `WORLDROUTER_API_KEY`、`DAYTONA_API_KEY`、`DAYTONA_API_URL`、`BRAVE_API_KEY`、`FIRECRAWL_API_KEY`、`JINA_API_KEY`、`ARTIFICIAL_ANALYSIS_API_KEY`、`DOUBAO_DIALOG_APP_ID/APP_KEY/ACCESS_TOKEN`、`SFU_APP_SECRET`、`SHORTLINK_ANON_SALT`、`SUPABASE_ANON_KEY`、`SUPABASE_SERVICE_ROLE_KEY`（后两条是被新 key 体系取代的 legacy JWT）。`wrangler.jsonc` 底部注释里已经列过其中几条「convenient 时删」，一直没删。
+  - **孤儿 KV 键**: `PROMPTS_KV` 里 2 个已删 prompt 名（见上条）；`MEMORY` 里 8 个 `att:` 键，uuidv7 解出来全是 **2026-05-13 ~ 05-20**，而 `attachments` 表 0 行、R2 `pendingbot-uploads-prod` **object_count = 0** —— 是上一个数据纪元留下的残渣，`attachment-cache.ts` 没有 TTL 也没有清扫。
+- **影响**: 不影响功能。但「线上有 39 条 secret、代码只读 25 条」这件事本身会让下一个 session 判断不了哪些是活的（本次盘点就是靠逐条 grep 才敢下结论）。
+- **建议**: 删死 secret（`SUPABASE_SERVICE_ROLE_KEY` / `SUPABASE_ANON_KEY` 删前确认 Supabase 后台的 legacy key 已 disable —— 那是 `#250` 的尾巴）；`att:` 键给个 TTL。
+- **状态**: 待办。

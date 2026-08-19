@@ -116,34 +116,29 @@ task: —
 
 ## stack/cloudflare
 status: partial
-现状: edge(生产 Worker,api/bot.pendingname.com)、access(Access 门+双层校验)、kv(配置缓存+prompt 下发)、r2(附件上传/取字节+去重+配额)均已落地+生产在用(done);admin board CMS 代码合 main、edge 侧端到端验过但 SPA 未部署生产(partial);ai-gateway 生产路径在用但真实扣费待开关(partial);durable-objects 多数已落(GroupRouter/RealtimeHub/投影 DO 验过),WalletDO/语音 DO 代码+单测齐但计费默认关、群语音 QA 待验(partial);voice-container 整套代码合 main、多人多 bot 实景 QA 待验(partial)。
-证据: edge 已部署生产;Access 无凭证→403 已验;admin SPA 未部署生产;计费总开关默认关
+现状: 2026-08-19 只读盘点复核。**在用(有线上实据)**: edge Worker(生产 `pendingbot-edge`,最新部署 2026-08-18 07:36,`GET /v1/health` 实测 `environment: production`;api + bot.pendingname.com 两条 custom_domain,AASA 实测返回真 appIDs)、Access(`/v1/board/*` 无凭证实测 403,`/board/` 200)、KV(PROMPTS_KV 21 键 / MEMORY 有 cfg·bal·memo·botnote·user·bot 真数据)、Queues(`pendingbot-audit` 1 生产者 1 消费者 + dlq 都在)、AI Gateway(audit_log 2026-08-19 有 `provider_slug: anthropic` 成功记录)。**没跑起来**: R2 —— `pendingbot-uploads-prod` **object_count = 0**、`attachments` 表 0 行(此前本条写的「r2 生产在用(done)」不成立,已纠);Containers 两个 image 都 ready 但 `bot_code_exec_requests` 0 行、`voice_active_calls` 0 行,真实调用未发生;Turnstile 客户端 site key 已配(`HostedConfig.swift:74`),**secret 是否贴进 Supabase Auth 后台无法只读验证,没贴=验证码形同虚设**(代码注释自陈)。**缺口**: `CF_AIG_TOKEN` 从未部署 → 主路径每次调用成本记不下来(tech-debt 🟡);线上残留 14 条代码零引用的 secret,其中一条的**名字本身是 Daytona token**(tech-debt 🔴)。
+证据: wrangler deployments/secret list/kv key list/r2 bucket info/queues list/containers list 实查 + `/v1/health`·AASA·`/v1/board/*` 实测(2026-08-19)
 task: —
-
 ## stack/supabase
 status: done
-现状: EU 单库在产、Auth+RLS+Storage 在用、新 API key 体系已部署验证;老 legacy key 仍在后台启用待 disable。
-证据: 2026-06-04 迁 EU + 2026-06-10 API key 部署已验证(#250)
+现状: EU 单库在产。2026-08-19 实据: `/auth/v1/settings` 返回 apple/google/email 三种登录均为 true;库里 87 messages / 20 bots / 16 conversations;**DB webhook → edge 实时 fan-in 活着** —— `net._http_response` 6 次全 200、最新 2026-08-19 02:10:49,vault 里有 `realtime_webhook_secret`(2026-06-04),8 张表挂 `realtime_notify` 触发器。老 legacy anon/service_role key 仍在后台启用待 disable(worker 侧已不读,但两条 legacy secret 还留在线上)。**已知缺口**: `conversations` / `user_unread_counts` 两条投影喂养触发器缺失(见 tech-debt 2026-08-19 🔴,另有 session 在治)。
+证据: `/auth/v1/settings` + `net._http_response` + `pg_trigger` + `vault.secrets` 实查(2026-08-19);2026-06-04 迁 EU + 2026-06-10 API key 部署(#250)
 task: #250
-
 ## stack/openrouter
 status: done
-现状: 模型目录读取 + 边缘缓存 + 预设解析(旗舰/最快/盲盒)代码在生产路径在用;视觉能力/上下文窗口判断读它。
-证据: 2026-06-15/16 模型预设+目录实测纠偏已完成
+现状: 作为 AI Gateway 上的一条 provider 通路在产使用,并且是模型目录的唯一来源(`llm/catalog.ts:20` / `routes/models.ts:466` 直连 `openrouter.ai/api/v1/models`)。2026-08-19 实据: `audit_log` 有 `provider_slug: openrouter` 的成功记录且**带真实 cost**(2026-08-18 04:41 `google/gemma-4-31b-it` 起标题 $0.000012;2026-06-10 `openrouter/auto` $0.028880)。注意: OpenRouter 自报成本,所以 `CF_AIG_TOKEN` 缺失那个洞**不影响它**,只吃掉原生透传(anthropic/openai/gemini)的成本 —— 别据此误判「成本记录一切正常」。
+证据: `audit_log` 实查(2026-08-19);2026-06-15/16 模型预设+目录实测纠偏
 task: —
-
 ## stack/polar
 status: partial
-现状: 引擎/钱包封装 + Polar/RevenueCat 入账 webhook + 群池自研代码+单测齐,P0/P1 资金流已在 Polar sandbox 直连实测通过;生产端到端(真 product_id+配 webhook+翻开开关+真支付)未验,计费总开关默认关。
-证据: Polar sandbox 直连实测;progress §4b
+现状: 引擎/钱包封装 + Polar/RevenueCat 入账 webhook + 群池自研代码+单测齐。2026-08-19 只读盘点新增实据: **计费在线上其实是开着的** —— `wrangler.jsonc` 写 `BILLING_ENABLED:"false"`,但线上 KV `cfg:feature-flags` = `{"langfuse":true,"billing":true}`,override 胜出(本条此前「计费总开关默认关」的说法不成立,已纠)。`pnc_ledger` 4 行: 1 笔真实 `polar_checkout` topup(2026-07-11)+ signup 赠送 + 2 笔 admin grant → **Polar webhook 收单这一半通过了**;但那笔 polar_checkout 的 `polar_synced = false` —— **疑似漏账**(分不清是推 Polar 失败、还是推成功而标记那句 UPDATE 失败,判别要去 Polar 侧对余额),且因幂等键任何重试都走不到 grantCredits;`polar_synced` 这个字段**全仓库只写不读**(tech-debt 2026-08-19 🔴)。POLAR_ACCESS_TOKEN / POLAR_WEBHOOK_SECRET / POLAR_PNC_METER_ID / POLAR_SERVER 四条 secret 均已部署。**Polar 侧真实余额只能人工在后台核**。
+证据: 线上 KV `cfg:feature-flags` + `pnc_ledger` + secret list 实查(2026-08-19);Polar sandbox 直连实测;progress §4b
 task: —
-
 ## stack/revenuecat
 status: partial
-现状: edge 侧 RevenueCat 入账 webhook + 客户端身份 SDK(Telemetry.swift 三端)代码就位;RevenueCat 账号未开通、key 占位空串、IAP 产品未配,真机充值闭环完全未验。
-证据: key 占位空串,真机充值闭环未验
+现状: edge 侧 webhook(`/v1/billing/revenuecat/webhook` + `REVENUECAT_WEBHOOK_AUTH` 已部署)+ 客户端身份 SDK 代码就位。**本条旧说法「账号未开通、key 占位空串」已不成立** —— iOS 公钥已经配上(`HostedConfig.swift:132` `appl_OHplTtFSfcqsgKJvjZajkelEOJo`),但 `Telemetry.swift:25` 的注释仍写着「key 空、账号未开通」,是**代码注释漂移**。真实缺口在别处: `pnc_ledger` **0 条 iap_ios 入账**,真机内购闭环从未跑过;RevenueCat 后台是否配了 IAP 产品需人工确认。
+证据: `HostedConfig.swift:132` + `pnc_ledger` + secret list 实查(2026-08-19)
 task: —
-
 ## stack/anthropic+openai (coding-agent runners)
 status: partial, pending-qa
 现状: Codex 协议字段已对真 schema 校准、两个真 bug 已根治并 GUI E2E 验、单测全绿;活体像素渲染 + 完整真机 QA 是尾巴。(claude-code runner 状态见 stack/anthropic/claude-code 条。)
@@ -152,34 +147,29 @@ task: —
 
 ## stack/langfuse
 status: partial
-现状: Prompt loader 换源 KV 分发+fail-loud、HMAC webhook→KV、trace/score helper 代码+单测齐;16 个 prompt 已 seed 进 Langfuse production。待配 `LANGFUSE_WEBHOOK_SECRET`、翻 `LANGFUSE_ENABLED=true` 开 trace 上报、真实 trace 到面板核验。
-证据: 16 prompt seed production;待配 secret/开关
+现状: 拆成**两半**看,状态不同(注意 prompt 取用**不受** `LANGFUSE_ENABLED` 影响,那个 flag 只管 trace)。**① prompt 分发 = 通的**: `PROMPT_NAMES` 18 条 × zh + `session-world-model/en` 共 19 条**全部**在线上 `PROMPTS_KV` 里(实查),含 `lookback-instruction` —— 回看链路不缺 prompt。**② trace 上报 = 配齐但未核**: `LANGFUSE_ENABLED` 在 wrangler.jsonc 与线上 KV override 里都是 true、`LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` 已部署,但面板里有没有 trace 只能人工看。**③ 缺口**: `LANGFUSE_WEBHOOK_SECRET` **从未部署** → `/prompt-webhook` 恒返 501,改 prompt 不会推进 KV、而 KV 层没有 TTL,可能长期不生效(tech-debt 2026-08-19 🟡);KV 里另有 2 个已从 `PROMPT_NAMES` 删除的孤儿键。
+证据: `wrangler kv key list`(PROMPTS_KV 21 键)+ secret list + `cfg:feature-flags` 实查(2026-08-19)
 task: —
-
 ## stack/posthog
 status: partial
-现状: edge 服务端事件 helper + iOS/Mac PostHog 身份 SDK 代码就位;Sentry+PostHog 生产已启用(EU host)。待定全套事件规范 + iOS 交互事件补齐 + 真机事件投递闭环 + 漏斗/留存搭建。
-证据: 生产已启用(EU host);真机投递闭环未做
+现状: edge 服务端事件 helper + iOS/Mac SDK 代码就位。配置侧 2026-08-19 复核**齐全**: `POSTHOG_ENABLED=true`(wrangler vars)、`POSTHOG_KEY` 已部署、`POSTHOG_HOST=https://eu.i.posthog.com`;iOS 侧 `HostedConfig.swift:105` 有 `phc_…` 项目 key、同一 EU host。**未验的是「面板里到底有没有事件」** —— 只读手段够不到(MCP 需 OAuth,不开浏览器),列入待人工确认。另待做: 全套事件规范 + iOS 交互事件补齐 + 漏斗/留存搭建。
+证据: wrangler vars + secret list + `HostedConfig.swift:105` 实查(2026-08-19)
 task: —
-
 ## stack/sentry
 status: partial
-现状: worker `withSentry` 包裹 + 三处吞错点 captureException 代码齐;Sentry 生产已启用(DSN 已设);客户端 SDK 代码就位但只验了编译+启动不崩,错误真实到达面板的真机闭环未做。
-证据: 生产 DSN 已设;真机投递闭环未做
+现状: worker `withSentry` 包裹(`index.ts:249`)+ 三处吞错点 captureException;`SENTRY_ENABLED=true`(注意 Sentry **只认 env、不受 KV override**,见 `feature-flags.ts` 文件头)、`SENTRY_DSN` 已部署;iOS 侧 DSN 在 `HostedConfig.swift:124`(Apple 项目,与 worker 的 JS 项目不同)。**未验的是「错误真实到达面板」** —— 只读手段够不到,列入待人工确认。
+证据: `index.ts:249` + wrangler vars + secret list + `HostedConfig.swift:124` 实查(2026-08-19)
 task: —
-
 ## stack/grafana
 status: partial
-现状: 5 张 provisioning 看板(营收/钱包/群池/成本/转化,SQL 全基于真实列) + `bi_ro` 只读角色迁移已建+apply;开 Grafana Cloud 账号、设 `bi_ro` 密码、连 datasource 待用户,看板端到端出图未验。
-证据: 看板就绪;端到端出图未验(待用户开账号)
+现状: 5 张 provisioning 看板 + gcx 版资源文件都在仓库(`infra/grafana/{dashboards,gcx,provisioning}`);`bi_ro` 只读角色**线上确实存在**(`pg_roles` 实查,可登录)。2026-08-19 新增实据: 本机 `~/.config/gcx/config.yaml` 里有 `stack-id: 1678832` → **Grafana Cloud 账号已开通**(本条旧说法「待用户开账号」已过时)。仍未验: gcx CLI 本机未安装,看板是否真导入 / datasource 是否真连上 Supabase,只能人工在面板确认。
+证据: `pg_roles` 实查 + `~/.config/gcx/config.yaml` stack-id + `infra/grafana` 文件树(2026-08-19)
 task: —
-
 ## stack/apple/sign-in (Google)
 status: partial
-现状: iOS Google Sign-In→Supabase 换 session 客户端代码已落、iOS OAuth client id 已配;Mac 端 macOS 型 OAuth client 配置与真实 Google 登录回合待做,PendingCrew Google client id 未配。
-证据: iOS client id 已配;Mac/PendingCrew client id 未配
+现状: PendingBot iOS/Mac 侧**客户端配齐并已核**: `Info.plist:42` `GIDClientID = 842392349572-…apps.googleusercontent.com` + 反转 URL scheme 都在,`GoogleSignIn.swift` 走 SDK in-process 换 session。服务端侧 `/auth/v1/settings` 实测 **google + apple + email 三种都是 true**。剩余缺口不变: Mac 型 OAuth client 的真实登录回合待验;**PendingCrew 的 Google client id 仍未配**(那是另一个 bundle id)。
+证据: `Info.plist:42` + `/auth/v1/settings` 实查(2026-08-19)
 task: —
-
 ## stack/fly
 status: planned
 现状: 机器清单里 `kind=fly` 字段结构 + 新建流程的机器选择 UI 已占位;云 API 集成、box 开通/关停、按秒计费、冷启动唤醒 UX 全未实现。

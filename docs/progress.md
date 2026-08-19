@@ -1,6 +1,48 @@
 # PendingBot / PendingCrew 进度账本 (Progress Ledger)
 
-**最近对账：2026-07-17**（机组群聊体验批次收口 #478/#481/#482 三分支合 main；对照实际代码 / 迁移 / git，不是看 task 标记）
+**最近对账：2026-08-19（限外部服务接入面）**（人类 Todo #4 只读盘点，26 家逐家取证；**其余面仍停在 2026-07-17 那次对账**，别把这行当全量刷新）
+**上一次全量对账：2026-07-17**（机组群聊体验批次收口 #478/#481/#482 三分支合 main；对照实际代码 / 迁移 / git，不是看 task 标记）
+
+
+> **2026-08-19 外部服务接入盘点（人类 Todo #4，全程只读，不改代码/不部署/不写库/不发付费请求）**：26 家外部服务逐家取证 —— 证据来源是**代码 + `wrangler secret list/kv/r2/queues/containers/deployments` + 线上 Supabase 只读 SQL + 公开端点实测**，`docs/` 里的旧结论一律不采信（本仓库有过历史丢失）。分级明细已并进 `docs/state/shared.md` 的 `stack/*` 条目；结构性问题 7 条已记 `docs/tech-debt.md`「2026-08-19 外部服务接入盘点」。
+>
+> **✅ 接通并在用（14）**
+> | 服务 | 线上实据 |
+> |---|---|
+> | Cloudflare Workers / edge | 生产 `pendingbot-edge`，最新部署 2026-08-18 07:36；`GET /v1/health` → `environment: production`；`bot.pendingname.com` 的 AASA 返回真 appIDs |
+> | Cloudflare AI Gateway（主路径） | `audit_log` 2026-08-19 02:10 `claude-opus-5` / `provider_slug: anthropic` / ok；`CF_AIG_RUN_TOKEN` 已部署 |
+> | OpenRouter | `audit_log` 有带真实 cost 的成功记录（2026-08-18 `gemma-4-31b-it` $0.000012）；模型目录 `llm/catalog.ts:20` 直连 |
+> | `openai` SDK | AI Gateway 的 client + 全仓 Chat-Completions 类型底座（`llm/router.ts:1`） |
+> | Supabase DB | 87 messages / 20 bots / 16 conversations |
+> | Supabase Auth | `/auth/v1/settings` 实测 apple + google + email 三种均 true |
+> | Supabase → edge 实时 fan-in | `net._http_response` 6 次全 200、最新 2026-08-19 02:10:49；vault 有 `realtime_webhook_secret`；8 张表挂 `realtime_notify` |
+> | Cloudflare KV | PROMPTS_KV 21 键；MEMORY 有 cfg/bal/memo/botnote/user/bot 真数据 |
+> | Langfuse（prompt 分发这一半） | `PROMPT_NAMES` 18×zh + `session-world-model/en` 共 **19 条一条不缺**在 PROMPTS_KV（含 `lookback-instruction`） |
+> | Cloudflare Queues | `pendingbot-audit`（1 生产者 1 消费者）+ dlq 都在 |
+> | Cloudflare Access（board 门） | `/v1/board/*` 无凭证实测 403 |
+> | Honcho | `HONCHO_API_KEY` + `HONCHO_WORKSPACE_ID` 已部署；MEMORY KV 里有 `user:`×4 / `bot:`×5 表征缓存（`memory.ts:45-46` 写入）→ 真返回过内容 |
+> | Google / Apple 登录（客户端） | `Info.plist:42` GIDClientID + 反转 URL scheme 齐；服务端两个 provider 都开 |
+> | ASC / TestFlight | 机长实查 ASC 拿到 build 3571；`scripts/release/asc_highest_build.py` 在用 |
+>
+> **🟡 接了但没跑通 / 没在用（10）**
+> | 服务 | 卡在哪 |
+> |---|---|
+> | AI Gateway 成本回读 | **`CF_AIG_TOKEN` 从未部署** → `ai-gateway.ts:61` 直接 `return null`；实证：8-18/8-19 两条原生透传记录 `cost_usd = null`、`billing_status = 'skipped'`。OpenRouter 自报成本所以看起来正常，**只有主路径在漏** |
+> | Exa / MCP 网页搜索 | `mcp_servers` 里 exa `enabled=true`、`secret_ref='EXA_API_KEY'`，但**该 secret 未部署**；`mcp/client.ts:113-121` 取不到值就**静默不带鉴权头**。`audit_web_tool_calls` **0 行** |
+> | Langfuse prompt 推送 | **`LANGFUSE_WEBHOOK_SECRET` 未部署** → `/prompt-webhook` 恒返 501（`langfuse-prompts.ts:61`）；KV 无 TTL，改 prompt 可能长期不生效 |
+> | Langfuse trace | 开关 + 双 key 都齐，**面板有没有 trace 只读验不了** |
+> | Polar | 一笔真实 `polar_checkout` topup（2026-07-11）证明收单通道通；但该行 `polar_synced = false` = **疑似漏账**，且幂等自锁 + 该字段全仓只写不读 |
+> | 计费开关 | `wrangler.jsonc` 写 `false`，线上 KV `cfg:feature-flags` = `{"langfuse":true,"billing":true}` → **实际是开着的**，读配置文件会得到相反结论 |
+> | RevenueCat | iOS 公钥**其实已配**（`HostedConfig.swift:132`），`Telemetry.swift:25` 注释仍写「账号未开通」= 文档漂移；`pnc_ledger` **0 条 iap_ios 入账** |
+> | R2 附件 | `pendingbot-uploads-prod` **object_count = 0**、`attachments` 表 0 行；KV 里还留着 8 个 5 月的孤儿 `att:` 键 |
+> | 推送 / 语音 / 沙箱 | APNs 6 条 secret 齐但 `device_tokens` 仅 2 行（最后 7-11）；语音三家密钥全齐、20 只 bot 全开 voice，但 `realtime_sessions` / `voice_active_calls` **均 0 行**；sandbox 容器 ready 但 `bot_code_exec_requests` **0 行** |
+> | Sentry / PostHog / Grafana | 开关 + DSN/KEY + iOS 侧 key 全齐；Grafana Cloud 账号确实开了（`~/.config/gcx/config.yaml` 有 `stack-id: 1678832`）、`bi_ro` 角色线上存在。**面板侧一律只读验不了** |
+>
+> **❌ 只有依赖 / 只有文档，代码里没有**：Tavily（`wrangler.jsonc` 注释声明，代码零引用，secret 也没推）；自托管看板那套 Metabase+Appsmith on VPS（`docs/dashboards-setup.md` 顶部自己已标「降级为可选 fallback」）；Fly（state 账已标 planned）。另有**线上残留 14 条代码零引用的 secret**，其中一条的**名字本身是一个 Daytona token**（明文暴露，建议吊销+删除）。
+>
+> **待人工确认（只读手段够不到，需要人去后台点）**：① Polar 真实余额 + 7-11 那笔的状态；② RevenueCat 后台是否开通、IAP 产品配了没；③ Sentry / PostHog / Langfuse 面板有没有数据进来；④ Grafana Cloud 的 5 张看板导没导入、datasource 连没连上；⑤ **Supabase Auth → Captcha 里 Turnstile 的 secret 有没有贴**（没贴则注册验证码形同虚设，`HostedConfig.swift:67-73` 注释自陈这个坑）。
+>
+> **顺带**：handbook `stack/` 下没有 Honcho / Exa(MCP) / Turnstile 的期望页，所以这三家在 `docs/state/shared.md` 里没有独立条目，事实暂折进相邻条目（Honcho 无处可折，仅见本节与 tech-debt）。要不要补页归期望账（人写）。
 
 > **2026-07-17 机组群聊体验批次收口（3 隔离 worktree 并行，task #478/#481/#482 全 completed，机长派工+对账）**：
 > - **#481 切 crew 不串 session**（ff 合 `76076fe0`）：右栏打开的 session/模式改 per-crew 记忆，切 crew 存旧恢新；别的 crew 后台起的 session 不再抢当前 crew 前台。Mac build 绿。
