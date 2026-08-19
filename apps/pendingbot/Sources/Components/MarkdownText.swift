@@ -44,15 +44,20 @@ struct MarkdownText: View {
 
     var body: some View {
         Markdown(rewrittenText)
-            .markdownTheme(variant == .article ? MarkdownText.articleTheme : MarkdownText.chatTheme)
-            .markdownBlockStyle(\.codeBlock) { configuration in
-                ChatCodeBlock(
-                    content: configuration.content,
-                    language: configuration.language,
-                    allowRun: allowCodeRun,
-                    variant: variant
-                )
-            }
+            // 代码块样式**烘进 theme 本体**(见 `resolvedTheme` / `chatCodeBlock`),
+            // 不再挂 `.markdownBlockStyle(\.codeBlock)`。
+            //
+            // 原来写成 `.markdownTheme(…)` 在里层、`.markdownBlockStyle(\.codeBlock)`
+            // 在外层,而 MarkdownUI 里这两个都是环境值写入:
+            //   markdownTheme(t)           → .environment(\.theme, t)       // 整个换掉
+            //   markdownBlockStyle(kp){…}  → .environment(\.theme[kp], …)   // 读-改-写一个字段
+            // SwiftUI 环境值离视图越近的越赢,所以里层的 markdownTheme 把外层那个补丁
+            // 整个盖回去了 —— ChatCodeBlock 从来没被实例化过,围栏代码块一路退到
+            // MarkdownUI `Theme()` 的默认 codeBlock(`BlockStyle { $0.label }` = 拿正文
+            // 字体直接画),于是没边框/没底色/不等宽/没复制按钮、还跟正文一起按字宽折行。
+            // 行内 `code` 不受影响,因为它本来就写在 theme 里 —— 这正是「行内好、围栏坏」
+            // 的成因。烘进 theme 之后只剩一次环境写入,顺序问题从结构上不存在了。
+            .markdownTheme(resolvedTheme)
             // LaTeX math support — see MathRendering.swift. The rewrite turns
             // `\(…\)` / `$$…$$` etc. into `pendingbot-math://` image refs,
             // and these providers typeset them; non-math images fall through
@@ -65,7 +70,7 @@ struct MarkdownText: View {
             .markdownInlineImageProvider(
                 MathInlineImageProvider(textColor: AppTheme.Palette.ink, fontSize: mathFontSize, scheme: colorScheme)
             )
-            .textSelection(.enabled)
+            .bubbleSelectableText()
             .environment(\.openURL, OpenURLAction { url in
                 // Citation taps go through a fake `pendingbot-cite://N`
                 // scheme so we can intercept them here and show the source
@@ -82,6 +87,20 @@ struct MarkdownText: View {
             .sheet(item: $presentedCitation) { p in
                 CitationSheet(index: p.n, citation: p.citation)
             }
+    }
+
+    /// The variant's theme with `ChatCodeBlock` already baked into
+    /// `\.codeBlock`. Precombined statics rather than building a `Theme` per
+    /// `body` pass — the chat list re-evaluates bodies constantly, and handing
+    /// SwiftUI a freshly-allocated environment value each time would churn the
+    /// whole Markdown subtree.
+    private var resolvedTheme: MDTheme {
+        switch (variant, allowCodeRun) {
+        case (.chat, false):    return MarkdownText.chatTheme
+        case (.chat, true):     return MarkdownText.chatThemeRunnable
+        case (.article, false): return MarkdownText.articleTheme
+        case (.article, true):  return MarkdownText.articleThemeRunnable
+        }
     }
 
     private var rewrittenText: String {
@@ -106,9 +125,16 @@ struct MarkdownText: View {
 
     // ── Themes ─────────────────────────────────────────────────────────────
 
+    // 每个 variant 一份「已烘入代码块样式」的成品 theme。`allowCodeRun` 也进 key,
+    // 因为它是 ChatCodeBlock 的构造参数,不能在渲染时再补。
+    fileprivate static let chatTheme = chatThemeBase.chatCodeBlock(allowRun: false, variant: .chat)
+    fileprivate static let chatThemeRunnable = chatThemeBase.chatCodeBlock(allowRun: true, variant: .chat)
+    fileprivate static let articleTheme = articleThemeBase.chatCodeBlock(allowRun: false, variant: .article)
+    fileprivate static let articleThemeRunnable = articleThemeBase.chatCodeBlock(allowRun: true, variant: .article)
+
     /// Chat-tuned theme: tight vertical rhythm so a short bot reply doesn't
     /// feel like a blog post. Default for `.chat` variant.
-    fileprivate static let chatTheme: MDTheme = MDTheme()
+    fileprivate static let chatThemeBase: MDTheme = MDTheme()
         .text {
             ForegroundColor(AppTheme.Palette.ink)
             // Matches `Theme.Fonts.body` exactly — both sides of the chat
@@ -203,7 +229,7 @@ struct MarkdownText: View {
     ///   that drops a comparison table doesn't end up with mashed cells.
     /// - Thematic breaks render as a centered short hairline rather than
     ///   a full-width rule — feels more like a section break in print.
-    fileprivate static let articleTheme: MDTheme = MDTheme()
+    fileprivate static let articleThemeBase: MDTheme = MDTheme()
         .text {
             ForegroundColor(AppTheme.Palette.ink)
             FontFamily(.system(.serif))
@@ -309,6 +335,22 @@ struct MarkdownText: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 7)
         }
+}
+
+// 把 `ChatCodeBlock` 焊进 theme 的 `\.codeBlock`。走 `Theme.codeBlock(body:)`
+// (MarkdownUI 自带的 theme builder)而不是 `.markdownBlockStyle(\.codeBlock)` 视图
+// 修饰器 —— 后者是环境值补丁,会被里层的 `.markdownTheme(…)` 整体盖掉(见 body)。
+fileprivate extension MDTheme {
+    func chatCodeBlock(allowRun: Bool, variant: MarkdownText.Variant) -> MDTheme {
+        codeBlock { configuration in
+            ChatCodeBlock(
+                content: configuration.content,
+                language: configuration.language,
+                allowRun: allowRun,
+                variant: variant
+            )
+        }
+    }
 }
 
 private struct PresentedCitation: Identifiable {
@@ -488,7 +530,8 @@ private struct ChatCodeBlock: View {
                     .padding(.horizontal, horizontalPadding)
                     .padding(.vertical, verticalPadding)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
+                    // 代码块也是 NSTextField 大户,同样按需挂。
+                    .bubbleSelectableText()
             }
         }
         .background(AppTheme.Palette.surfaceMuted.opacity(variant == .article ? 0.6 : 0.85))

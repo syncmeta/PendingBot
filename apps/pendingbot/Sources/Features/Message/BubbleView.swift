@@ -79,11 +79,16 @@ struct BubbleView<Menu: View>: View {
     }
 
     var body: some View {
-        if message.isMine(currentUserId: currentUserId) {
-            userLayout
-        } else {
-            botLayout
+        Group {
+            if message.isMine(currentUserId: currentUserId) {
+                userLayout
+            } else {
+                botLayout
+            }
         }
+        // 文本选中只给指针底下这一条 —— macOS 上常开会给每段文字挂一个真
+        // NSTextField 并逐帧全量刷新。见 BubbleTextSelection.swift。
+        .bubbleTextSelection(id: message.id)
     }
 
     // ── Bot ─────────────────────────────────────────────────────────────────
@@ -199,7 +204,7 @@ struct BubbleView<Menu: View>: View {
                             .accessibilityLabel("重新发送")
                         }
                         Text(message.content)
-                            .textSelection(.enabled)
+                            .bubbleSelectableText()
                             .font(Theme.Fonts.body)
                             .foregroundStyle(message.isFailed
                                              ? Color.red.opacity(0.95)
@@ -304,8 +309,12 @@ struct AttachmentGrid: View {
             ForEach(imageRows.indices, id: \.self) { row in
                 HStack(spacing: 6) {
                     ForEach(imageRows[row]) { att in
+                        // 按格子尺寸降采样解码 —— 110pt 的缩略图不需要 4000px 原图,
+                        // ×3 给 retina + 放大留余量。看大图那条路(ImageViewer)不传,
+                        // 仍是原尺寸。
                         ServerImage(path: att.url, serverURL: serverURL,
-                                    contentMode: .fill)
+                                    contentMode: .fill,
+                                    maxPixelSize: Int(cell * 3))
                             .frame(width: cell, height: cell)
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                             .contentShape(Rectangle())

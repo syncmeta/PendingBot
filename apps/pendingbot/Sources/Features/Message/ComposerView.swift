@@ -2,6 +2,8 @@ import SwiftUI
 import PhotosUI
 #if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
 #endif
 
 /// Bottom-of-screen input bar — capsule field flanked by circle buttons.
@@ -239,6 +241,9 @@ struct ComposerView: View {
                                 .font(Theme.Fonts.body)
                                 .foregroundStyle(.white, .black.opacity(0.55))
                         }
+                        // Without .plain, macOS gives this its default bordered
+                        // chrome — a shadowed rounded slab around the glyph.
+                        .buttonStyle(.plain)
                         .offset(x: 6, y: -6)
                     }
                 }
@@ -264,7 +269,9 @@ struct ComposerView: View {
                 ServerImage(
                     path: "/v1/uploads/\(remoteId)",
                     serverURL: HostedConfig.environment.workerURL,
-                    contentMode: .fill
+                    contentMode: .fill,
+                    // 64pt 的托盘缩略图,×3 给 retina。
+                    maxPixelSize: 192
                 )
                 .frame(width: 64, height: 64)
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -562,47 +569,238 @@ final class ComposerUITextView: UITextView {
 
 // ── Composer text input (macOS twin) ───────────────────────────────────────
 
-/// Plain SwiftUI multiline input standing in for the UIKit-backed
-/// `ComposerTextField` on macOS. No keyboard-frame tracking or hardware-
-/// Return interception here — the Mac composer is hosted via a normal
-/// `.safeAreaInset` (the ConversationView macOS path), not a UIKit
-/// `inputAccessoryView`, so the elaborate first-responder/height dance the
-/// iOS version performs isn't needed. Same init signature so `ComposerView`'s
-/// body compiles unchanged; `onHardwareReturn` is wired to the Return key via
-/// `.onSubmit`, and the vertical-axis `TextField` grows 1–6 lines like the
-/// iOS version (⌥/⇧+Return inserts a newline).
-struct ComposerTextField: View {
+/// NSTextView-backed input mirroring the iOS `ComposerTextField` UITextView
+/// twin. A plain SwiftUI `TextField` can't be used here: its bound `String`
+/// stays empty while an IME (拼音 etc.) is mid-composition, so a
+/// `text.isEmpty` placeholder never hides and ends up painted on top of the
+/// candidate letters the user is typing. NSTextView exposes `hasMarkedText()`,
+/// which lets the placeholder disappear the moment composition starts.
+///
+/// Behavior summary (kept identical to the previous SwiftUI version):
+/// - Plain hardware Return → calls `onHardwareReturn` (send), no newline.
+/// - Shift+Return / Option+Return → inserts a newline.
+/// - Grows 1–6 lines, then scrolls internally.
+/// - `isFocused` ⇄ first-responder kept in sync both directions.
+/// - Placeholder visible iff the field is empty AND not composing (marked text).
+struct ComposerTextField: NSViewRepresentable {
     @Binding var text: String
     let placeholder: String
     @Binding var isFocused: Bool
     let onHardwareReturn: () -> Void
 
-    @FocusState private var fieldFocused: Bool
+    /// Cap on auto-grown height — matches the old `lineLimit(1...6)`.
+    private static let maxLines: CGFloat = 6
 
-    var body: some View {
-        ZStack(alignment: .topLeading) {
-            if text.isEmpty {
-                Text(placeholder)
-                    .font(.system(size: Theme.Fonts.scaled(16)))
-                    .foregroundStyle(Theme.Palette.inkMuted.opacity(0.6))
-                    .padding(.vertical, 6)
-                    .allowsHitTesting(false)
+    private var font: NSFont { .systemFont(ofSize: Theme.Fonts.scaled(16)) }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = false
+        scrollView.hasHorizontalScroller = false
+        scrollView.borderType = .noBorder
+        scrollView.verticalScrollElasticity = .allowed
+
+        let tv = ComposerNSTextView()
+        tv.delegate = context.coordinator
+        tv.font = font
+        tv.textColor = NSColor(Theme.Palette.ink)
+        tv.insertionPointColor = NSColor(Theme.Palette.accent)
+        tv.drawsBackground = false
+        tv.isRichText = false
+        tv.isEditable = true
+        tv.isSelectable = true
+        tv.allowsUndo = true
+        tv.textContainerInset = NSSize(width: 0, height: 6)
+        tv.textContainer?.lineFragmentPadding = 0
+        tv.textContainer?.widthTracksTextView = true
+        tv.isVerticallyResizable = true
+        tv.isHorizontallyResizable = false
+        tv.autoresizingMask = [.width]
+        tv.minSize = NSSize(width: 0, height: 0)
+        tv.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        // Marked-text (IME candidate) changes don't fire the text-did-change
+        // delegate, so hook the composition entry points directly to keep the
+        // placeholder visibility honest while the user is still typing pinyin.
+        tv.onMarkedTextChange = { [weak coordinator = context.coordinator, weak tv] in
+            guard let coordinator, let tv else { return }
+            coordinator.refreshPlaceholder(tv)
+        }
+        // Focus tracking hangs off the responder chain, NOT the
+        // textDidBegin/EndEditing delegate pair: AppKit only posts
+        // textDidBeginEditing on the first actual text change (unlike iOS,
+        // where focus alone begins editing). With the delegate pair, a click
+        // left `isFocused` false, and the next host re-render (a streaming
+        // reply re-renders the conversation constantly) hit updateNSView's
+        // "binding says unfocused but we're first responder" branch and stole
+        // focus back — the "click, then focus drops unless you type" bug.
+        tv.onFocusChange = { [weak coordinator = context.coordinator] focused in
+            guard let coordinator else { return }
+            // Keep the async make/resign guards' snapshot in sync too, so a
+            // stale queued resign can't fire against the new reality.
+            coordinator.requestedFocus = focused
+            if coordinator.parent.isFocused != focused {
+                coordinator.parent.isFocused = focused
             }
-            TextField("", text: $text, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(.system(size: Theme.Fonts.scaled(16)))
-                .foregroundStyle(Theme.Palette.ink)
-                .lineLimit(1...6)
-                .padding(.vertical, 6)
-                .focused($fieldFocused)
-                .onSubmit(onHardwareReturn)
         }
-        .onChange(of: isFocused) { _, want in
-            if fieldFocused != want { fieldFocused = want }
+        scrollView.documentView = tv
+
+        // Placeholder is drawn by the text view itself (see ComposerNSTextView
+        // .draw) — NOT an NSTextField subview of the scroll view. Two reasons,
+        // both hard-learned: Auto Layout constraints on a direct subview of
+        // NSScrollView are never applied (NSScrollView's layout pass is tile(),
+        // which skips the constraint engine → the label stays at its initial
+        // frame, top-left + truncated), and an NSTextField overlay swallows
+        // mouse-downs over exactly the strip where the placeholder text shows,
+        // so click-to-focus dies there. Drawing at textContainerOrigin with the
+        // same font is pixel-aligned with real text by construction and leaves
+        // hit-testing entirely to the text view.
+        tv.placeholderString = placeholder
+        return scrollView
+    }
+
+    func updateNSView(_ nsView: NSScrollView, context: Context) {
+        context.coordinator.parent = self
+        context.coordinator.requestedFocus = isFocused
+        guard let tv = nsView.documentView as? ComposerNSTextView else { return }
+        if tv.placeholderString != placeholder {
+            tv.placeholderString = placeholder
+            tv.needsDisplay = true
         }
-        .onChange(of: fieldFocused) { _, focused in
-            if isFocused != focused { isFocused = focused }
+        // Don't stomp an in-flight IME composition; only push external text
+        // changes (send-clear, @-mention insertion) when not composing.
+        if !tv.hasMarkedText(), tv.string != text {
+            tv.string = text
+            context.coordinator.refreshPlaceholder(tv)
         }
+        let isFirst = (tv.window?.firstResponder === tv)
+        if isFocused, !isFirst {
+            DispatchQueue.main.async { [weak coordinator = context.coordinator, weak tv] in
+                guard coordinator?.requestedFocus == true, let tv,
+                      let window = tv.window, window.firstResponder !== tv else { return }
+                window.makeFirstResponder(tv)
+            }
+        } else if !isFocused, isFirst {
+            DispatchQueue.main.async { [weak coordinator = context.coordinator, weak tv] in
+                guard coordinator?.requestedFocus == false, let tv,
+                      let window = tv.window, window.firstResponder === tv else { return }
+                window.makeFirstResponder(nil)
+            }
+        }
+    }
+
+    @MainActor
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
+        let width = proposal.width ?? 200
+        let inset = (nsView.documentView as? NSTextView)?.textContainerInset ?? NSSize(width: 0, height: 6)
+        let verticalInset = inset.height * 2
+        let attrs: [NSAttributedString.Key: Any] = [.font: font]
+        let oneLine = ("M" as NSString).size(withAttributes: attrs).height
+        let maxHeight = oneLine * Self.maxLines + verticalInset
+        let measured = (nsView.documentView as? NSTextView)?.string ?? text
+        let bounding = (measured.isEmpty ? " " : measured as String).boundingRect(
+            with: NSSize(width: max(0, width - inset.width * 2), height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: attrs
+        )
+        let content = ceil(bounding.height) + verticalInset
+        let height = min(max(content, oneLine + verticalInset), maxHeight)
+        return CGSize(width: width, height: height)
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: ComposerTextField
+        var requestedFocus = false
+
+        init(_ parent: ComposerTextField) { self.parent = parent }
+
+        func textDidChange(_ notification: Notification) {
+            guard let tv = notification.object as? NSTextView else { return }
+            parent.text = tv.string
+            refreshPlaceholder(tv)
+        }
+
+        // NOTE: no textDidBeginEditing/textDidEndEditing here — focus sync
+        // rides ComposerNSTextView's become/resignFirstResponder overrides
+        // (see onFocusChange in makeNSView). The editing notifications fire
+        // too late on AppKit (first keystroke, not focus) to be a focus signal.
+
+        /// Intercept the plain Return so it sends instead of inserting a
+        /// newline. Shift/Option+Return fall through to the default newline.
+        /// While an IME is composing (`hasMarkedText`), Return is consumed by
+        /// the input method to commit the candidate and never reaches here, but
+        /// the guard makes that explicit and fail-safe.
+        func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+                let flags = NSApp.currentEvent?.modifierFlags ?? []
+                let wantsNewline = flags.contains(.shift) || flags.contains(.option)
+                if !wantsNewline, !textView.hasMarkedText() {
+                    parent.onHardwareReturn()
+                    return true
+                }
+            }
+            return false
+        }
+
+        func refreshPlaceholder(_ textView: NSTextView) {
+            // Visibility is decided inside ComposerNSTextView.draw (empty &&
+            // not composing); this just schedules a repaint on state changes.
+            textView.needsDisplay = true
+        }
+    }
+}
+
+/// NSTextView subclass that surfaces IME composition changes. `setMarkedText`
+/// / `unmarkText` are the entry/exit points for marked (candidate) text and
+/// don't trigger `textDidChange`, so we notify from them to keep the
+/// placeholder hidden the instant composition starts and restored when it
+/// clears.
+final class ComposerNSTextView: NSTextView {
+    var onMarkedTextChange: (() -> Void)?
+    /// Fired from become/resignFirstResponder — the only reliable focus signal
+    /// on AppKit (textDidBeginEditing waits for the first keystroke).
+    var onFocusChange: ((Bool) -> Void)?
+    /// Placeholder drawn in `draw(_:)` when empty and not composing. Drawn (not
+    /// an overlay view) so it can't intercept clicks and is positioned at the
+    /// exact text origin — see the comment at the construction site.
+    var placeholderString: String = ""
+
+    override func becomeFirstResponder() -> Bool {
+        let ok = super.becomeFirstResponder()
+        if ok { onFocusChange?(true) }
+        return ok
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let ok = super.resignFirstResponder()
+        if ok { onFocusChange?(false) }
+        return ok
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard !placeholderString.isEmpty, string.isEmpty, !hasMarkedText() else { return }
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font ?? .systemFont(ofSize: Theme.Fonts.scaled(16)),
+            .foregroundColor: NSColor(Theme.Palette.inkMuted).withAlphaComponent(0.6),
+        ]
+        let origin = NSPoint(
+            x: textContainerOrigin.x + (textContainer?.lineFragmentPadding ?? 0),
+            y: textContainerOrigin.y
+        )
+        NSAttributedString(string: placeholderString, attributes: attrs).draw(at: origin)
+    }
+
+    override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
+        onMarkedTextChange?()
+    }
+
+    override func unmarkText() {
+        super.unmarkText()
+        onMarkedTextChange?()
     }
 }
 #endif
