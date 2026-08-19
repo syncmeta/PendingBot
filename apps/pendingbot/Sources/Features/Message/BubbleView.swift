@@ -304,8 +304,12 @@ struct AttachmentGrid: View {
             ForEach(imageRows.indices, id: \.self) { row in
                 HStack(spacing: 6) {
                     ForEach(imageRows[row]) { att in
+                        // 按格子尺寸降采样解码 —— 110pt 的缩略图不需要 4000px 原图,
+                        // ×3 给 retina + 放大留余量。看大图那条路(ImageViewer)不传,
+                        // 仍是原尺寸。
                         ServerImage(path: att.url, serverURL: serverURL,
-                                    contentMode: .fill)
+                                    contentMode: .fill,
+                                    maxPixelSize: Int(cell * 3))
                             .frame(width: cell, height: cell)
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                             .contentShape(Rectangle())

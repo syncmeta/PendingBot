@@ -1,4 +1,5 @@
 import SwiftUI
+import ImageIO
 import Supabase
 
 /// Loads an auth-gated image from the Worker (`/v1/uploads/<id>`). Cross-platform
@@ -13,6 +14,10 @@ struct ServerImage: View {
     let path: String
     let serverURL: URL
     var contentMode: ContentMode = .fit
+    /// 解码上限(像素长边)。缩略图格子按显示尺寸传(×3 给 retina + 放大留余量);
+    /// nil = 原尺寸(看大图那条路)。110pt 的缩略图不需要把 4000px 原图整张解出来 ——
+    /// 那是「图多的会话点进去转圈」的放大器。
+    var maxPixelSize: Int? = nil
 
     @State private var image: PlatformImage?
     @State private var failed = false
@@ -52,8 +57,19 @@ struct ServerImage: View {
         do {
             let (data, response) = try await URLSession.shared.data(for: req)
             guard let http = response as? HTTPURLResponse,
-                  (200..<300).contains(http.statusCode),
-                  let decoded = PlatformImage(data: data) else {
+                  (200..<300).contains(http.statusCode) else {
+                failed = true
+                return
+            }
+            // 解码搬离主线程。`load()` 由 `.task` 驱动,继承 View 的 MainActor —— 在这里
+            // 直接 `PlatformImage(data:)` 等于在主线程上解全尺寸位图。ImageIO 那条路还能
+            // 顺带按 `maxPixelSize` 降采样,并用 `ShouldCacheImmediately` 把真正的解码钉在
+            // 本线程完成(否则 UIImage/NSImage 是懒解码,那一下仍会落到首帧的主线程上)。
+            let cap = maxPixelSize
+            let decoded = await Task.detached(priority: .userInitiated) {
+                ServerImageDecoder.decode(data, maxPixelSize: cap)
+            }.value
+            guard let decoded else {
                 failed = true
                 return
             }
@@ -61,6 +77,37 @@ struct ServerImage: View {
         } catch {
             failed = true
         }
+    }
+}
+
+
+/// 位图解码收口 —— 走 ImageIO 而不是 `PlatformImage(data:)`,为了两件事:
+/// 按显示尺寸降采样,以及把解码真正做完(而不是留一个懒解码的壳给主线程)。
+enum ServerImageDecoder {
+    static func decode(_ data: Data, maxPixelSize: Int?) -> PlatformImage? {
+        guard let source = CGImageSourceCreateWithData(
+            data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary
+        ) else {
+            // 解不出 source(非常规容器)就退回平台解码,别把图弄丢。
+            return PlatformImage.decode(data)
+        }
+        var options: [CFString: Any] = [
+            // 现在就解,别留懒解码的壳 —— 留了那一下会落到首帧的主线程上。
+            kCGImageSourceShouldCacheImmediately: true,
+            // 尊重 EXIF 方向,否则手机横拍的图会躺着。
+            kCGImageSourceCreateThumbnailWithTransform: true,
+        ]
+        let cg: CGImage?
+        if let cap = maxPixelSize, cap > 0 {
+            // 即使内嵌缩略图比 cap 小也重新生成,免得拿到一张糊的。
+            options[kCGImageSourceCreateThumbnailFromImageAlways] = true
+            options[kCGImageSourceThumbnailMaxPixelSize] = cap
+            cg = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+        } else {
+            cg = CGImageSourceCreateImageAtIndex(source, 0, options as CFDictionary)
+        }
+        guard let cg else { return PlatformImage.decode(data) }
+        return PlatformImage.fromCGImage(cg)
     }
 }
 

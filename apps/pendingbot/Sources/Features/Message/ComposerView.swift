@@ -267,7 +267,9 @@ struct ComposerView: View {
                 ServerImage(
                     path: "/v1/uploads/\(remoteId)",
                     serverURL: HostedConfig.environment.workerURL,
-                    contentMode: .fill
+                    contentMode: .fill,
+                    // 64pt 的托盘缩略图,×3 给 retina。
+                    maxPixelSize: 192
                 )
                 .frame(width: 64, height: 64)
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
