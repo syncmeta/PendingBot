@@ -37,8 +37,8 @@ import { patchCachedAttachment } from '../lib/attachment-cache';
 import { classifyAttachment } from '../lib/attachments';
 import { uuidv7 } from '../lib/ids';
 import {
+  auditErrorFields,
   enqueueAudit,
-  FallbackError,
   usageFromCompletion,
   withFallback,
 } from './router';
@@ -360,24 +360,23 @@ export async function summarizeAttachment(
     const message =
       err instanceof Error ? err.message : String(err) || 'unknown error';
     console.warn('[vision] summarize failed', attachmentId, message);
-    if (err instanceof FallbackError) {
-      await enqueueAudit(env, err.lastRoute, {
-        auditId: turnId,
-        userId: deps.userId,
-        conversationId: deps.conversationId,
-        taskType: 'attachment_summary',
-        startedAt,
-        status: 'error',
-        errorClass:
-          err.routeTrace[err.routeTrace.length - 1]?.error_class ?? 'unknown',
-        routeTrace: err.routeTrace,
-        metadata: {
-          attachment_id: attachmentId,
-          vision_model: picked.slug,
-          vision_reason: picked.reason,
-        },
-      });
-    }
+    const audit = auditErrorFields(err);
+    await enqueueAudit(env, audit.route, {
+      auditId: turnId,
+      userId: deps.userId,
+      conversationId: deps.conversationId,
+      taskType: 'attachment_summary',
+      startedAt,
+      status: 'error',
+      errorClass: audit.errorClass,
+      routeTrace: audit.routeTrace,
+      metadata: {
+        attachment_id: attachmentId,
+        vision_model: picked.slug,
+        vision_reason: picked.reason,
+        error_message: audit.message,
+      },
+    });
     await supa
       .from('attachments')
       .update({
@@ -563,24 +562,23 @@ export async function readAttachmentForTool(
   } catch (err) {
     const message =
       err instanceof Error ? err.message : String(err) || 'unknown error';
-    if (err instanceof FallbackError) {
-      await enqueueAudit(env, err.lastRoute, {
-        auditId: turnId,
-        userId: deps.userId,
-        conversationId: deps.conversationId,
-        taskType: 'attachment_read',
-        startedAt,
-        status: 'error',
-        errorClass:
-          err.routeTrace[err.routeTrace.length - 1]?.error_class ?? 'unknown',
-        routeTrace: err.routeTrace,
-        metadata: {
-          attachment_id: attachmentId,
-          vision_model: picked.slug,
-          vision_reason: picked.reason,
-        },
-      });
-    }
+    const audit = auditErrorFields(err);
+    await enqueueAudit(env, audit.route, {
+      auditId: turnId,
+      userId: deps.userId,
+      conversationId: deps.conversationId,
+      taskType: 'attachment_read',
+      startedAt,
+      status: 'error',
+      errorClass: audit.errorClass,
+      routeTrace: audit.routeTrace,
+      metadata: {
+        attachment_id: attachmentId,
+        vision_model: picked.slug,
+        vision_reason: picked.reason,
+        error_message: audit.message,
+      },
+    });
     return { error: message };
   }
 }

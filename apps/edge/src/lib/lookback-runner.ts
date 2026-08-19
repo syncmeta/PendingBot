@@ -2,8 +2,8 @@ import type { Env } from '../types';
 import type { ChatCompletionCreateParamsNonStreaming } from 'openai/resources/chat/completions';
 import { serviceClient } from './supabase';
 import {
+  auditErrorFields,
   enqueueAudit,
-  FallbackError,
   usageFromCompletion,
   withFallback,
 } from '../llm/router';
@@ -144,18 +144,16 @@ export async function runLookback(input: RunLookbackInput): Promise<void> {
     });
   } catch (err) {
     console.warn('[lookback]', err);
-    if (err instanceof FallbackError) {
-      await enqueueAudit(env, err.lastRoute, {
-        auditId: turnId,
-        conversationId,
-        taskType: 'lookback',
-        startedAt,
-        status: 'error',
-        errorClass:
-          err.routeTrace[err.routeTrace.length - 1]?.error_class ?? 'unknown',
-        routeTrace: err.routeTrace,
-        metadata: { bot_id: botId },
-      });
-    }
+    const audit = auditErrorFields(err);
+    await enqueueAudit(env, audit.route, {
+      auditId: turnId,
+      conversationId,
+      taskType: 'lookback',
+      startedAt,
+      status: 'error',
+      errorClass: audit.errorClass,
+      routeTrace: audit.routeTrace,
+      metadata: { bot_id: botId, error_message: audit.message },
+    });
   }
 }

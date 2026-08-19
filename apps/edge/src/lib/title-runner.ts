@@ -2,8 +2,8 @@ import type { Env } from '../types';
 import type { ChatCompletionCreateParamsNonStreaming } from 'openai/resources/chat/completions';
 import { serviceClient } from './supabase';
 import {
+  auditErrorFields,
   enqueueAudit,
-  FallbackError,
   usageFromCompletion,
   withFallback,
 } from '../llm/router';
@@ -102,20 +102,20 @@ export async function runTitle(input: RunTitleInput): Promise<void> {
     });
   } catch (err) {
     console.warn('[title]', err);
-    if (err instanceof FallbackError) {
-      // Every attempt failed — record the trace so /audit knows what
-      // we tried. lastRoute may be null if even the first resolveRoute
-      // couldn't pick a provider.
-      await enqueueAudit(env, err.lastRoute, {
-        auditId: turnId,
-        conversationId,
-        taskType: 'title',
-        startedAt,
-        status: 'error',
-        errorClass:
-          err.routeTrace[err.routeTrace.length - 1]?.error_class ?? 'unknown',
-        routeTrace: err.routeTrace,
-      });
-    }
+    // Record the failure so it's queryable after the fact. Every throw
+    // gets a row, not just FallbackError — a runner-body throw is just as
+    // invisible otherwise. route/route_trace are null when no provider
+    // was ever reached.
+    const audit = auditErrorFields(err);
+    await enqueueAudit(env, audit.route, {
+      auditId: turnId,
+      conversationId,
+      taskType: 'title',
+      startedAt,
+      status: 'error',
+      errorClass: audit.errorClass,
+      routeTrace: audit.routeTrace,
+      metadata: { error_message: audit.message },
+    });
   }
 }

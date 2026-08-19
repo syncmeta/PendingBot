@@ -6,6 +6,7 @@ import type { Env } from '../../../types';
 import { serviceClient } from '../../supabase';
 import { uuidv7 } from '../../ids';
 import {
+  auditErrorFields,
   FallbackError,
   enqueueAudit,
   usageFromCompletion,
@@ -186,12 +187,33 @@ export async function delegateToSpecialistTool(
   } catch (err) {
     clearTimeout(timer);
     const aborted = ac.signal.aborted && !ctx.signal.aborted;
+    const audit = auditErrorFields(err);
     const errMsg =
       err instanceof FallbackError
         ? (err.lastError as Error | undefined)?.message ?? err.message
         : err instanceof Error
           ? err.message
           : String(err);
+    // Delegated turns were the one withFallback call site that recorded
+    // nothing on failure — a specialist call that never landed left no
+    // row at all, so `select * from audit_log where task_type='delegate'`
+    // only ever showed the ones that worked.
+    await enqueueAudit(env, audit.route, {
+      auditId: turnId,
+      userId: ctx.userId,
+      conversationId: ctx.conversationId,
+      taskType: 'delegate',
+      startedAt,
+      status: 'error',
+      errorClass: aborted ? 'timeout' : audit.errorClass,
+      routeTrace: audit.routeTrace,
+      metadata: {
+        delegate_model_slug: modelSlug,
+        caller_bot_id: ctx.botId,
+        caller_conversation_id: ctx.conversationId,
+        error_message: aborted ? 'specialist timeout' : audit.message,
+      },
+    });
     ctx.emit('tool_result', {
       name: 'delegate_to_specialist',
       model_slug: modelSlug,

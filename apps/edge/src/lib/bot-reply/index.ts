@@ -10,6 +10,7 @@ import type { Env } from '../../types';
 import type { Json } from '../../db/schema';
 import { serviceClient } from '../supabase';
 import {
+  auditErrorFields,
   enqueueAudit,
   FallbackError,
   type ResolvedRoute,
@@ -1249,16 +1250,17 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
     //     stayed on whatever route last opened a stream. Use the
     //     accumulated routeTrace from prior round successes.
     try {
+      const audit = auditErrorFields(err);
       const fbErr = err instanceof FallbackError ? err : null;
-      const auditRoute = fbErr ? fbErr.lastRoute : route;
-      const auditTrace = fbErr ? fbErr.routeTrace : routeTrace;
-      const errorClass = aborted
-        ? null
-        : fbErr
-          ? fbErr.routeTrace[fbErr.routeTrace.length - 1]?.error_class ?? 'unknown'
-          : err instanceof Error
-            ? err.name
-            : 'unknown';
+      // Non-FallbackError throws happened after a route was already
+      // open — keep that route and the trace accumulated by the rounds
+      // that did succeed, rather than auditErrorFields' nulls.
+      const auditRoute = fbErr ? audit.route : route;
+      const auditTrace = fbErr ? audit.routeTrace : routeTrace;
+      // error_class always speaks the classifyError vocabulary (auth /
+      // rate_limit / no_route / …) so audit_log groups cleanly — it used
+      // to fall back to the raw JS `err.name` on the non-fallback branch.
+      const errorClass = aborted ? null : audit.errorClass;
       await enqueueAudit(env, auditRoute, {
         auditId: turnId,
         userId,
@@ -1284,7 +1286,12 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
         completionBody: totalContent,
         promptName: getPromptMeta('system', locale)?.name,
         promptVersion: getPromptMeta('system', locale)?.version,
-        metadata: { bot_id: bot.id, status, message: message.slice(0, 200) },
+        metadata: {
+          bot_id: bot.id,
+          status,
+          message: message.slice(0, 200),
+          error_message: audit.message,
+        },
       });
     } catch (auditErr) {
       console.warn('[bot-reply] audit on error failed:', auditErr);
