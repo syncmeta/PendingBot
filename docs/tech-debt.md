@@ -1339,3 +1339,33 @@
 - **影响**: "最快"预设的候选集会被**静默削掉一部分样本**，结果取决于当时有多少个非 2xx 响应堆积 —— 每次预热选出来的 5 个模型可能不稳定，而且**没有任何日志喊一声**（`fetchThroughput` 的 catch 是空的）。不致命（预设仍有结果），但属于"编译期合法、运行期静默降级"那一类。
 - **建议**: `if (!res.ok) { await res.body?.cancel(); return null; }`；顺带给那个空 `catch` 加一行 warn，别让 probe 失败继续无声。（并发上限本身也可以用小并发窗口而不是无限 `Promise.all`。）
 - **状态**: 待办 —— 本 session 只做投影验证，按纪律「发现即记录、不顺手改」。
+
+## 2026-08-19 架构梳理（`docs/architecture.md` 汇总时交叉发现）
+
+### 🔴 计费开着 × 网关成本读不到 = 原生 provider 腿正在免费消费
+- **发现**: 2026-08-19 · 技术架构梳理 crew（机长汇总四份只读笔记时交叉拼出，单看任一面都发现不了）
+- **位置**: `apps/edge/src/lib/ai-gateway.ts:62-65`（`fetchGatewayCost` 的短路）× 生产 secret 列表（缺 `CF_AIG_TOKEN`）× 线上 `MEMORY` KV 的 `cfg:feature-flags`
+- **问题**: 三件已知的事相乘，结论是新的 ——
+  ① 线上 KV 实测 `{"langfuse":true,"billing":true}`，而 `billingEnabled()` 是 `KV override ?? env`（`feature-flags.ts:63-77`），**所以计费闸和扣费在生产是开着的**（`wrangler.jsonc` 那行 `BILLING_ENABLED:"false"` 不生效，见上面「两个真值来源」那条）；
+  ② `CF_AIG_TOKEN` 生产从未部署 → `fetchGatewayCost` 第一行就 `return null`；
+  ③ 非 OpenRouter 腿（anthropic / gemini / openai 三条原生透传）的**唯一**成本源就是网关日志，于是 `cost_usd = null` → `billing_status = 'skipped'` → 扣费分支（只在 `'billed'` 时执行，`llm/router.ts:531`）**根本不进**。
+- **线上实证**: `audit_log` 里最近 5 条 `anthropic` 的 `message_reply` **全部** `cost_usd = null` / `billing_status = 'skipped'`；同一秒的标题级联走 OpenRouter 腿（自报成本）则 `cost_usd` 有值。
+- **影响**: 用户在计费开启的前提下，走原生 provider 腿的每一轮对话**一分钱扣不到**；OpenRouter 腿正常。这不是"预发布故意不计费"，是两个独立缺口叠出来的洞 —— 之前两半分别被记过（服务盘点记了 `CF_AIG_TOKEN` 未部署、开关那条记了 KV 与配置相反），但**没有人把它们乘起来**。
+- **建议**: 给生产设 `CF_AIG_TOKEN`（AI Gateway Logs 读权限）。**但别单独设它** —— 先一并处理下面那条规模坑，否则量一上来会从"不扣费"变成"队列反复重试进 DLQ"。
+- **状态**: 待办（本次只读调研，未改任何配置）。
+
+### 🟡 `fetchGatewayCost` 只扫最近 100 条网关日志且不按 turn_id 过滤 — 并发一上来必然查不到自己
+- **发现**: 2026-08-19 · 技术架构梳理 crew（对话链路面）
+- **位置**: `apps/edge/src/lib/ai-gateway.ts:67,105-106`
+- **问题**: 拉 AI Gateway Logs 时用 `?per_page=100` 且**没有按 `turn_id` 过滤**，靠客户端逐条比对 metadata 找自己那一条。并发量一上来，某个回合的日志会掉出首页 → `matched === 0` → 返回 `GATEWAY_COST_PENDING` → 队列 `retry({delaySeconds:60})` → 超过 `max_retries:5` 进 `pendingbot-audit-dlq`。而 DLQ **刻意不消费**，卡在那里的每条消息 = 一笔丢掉的扣费。
+- **影响**: 当前流量极低所以完全看不出来；它会在"用户变多"这个最不该出问题的时刻同时失效。属于典型的"规模上去才变形"的设计。
+- **建议**: 改成按 `turn_id` 服务端过滤（网关 Logs API 支持按 metadata 查询时优先用），或至少把 `matched===0` 与"日志确实还没 ingest"区分开，别让两者共用同一个 PENDING 语义。
+- **状态**: 待办。
+
+### 🟢 `docs/architecture-file-map.md` 已失效 — 227 处描述已拆走的 `apps/pendingcrew`
+- **发现**: 2026-08-19 · 技术架构梳理 crew
+- **位置**: `docs/architecture-file-map.md`（`scripts/generate-architecture-map.mjs` 于 2026-06-18 生成）
+- **问题**: PendingCrew 已于 2026-08-17 拆成独立仓库，但这份自动生成的索引仍有 227 处引用 `apps/pendingcrew`；且它按路径套模板推断角色，把 `room-media-protocol.ts` / `room-voice-policy.ts` 这类纯函数文件标成 Durable Object，是错的。
+- **影响**: 它的文件名看起来像"架构文档"，实际是文件索引且已过期，容易被当成架构结论引用。
+- **建议**: 要么重跑生成器并修正推断规则，要么在文件头显式标注"自动生成的文件索引，非架构结论，架构见 `docs/architecture.md`"。
+- **状态**: 待办（`docs/architecture.md` 已在 §12 记下这条漂移）。
