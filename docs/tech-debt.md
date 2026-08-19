@@ -1408,4 +1408,41 @@
 - **怎么定位（一句 SQL + 一次查看就能分辨）**: 先跑 `select status, count(*) from pendingbot.audit_log group by 1;` 确认 0 是真的 0 还是 NULL 混淆；再看 `pendingbot-audit-dlq` 的积压条数与内容。本次已加的 `[audit-write-dropped]` 标记只在"队列和内联写库双双失败"时打，若嫌疑是 ①/②，它不会打 —— 别把它的沉默当成健康。
 - **影响**: 这正是本次派活要根治的病本身。代码侧已补齐，但**"失败一定查得到"这句话在生产尚未成立**，下一次线上报错仍可能只留下 `[llm-fallback-exhausted]` 日志、库里没有行。
 - **机长复核补充（2026-08-19）**: ① 「失败行卡在等网关成本被反复重投」这条嫌疑**已排除** —— `persistAuditMessage` 读成本那段确实只在 `status === 'success'` 时走。② audit 消息里确实带着完整 prompt 和完整回复正文（`promptBody` / `completionBody`，为送 Langfuse 而加，见 #248），是全仓最胖的队列消息，嫌疑 ① 有依据。③ **DLQ 至今没人查成** —— `wrangler queues` 接口连试四次全部超时（同刻 `deployments list` 通，非登录问题），嫌疑 ② 仍挂着，不算已排除。
-- **状态**: 待办 —— 需要一次线上确认（DLQ 积压 + 队列消息大小），不是代码改动能关掉的。本次按边界「不动数据库、不部署」，只做到把代码侧写死并留下证据链。
+- **线上只读排查结果（2026-08-19 · 「查死信队列积压」session）**: 走 Cloudflare REST + GraphQL Analytics（`wrangler queues list/info` 这次没超时，正常返回）查清如下。
+
+  **队列拓扑**: `pendingbot-audit`（producer + consumer 都是 `pendingbot-edge-production`，`max_batch_size:100` / `max_retries:5`）→ DLQ `pendingbot-audit-dlq`（**0 producer / 0 consumer**，确认刻意不消费）。两个队列 `message_retention_period` 均为 **345600 秒（4 天）**。
+
+  **嫌疑 ①（消息超上限被拒）—— 已排除，三条独立证据**:
+  1. 官方文档确认上限是 **128 KB / 条**（含约 100 字节内部元数据）—— 见 `queues/platform/limits`，不是凭印象。
+  2. 该队列**有史以来最大的一条消息是 18,425 字节**（`queueMessageOperationsAdaptiveGroups.max(messageSize)` 全窗口），离上限还有约 7 倍余量。带 `promptBody` + `completionBody` 的主对话消息确实是最胖的一条，但远没到上限。
+  3. 那条真进了 DLQ 的消息是 11,939 字节，而且它的 `WriteMessage` 是**成功**的 —— 它是被接收后消费失败，不是投递时被拒。
+  4. 补充推理：即便 `send()` 真的因超限抛错，`enqueueAudit` 也会 catch 并回落到内联 `persistAuditMessage` 直接写库 —— 光靠"消息过大"根本产生不了"库里 0 行"。
+
+  **嫌疑 ②（进了 DLQ）—— 坐实**。8-18/8-19 逐小时对账，队列侧与库侧严丝合缝：
+
+  | 小时 (UTC) | 入队 | 消费成功 | 进 DLQ | `audit_log` 落行 |
+  |---|---|---|---|---|
+  | 08-19T04 | 4 | 4 | 0 | 4 |
+  | **08-19T07** | **5** | **4** | **1** | **4** |
+  | 08-19T10 | 6 | 6 | 0 | 6 |
+  | 08-19T13 | 7 | 7 | 0 | 7 |
+  | 08-19T15 | 4 | 4 | 0 | 4 |
+
+  **每一小时「消费成功数」都等于「库里落行数」**，唯独 08-19T07 那一小时 5 条进、4 条成、**1 条 `outcome:dlq`**（`avg(retryCount)=4`，即 5 次尝试打满 `max_retries:5`），库里也正好只有 4 行。**队列投递本身是健康的**（当天 29 条入队、28 条落库），断点就是这一条被消费端连续拒收 5 次后丢进 DLQ。07:00Z = 北京时间 15:00，与人类报的那次 `withFallback exhausted`（15:2x）时间吻合。
+
+  **但"为什么消费失败"—— 证据不足，不要猜**。把代码路径逐条排掉后，`persistAuditMessage` 里只剩一个抛点能导致重试：`audit_log` upsert 自己失败（`throw new Error('audit_log upsert failed: …')`）。另外两个候选都已证伪：
+  - `GatewayCostPendingError` **不可能**是原因 —— 线上 secret 列表确认 `CF_AIG_TOKEN` **根本没部署**（只有 `CF_AIG_RUN_TOKEN`），`fetchGatewayCost` 在 `if (!token …) return null` 就返回了，永远走不到 PENDING；何况读成本那段只在 `status === 'success'` 时才走。**⚠️ 推论：上面那条「AI Gateway 成本回读规模坑」的修复，救不了这一条** —— 那条坑要 `CF_AIG_TOKEN` 存在才会发作，别把两件事当成一件。
+  - 表结构/约束再次线上核实无辜：`status` / `error_class` 都是可空 `text`，`audit_log` 上只有 4 条约束（pkey、两条 FK、`billing_status` 的 CHECK），**`status` 上没有任何 CHECK**，结构上没有任何东西会拒绝一条 `status='error'` 的行。
+
+  **卡在哪、需要什么才能查下去**: 读不到那条 DLQ 消息的消息体和报错原文，而这正是唯一还缺的一环。两条路都被挡住：
+  - 给 DLQ 挂 pull consumer 才能取消息 —— 那是**改配置**，超出本次「纯只读」边界，没做。
+  - Workers Logs 历史回查（`/workers/observability/telemetry/query`）—— 本机 wrangler 的 OAuth token **没有 observability 读权限**（有 `workers_tail:read`，没有 observability scope），调用返回 `Authentication error`。这就是机长之前撞的那堵墙，是**真实的权限缺口，不是偶发失败**。
+
+  **一处对不上，明说**: REST 实时指标 `/queues/{id}/metrics` 报 DLQ `backlog_count=12` / `backlog_bytes=26975`（连查两次稳定），但两个 GraphQL 数据集都只看得到 **1** 条 dead-letter 事件、DLQ 积压也只有 1 条。队列 analytics 从 7-25 到 8-17 完全没有数据（同期 `audit_log` 也没有行，系统确实是闲的），而 4 天保留期本该让更早的消息过期。**这 12 与 1 的差我没能对上，证据不足以判定谁对**；实时接口同时把 `oldest_message_timestamp_ms` 报成 `0`（明显的"无数据"哨兵值），所以它这几个字段对本队列可能并未完整填充。取消息体时应以实际取到的条数为准。
+
+- **修法建议（本次只写不动手，按边界没实施）**:
+  1. **先让 DLQ 可读，这是最高优先** —— 现在一条失败 audit 进了 DLQ 就永久不可见，连"为什么失败"都问不出来。要么给 DLQ 挂一个把消息原样写进 `audit_dlq` 表的 consumer，要么加个 pull consumer + 一个 ops 脚本。**这个洞比这次这条具体的 bug 更值钱**：不补，下一次照样是这个死局。
+  2. **消费端"救不活也要留骨架"** —— `enqueueAudit` 的内联兜底只覆盖 *send* 失败，不覆盖 *consume* 失败。建议在重试耗尽时至少写一行只带 `id / status / error_class / route_trace`、成本字段全 null 的最小行，把"补不齐附加信息"降级成"仍然记一笔"，而不是整条丢掉。
+  3. **别把这条和成本回读那条混为一谈**（理由见上），也**别以为 8-19 15:48Z 那次部署解决了它** —— 断点在消费端写库，新部署的是生产端的失败入账代码，两者不是一回事。
+  4. 想拿到真因，二选一：给一个带 **Workers Observability 读权限**的 CF API token，或在复现时挂着 `wrangler tail`（`workers_tail:read` 现有 token 就够）。
+- **状态**: 待办 —— 嫌疑 ① 已排除，嫌疑 ② 已坐实（消息确实进了 DLQ、库里确实少了对应的行），但**消费失败的真正原因仍未知**，卡在读不到 DLQ 消息体 + 没有日志回查权限。下一步是上面第 1 条。
