@@ -1278,3 +1278,40 @@
 - **影响**: 不影响功能。但「线上有 39 条 secret、代码只读 25 条」这件事本身会让下一个 session 判断不了哪些是活的（本次盘点就是靠逐条 grep 才敢下结论）。
 - **建议**: 删死 secret（`SUPABASE_SERVICE_ROLE_KEY` / `SUPABASE_ANON_KEY` 删前确认 Supabase 后台的 legacy key 已 disable —— 那是 `#250` 的尾巴）；`att:` 键给个 TTL。
 - **状态**: 待办。
+
+## 2026-08-19 聊天界面对照 PendingCrew 同步修复（人类 Todo #2）
+
+### 🟢 气泡文本选中的按需挂载是「按机制同源移植」，PendingBot 侧未实测量级
+- **发现**: 2026-08-19 · `fix/chat-ui-sync-from-crew`（对照 PendingCrew 同步聊天页修复）
+- **位置**: `apps/pendingbot/Sources/Components/BubbleTextSelection.swift`（新增）+ `BubbleView.swift` / `MarkdownText.swift` 的三个调用点
+- **背景**: PendingCrew 从**人类机器上的真实 hang 报告**里定位到 `.textSelection(.enabled)` 常开这条热点（0.1.7 卡 68.68s，主线程 4/11 采样在 `SelectionOverlay.updateNSView → -[NSTextField setAttributedStringValue:]`），改成悬停接力。PendingBot 有同样的常开写法，已同步改掉。
+- **要记的是这个**: **那 68.68s 是 PendingCrew 的数字，不是 PendingBot 的。** 本仓库没有对应的 Instruments/hang 采样，采纳这条的理由是「macOS 上每段可选中文字背后挂一个真 NSTextField、且逐帧全量 `updateNSView`」这个**机制**本身，以及「改法不减功能」。别在任何地方把 crew 的秒数写成 PendingBot 的收益。
+- **未验证的部分**: 划选是否跟手、悬停切换时会不会闪、按住拖到气泡外继续划是否连贯 —— 这三样只有真 GUI 看得出，挂在 #2 的人工 QA 尾巴上。iOS 分支恒为 `true`，行为逐字未变，不需要验。
+- **状态**: 待办（等一次 Mac GUI QA 确认无退化后可关）。
+
+### 🟢 会话消息列表一次全量塞进视图树，没有渲染窗口
+- **发现**: 2026-08-19 · 同上（对照 PendingCrew 的 `CrewChatWindow`）
+- **位置**: `apps/pendingbot/Sources/Features/Message/ConversationView.swift:1115` `displayedMessages { return messages }`
+- **问题**: `ForEach(displayedMessages)` 把整条时间线交给 `LazyVStack`，打开一个会话的成本是 O(消息数) —— 懒容器仍要为每一行跑估算/测量（PendingCrew 那边的 hang 报告里 12/12 采样在 `LazyStack.measureEstimates → 逐行 sizeThatFits`）。PendingCrew 已改成只渲染最近 12 条 + 顶部「加载更早的消息」占位。
+- **为什么现在不跟（2026-08-19 机长决策）**: 场景不同 —— crew 群聊是 agent 刷屏、动辄几百上千条；PendingBot 线上**最长的会话是 11 条消息**。为一个当前不存在的性能问题多加一个「加载更早」按钮、改变交互，不划算。
+- **触发条件（到了就直接照 crew 的做法上，不用重新论证）**: 出现以下任一 —— ① 单会话消息数常态过百；② 用户报「点进某个会话要转一下才出来」；③ 引入群聊/多 agent 这类会持续刷屏的会话类型。
+- **现成参考**: `PendingCrew/Sources/Chat/Adapter/CrewChatWindow.swift` + `Tests/PendingCrewTests/CrewChatWindowTests.swift`（纯函数，窗口/翻页/`hasMore` 的边界都钉住了，可直接搬）。注意它顺带解决的一个坑：首屏用 eager stack 把真实行高一次量完，避免 `LazyVStack` 估算高度导致的空白首屏。
+- **状态**: 待办（有意不做，等触发条件）。
+
+### 🟢 贴底 / 未读跳转是否与 PendingCrew 同病，未经人验证
+- **发现**: 2026-08-19 · 同上
+- **位置**: `apps/pendingbot/Sources/Features/Message/ConversationView.swift`（`.defaultScrollAnchor(.bottom)` + `scrollToBottom` + `unreadJumpButton`）
+- **背景**: PendingCrew 为「进群有时落在最新、有时落在最早」修过**三次**（Todo #28 → #45 → #47 → #54）。两次失败的病根都值得知道：① 跟随开关被**我们自己的程序化滚动**关掉了（`onScrollPhaseChange` 丢了 oldPhase，分不清「用户滑上去」和「自己 scrollTo 收尾」）；② 首屏两记落底跑在 `LazyVStack` 量到真实行高**之前**，拿估算高度解出的偏移量约等于 0，于是停在最早那条。
+- **为什么没动**: PendingBot 的实现路子不同（`.defaultScrollAnchor(.bottom)` 而非跟随开关 + 哨兵），**是否同病只有在 Mac 上真用才看得出**，不凭猜改。
+- **怎么验**: 开一个消息较多的会话，反复进出 5–10 次，看是否偶尔停在最早那条而非最新；以及流式回复期间滑上去后新消息是否不再抢焦点。
+- **现成参考**: `PendingCrew/Sources/Chat/Adapter/CrewChatBottomFollow.swift`（含四次修复的完整病历）+ `CrewChatBottomFollowTests.swift`。
+- **状态**: 待办（等人工复现确认）。
+
+### 🟡 PendingBot 一个测试 target 都没有 — 整类 bug 无人拦
+- **发现**: 2026-08-19 · 同上（修「围栏代码块完全不渲染」时暴露）
+- **位置**: `apps/pendingbot/project.yml` —— 只有一个 `PendingBot` application target，没有任何 test target；`find apps/pendingbot -type d -name '*Tests*'` 为空。
+- **问题**: 本次修的第 1 条 bug（`.markdownTheme` 写在里层把 `.markdownBlockStyle(\.codeBlock)` 的补丁整个盖掉，`ChatCodeBlock` 从未被实例化）**是编译期完全合法、运行期静默降级**的那一类 —— typecheck 和 `xcodebuild` 都是绿的，界面只是"看起来朴素了点"。它从 2026-06-13 之前一直坏到 2026-08-19，**两个多月没人发现**，正是因为没有任何自动化能拦。edge 侧有 663 个 vitest，iOS/macOS 侧是零。
+- **为什么是 🟡 不是 🟢**: 这不只是"不规范"——它意味着 iOS/Mac 三端的每一次改动都只有"编译过"这一道保护，而 SwiftUI 的失败模式大量是编译期合法的静默降级（环境值覆盖、修饰器顺序、懒容器测量时机）。本仓库已经为此付过一次两个月的账。
+- **现成的起点（不用从零设计）**: PendingCrew 已经有一个 `PendingCrewTests` bundle，其中 `ChatCodeBlockRenderTests.swift` 正是守本次第 1 条的回归测试 —— **不截图、不比像素，只用离屏 `NSHostingView` 量高度**：`ChatCodeBlock` 有工具条+内边距+描边，同样一行内容比裸段落高一截；且内容装在 `ScrollView(.horizontal)` 里，超长单行横向滚动而不是按字宽折成很多行。两条合起来只有"`ChatCodeBlock` 真的被实例化了"能解释。这套路子对 SwiftUI 静默降级类 bug 普遍适用。
+- **建议**: 在 `project.yml` 加一个 macOS unit-test target，第一批就搬 `ChatCodeBlockRenderTests` + 把 `MathMarkup`（纯 Foundation）这类可测逻辑纳入；`xcodegen` 后把 pbxproj 一起提交。
+- **状态**: 待办（2026-08-19 机长确认是独立的一件事，不并进本次回流）。
