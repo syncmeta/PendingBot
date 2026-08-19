@@ -1194,3 +1194,14 @@
 - **问题**: 线上有多条老会话 `round_count = 0` 但实际有 8~9 条消息（Lorem / Sit / Amet 那几只）。round_count 明显没跟上消息数。
 - **影响**: 它是 title-runner 的**唯一触发依据**，失准 → 自动改名在这些会话上永不触发（`0 % 3 === 0` 虽然为真，但计数不再前进就不会有下一次触发边沿）。与本次显示 bug 无关。
 - **状态**: 待办（刻意不在本分支修 —— 与会话列表投影是两条独立链路）。
+
+### 🔴 `pnc_ledger.polar_synced` 是只写不读的死标记 — 回写 Polar 失败的入账无人补，且重试路径被自身幂等挡死
+- **发现**: 2026-08-19 · 由 PendingBot发版 crew 的 21-5（外部服务接入盘点）交叉发现，本 crew 复核确认
+- **位置**: `apps/edge/src/lib/billing-polar.ts:recordCreditIn`
+- **问题**: 顺序是「先插影子账 → 再 `om.grantCredits()` 推 Polar → 成功才置 `polar_synced=true`」。两步之间没有事务、没有补偿：
+  - `grantCredits` 抛错时，影子账那行**已经落库**，函数向上抛 → webhook 500 → Polar 重投 → 撞 `unique(source, external_ref)` → `return { applied: false }` → **根本走不到 `grantCredits`**。这笔钱因此**任何重试都补不上**，只能人工补。
+  - 全仓库检索：`polar_synced` 只有这一处 `update` 写入，**没有任何地方读它**（无 cron、无对账任务、无 board 视图）。它记下了「这笔没同步」，然后没有人看。
+- **线上实例**: `pnc_ledger` 里 2026-07-11 14:16 那条 `source='polar_checkout'` / `kind='topup'` / `external_ref='2adbcac3-…'` / 6,750,000 micros（= 6.75 PNC，$1 测试包）的 `polar_synced = false`。其余 3 笔（signup + 2 笔 admin grant）均为 true。
+- **仍未证实的一点**: `polar_synced=false` 有两种成因 —— ① `grantCredits` 真的失败（钱没进 Polar）；② `grantCredits` 成功但随后那句 UPDATE 失败（钱在 Polar，只是标记陈旧）。仅凭数据库分不清，要查 Polar 侧该 customer 的实际余额才能定。判别法：账本四笔合计 100,311,750,000 micros，若 Polar 余额比它少正好 6,750,000 就是成因 ①。
+- **建议**: ① 让幂等对「已插账但未同步」可重入 —— 撞唯一键时先查该行 `polar_synced`，为 false 则继续走 `grantCredits` + 回填标记，而不是直接 `applied:false` 返回；② 加一个扫 `polar_synced=false` 的补偿任务（cron 或 board 按钮），别让这个标记继续只写不读；③ 顺序上考虑先推 Polar 再落账，或落账后立刻排补偿。
+- **状态**: 待办。线上那笔 6.75 PNC 的漏账未补。
