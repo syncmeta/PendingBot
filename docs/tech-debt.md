@@ -1187,7 +1187,13 @@
   - **写投影失败不再静默**：DO RPC 现在检查 `res.ok`，所有失败统一打 `[projection][write-through-failed]`（可 grep / 可挂告警）。这个 bug 能活两个多月，正是因为通道断了从来没有人喊过一声。
   - **验证**：`bun --filter='@pendingbot/edge' run typecheck` 绿；`vitest run` 78 文件 / 672 用例全绿，其中新增 `tests/projection-writethrough.test.ts`（10 例）+ `tests/title-projection.test.ts`（runTitle 端到端 → 投影里就是新标题），用真 DO（node:sqlite 背 `storage.sql`）跑完整写穿链路。
   - **已部署**（2026-08-19，worker 版本 `88b9f718`）。部署后线上只验到 worker 健康 + `GET /v1/conversations` 路由存活且 fail-closed（无 token → 401）。
-  - ⚠️ **真实链路（新建会话 → 起标题 → 读投影看那一行是否完整）没验成**：需要一个真实登录态的 JWT，而本地拿不到 —— 公开注册被 Turnstile 挡（`captcha_failed`），取 service_role key 的命令被权限分类器拒绝。**这条尾巴留着**：closeout 需要一次真实客户端动作（用户在 app 里发一条消息），或由人给出一个可用 token。**在它验成之前，本条不能算"线上已验证"，只算"已部署 + 单测已证"。**
+  - ✅ **线上真实链路已验（2026-08-19 04:35 UTC）**。用户在 app 里真发了一条消息（会话 `01a0132c…`「模型身份确认」，`message_seq` 14/15），全程 `wrangler tail --env production --format json` 录到（`scriptVersion` 确认 `88b9f718`）。按毫秒排序的调用链：
+    - `POST /v1/messages` → `realtime-internal/notify` ×4 → `ConvProjectionDO /ingest-message`·`/ingest-roster`·`/set-meta` → `UserProjectionDO /ingest-conversation`·`/ingest-unread` → `/members` → `/patch-conversation` → `/list` → `GET /v1/conversations 200`（11–36ms，投影命中）。**全部 `outcome: ok`，零 exception。**
+    - **`[projection][write-through-failed]` 出现 0 次。**
+    - **关键判据**：两次 `/patch-conversation` 之后都**没有**跟一次「`/set-meta` + `/ingest-conversation`（且不带 `/ingest-roster`）」的补读回落 —— 按 `UserProjectionDO.patchConversation` 的约定，行缺失**或行是 `unknown` 占位壳**都会返回 `found:false` 触发那次回落。没触发 ⇒ **投影里那一行存在且不是占位壳**。`/ingest-unread` 同理（`ingestUnread` 对占位行也返回 false）。日志里每一次 `/set-meta` 都紧跟在 `/ingest-roster` 之后，即全部来自 participants webhook 的正常 sync，没有一次是 patch 回落。
+    - DB 侧对得上：`conversations` 行 title/bot_id/round_count/updated_at 均为最新；`user_unread_counts` 的 `last_message_preview` + `last_message_at` 跟到最新一条。
+    - **口径诚实说明**：线上**没有**任何后台通道能逐字段读投影行（读投影必须带用户 Supabase JWT，`packages/identity/middleware.ts` 只认它，这是有意的 fail-closed），所以「那一行是完整行」是**从调用链 + 回落/告警均未触发推断**的，不是直接读到的内容。**自愈**同理：该会话建于 8-18（彼时代码写的就是占位壳），现在已非占位壳 ⇒ 自愈生效，但没有修复前的 DO 快照做直接对照。
+    - 顺带：历史 Workers Logs 查询（`/workers/observability/telemetry/query`）用本机 wrangler OAuth 会 `Authentication error` —— 该 token 的 scope 里没有 observability 读，只有 `workers_tail:read`。以后要查历史日志得先扩 scope 重新 `wrangler login`。
   - **遗留占位行会自愈**（`fix/projection-legacy-placeholder-heal`）：线上 DO 里 2026-08-19 之前落下的 `unknown` 行不会自己变好，所以把它当作"这一行不算数"—— 任何局部写穿落在它上面都触发一次完整补读，把整行换掉。用户下次在那个会话里说话即自愈。
 
 ### 🟡 客户端对边缘投影**照单全收**，把一次投影缺口放大成永久错误显示
@@ -1324,3 +1330,12 @@
 - **现成的起点（不用从零设计）**: PendingCrew 已经有一个 `PendingCrewTests` bundle，其中 `ChatCodeBlockRenderTests.swift` 正是守本次第 1 条的回归测试 —— **不截图、不比像素，只用离屏 `NSHostingView` 量高度**：`ChatCodeBlock` 有工具条+内边距+描边，同样一行内容比裸段落高一截；且内容装在 `ScrollView(.horizontal)` 里，超长单行横向滚动而不是按字宽折成很多行。两条合起来只有"`ChatCodeBlock` 真的被实例化了"能解释。这套路子对 SwiftUI 静默降级类 bug 普遍适用。
 - **建议**: 在 `project.yml` 加一个 macOS unit-test target，第一批就搬 `ChatCodeBlockRenderTests` + 把 `MathMarkup`（纯 Foundation）这类可测逻辑纳入；`xcodegen` 后把 pbxproj 一起提交。
 - **状态**: 待办（2026-08-19 机长确认是独立的一件事，不并进本次回流）。
+
+### 🟡 `fetchThroughput` 非 2xx 时不读也不取消响应体 → 预热并发把响应挤爆，"最快"预设被静默削样本
+- **发现**: 2026-08-19 · 验证边缘投影写穿时挂线上 `wrangler tail` 顺手捞到（与投影链路无关）
+- **实证**: 线上 `*/30 * * * *` cron 的 `preset-warm` 回合里有一条 workerd 警告：`A stalled HTTP response was canceled to prevent deadlock. This can happen when a Worker calls fetch() ... without reading the bodies of the returned Response objects.`（2026-08-19T04:30:00Z，worker `88b9f718`）
+- **位置**: `apps/edge/src/lib/model-presets.ts:194` `fetchThroughput()` —— `if (!res.ok) return null;` 这一行直接丢弃 `res`，既没 `await res.json()` 也没 `res.body?.cancel()`；调用方 `resolveFastest()`（同文件 `:218`）用 `Promise.all` 一次并发打 `FASTEST_CANDIDATE_CAP` 个 OpenRouter `/endpoints` 请求。
+- **问题**: Workers 对在途 HTTP 响应有并发上限；未读取的响应永不完成，超限时最老的那个被**运行时强制取消**。取消掉的那次 probe 在 `fetchThroughput` 里表现为抛错 → `catch` → `return null` → 该模型被 `scored.filter(s => s.tput != null)` 丢掉。
+- **影响**: "最快"预设的候选集会被**静默削掉一部分样本**，结果取决于当时有多少个非 2xx 响应堆积 —— 每次预热选出来的 5 个模型可能不稳定，而且**没有任何日志喊一声**（`fetchThroughput` 的 catch 是空的）。不致命（预设仍有结果），但属于"编译期合法、运行期静默降级"那一类。
+- **建议**: `if (!res.ok) { await res.body?.cancel(); return null; }`；顺带给那个空 `catch` 加一行 warn，别让 probe 失败继续无声。（并发上限本身也可以用小并发窗口而不是无限 `Promise.all`。）
+- **状态**: 待办 —— 本 session 只做投影验证，按纪律「发现即记录、不顺手改」。
