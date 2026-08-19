@@ -692,6 +692,58 @@ Honcho 按 **观察者 × 被观察者** 给出四份，各自一个 KV 命名�
 每份的结构是 `Memory{ card, representation, syncedAt, lastCoveredMessageId }`，
 进提示词的是 `representation`。
 
+**这四份是怎么来的 —— Honcho 的 peer 模型**（`lib/honcho.ts:15-21`、`lib/memory.ts:140-210`）
+
+Honcho 里没有「用户 / AI 助手」之分，只有 **peer（参与者）** 和 **session（对话场）**，
+每个 peer 既能被观察也能观察别人。PendingBot 直接用了这个对称性：
+
+| PendingBot 概念 | Honcho 对象 |
+|---|---|
+| 用户 | peer `user-<userId>` |
+| **bot** | peer `bot-<botId>` —— **平等的参与者，不是"助手角色"** |
+| 会话 | session `conv-<convId>` |
+
+消息按行归属：`role='bot'` 挂到 `bot-<sender_bot_id>`，其余挂到 `user-<user_id>`
+（`lib/memory.ts:143-150`）。两个 peer **摄入同一区间**（它们观察的是同一个 session）。
+
+四份表征就是**两个 peer 各问两次**：不带 `target` = 我的自我模型，带 `target` = 我对 ta 的模型。
+
+```
+user peer.context()                    → ③ 用户自我
+user peer.context({target: bot peer})  → ④ 用户眼中的 bot
+bot  peer.context()                    → ① bot 自我      ← 8.1 那个「没有人格字段」的答案
+bot  peer.context({target: user peer}) → ② bot 眼中的这个人
+```
+
+**§8.1 的谜底在这里**：bot 的自我认知不是写死的人设，是 Honcho **观察 bot 自己说过的话
+反推出来的**。正因为 bot 被当作平等 peer，它才可能有"自我"。
+
+**读侧的定向隔离**：`botPeer.chat(query, {target: userPeer})`（`lib/honcho.ts:65-68`）查的是
+「这个 bot 眼中的这个人」，而非用户的全局画像 —— **用户对 A bot 说的话天然不会漏给 B bot**，
+靠的是 peer 模型的方向性，不需要额外过滤代码。
+
+**session 作用域当漏泄闸**（`lib/honcho.ts:29-38`）：
+私聊**不带** session → 记忆跟着 (bot, user) 这段关系走，跨双方共享的所有会话汇聚；
+群聊**带** session → 锁死在本群，防止把 1v1 私聊内容抖进群。
+
+> ⚠️ **但群聊这条闸目前是"空转成立"的**：`maybeRefreshMemory` 全仓只在
+> `routes/messages.ts:405` 被调用，而群消息在 `:284-339` 就早返回了 ——
+> **群会话的 Honcho session 从未被写入过任何消息**。同时 `query_user_memory` 属于
+> `CHAT_TOOLS`（`lib/bot-reply/tool-defs.ts:123-127`），群里照样发给模型。
+> 即：闸的目的达到了，但更像"因为那儿是空的"，而不是"过滤住了"；群里这个工具基本空转。
+> 已记 `docs/tech-debt.md`。
+>
+> 另外两点：**peer / session 从不显式创建**（首次使用隐式建），
+> `lib/honcho.ts:16-17` 注释写的 `observe_me=true` **代码里没有任何地方设置**，靠 Honcho 默认值。
+
+**自聊的特例**：`isSelfChat` 时"自我"段读的是**用户**的表征而非 bot 的
+（`lib/bot-reply/index.ts:324`）—— 自聊里 bot ≡ 用户本人。
+且 `relational = !isSelfChat && !inGroup`（`:319`）正是 ②④ 的注入门。
+
+**谁还在读**：除文字聊天外，来信（`lib/envelope-runner.ts:258`）、1:1 语音
+（`routes/realtime.ts:200`）、群语音（`routes/group-voice.ts:177`）也读 bot 的自我表征 ——
+但**只读 ①**，成对的 ②④ 仅在 1v1 文字链路注入。
+
 #### ② bot 写给自己的私人笔记（每个用户一份）
 
 存在 `skills` 表（`bot_id` + `user_id` 定位），KV 缓存 1 小时。

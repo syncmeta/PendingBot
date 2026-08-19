@@ -1378,3 +1378,22 @@
 - **对照**: **群聊没有这个问题** —— `lib/group-dispatch.ts:176-182` 由服务端自己查最近 20 条。所以这不是"做不到"，是 1v1 为省一次查询做的取舍。
 - **建议**: 不必推翻这个取舍（客户端本就有缓存，回查会加一跳延迟）。可选的收敛方向：① 只信任 `role`/`created_at` 由服务端按 `clientMessageId` 回查校验的条目；② 至少对 `role:'bot'` 的历史条目做存在性抽查；③ 或明确接受并在设计文档里写下"历史是客户端断言"这个前提，别让后续依赖它做安全判断。
 - **状态**: 待办（只读调研，未改）。已写入 `docs/architecture.md` §12 病根 A2 + §8.5。
+
+### 🟡 群聊从不写入 Honcho，但 `query_user_memory` 仍发给群里的 bot — 漏泄闸「空转成立」+ 工具空跑
+- **发现**: 2026-08-19 · 技术架构梳理 crew（讲解 Honcho peer 模型时核出）
+- **位置**: `apps/edge/src/lib/memory.ts:107`（`maybeRefreshMemory`，全仓唯一写 Honcho 的入口）× `apps/edge/src/routes/messages.ts:405`（唯一调用点）× `:284-339`（群分支早返回）× `apps/edge/src/lib/bot-reply/tool-defs.ts:123-127`（`query_user_memory` 属于恒开的 `CHAT_TOOLS`）
+- **问题**: `maybeRefreshMemory` 只在 1v1 / self 路径被调用 —— 群消息在 `routes/messages.ts:284` 判到 `conversation_type==='group'` 后于 `:339` 就 `return` 了，**群会话对应的 Honcho session `conv-<convId>` 从未被写入任何消息**。而 `lib/honcho.ts:29-38` 设计里，群聊调 `query_user_memory` 时会 `{ session: conv-<convId> }` 限定作用域，本意是防止把 1v1 私聊内容带进群。
+- **后果两条**:
+  ① **防漏泄的目的达到了，但是「因为那儿是空的」而不是「过滤住了」** —— 一旦将来给群聊补上 Honcho 摄入，这条闸是否真的挡得住，取决于 Honcho 服务端对 session 作用域的实现，而这一点本仓库从未验证过。现在的安全性建立在一个巧合上。
+  ② **群里这个工具基本空转** —— 模型仍被告知有 `query_user_memory` 可用，调用后查的是空 session。bot 在群里"回忆不起来"任何事，且模型不知道为什么。
+- **未核**: 空 session 下 Honcho dialectic 是返回 null 还是回落 peer card，属服务端行为，只读手段验不了；建议真发一次群消息让 bot 调该工具，看返回。
+- **建议**: 二选一 —— ① 群里把 `query_user_memory` 从工具集摘掉（诚实：没有就别给）；② 给群聊补 Honcho 摄入，并**真实验证** session 作用域确实挡住了跨会话内容。别停在现状（工具在、数据不在）。
+- **状态**: 待办（只读调研，未改）。已写入 `docs/architecture.md` §8.3。
+
+### 🟢 `lib/honcho.ts` 注释声称 peer 配了 `observe_me=true`，代码里没有任何地方设置
+- **发现**: 2026-08-19 · 技术架构梳理 crew
+- **位置**: `apps/edge/src/lib/honcho.ts:15-17`（注释）vs 全仓（`honcho.peer(...)` 只传 id，无配置参数）
+- **问题**: 注释把「user peer (observe_me=true → user representation)」写成既成事实，但 peer 是首次使用时隐式创建的，代码从未显式配置该标志 —— 实际行为取决于 Honcho 的默认值。
+- **影响**: 不影响当前功能（表征确实产出了，说明默认值符合预期），但注释是"我们配了"的口吻，会让后来人以为这是本仓库控制的不变量；哪天 Honcho 改默认值，没人会想到来看这里。
+- **建议**: 要么显式配置并保留注释，要么把注释改成「依赖 Honcho 默认 observe_me 行为」。
+- **状态**: 待办。
