@@ -70,7 +70,7 @@ struct MarkdownText: View {
             .markdownInlineImageProvider(
                 MathInlineImageProvider(textColor: AppTheme.Palette.ink, fontSize: mathFontSize, scheme: colorScheme)
             )
-            .textSelection(.enabled)
+            .bubbleSelectableText()
             .environment(\.openURL, OpenURLAction { url in
                 // Citation taps go through a fake `pendingbot-cite://N`
                 // scheme so we can intercept them here and show the source
@@ -530,7 +530,8 @@ private struct ChatCodeBlock: View {
                     .padding(.horizontal, horizontalPadding)
                     .padding(.vertical, verticalPadding)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
+                    // 代码块也是 NSTextField 大户,同样按需挂。
+                    .bubbleSelectableText()
             }
         }
         .background(AppTheme.Palette.surfaceMuted.opacity(variant == .article ? 0.6 : 0.85))

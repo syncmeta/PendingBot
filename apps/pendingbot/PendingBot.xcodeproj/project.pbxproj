@@ -112,6 +112,7 @@
 		8C5BA9B67A199694684F4D25 /* AddMeMethodsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4E8F2C116FE4E4C091C20C5 /* AddMeMethodsView.swift */; };
 		8DCDDFC943420CE93381525F /* CallView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 213E09F2D1646151DC7BE1C6 /* CallView.swift */; };
 		8E9E5D16A0E2681726E411DB /* MessagesFetch.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDF32066E5F831C3B474EBB7 /* MessagesFetch.swift */; };
+		8F412E0EF9B62FCBCDB2DA6C /* BubbleTextSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F9FB7707A617FB6018E0ADA /* BubbleTextSelection.swift */; };
 		914D5EAC7D1675C8770C5658 /* DataProtectionKeychainStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BE4B8362D82ACBB36C1084D /* DataProtectionKeychainStorage.swift */; };
 		93195F559ABAEBD132E64F17 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 11A77E911EA1D815E90E7BFD /* GRDB */; };
 		95771EBFA9FE35E196DBAB95 /* MacWelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 954AA26D0420171081DFA5EA /* MacWelcomeView.swift */; };
@@ -221,6 +222,7 @@
 		1E55C06FEBF15F6F9C54D5EA /* LetterComposeSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LetterComposeSheet.swift; sourceTree = "<group>"; };
 		1F14048DCB73276C7D252616 /* GoogleSignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleSignIn.swift; sourceTree = "<group>"; };
 		1F18FB9C392174C32131512F /* EnvelopeArticleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvelopeArticleView.swift; sourceTree = "<group>"; };
+		1F9FB7707A617FB6018E0ADA /* BubbleTextSelection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BubbleTextSelection.swift; sourceTree = "<group>"; };
 		1FEFDBE4DFE6AB93D06D2015 /* AppleSignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSignIn.swift; sourceTree = "<group>"; };
 		213E09F2D1646151DC7BE1C6 /* CallView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallView.swift; sourceTree = "<group>"; };
 		220B62863E705C1D1C1CB569 /* BotPick.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotPick.swift; sourceTree = "<group>"; };
@@ -458,6 +460,7 @@
 				90F4AA849A0395AE40EE6817 /* BotAvatar.swift */,
 				58C7852B0C9D1F1A7346DDCB /* BotVisibilityTag.swift */,
 				1C5FC1E414D4CABC226AD902 /* BrandAvatar.swift */,
+				1F9FB7707A617FB6018E0ADA /* BubbleTextSelection.swift */,
 				C4FD2DA59C766A4993A0F696 /* Clipboard.swift */,
 				5F74C5B9B7D89D583C48817E /* CodeRunnerSheet.swift */,
 				C53CFA1DBE04DAEFC59F99DE /* ColorHash.swift */,
@@ -850,6 +853,7 @@
 				D7E54D526FC58DAACFDBA45C /* BotVisibilityTag.swift in Sources */,
 				ACB7DE5BB4722BC475D80C54 /* BrandAvatar.swift in Sources */,
 				C6F7A651FC9842DE3C2D32A7 /* BubbleSplitter.swift in Sources */,
+				8F412E0EF9B62FCBCDB2DA6C /* BubbleTextSelection.swift in Sources */,
 				0D14B87E36E28B1C76B152E6 /* BubbleView.swift in Sources */,
 				68647D14BF681211208CE4BB /* CacheRepository.swift in Sources */,
 				583836D442830F875F8C55F2 /* CallCenter.swift in Sources */,
