@@ -45,11 +45,12 @@ function billingCategory(taskType: string, metadata: unknown): { key: string; la
 }
 
 // GET /v1/me/profile — read-side for app-wide user preferences. Today
-// only exposes notification_preview_mode (lock-screen privacy knob); add
-// other preference fields here as they appear rather than scattering them
-// across the API. Backed by users.custom_fields so no schema migration is
-// needed per knob — the iOS side is the source of truth for available
-// modes (the union here just enforces server-side normalisation).
+// exposes notification_preview_mode (lock-screen privacy knob) and
+// model_reveal_preference (global 模型盲盒 override); add other preference
+// fields here as they appear rather than scattering them across the API.
+// Backed by users.custom_fields so no schema migration is needed per knob —
+// the iOS side is the source of truth for available modes (the union here
+// just enforces server-side normalisation).
 meRoutes.get('/profile', async (c) => {
   const userJwt = c.var.userJwt!;
   const userId = c.var.userId!;
@@ -67,10 +68,18 @@ meRoutes.get('/profile', async (c) => {
   const rawMode = cf?.notification_preview_mode;
   const mode =
     rawMode === 'name' || rawMode === 'name_content' ? rawMode : 'generic';
+  // 全局模型盲盒档位。未设置 / 认不出的值一律归到 follow_bot(= 加这个开关
+  // 之前的行为),客户端才不必自己防脏值。
+  const rawReveal = cf?.model_reveal_preference;
+  const revealPreference =
+    rawReveal === 'always_real' || rawReveal === 'always_blind' ? rawReveal : 'follow_bot';
   // 新用户 welcome 赠送(35 PNC)——幂等 + best-effort,仅 BILLING_ENABLED 时种
   // Polar 余额。挂在 /profile(app 打开必经)上,免单独 signup 钩子。
   safeWaitUntil(c, grantSignupBonus(c.env, serviceClient(c.env), userId));
-  return c.json({ notification_preview_mode: mode });
+  return c.json({
+    notification_preview_mode: mode,
+    model_reveal_preference: revealPreference,
+  });
 });
 
 // PATCH /v1/me/profile — write-side. Merges into users.custom_fields so
@@ -78,7 +87,11 @@ meRoutes.get('/profile', async (c) => {
 // RLS policy users_self_update gates this to the caller's own row.
 const PatchProfileBody = z.object({
   notification_preview_mode: z.enum(['generic', 'name', 'name_content']).optional(),
+  model_reveal_preference: z.enum(['follow_bot', 'always_real', 'always_blind']).optional(),
 });
+// 每个偏好一个键(zod 键名 = custom_fields 键名)。列在这里是为了让"再加一个
+// 偏好"只需要动两处:上面的 union + 这个数组。
+const PROFILE_PREF_KEYS = ['notification_preview_mode', 'model_reveal_preference'] as const;
 meRoutes.patch('/profile', async (c) => {
   const userJwt = c.var.userJwt!;
   const userId = c.var.userId!;
@@ -88,7 +101,11 @@ meRoutes.patch('/profile', async (c) => {
   } catch (err) {
     return jsonError(c, 400, 'invalid_body', { detail: String(err) });
   }
-  if (body.notification_preview_mode === undefined) {
+  // 只写请求里真正带了的键 —— 客户端每个 picker 只发自己那一格,没带的键保持
+  // 库里的旧值。(以前这里是 `if (body.notification_preview_mode === undefined)
+  // return`,加第二个字段后那句会把只带新字段的请求静默吞掉。)
+  const present = PROFILE_PREF_KEYS.filter((k) => body[k] !== undefined);
+  if (present.length === 0) {
     return c.json({ ok: true }); // nothing to patch
   }
   const supa = userClient(c.env, userJwt);
@@ -98,7 +115,7 @@ meRoutes.patch('/profile', async (c) => {
     .eq('id', userId)
     .maybeSingle();
   const cf = ((existing?.custom_fields ?? {}) as Record<string, unknown>);
-  cf.notification_preview_mode = body.notification_preview_mode;
+  for (const k of present) cf[k] = body[k];
   const { error } = await supa
     .from('users')
     .update({ custom_fields: cf as never })
@@ -107,7 +124,7 @@ meRoutes.patch('/profile', async (c) => {
     console.error('[me/profile] update failed', error);
     return jsonError(c, 500, 'internal_error');
   }
-  return c.json({ ok: true, notification_preview_mode: body.notification_preview_mode });
+  return c.json({ ok: true, ...Object.fromEntries(present.map((k) => [k, body[k]])) });
 });
 
 // POST /v1/me/account-deletion — 请求注销账号。SOT 写收进 worker(原客户端直连
