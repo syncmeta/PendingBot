@@ -43,6 +43,7 @@
 		232CB5FD82ABC5A3C6724863 /* AppearanceMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38FE558CFE957C64782A15FA /* AppearanceMode.swift */; };
 		26BF32DE6C12E211FC91F64E /* CodeRunnerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F74C5B9B7D89D583C48817E /* CodeRunnerSheet.swift */; };
 		275EBB90F22BDCDFEE0D5F84 /* ToolTraceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAB29CAABC38BF9B5380C3DE /* ToolTraceView.swift */; };
+		277A70078E8E41FAB006EEAD /* ModelRevealPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D48064D39B52115985DB0D8 /* ModelRevealPolicy.swift */; };
 		2A2A57D4494DB9D43B074897 /* SupabaseStack.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0767E4C8060BA86E1484AB2E /* SupabaseStack.swift */; };
 		2A83FD0E0DB5D7BEAB180B85 /* UserUserPeer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 398ED7C99CCFD9735C8B9480 /* UserUserPeer.swift */; };
 		2B5FBDBE4E766F40C3B0D349 /* ServerImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F1FA831F2107CCFDA665DF7 /* ServerImage.swift */; };
@@ -272,6 +273,7 @@
 		6A5442547F63F7CF41B54C46 /* BotInviteAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotInviteAPI.swift; sourceTree = "<group>"; };
 		6C64B7684626EF8B4F4F573F /* CrewListStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewListStore.swift; sourceTree = "<group>"; };
 		6D2B2B8D8BD1DE4D364525C4 /* GroupWalletView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWalletView.swift; sourceTree = "<group>"; };
+		6D48064D39B52115985DB0D8 /* ModelRevealPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelRevealPolicy.swift; sourceTree = "<group>"; };
 		6EFB784DC12029E53EB12A5C /* RealtimeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeManager.swift; sourceTree = "<group>"; };
 		70EAEDCC6E5ABCC5261A43E3 /* MyQRBusinessCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyQRBusinessCard.swift; sourceTree = "<group>"; };
 		7114A9AF0BBDF033ADE65E67 /* ConversationView+Realtime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConversationView+Realtime.swift"; sourceTree = "<group>"; };
@@ -725,6 +727,7 @@
 				521B18ABF9E66E84454F7694 /* GuessModelSheet.swift */,
 				2403378DC838085AD809C6B4 /* GuessPromptCard.swift */,
 				0D559B8D3970D7B444980F3C /* MessageTabView.swift */,
+				6D48064D39B52115985DB0D8 /* ModelRevealPolicy.swift */,
 				41E45BBC787A00847D76DFBD /* PermissionRequestAPI.swift */,
 				DA2C5A82ADBE3A378A292684 /* PermissionRequestCard.swift */,
 				7E95667CA42D6EA266907A06 /* SubConversationView.swift */,
@@ -942,6 +945,7 @@
 				746FAC37DF7AF6317D0DE6C7 /* ModelCatalog.swift in Sources */,
 				80F4BC61FE476D0E3362F831 /* ModelPicker.swift in Sources */,
 				0ADE115DC274D1CA464F5FE9 /* ModelPresetsAPI.swift in Sources */,
+				277A70078E8E41FAB006EEAD /* ModelRevealPolicy.swift in Sources */,
 				01D69F420946CB0900A7EEFC /* MyQRBusinessCard.swift in Sources */,
 				AAB2D88349F81B503325DD4E /* NewCrewTaskSheet.swift in Sources */,
 				C5029F554D68B613AC801852 /* OpenAICallTransport.swift in Sources */,
