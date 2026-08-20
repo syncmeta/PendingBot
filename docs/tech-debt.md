@@ -1512,3 +1512,20 @@
 - **影响**: 数量本身说明的是流程缺口（没有定期跑），比任何单条公告更值得处理。
 - **建议**: ① 把 `bun audit` 接进 `.github/workflows/security-gates.yml`，配一份带理由和过期日的 allowlist（可直接照 `docs/definer-execute-allowlist.json` 的形状）；② react-router 那条单独排期升级。**别顺手升依赖** —— 那是独立的一摊活，会把当前任务滚大。
 - **状态**: 待办 —— 只登记，未动。
+## 2026-08-20 macOS 本地出包流水线（开源准备 C）
+
+### 🟡 macOS 的 build 号没有防倒退闸 —— 只靠时钟单调，没有账本可比
+- **发现**: 2026-08-20 · `chore/macos-release-pipeline`
+- **位置**: `scripts/release/build-macos-dmg.sh`（调 `ios-build-number.sh --print-only`）
+- **背景**: iOS 那条有真闸 —— 查 ASC 上已收到的最高 build 号，不严格递增就拒绝发版（`asc_highest_build.py`，拿不到数据也拒绝，fail-closed）。macOS 走 Developer ID 直接分发，**不上 App Store Connect，没有任何账本可比**：ASC 上没有 Mac 包的记录，我们也没有 Sparkle / 自更新通道，眼下没有任何消费方按 `CFBundleVersion` 排先后。
+- **为什么现在不补**: 硬把 iOS 那道闸接过来是**比错了对象**（拿 iOS TestFlight 的最高 build 去卡 Mac 包），而且会把「能不能出 Mac 包」绑死在 ASC 可达上 —— 一道拦不住真事故、却会因为网络问题假报警的闸，比没有更糟。单调性目前由时钟本身保证（build 号 = 纪元日「天.秒」，天生递增，不依赖仓库状态）。
+- **什么时候必须补**: **Mac 端一旦有了更新通道**（Sparkle appcast、或任何按 `CFBundleVersion` 判新旧的东西），必须在 `build-macos-dmg.sh` 里补一道对着那个通道的 fail-closed 闸。PendingCrew 的 `scripts/release/build-macos-update.sh` 里有现成写法：比线上 appcast feed 的最大值，且**拉不到 feed 就拒绝构建**（他们踩过的坑正是 `curl … || true` 让「网络失败」和「首发」共用一条放行路径，闸静默失效）。
+- **残余风险**: 系统时钟被往回调、或有人手工传过一个未来的 build 号。两种都会让新包的号不大于旧包，而现在没有东西会拦。发生概率低，后果也仅限于「哪天接上更新通道后，那一版推不出去」。
+- **状态**: 待办（触发条件明确：接更新通道的那一刻）。
+
+### 🟢 Developer ID 描述文件是手工在 Apple 后台维护的，能力变更不会自动跟上
+- **发现**: 2026-08-20 · 同上
+- **位置**: Apple 后台的 `PendingBotDistribute`（`MAC_APP_DIRECT`）；消费方 `scripts/release/asc-macos-profile.py`
+- **问题**: Mac 发布身份不能走 Xcode 自动签名 —— 自动签名要的是「云端托管发布证书」，本机这个账号申请它会被 Apple 挡回来（403 `You haven't been given access to cloud-managed distribution certificates.`）。所以描述文件是手工建的，而**手工建的文件不会随 App ID 上的能力变更自动重生**：2026-08-20 就撞上了，App ID 上 Sign in with Apple 开着，描述文件是早先生成的、没带上，Mac 端登录会因此签不出来。
+- **为什么是 🟢 不是 🟡**: 已经有断言兜住了。`build-macos-dmg.sh` 第 0.5 道在 archive **之前**比对「描述文件授权的键 ⊇ 源 entitlements 声明的键」，缺了就当场停并打印去哪个页面点什么；同时每次构建都从 Apple 重拉描述文件（本机那份只当缓存），所以后台改好之后不会出现「后台已改、构建还在用旧的」的错位。过期也在同一处检查。
+- **状态**: 已被断言覆盖，不另行处理。真嫌烦的话正解是拿到云端托管发布证书的权限、切回自动签名。
