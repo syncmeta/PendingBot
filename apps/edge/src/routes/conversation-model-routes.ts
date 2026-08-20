@@ -64,12 +64,14 @@ conversationModelRoutes.get('/:id/model', async (c) => {
   if (!state) return jsonError(c, 404, 'not_found');
   const bb = parseBlindBoxConfig(cb.bot?.config);
   const hasPool = cb.bot ? modelPoolConfigFromBotConfig(cb.bot.config) !== null : false;
-  // disclose mode → always treated as revealed for display.
-  const revealed = bb.revealMode === 'disclose' ? true : state.model_revealed;
+  // model_revealed 发**会话的原始事实**,不再把 disclose 折叠进来。
+  // 客户端本来就自己 OR 了 reveal_mode == 'disclose'(显示态不变),而全局
+  // 「总是盲盒」那档需要分辨"这个会话真揭晓过"和"bot 本来就直接披露" ——
+  // 前者不可逆、压不回盲盒,后者可以。折叠了就分辨不出来。
   return c.json({
     current_model_slug: state.current_model_slug,
     current_model_provider: state.current_model_provider,
-    model_revealed: revealed,
+    model_revealed: state.model_revealed,
     reveal_mode: bb.revealMode,
     regen_reroll: bb.regenReroll,
     has_pool: hasPool,

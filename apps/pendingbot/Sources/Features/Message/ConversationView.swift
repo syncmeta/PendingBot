@@ -307,37 +307,50 @@ struct ConversationView: View {
     /// 盲盒「换模型」sheet 的呈现开关。任何带 bot 的 conv 都可换。
     @State private var showSwitchSheet = false
 
-    /// 是否给该 conv 提供「猜模型」入口:有模型池、surprise(盲盒)模式、且尚未揭晓。
-    private var shouldOfferGuess: Bool {
-        guard let s = convModelState else { return false }
-        return s.has_pool && s.reveal_mode == "surprise" && !s.model_revealed
+    /// 全局「显示 PendingModel 还是真实模型」偏好(设置页那档,跟账号走)。
+    /// 用 @AppStorage 读同一个键 —— 设置页一改,正开着的会话 pill 立刻跟着变,
+    /// 不用重进会话。
+    @AppStorage(ModelRevealPreference.storageKey)
+    private var modelRevealPrefRaw = ModelRevealPreference.default.rawValue
+
+    /// 会话侧的盲盒事实。nil = 还没取到 `GET /v1/conversations/:id/model`。
+    private var modelRevealFacts: ModelRevealFacts? {
+        guard let s = convModelState else { return nil }
+        return ModelRevealFacts(revealMode: s.reveal_mode,
+                                modelRevealed: s.model_revealed,
+                                hasPool: s.has_pool)
     }
 
-    /// "<bot_name> · <model-tag>". When the conversation carries a 盲盒 model
-    /// state, the tag reflects the drawn model + reveal flag: "PendingModel"
-    /// until revealed (surprise mode), the friendly name once revealed or in
-    /// disclose mode. Falls back to the bot's pinned model (bots.model_id)
-    /// when the conv state hasn't loaded.
+    /// 全局档位 + 会话事实 → 显示真名 / 是否给猜的入口。判定本身在
+    /// `ModelRevealPolicy`(纯函数,有独立测试);这里只负责喂数据。
+    private var modelRevealDecision: ModelRevealDecision {
+        ModelRevealPolicy.decide(
+            preference: ModelRevealPreference.normalized(modelRevealPrefRaw),
+            facts: modelRevealFacts
+        )
+    }
+
+    /// 是否给该 conv 提供「猜模型」入口。
+    private var shouldOfferGuess: Bool { modelRevealDecision.offersGuess }
+
+    /// "<bot_name> · <model-tag>". 模型标签显示真名还是 "PendingModel",由
+    /// `modelRevealDecision` 决定(全局档位压过 bot 的 revealMode)。会话状态
+    /// 没取到时真名回落成 bot 固定的模型(bots.model_id)。
     private var botName: String {
         let base = effectiveBot?.display_name ?? conversation.bot_name ?? conversation.bot_id
         guard conversation.conversation_type != "user_user" else { return base }
-        let modelTag: String?
-        if let s = convModelState {
-            if s.reveal_mode == "disclose" || s.model_revealed {
-                modelTag = s.current_model_slug.map { modelCatalog.displayName(for: $0) }
-            } else {
-                modelTag = "PendingModel"   // 盲盒未揭示
-            }
-        } else {
-            // 未取到会话状态 → 回落 bot 模型(老行为)
-            if let slug = effectiveBot?.model, !slug.isEmpty {
-                modelTag = modelCatalog.displayName(for: slug)
-            } else {
-                modelTag = nil
-            }
+        guard modelRevealDecision.showsRealName else {
+            return "\(base) · PendingModel"
         }
-        guard let tag = modelTag else { return base }
-        return "\(base) · \(tag)"
+        // 会话态在手就用它抽中的模型;没取到才回落 bot 固定的模型(老行为)。
+        let slug: String?
+        if let s = convModelState {
+            slug = s.current_model_slug
+        } else {
+            slug = effectiveBot?.model.flatMap { $0.isEmpty ? nil : $0 }
+        }
+        guard let slug else { return base }
+        return "\(base) · \(modelCatalog.displayName(for: slug))"
     }
 
     /// Seed for the avatar's emoji glyph. Always tied to bot identity so
@@ -535,9 +548,13 @@ struct ConversationView: View {
                                 // GuessModelSheet while the model isn't
                                 // revealed; once revealed (or in disclose
                                 // mode) it just shows the friendly name.
+                                // 全局档位同样管着这张卡:always_real 时它
+                                // 直接以「已揭晓」形态显示真名(不再邀请猜),
+                                // always_blind 时即使 bot 是 disclose 也保持
+                                // 可猜 —— 与 pill / "+" 菜单同一个判定,不另
+                                // 立一套规则。
                                 GuessPromptCard(
-                                    revealed: (convModelState?.model_revealed ?? false)
-                                        || (convModelState?.reveal_mode == "disclose"),
+                                    revealed: modelRevealDecision.showsRealName,
                                     revealedName: convModelState?.current_model_slug
                                         .map { modelCatalog.displayName(for: $0) },
                                     onTapGuess: { showGuessSheet = true }

@@ -35,12 +35,23 @@ struct SettingsView: View {
     /// edge push fan-out picks it up.
     @AppStorage("notification_preview_mode") private var previewModeRaw = NotificationPreviewMode.generic.rawValue
 
+    /// Local mirror of the server-side model_reveal_preference — the global
+    /// 盲盒 override. Same account-synced pattern as the notification knob
+    /// (GET on appear, PATCH on change); ConversationView reads this same
+    /// @AppStorage key so an open chat's pill flips immediately.
+    @AppStorage(ModelRevealPreference.storageKey)
+    private var modelRevealPrefRaw = ModelRevealPreference.default.rawValue
+
     /// App-wide appearance override (跟随系统/浅/深). Device-local, not synced.
     /// Both `@main` scenes read the same key and drive `.preferredColorScheme`.
     @AppStorage(AppearanceMode.storageKey) private var appearanceRaw = AppearanceMode.default.rawValue
 
     private var previewMode: NotificationPreviewMode {
         NotificationPreviewMode(rawValue: previewModeRaw) ?? .generic
+    }
+
+    private var modelRevealPref: ModelRevealPreference {
+        ModelRevealPreference.normalized(modelRevealPrefRaw)
     }
 
     private var appearance: AppearanceMode {
@@ -81,6 +92,21 @@ struct SettingsView: View {
             }
 
             Section {
+                Picker("模型显示", selection: Binding(
+                    get: { modelRevealPref },
+                    set: { modelRevealPrefRaw = $0.rawValue }
+                )) {
+                    ForEach(ModelRevealPreference.allCases) { pref in
+                        Text(pref.label).tag(pref)
+                    }
+                }
+            } header: {
+                Text("模型盲盒")
+            } footer: {
+                Text("聊天顶部显示真实模型名，还是「PendingModel」。「跟随机器人」按每个机器人自己的设置；「总是真实模型」不再有盲盒和猜模型；「总是盲盒」即使机器人本来直接披露也藏起来。已经揭晓过的会话不受影响，仍显示真名。")
+            }
+
+            Section {
                 Picker("通话连接模式", selection: $voiceTransport) {
                     Text("自动").tag("auto")
                     Text("WebRTC").tag("webrtc")
@@ -101,21 +127,39 @@ struct SettingsView: View {
         .task {
             // Pull authoritative value on view appear in case the user
             // changed it on another device. Cheap — single GET.
-            await refreshPreviewModeFromServer()
+            await refreshProfileFromServer()
         }
         .onChange(of: previewModeRaw) { _, newValue in
-            Task { await syncPreviewModeToServer(rawValue: newValue) }
+            Task { await syncProfileToServer(ProfilePatch(notification_preview_mode: newValue)) }
+        }
+        .onChange(of: modelRevealPrefRaw) { _, newValue in
+            Task { await syncProfileToServer(ProfilePatch(model_reveal_preference: newValue)) }
         }
     }
 
-    private func refreshPreviewModeFromServer() async {
+    /// PATCH body — every field optional so each picker sends only its own
+    /// knob (the worker merges into users.custom_fields, so omitted keys keep
+    /// their stored value).
+    private struct ProfilePatch: Encodable {
+        var notification_preview_mode: String? = nil
+        var model_reveal_preference: String? = nil
+    }
+
+    private func refreshProfileFromServer() async {
         do {
             struct ProfileResponse: Decodable {
                 let notification_preview_mode: String
+                // Optional on purpose: an app build can reach a worker that
+                // predates this knob. Required would fail the whole decode
+                // and silently take the notification knob down with it.
+                let model_reveal_preference: String?
             }
             let resp: ProfileResponse = try await APIClient().get("v1/me/profile")
             if resp.notification_preview_mode != previewModeRaw {
                 previewModeRaw = resp.notification_preview_mode
+            }
+            if let pref = resp.model_reveal_preference, pref != modelRevealPrefRaw {
+                modelRevealPrefRaw = pref
             }
         } catch {
             // Non-fatal — keep showing the local value. Picker still
@@ -124,12 +168,9 @@ struct SettingsView: View {
         }
     }
 
-    private func syncPreviewModeToServer(rawValue: String) async {
-        struct ProfilePatch: Encodable {
-            let notification_preview_mode: String
-        }
+    private func syncProfileToServer(_ patch: ProfilePatch) async {
         do {
-            try await APIClient().patchVoid("v1/me/profile", body: ProfilePatch(notification_preview_mode: rawValue))
+            try await APIClient().patchVoid("v1/me/profile", body: patch)
         } catch {
             // Write failed (auth, network). Keep the local state — next
             // toggle will re-attempt. Don't roll back the picker, since a
