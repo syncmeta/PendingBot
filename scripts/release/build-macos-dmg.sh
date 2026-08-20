@@ -118,11 +118,24 @@ if missing:
     for k in missing:
         print("    " + k, file=sys.stderr)
     print("""
-  去 developer.apple.com/account → Certificates, Identifiers & Profiles
-  → Profiles → %s → Edit，确认对应能力勾上后重新 Generate。
-  （能力在 App ID 上开着还不够，描述文件是早先生成的就不会带上。）
+  这份**是刚从 Apple 现拉的，不是本机缓存** —— 本脚本每次构建都重新下载
+  描述文件，本机那份只当缓存。所以「缺」是 Apple 那边记录的实际状态。
+    描述文件 UUID : %s
+    它自己记的生成时刻 : %s
+  UUID 和生成时刻没变，就说明后台那条记录**从来没有被重新生成过**。
+
+  能力在 App ID 上勾着**还不够** —— 描述文件是生成那一刻的快照，之后给
+  App ID 加的能力不会自动补进已有的文件里。所以后台页面上看着是勾的、
+  文件里却没有，这两件事可以同时为真。
+
+  修法：developer.apple.com/account → Certificates, Identifiers & Profiles
+  → Profiles → %s → Edit → Generate（重新生成一次，UUID 会变）。
+
+  如果重新生成之后这些键**还是**没进来，那就不是过期问题，而是 Apple 不给
+  这个分发方式这项能力 —— 那是产品级问题，停下来找人，别绕。
+
   别为了绕过它从 %s 里删键 —— 那是把功能悄悄关掉，不是修好。""" % (
-        prof["name"], sys.argv[1]), file=sys.stderr)
+        prof["uuid"], prof.get("created"), prof["name"], sys.argv[1]), file=sys.stderr)
     sys.exit(2)
 print("描述文件覆盖了源 entitlements 的全部 %d 个键" % len(src))
 ' "$src_ent" || fail "描述文件授权不全 —— 这次构建注定签不出来，停在这里"

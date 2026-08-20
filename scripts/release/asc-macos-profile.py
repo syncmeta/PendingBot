@@ -190,6 +190,9 @@ def main() -> None:
         "uuid": uuid,
         "path": str(dest),
         "expiration": exp,
+        # 描述文件**自己**记的生成时刻。断言失败时必须打出来 —— 它是区分
+        # 「文件真的缺这个键」和「后台已经改好、我读的是过期副本」的唯一凭据。
+        "created": plist.get("CreationDate"),
         "platform": plist.get("Platform"),
         "certificates": certs,
         "entitlements": {k: v for k, v in plist.get("Entitlements", {}).items()},
