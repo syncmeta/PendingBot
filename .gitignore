@@ -1,0 +1,60 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build output
+**/dist/
+**/.build/
+**/.vite/
+**/.next/
+**/.vercel/
+**/.turbo/
+**/next-env.d.ts
+**/tsconfig.tsbuildinfo
+
+# scroll-lab experiment run outputs (scratch)
+apps/scroll-lab/runs/
+
+# SQLite database files (only matter for self-host dev runs)
+**/data/*.sqlite
+**/data/*.sqlite-shm
+**/data/*.sqlite-wal
+**/data/uploads/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+**/.env
+**/.env.local
+**/.env.*.local
+
+# macOS
+.DS_Store
+
+# Xcode user-specific state
+**/xcuserdata/
+*.xcuserstate
+
+# Xcode 本地生成物（.xcodeproj 本身是入库的，由 project.yml + xcodegen 生成；
+# scheme 和用户状态不入库，所以新 clone 要先跑一次 xcodegen）
+apps/pendingbot/PendingBot.xcodeproj/xcuserdata/
+apps/pendingbot/PendingBot.xcodeproj/xcshareddata/
+apps/pendingbot/build/
+**/DerivedData/
+
+# 发版产物
+dist-release/
+*.dmg
+*.ipa
+*.xcarchive
+
+# 编码 agent 的本地配置（各人自便，不入 git）
+.claude/
+.codex/
+.superpowers/
+.agents/
+.pendingcrew/
+AGENTS.md
+CLAUDE.md
+GEMINI.md

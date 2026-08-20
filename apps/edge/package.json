@@ -1,0 +1,40 @@
+{
+  "name": "@pendingbot/edge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "bun --filter='@pendingbot/admin' run build && wrangler deploy --env production",
+    "tail": "wrangler tail --env production",
+    "typecheck": "tsc --noEmit",
+    "types:cf": "wrangler types --env-interface Env src/types.ts",
+    "types:db": "supabase gen types typescript --linked --schema pendingbot 2>/dev/null > src/db/schema.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "polar:spike": "bun run scripts/polar-spike.ts"
+  },
+  "dependencies": {
+    "@cloudflare/containers": "^0.3.4",
+    "@cloudflare/sandbox": "^0.10.1",
+    "@honcho-ai/sdk": "^2",
+    "@pendingbot/identity": "workspace:*",
+    "@sentry/cloudflare": "^10.55.0",
+    "@supabase/supabase-js": "^2",
+    "hono": "^4.12.22",
+    "jose": "^5",
+    "langfuse": "^3.38.20",
+    "openai": "^4",
+    "posthog-node": "^5.35.11",
+    "zod": "^4",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@polar-sh/sdk": "^0.47.1"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0",
+    "@cloudflare/workers-types": "^4",
+    "typescript": "^6",
+    "vitest": "^2",
+    "wrangler": "^4.90.0"
+  }
+}

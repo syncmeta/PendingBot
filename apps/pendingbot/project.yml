@@ -1,0 +1,136 @@
+name: PendingBot
+options:
+  bundleIdPrefix: com.pendingname
+  deploymentTarget:
+    iOS: "17.0"
+    macOS: "14.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    # 签名策略:
+    # - iOS 真机(iphoneos) + iOS Simulator:Automatic + dev team。
+    #   Simulator 也必须签名 —— 否则 ad-hoc 构建拿不到 keychain-access-groups
+    #   (该 entitlement 需要 team 前缀),Keychain 全挂 -34018,supabase 会话
+    #   存不住,登录态写操作静默降级成 anon → onboarding 报 "permission denied
+    #   for table users"。这个坑被反复误诊过多次,务必保持 Simulator 签名开启。
+    # - macOS:也签名(Development)。Mac 版已是真能用的三端之一(#212),不再是
+    #   占位。不签名 = 钥匙串身份不稳定,每次重构 supabase.gotrue.swift(GoTrue
+    #   会话存储)条目都重弹授权框、甚至 -34018 让 session 存不住 → supabase-swift
+    #   静默降级 anon(和上面 Simulator 那个反复误诊的坑同源)。
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: M42BKJN82S
+    # Simulator 也用 dev team 签名(继承上面的 Automatic + M42BKJN82S,和真机
+    # 一致)。必须显式给 iphonesimulator 指定 Apple Development 身份,否则 Xcode
+    # 默认 "Sign to Run Locally"(ad-hoc),ad-hoc 不带 team 前缀 →
+    # keychain-access-groups entitlement 失效 → Keychain 全挂 -34018 →
+    # supabase 会话存不住 → 登录态写静默降级成 anon → onboarding 报
+    # "permission denied for table users"。这个坑被反复误诊多次,务必保持开启。
+    # 用 Xcode GUI / 已登录 Apple ID 的环境构建即可正常签名;headless 无证书的
+    # 构建会回落 ad-hoc(仅编译校验用,不影响)。
+    "CODE_SIGN_IDENTITY[sdk=iphonesimulator*]": "Apple Development"
+    # macOS 显式指定 Development 身份(继承 Automatic + M42BKJN82S),否则 Xcode
+    # 默认 ad-hoc("Sign to Run Locally")→ 钥匙串身份每次重构都变 → 反复重弹授权 /
+    # -34018。headless 无证书构建仍会回落 ad-hoc(仅编译校验用,不影响 GUI 构建)。
+    "CODE_SIGN_IDENTITY[sdk=macosx*]": "Apple Development"
+    MARKETING_VERSION: "0.1.0"
+    # 占位符。发版时由 scripts/release/ios-build-number.sh --apply 覆盖成纪元日
+    # 时间戳(<自1970-01-01起的天数>.<当天已过秒数>,如 20683.07431)。
+    # **别手工填** —— 以前是手工填 + 拿 commit 数当值,仓库重建后提交数从 3571
+    # 掉到 3178,build 号倒退、ASC 直接拒收。
+    # 详见 docs/deploy.md 的「iOS build 号 — 纪元日时间戳 + 防倒退闸」一节。
+    CURRENT_PROJECT_VERSION: "1"
+packages:
+  GRDB:
+    url: https://github.com/duckduckgo/GRDB.swift
+    exactVersion: 2.4.2-1
+  GoogleSignIn:
+    url: https://github.com/google/GoogleSignIn-iOS
+    minVersion: 8.0.0
+    maxVersion: 9.0.0
+  MarkdownUI:
+    url: https://github.com/gonzalezreal/swift-markdown-ui
+    minVersion: 2.4.0
+    maxVersion: 3.0.0
+  PostHog:
+    url: https://github.com/PostHog/posthog-ios
+    minVersion: 3.0.0
+    maxVersion: 4.0.0
+  RevenueCat:
+    url: https://github.com/RevenueCat/purchases-ios
+    minVersion: 5.0.0
+    maxVersion: 6.0.0
+  Sentry:
+    url: https://github.com/getsentry/sentry-cocoa
+    minVersion: 9.0.0
+    maxVersion: 10.0.0
+  SwiftMath:
+    url: https://github.com/mgriebling/SwiftMath
+    minVersion: 1.0.0
+    maxVersion: 2.0.0
+  Supabase:
+    url: https://github.com/supabase/supabase-swift
+    minVersion: 2.0.0
+    maxVersion: 3.0.0
+  WebRTC:
+    url: https://github.com/stasel/WebRTC
+    minVersion: 130.0.0
+    maxVersion: 131.0.0
+targets:
+  PendingBot:
+    type: application
+    supportedDestinations: [iOS, macOS]
+    sources:
+      - path: Sources
+      - path: Resources
+        # Info.plist 是 INFOPLIST_FILE 引用，不能也 copy 进 bundle
+        excludes:
+          - "Info.plist"
+          - "PendingBot.entitlements"
+          - "PendingBot-macOS.entitlements"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.pendingname.pendingbot
+        PRODUCT_NAME: PendingBot
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Info.plist
+        CODE_SIGN_ENTITLEMENTS: Resources/PendingBot.entitlements
+        # Mac 端单独一份 —— 差异只有「没有推送」那一条,理由写在文件里。
+        # 共用那份的 `aps-environment` 是 iOS 专有键,拿到 macOS 上会被 Xcode
+        # **静默剥掉**(不报错/照样签/照样公证),发版脚本那道「源里声明的键产物
+        # 里必须还在」的断言就会永远红着。2026-08-20 真构建实测,不是推测。
+        "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": Resources/PendingBot-macOS.entitlements
+        # 1 = iPhone, 2 = iPad
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ENABLE_PREVIEWS: YES
+        SUPPORTS_MACCATALYST: NO
+        # 不为 macOS 提供 Designed-for-iPad 模式（要真正的 SwiftUI macOS）
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+        # iOS 端排除 macOS-only 子树（Sources/Mac/）
+        "EXCLUDED_SOURCE_FILE_NAMES[sdk=iphone*]": "Mac/* Mac/**/*"
+        # macOS 端不再用 EXCLUDED_SOURCE_FILE_NAMES 大锅排除业务子树 —
+        # 改为在每个 iOS-only 文件顶部包 `#if os(iOS)` ... `#endif`,
+        # 让纯 Foundation/SwiftUI 的 Models / Storage / 部分 Networking /
+        # 部分 Components 自然进入 Mac build,给 Sources/Mac/ 的真实视图
+        # 提供数据底座。剩余 iOS-only 业务(Features/* 等)的 Mac 接入
+        # 见 docs/tech-debt.md 中的 T0.1 P1+P2 条目。
+    dependencies:
+      - package: GRDB
+        product: GRDB
+      - package: GoogleSignIn
+        product: GoogleSignIn
+      - package: MarkdownUI
+        product: MarkdownUI
+      - package: PostHog
+        product: PostHog
+      - package: RevenueCat
+        product: RevenueCat
+      - package: Sentry
+        product: Sentry
+      - package: SwiftMath
+        product: SwiftMath
+      - package: Supabase
+        product: Supabase
+      - package: WebRTC
+        product: WebRTC
+        platforms: [iOS]

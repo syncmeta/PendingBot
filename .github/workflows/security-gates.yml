@@ -1,0 +1,58 @@
+name: Security gates
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  supabase-advisor-gate:
+    name: Supabase advisor gate fixtures
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run supabase:advisor:test
+
+  definer-execute-gate-fixtures:
+    name: Definer execute gate fixtures
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run db:definer:test
+
+  definer-execute-gate-ledger:
+    # Replays supabase/migrations into a throwaway local database and fails if
+    # any SECURITY DEFINER function in a PostgREST-exposed schema ends up
+    # executable by anon or PUBLIC. Postgres grants EXECUTE to PUBLIC by
+    # default, so this catches the "wrote the GRANT, forgot the REVOKE" mistake
+    # that made pendingbot.upsert_self_machine an unauthenticated write
+    # endpoint — the second time that class of hole shipped.
+    #
+    # Ledger-only by construction: it cannot see grants made straight against
+    # production (e.g. from the Supabase dashboard). Run
+    # `bun run db:definer:gate:linked` before a deploy for that — it needs the
+    # linked project, which is why it is not wired into CI.
+    name: Definer execute gate (replay migrations)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - run: bun install --frozen-lockfile
+      - name: Start local database
+        run: |
+          supabase start -x realtime,storage-api,imgproxy,studio,vector,edge-runtime,logflare,supavisor,postgres-meta,mailpit
+      - name: Replay migrations from scratch
+        run: supabase db reset --local
+      - name: Check for anon/PUBLIC-executable SECURITY DEFINER functions
+        run: bun run db:definer:gate:local
+      - name: Stop local database
+        if: always()
+        run: supabase stop --no-backup

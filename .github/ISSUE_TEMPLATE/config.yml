@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 安全漏洞
+    url: https://github.com/syncmeta/PendingBot/security/advisories/new
+    about: 请走 GitHub 私有漏洞报告，不要开公开 issue。详见 SECURITY.md。
+  - name: 自建跑不起来
+    url: https://github.com/syncmeta/PendingBot/blob/main/docs/self-hosting.md
+    about: 开 issue 之前先看一眼自建指南，里面列了每个外部服务要开什么、以及哪些步骤本来就没跑通。

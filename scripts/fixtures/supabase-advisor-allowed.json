@@ -1,0 +1,14 @@
+{
+  "result": {
+    "lints": [
+      {
+        "name": "rls_enabled_no_policy",
+        "title": "RLS Enabled No Policy",
+        "level": "INFO",
+        "categories": ["SECURITY"],
+        "detail": "Table `pendingbot.admin_audit` has RLS enabled, but no policies exist",
+        "cache_key": "rls_enabled_no_policy_pendingbot_admin_audit"
+      }
+    ]
+  }
+}

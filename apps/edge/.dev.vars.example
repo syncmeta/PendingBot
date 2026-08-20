@@ -1,0 +1,72 @@
+# Copy to `.dev.vars` (gitignored) for local `wrangler dev`.
+# Values are placeholders. `wrangler dev` does not automatically read the
+# root .env.example. Keep feature switches in wrangler.jsonc false unless the
+# matching optional integration is configured.
+
+# REQUIRED for authenticated/data routes. Obtain local values from
+# `supabase status`; legacy local anon/service_role JWTs are accepted by the
+# checked-in local stack as well as new-format keys.
+SUPABASE_URL="http://127.0.0.1:54321"
+SUPABASE_PUBLISHABLE_KEY="<local-supabase-publishable-or-anon-key>"
+SUPABASE_SECRET_KEY="<local-supabase-secret-or-service-role-key>"
+ALLOWED_ORIGIN="http://127.0.0.1:5174"
+
+# REQUIRED for LLM calls: create a Cloudflare AI Gateway and an Authenticated
+# Gateway run token. CF_AIG_TOKEN is optional and only reads cost logs.
+CF_ACCOUNT_ID="<cloudflare-account-id>"
+CF_AIG_GATEWAY="<ai-gateway-slug>"
+CF_AIG_RUN_TOKEN="<ai-gateway-run-token>"
+CF_AIG_TOKEN="<optional-token-with-ai-gateway-read>"
+GOOGLE_BYOK_ALIAS="<optional-google-ai-studio-byok-alias>"
+
+# REQUIRED for any LLM path on an empty clone: Langfuse is the only prompt
+# source. Create every prompt listed in docs/self-hosting.md with label
+# `production`. LANGFUSE_WEBHOOK_SECRET is optional (pull-on-miss still works).
+LANGFUSE_PUBLIC_KEY="<langfuse-public-key>"
+LANGFUSE_SECRET_KEY="<langfuse-secret-key>"
+LANGFUSE_BASE_URL="https://<your-langfuse-host>"
+LANGFUSE_WEBHOOK_SECRET="<optional-random-webhook-secret>"
+
+# OPTIONAL memory/dialectic features.
+HONCHO_API_KEY="<honcho-api-key>"
+HONCHO_WORKSPACE_ID="<honcho-workspace-id>"
+
+# OPTIONAL web tools. EXA_API_KEY matches the seeded Exa MCP server's
+# secret_ref. TAVILY_API_KEY is declared but not wired by default today.
+EXA_API_KEY="<exa-api-key>"
+TAVILY_API_KEY="<reserved-tavily-api-key>"
+
+# OPTIONAL 1:1/group voice.
+OPENAI_API_KEY="<openai-api-key>"
+REALTIMEKIT_ACCOUNT_ID="<cloudflare-realtimekit-account-id>"
+REALTIMEKIT_APP_ID="<cloudflare-realtimekit-app-id>"
+REALTIMEKIT_API_TOKEN="<cloudflare-realtimekit-api-token>"
+REALTIMEKIT_HUMAN_PRESET="group_call_host"
+REALTIMEKIT_BOT_PRESET="group_call_participant"
+TURN_KEY_ID="<cloudflare-turn-key-id>"
+TURN_KEY_API_TOKEN="<cloudflare-turn-api-token>"
+
+# OPTIONAL for basic startup, REQUIRED for database-triggered realtime. The
+# same value must be stored in Supabase Vault as `realtime_webhook_secret`.
+REALTIME_WEBHOOK_SECRET="<random-realtime-webhook-secret>"
+
+# OPTIONAL push notifications (all six are needed together for APNs).
+APNS_TEAM_ID="<apple-team-id>"
+APNS_TOPIC="<ios-bundle-id>"
+APNS_KEY_ID_DEV="<development-apns-key-id>"
+APNS_KEY_ID_PROD="<production-apns-key-id>"
+APNS_KEY_DEV="<development-apns-p8-pem>"
+APNS_KEY_PROD="<production-apns-p8-pem>"
+
+# OPTIONAL billing; leave BILLING_ENABLED=false in wrangler.jsonc to skip.
+POLAR_ACCESS_TOKEN="<polar-sandbox-access-token>"
+POLAR_SERVER="sandbox"
+POLAR_WEBHOOK_SECRET="<polar-webhook-secret>"
+POLAR_PNC_METER_ID="<polar-pnc-meter-id>"
+REVENUECAT_WEBHOOK_AUTH="<revenuecat-webhook-authorization-value>"
+
+# OPTIONAL observability. Each also needs its *_ENABLED switch set to true in
+# wrangler.jsonc. LANGFUSE prompt loading above is independent of tracing.
+SENTRY_DSN="<sentry-worker-dsn>"
+POSTHOG_KEY="<posthog-project-api-key>"
+POSTHOG_HOST="https://<your-posthog-ingest-host>"

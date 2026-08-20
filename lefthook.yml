@@ -1,0 +1,35 @@
+# Git hooks for the PendingBot monorepo, managed by lefthook.
+#
+# Install (once per clone):
+#   bunx lefthook install
+#
+# Note: if you already have a global core.hooksPath set (e.g. for shared
+# commit signing), `lefthook install` will warn — re-run with
+#   bunx lefthook install --reset-hooks-path
+# only if you're sure you don't lose the previous global hooks. Otherwise
+# run lefthook manually before committing:
+#   bunx lefthook run pre-commit
+#
+# Auto-installs on `bun install` via the package.json "prepare" script.
+#
+# To run a hook manually:   bunx lefthook run pre-commit
+# To skip a hook one time:  LEFTHOOK=0 git commit ...   (do this with care)
+
+pre-commit:
+  parallel: true
+  jobs:
+    # Migration-vs-schema-drift guard. If a commit adds/edits a
+    # supabase/migrations/*.sql file, schema.ts MUST also be staged.
+    # Otherwise the edge worker compiles against a stale schema and
+    # silently falls back to `as unknown as` casts. See the May-2026
+    # audit notes for the full rationale.
+    - name: schema-regen-check
+      glob: "supabase/migrations/*.sql"
+      run: node scripts/check-schema-regen.mjs {staged_files}
+
+    # Run typecheck for the edge workspace if anything under
+    # apps/edge/src/** or packages/identity/src/** is touched. Cheap
+    # (~3s incremental) and saves a CI round-trip.
+    - name: typecheck-edge
+      glob: "{apps/edge/src/**/*.ts,packages/identity/src/**/*.ts}"
+      run: bun --filter='@pendingbot/edge' run typecheck

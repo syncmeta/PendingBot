@@ -1,0 +1,26 @@
+name: 想法 / 提议
+description: 想加个东西，或者想改现在的做法
+labels: [idea]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        先说清楚：这是个人实验项目，作者对它要变成什么样有自己的想法，
+        而且大部分没写进仓库。所以**这里更适合先聊，而不是直接甩 PR**。
+        没有路线图承诺，也不保证会做。
+  - type: textarea
+    id: problem
+    attributes:
+      label: 你实际撞上的问题是什么
+      description: 先说问题，别直接说方案 —— 方案可以一起想，问题得是真的。
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: 你想到的做法
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 你考虑过但放弃的做法
+      description: 可选。写了很有用 —— 能省掉一轮来回。

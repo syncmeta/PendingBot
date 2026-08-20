@@ -1,0 +1,390 @@
+{
+  // PendingBot Edge Worker — Hono on Cloudflare Workers
+  // ──────────────────────────────────────────────────────────────
+  // Resources used (each env binds its own instance):
+  //   UPLOADS    — R2 bucket (attachments)
+  //   MEMORY     — KV namespace (Honcho representation cache)
+  //   PROMPTS_KV — KV namespace (Langfuse prompt distribution cache)
+  //
+  // Markdown text imports for the prompt library: see [[rules]].
+
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "pendingbot-edge",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-05-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // (No Text module rule: prompts are no longer bundled as .md — Langfuse is
+  // the source of truth, distributed via PROMPTS_KV. See llm/prompt-loader.ts.)
+
+  "observability": {
+    "enabled": true
+  },
+
+  // Cron triggers (B8). Each pattern is matched in src/cron/index.ts.
+  // Dropped "0 3 * * 1" (weekly model-pricing) to stay under the
+  // account cron-trigger cap (5). model_pricing now syncs manually
+  // from the board admin or via a one-shot wrangler invocation —
+  // pricing changes are rare enough to not need a recurring trigger.
+  // Dropped "5 * * * *" (idle sandbox sweep) when the code-exec
+  // tool moved off Daytona — Cloudflare's Sandbox container handles
+  // idle cleanup natively via `sleepAfter`.
+  "triggers": {
+    "crons": [
+      "0 4 * * *",
+      "*/5 * * * *",
+      "*/30 * * * *"
+    ]
+  },
+
+  // Default env (used by `wrangler dev` for local). Real bindings live under
+  // env.production; `wrangler dev` stubs R2/KV/etc and reads secrets from
+  // .dev.vars. We deliberately keep ONE deployed env (production) until there
+  // are real users to insulate from churn — see CLAUDE.md "Deploys".
+  "vars": {
+    "ENVIRONMENT": "dev",
+    // Kill-switches (lib/feature-flags.ts). Default OFF: only "true" enables.
+    // Observability is per-service so each vendor's quota toggles independently.
+    "BILLING_ENABLED": "false",
+    "SENTRY_ENABLED": "false",
+    "POSTHOG_ENABLED": "false",
+    "LANGFUSE_ENABLED": "false"
+  },
+
+  // Board admin console (apps/admin SPA) served same-origin under /board so
+  // the Cloudflare Access cookie covers both the page and /v1/board/* (a
+  // cross-origin Pages deploy can't carry the Access cookie on API fetches).
+  // run_worker_first: the Hono app owns ALL routing; /board/* explicitly
+  // proxies into this binding (src/index.ts), nothing else touches assets.
+  // NOTE: `wrangler deploy` uploads ../admin/dist — build apps/admin first
+  // (the deploy script chains it).
+  "assets": {
+    "directory": "../admin/dist",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "not_found_handling": "single-page-application"
+  },
+
+  // ─────────────────────────────────────────────────────────────
+  // NOTE (public repo): every value under env.production below that
+  // looks like `YOUR_…` / `example.com` is a PLACEHOLDER. This repo
+  // ships no real account coordinates. Fill in your own Cloudflare +
+  // Supabase resources before `wrangler deploy`; see docs/self-hosting.md.
+  // ─────────────────────────────────────────────────────────────
+
+  "env": {
+    "production": {
+      "assets": {
+        "directory": "../admin/dist",
+        "binding": "ASSETS",
+        "run_worker_first": true,
+        "not_found_handling": "single-page-application"
+      },
+      "vars": {
+        "ENVIRONMENT": "production",
+        // Kill-switches (lib/feature-flags.ts). Default OFF: only "true"
+        // enables. Flip to "true" + redeploy when ready; flip back to disable.
+        // BILLING_ENABLED gates the live billing gate + debit (off = nobody
+        // blocked, nothing charged). Observability is PER-SERVICE so each
+        // vendor's quota toggles independently (each also needs its key/DSN):
+        //   SENTRY_ENABLED   — errors (flood risk on error bursts)
+        //   POSTHOG_ENABLED  — product events (scales with user actions)
+        //   LANGFUSE_ENABLED — LLM traces (1/LLM call — burns quota fastest)
+        "BILLING_ENABLED": "false",
+        "SENTRY_ENABLED": "true",
+        "POSTHOG_ENABLED": "true",
+        // Full-content LLM traces to Langfuse Cloud (user opted in 2026-07-11;
+        // was held off on privacy grounds while trace payloads were metrics-only).
+        "LANGFUSE_ENABLED": "true",
+        "SUPABASE_URL": "https://YOUR-PROJECT.supabase.co",
+        // Publishable API key — public by design (ships in the iOS binary
+        // too), so a plain var, not a secret. Pairs with the caller's JWT
+        // in userClient; RLS does the gating.
+        "SUPABASE_PUBLISHABLE_KEY": "sb_publishable_REPLACE_ME",
+        "POSTHOG_HOST": "https://eu.i.posthog.com",
+        "LANGFUSE_BASE_URL": "https://cloud.langfuse.com",
+        // Comma-separated allowlist. The board console lives same-origin
+        // under /board, so it needs no extra entry here.
+        "ALLOWED_ORIGIN": "https://bot.example.com",
+        // Cloudflare Access gate for /v1/board/* (lib/cf-access.ts). Both
+        // values are public identifiers, not secrets — the AUD tag names the
+        // Access app "pendingbot-board" (destinations /board* + /v1/board*).
+        "CF_ACCESS_TEAM_DOMAIN": "YOUR-TEAM.cloudflareaccess.com",
+        "CF_ACCESS_AUD": "YOUR_CF_ACCESS_AUD",
+        // Board-admin allowlist — the Access-verified email must match. Second
+        // authority independent of the Access policy (lib/cf-access.ts).
+        "BOARD_ADMIN_EMAILS": "you@example.com",
+        // AI Gateway coordinates — the worker reads the gateway's
+        // computed per-request cost from the Logs API when a provider
+        // doesn't report its own (see lib/ai-gateway.ts). Account id +
+        // gateway name match the base_url used for AI Gateway requests;
+        // the Logs API auth token is the CF_AIG_TOKEN secret below.
+        "CF_ACCOUNT_ID": "YOUR_CF_ACCOUNT_ID",
+        "CF_AIG_GATEWAY": "YOUR_AI_GATEWAY_NAME",
+        // BYOK key alias for google-ai-studio. Gemini 3.x isn't on the
+        // gateway's Unified Billing native passthrough (only ~2.x), so
+        // Google rides a stored BYOK key saved under this alias; the
+        // gemini adapter sends it as cf-aig-byok-alias. See types.ts.
+        "GOOGLE_BYOK_ALIAS": "byok-1",
+        // Cloudflare RealtimeKit group voice app. REALTIMEKIT_API_TOKEN is
+        // a secret with Realtime Admin permission. Presets live in the
+        // RealtimeKit app.
+        "REALTIMEKIT_APP_ID": "YOUR_REALTIMEKIT_APP_ID",
+        "REALTIMEKIT_HUMAN_PRESET": "group_call_host",
+        "REALTIMEKIT_BOT_PRESET": "group_call_participant"
+      },
+      "routes": [
+        { "pattern": "api.example.com", "custom_domain": true },
+        // bot.example.com — Apple Universal Links AASA at
+        //   /.well-known/apple-app-site-association  (handler: routes/well-known.ts)
+        // Bound as custom_domain so wrangler auto-provisions the DNS record on
+        // deploy (the OAuth token wrangler is logged in with has workers:write
+        // but no dns_records:write, so a path-scoped route would need a manual
+        // placeholder record first).
+        // Side effect: the worker now owns the entire bot.example.com
+        // hostname; non-AASA paths fall through to the global notFound handler
+        // and 404. That's fine while bot.example.com is otherwise unused;
+        // if the Board ever lands here, swap this to a path-scoped route and
+        // arrange a DNS placeholder.
+        { "pattern": "bot.example.com", "custom_domain": true }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "UPLOADS",
+          "bucket_name": "YOUR-UPLOADS-BUCKET"
+        }
+      ],
+      "kv_namespaces": [
+        {
+          "binding": "MEMORY",
+          "id": "YOUR_KV_NAMESPACE_ID_MEMORY"
+        },
+        {
+          // Langfuse prompt distribution cache. Source of truth = Langfuse;
+          // entries written by the prompt-version webhook + pull-on-miss.
+          "binding": "PROMPTS_KV",
+          "id": "YOUR_KV_NAMESPACE_ID_PROMPTS"
+        }
+      ],
+      // Per-group debounce + small-model routing (M4 of group chat).
+      // One DO instance per conversation_id; state is recentMessages
+      // timestamps + a single pending alarmAt. See
+      // src/durable-objects/group-router.ts for the full state model.
+      //
+      // SANDBOX is Cloudflare Sandbox SDK's container-backed DO — one
+      // instance per conversation_id, used by the chat agent's
+      // execute_code / request_execute_code tools. Auto-sleeps after a
+      // short idle window (sleepAfter in lib/sandbox.ts) so we don't pay
+      // memory+disk for abandoned conversations.
+      //
+      // REALTIME_HUB is the realtime fan-out DO — one instance per
+      // topic (`conv:<id>` / `user:<id>`), holds clients' hibernatable
+      // WebSocket connections and broadcasts row changes pushed in by
+      // the DB-webhook notify path. Hibernatable WebSockets keep idle
+      // connections near-free. See src/durable-objects/hub.ts.
+      //
+      // SESSION_PROXY_DO is the cross-device session remote-control hub
+      // (T4.5 — spec v2 §8.2 + §9.6). One instance per active crew session
+      // (keyed by session_id); holds viewer sockets + at most one runner
+      // socket and queues commands while the runner is offline. See
+      // src/durable-objects/session-proxy.ts.
+      "durable_objects": {
+        "bindings": [
+          { "name": "GROUP_ROUTER", "class_name": "GroupRouterDO" },
+          { "name": "REALTIME_HUB", "class_name": "RealtimeHubDO" },
+          { "name": "REALTIME_METER", "class_name": "RealtimeMeterDO" },
+          { "name": "ROOM_VOICE", "class_name": "RoomVoiceDO" },
+          { "name": "ROOM_MEDIA", "class_name": "RoomMediaContainerDO" },
+          { "name": "SESSION_PROXY_DO", "class_name": "SessionProxyDO" },
+          { "name": "Sandbox", "class_name": "Sandbox" },
+          { "name": "WALLET", "class_name": "WalletDO" },
+          // T2 边缘读投影(docs/superpowers/plans/2026-06-07-edge-read-offload.md)。
+          // CONV_PROJECTION:per conversation_id,消息尾 + roster + revision。
+          // USER_PROJECTION:per user_id,会话列表 + 未读 + revision。
+          // 都 SQLite-backed(migration tag v9);webhook 写穿 + 冷启动回填。
+          { "name": "CONV_PROJECTION", "class_name": "ConvProjectionDO" },
+          { "name": "USER_PROJECTION", "class_name": "UserProjectionDO" }
+        ]
+      },
+      // Cloudflare Sandbox SDK container. The DO above wraps a real
+      // Linux container built from ./Dockerfile — Python data-stack
+      // baked in there, not pip-installed at first use. `lite` is the
+      // smallest profile (1 vCPU / 2 GiB RAM-ish); raise instance_type
+      // or max_instances if real traffic justifies it.
+      "containers": [
+        {
+          "name": "pendingbot-edge-sandbox",
+          "class_name": "Sandbox",
+          "image": "./Dockerfile",
+          "instance_type": "lite",
+          "max_instances": 10
+        },
+        // Group-voice media engine (apps/voice-container). One running
+        // instance per active group call. "basic" (1/4 vCPU, 1 GiB) — NOT
+        // "lite" (1/16 vCPU): the real-time audio loop needs steady CPU,
+        // and lite's tiny slice risks reintroducing the choppiness we moved
+        // off the workerd isolate to fix. Custom instance types can't go
+        // smaller than basic (CF floors them at 1 vCPU / 3 GiB), so basic
+        // is the smallest safe option. max_instances caps the warm pool +
+        // concurrent calls — 3 is plenty pre-launch; raise as traffic grows.
+        {
+          "name": "pendingbot-edge-voice",
+          "class_name": "RoomMediaContainerDO",
+          "image": "../voice-container/Dockerfile",
+          "instance_type": "basic",
+          "max_instances": 3
+        }
+      ],
+      // Cloudflare native rate limiting. Per-namespace_id counters shared
+      // across worker instances; key chosen by caller (we use userId, or
+      // CF-Connecting-IP when auth is missing). 30 req / 60s is generous
+      // for normal use ("type a handle, fetch once") but blocks brute-
+      // force enumeration of user_handles values. Tune in prod if real
+      // traffic patterns show false positives.
+      "ratelimits": [
+        {
+          "name": "HANDLE_LOOKUP_RL",
+          "namespace_id": "100",
+          "simple": { "limit": 30, "period": 60 }
+        }
+      ],
+      "migrations": [
+        {
+          "tag": "v1",
+          "new_sqlite_classes": ["GroupRouterDO"]
+        },
+        {
+          "tag": "v2",
+          "new_sqlite_classes": ["Sandbox"]
+        },
+        {
+          "tag": "v3",
+          "new_sqlite_classes": ["RealtimeHubDO"]
+        },
+        {
+          "tag": "v4",
+          "new_sqlite_classes": ["RealtimeMeterDO"]
+        },
+        {
+          "tag": "v5",
+          "new_sqlite_classes": ["RoomVoiceDO"]
+        },
+        {
+          "tag": "v6",
+          "new_sqlite_classes": ["RoomMediaContainerDO"]
+        },
+        {
+          "tag": "v7",
+          "new_sqlite_classes": ["SessionProxyDO"]
+        },
+        {
+          "tag": "v8",
+          "new_sqlite_classes": ["WalletDO"]
+        },
+        {
+          "tag": "v9",
+          "new_sqlite_classes": ["ConvProjectionDO", "UserProjectionDO"]
+        }
+      ],
+      // Audit + billing offload. recordAudit used to insert audit_log
+      // (+ child rows) and run the billing debit inline on the LLM
+      // response path. enqueueAudit (src/llm/router.ts) now drops a
+      // serialized AuditMessage onto AUDIT_QUEUE and the worker's own
+      // `queue` handler (src/index.ts → persistAuditMessage) does the
+      // DB work off the response path.
+      //
+      // Same worker is both producer and consumer. Delivery is
+      // at-least-once: the consumer is idempotent because audit_log is
+      // inserted with a producer-generated uuidv7 id under
+      // upsert/ignoreDuplicates, and the billing path is skipped on a
+      // duplicate. After max_retries a message lands in
+      // pendingbot-audit-dlq (left unconsumed — ops inspects it; a
+      // stuck message there means a lost debit worth chasing).
+      "queues": {
+        "producers": [
+          { "binding": "AUDIT_QUEUE", "queue": "YOUR-AUDIT-QUEUE" }
+        ],
+        "consumers": [
+          {
+            "queue": "YOUR-AUDIT-QUEUE",
+            "max_batch_size": 100,
+            "max_batch_timeout": 5,
+            // 5 (was 3) — persistAuditMessage may retry a message while
+            // it waits for the AI Gateway log to become queryable
+            // (ingestion lag); the consumer re-queues those with a
+            // delay, so a few extra attempts buys headroom.
+            "max_retries": 5,
+            "dead_letter_queue": "YOUR-AUDIT-QUEUE-dlq"
+          }
+        ]
+      }
+    }
+  }
+
+  // Secrets (set on the deployed env via `wrangler secret put --env production`,
+  // or in `.dev.vars` for local `wrangler dev`):
+  //
+  //   --- supabase + LLM gateway ---
+  //   SUPABASE_SECRET_KEY    (sb_secret_… — service_role privileges,
+  //                           BYPASSRLS. The publishable counterpart is a
+  //                           plain var above; legacy anon/service_role
+  //                           JWTs are no longer read by the worker.)
+  //   CF_AIG_RUN_TOKEN       (AI Gateway "Authenticated Gateway" run token,
+  //                           created in the gateway Settings. Sent as the
+  //                           cf-aig-authorization header on every LLM
+  //                           request; the gateway injects the BYOK
+  //                           provider key. Required for LLM routing.)
+  //   CF_AIG_TOKEN           (Cloudflare API token with "AI Gateway Read"
+  //                           permission — persistAuditMessage reads the
+  //                           gateway's computed per-request cost from
+  //                           the Logs API for providers that don't
+  //                           report their own. Unset → those turns
+  //                           record no LLM cost / settle as 'skipped'.)
+  //
+  //   --- web tools (search + scrape, via MCP) ---
+  //   EXA_API_KEY            (default; bot-reply + envelope-runner both
+  //                           hit Exa's hosted MCP at mcp.exa.ai via the
+  //                           shared client in apps/edge/src/mcp/client.ts)
+  //   TAVILY_API_KEY         (declared but not wired by default — reserved
+  //                           for the future skill-based Tavily exposure)
+  //
+  //   Legacy keys to delete in CF when convenient (no code reads them):
+  //     BRAVE_API_KEY, FIRECRAWL_API_KEY, SERPER_API_KEY
+  //
+  //   --- push (APNs token auth, per-environment keys) ---
+  //   APNS_TEAM_ID
+  //   APNS_TOPIC
+  //   APNS_KEY_ID_DEV
+  //   APNS_KEY_ID_PROD
+  //   APNS_KEY_DEV   (.p8 PEM content, multi-line)
+  //   APNS_KEY_PROD  (.p8 PEM content, multi-line)
+  //
+  //   --- memory ---
+  //   HONCHO_API_KEY
+  //   HONCHO_WORKSPACE_ID
+  //
+  //   (Code-exec sandbox now runs on the Cloudflare Sandbox SDK
+  //   container declared above — no API key. Legacy Daytona keys
+  //   to delete from CF when convenient: DAYTONA_API_KEY,
+  //   DAYTONA_API_URL, DAYTONA_TOOLBOX_URL.)
+  //
+  //   --- voice call (optional; per-bot opt-in via bots.voice_call_enabled) ---
+  //   OPENAI_API_KEY        (mint Realtime ephemeral client_secret; also
+  //                          the group-voice RoomVoiceDO's OpenAI leg)
+  //   REALTIMEKIT_API_TOKEN (Cloudflare API token with Realtime Admin for
+  //                          group voice; pairs with REALTIMEKIT_APP_ID.)
+  //   TURN_KEY_ID           (Cloudflare Realtime TURN key id — create a
+  //                          TURN key in the Realtime dashboard. Used by
+  //                          the 'webrtc_turn' 1:1 voice transport.)
+  //   TURN_KEY_API_TOKEN    (API token paired with TURN_KEY_ID; the
+  //                          worker mints short-lived ICE credentials
+  //                          with it. See lib/cf-turn.ts.)
+  //
+  //   --- realtime fan-in ---
+  //   REALTIME_WEBHOOK_SECRET  shared secret the Supabase Database
+  //                            Webhooks send in X-Webhook-Secret to
+  //                            /v1/realtime-internal/notify. Mirror the
+  //                            same value into Supabase Vault as
+  //                            `realtime_webhook_secret` (the pg_net
+  //                            trigger reads it from there).
+}

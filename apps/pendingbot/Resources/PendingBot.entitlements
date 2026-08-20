@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>aps-environment</key>
+  <string>development</string>
+  <key>com.apple.developer.applesignin</key>
+  <array>
+    <string>Default</string>
+  </array>
+  <key>com.apple.developer.associated-domains</key>
+  <array>
+    <string>applinks:bot.pendingname.com</string>
+  </array>
+  <key>keychain-access-groups</key>
+  <array>
+    <string>$(AppIdentifierPrefix)com.pendingname.pendingbot</string>
+    <!-- 家族 SSO 共享组：与 PendingCrew 同组，双方经 kSecAttrAccessGroup 显式
+         读写家族凭据(pfa_)。keychain group 无需 portal 配置(profile 自动允许
+         TEAMID.* 下所有组)。spec: 2026-06-08-pendingcrew-login-sso-design.md -->
+    <string>$(AppIdentifierPrefix)com.pendingname.shared</string>
+  </array>
+</dict>
+</plist>

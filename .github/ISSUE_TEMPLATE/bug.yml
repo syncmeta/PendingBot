@@ -1,0 +1,61 @@
+name: Bug
+description: 有个东西的行为跟它应该有的行为不一样
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        动手之前请先看一眼 README 的「状态」一节。里面列了一批**代码在但从未接通**的功能
+        （群聊 bot 回复、语音、附件、主动复盘、邀请、加好友……）。
+        那些不算 bug，是已知的半成品，报了也只会得到「是的，知道」。
+
+        安全问题请不要用这个模板，走 [SECURITY.md](https://github.com/syncmeta/PendingBot/blob/main/SECURITY.md)。
+  - type: dropdown
+    id: component
+    attributes:
+      label: 哪个部分
+      options:
+        - Edge Worker (apps/edge)
+        - Swift 客户端 (apps/pendingbot)
+        - 后台控制台 (apps/admin)
+        - 数据库 / 迁移 (supabase)
+        - 构建 / 发版脚本 (scripts)
+        - 文档
+        - 说不好
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么
+      description: 你做了什么、期望看到什么、实际看到什么。有报错原文就贴原文。
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: 怎么复现
+      placeholder: |
+        1. …
+        2. …
+        3. 看到 …
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: 你测的是哪个 commit
+      placeholder: git rev-parse --short HEAD
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: 环境
+      description: 相关的才填 —— bun 版本、macOS / iOS 版本、Xcode 版本、Supabase CLI 版本、是本地栈还是自己部署的。
+  - type: checkboxes
+    id: config
+    attributes:
+      label: 配置状态
+      options:
+        - label: 我已经按 docs/self-hosting.md 接上了自己的后端（不是拿占位值在跑）

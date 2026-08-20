@@ -1,0 +1,35 @@
+# gitleaks configuration for PendingBot.
+#
+# This repo carries no real credentials — every backend coordinate is a
+# placeholder (see README "配置"). The two allowlist entries below are
+# documented false positives, not suppressed secrets. Anything else
+# gitleaks reports should be treated as a real finding.
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "generic-api-key"
+description = "Generic API Key"
+regex = '''(?i)(?:key|api|token|secret|client|passwd|password|auth|access)(?:[0-9a-z\-_\t .]{0,20})(?:[\s|']|[\s|"]){0,3}(?:=|>|:{1,3}=|\|\|:|<=|=>|:|\?=)(?:'|\"|\s|=|\x60){0,5}([0-9a-z\-_.=]{10,150})(?:['|\"|\n|\r|\s|\x60|;]|$)'''
+keywords = ["key","api","token","secret","client","passwd","password","auth","access"]
+
+  [rules.allowlist]
+  # Placeholder values in the *.example templates are angle-bracketed by
+  # convention: POLAR_WEBHOOK_SECRET="<polar-webhook-secret>". They are
+  # documentation, not values.
+  regexTarget = "line"
+  regexes = ['''=\s*"<[a-z0-9-]+>"''']
+
+[[rules]]
+id = "jwt"
+description = "JSON Web Token"
+regex = '''\b(ey[a-zA-Z0-9]{17,}\.ey[a-zA-Z0-9\/\\_-]{17,}\.(?:[a-zA-Z0-9\/\\_-]{10,}={0,2})?)(?:['|\"|\n|\r|\s|\x60|;]|$)'''
+keywords = ["ey"]
+
+  [rules.allowlist]
+  # The canonical `supabase start` demo anon key (iss: "supabase-demo").
+  # It ships with every local Supabase CLI stack and is public by design;
+  # it grants nothing on any real project.
+  regexTarget = "match"
+  regexes = ['''eyJpc3MiOiJzdXBhYmFzZS1kZW1vIi''']
