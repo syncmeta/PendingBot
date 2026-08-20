@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "reviewed_at": "2026-08-20",
+  "allowed_definer_functions": [
+    {
+      "signature": "pendingbot.upsert_self_machine(p_subject_id uuid, p_device_id text, p_display_name text)",
+      "reason": "fixture only — never allowlist this for real",
+      "expires_on": "2026-09-30"
+    }
+  ]
+}
