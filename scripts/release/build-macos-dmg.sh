@@ -53,7 +53,7 @@ fail() { printf '\n\033[1;31m✗ %s\033[0m\n' "$*" >&2; exit 2; }
 # ===========================================================================
 step "0. 前置断言"
 
-for tool in xcodegen xcodebuild hdiutil ditto codesign otool vtool plutil; do
+for tool in xcodegen xcodebuild hdiutil ditto codesign otool vtool lipo plutil xcrun; do
   command -v "$tool" >/dev/null 2>&1 || fail "PATH 上找不到 $tool"
 done
 [ "${PENDING_DRAFT_RELEASE:-0}" != "1" ] || command -v gh >/dev/null 2>&1 \
@@ -210,6 +210,10 @@ xcodebuild -exportArchive -archivePath "$xcarchive" \
 
 app="$snap/export/$app_name.app"
 [ -d "$app" ] || fail "exportArchive 没产出 $app"
+
+# 回到仓库根。后面没有一步需要待在快照里，而退出时的 cleanup 要把快照整个删掉 ——
+# 站在一个正在被删的目录里是自找麻烦。
+cd "$root"
 
 # ===========================================================================
 # 第 4 阶段 —— 八道断言
@@ -379,7 +383,7 @@ if [ "${PENDING_DRAFT_RELEASE:-0}" = "1" ]; then
   [ "$ref" = "main" ] || fail "PENDING_DRAFT_RELEASE=1 只在构建 main 时有意义"
   step "9. gh release create --draft（你明确要求的）"
   git -C "$root" push origin "$tag"
-  gh release create "$tag" --draft --prerelease --repo "$(git -C "$root" remote get-url origin)" \
+  gh release create "$tag" --draft --prerelease \
     --title "$app_name $version" \
     --notes '只有 1v1 文字聊天是真被用过的；群聊 / 语音 / 附件线上数据全是 0。' \
     "$dmg"
