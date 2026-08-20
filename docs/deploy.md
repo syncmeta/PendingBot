@@ -314,6 +314,126 @@ App Store Connect 网页上确认最高 build 号。
 
 ---
 
+## macOS — 本地出 `.dmg`（Developer ID 直接分发）
+
+一条命令：
+
+```
+scripts/release/build-macos-dmg.sh
+```
+
+干净快照（默认钉 `main` HEAD）→ Release archive（macOS destination）→
+Developer ID 签名 → 八道产物断言 → 公证 → staple → 打 `.dmg` → dmg 再签名 +
+公证 + staple → 终验（`spctl` / `stapler validate` 对着最终产物真跑）→ 打
+本地 tag。产物落 `dist/macos/PendingBot-<version>-<build>.dmg`。
+
+### 凭据一律不上云
+
+Developer ID 证书能签**任何**冒充这个开发者身份的 app。为了省几下手动操作把它
+送进 GitHub secrets 不划算（2026-08-20 人类拍板）。所以形态就是：
+
+- **本地**出包、签名、公证
+- 产物由人 `gh release create` 上传
+- **CI 只跑不需要凭据的闸**（`.github/workflows/edge-checks.yml`：typecheck + vitest）
+
+脚本里**没有**「跳过公证」「关掉签名」「先出个 ad-hoc 包」这类开关，是刻意的：
+那样出来的东西在别人机器上会被 Gatekeeper 拦，等于发了个装不上的包。卡住就
+卡住，卡住是个正确的状态。
+
+### 签名走手工指定描述文件，不是 Xcode 自动申请
+
+自动签名要的是「云端托管发布证书」（`DEVELOPER_ID_APPLICATION_MANAGED`），本机
+这个账号申请它会被 Apple 挡回来：
+
+```
+403 FORBIDDEN_ERROR
+"You haven't been given access to cloud-managed distribution certificates."
+```
+
+而我们本机和后台都有一张正常的 Developer ID Application 证书，也有一张手工建好的
+`MAC_APP_DIRECT` 描述文件（`PendingBotDistribute`）。所以 `exportArchive` 走
+**手工签名**、把这张文件显式指给它。**这不是降级**：证书、hardened runtime、
+公证一步不少，只是不去申请一张要不到的证书。
+
+描述文件**每次构建都从 Apple 重拉**（`scripts/release/asc-macos-profile.py`），
+本机那份只当缓存 —— 否则后台改过之后会出现「后台已改好、构建还在用旧的」这种
+极难查的错位。
+
+### 描述文件缺能力时怎么办（会碰上的第一个坑）
+
+手工建的描述文件**不会**随 App ID 上的能力变更自动重生。2026-08-20 就撞上了：
+App ID 上 Sign in with Apple 开着，描述文件是早先生成的、没带上，于是 Mac 端
+根本签不出来。
+
+脚本第 0.5 道断言在 **archive 之前**就会拦住并告诉你缺哪个键。修法：
+
+developer.apple.com/account → Certificates, Identifiers & Profiles → Profiles
+→ 点开那张 → **Edit** → 勾上对应能力 → **Generate**。不用下载，脚本自己拉。
+
+**别从 `PendingBot-macOS.entitlements` 里删键来绕过** —— 那是把功能悄悄关掉，
+不是修好。
+
+### entitlements 是分平台的
+
+- iOS：`apps/pendingbot/Resources/PendingBot.entitlements`
+- macOS：`apps/pendingbot/Resources/PendingBot-macOS.entitlements`
+
+差异只有一条：**Mac 那份没有推送**。共用那份里的 `aps-environment` 是 iOS 专有
+键，macOS 对应的是 `com.apple.developer.aps-environment`（两个不同的键）；拿
+iOS 那份 archive macOS，Xcode 会把它**静默剥掉** —— 不报错、照样签、照样能公证。
+分平台之后，「源里声明的每个键产物里必须还在」那道断言才是精确的。
+
+`project.yml` 里靠 `"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]"` 分流。**改完必须跑
+`xcodegen` 再编译。**
+
+### 版本号与 tag
+
+- **tag** = `v<MARKETING_VERSION>-preview.<n>`（如 `v0.1.0-preview.1`）。序号从已有
+  tag 推，不需要外部状态。**只在构建 `main` 时打**；`PENDING_RELEASE_REF` 指别的
+  ref 就是演练模式，照样出真包真公证，但不落任何共享状态。
+- **build 号**（`CFBundleVersion`）跟 tag **解耦**，仍走
+  `scripts/release/ios-build-number.sh` 的纪元日时间戳「天.秒」，只是加了
+  `--print-only` 跳过 ASC 那道防倒退闸 —— Mac 包不上 ASC，那道闸比错了对象。
+  代价（Mac 侧目前没有防倒退闸）已记进 `docs/tech-debt.md`，触发条件写明了。
+
+### 最后那下由人按
+
+脚本跑完会打印出两条命令，**自己不执行**：
+
+```
+git push origin <tag>
+gh release create <tag> --draft --prerelease --title "…" --notes "…" <dmg>
+```
+
+`gh release create` 要求 tag 已经在 origin 上，等于顺带做了一次 push —— 那是
+对外动作，得是人明确要的，不能是构建的副作用。真要脚本代劳，
+`PENDING_DRAFT_RELEASE=1`，且只在构建 `main` 时有意义。
+
+### 八道产物断言（别删，每道都对应一次真实事故）
+
+前六道来自 PendingCrew（2026-08 那几次出血），后两道是我们自己的：
+
+| # | 查什么 | 不查会怎样 |
+|---|---|---|
+| ① | Mach-O 平台是 `MACOS`、含 arm64 切片 | destination 写错/被人开了 Catalyst，照样能签能公证，装上去才发现不对 |
+| ② | `embedded.provisionprofile` 在 | 受限 entitlement 没授权 → AMFI 在 exec 前拒绝，表现是「已损坏」，而签名/公证/Gatekeeper 全过 |
+| ③ | entitlements 里没有未展开的 `$(...)` | keychain 组变成无意义字面量 → 读不到家族 SSO 凭据、登录态静默丢失，全链路零报错 |
+| ④ | keychain 共享组带 team 前缀（**正面**断言） | ③ 是反面判据，管不住「键整个不见了」 |
+| ⑤ | 源 entitlements 的每个键产物里都还在 | Xcode 会把描述文件没授权的键**静默剥掉**，那个功能永远不工作 |
+| ⑥ | hardened runtime 开着 | 漏了要等三分钟公证往返才被 Apple 拒 |
+| ⑦ | 每个 `@rpath` 依赖能在包内解析出真实文件 | 前六道查的全是签名和 entitlement，没人查 dyld —— 「六道全绿、一双击就崩」 |
+| ⑧ | 产物 Info.plist 的两个版本号真是传进去的值 | 版本号靠构建期变量替换，`INFOPLIST_FILE` 被动一下就带着字面量出门 |
+
+外加 archive **之前**的一道：描述文件授权的键 ⊇ 源 entitlements 声明的键。这道
+最省时间 —— 把「构建二十分钟后才炸」提前到两秒。
+
+### app 和 dmg 各公证一次，是有意的
+
+只 staple dmg 的话，用户把 app 拖出来之后**那份 app 身上没有公证票**，第一次
+打开要联网让 Gatekeeper 现问 Apple —— 断网或 Apple 抖一下就打不开。
+
+---
+
 ## Admin / BI surface — dashboard stack (board retired)
 
 The old self-made `apps/board` Next.js admin UI is **deleted**. The
