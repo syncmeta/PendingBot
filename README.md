@@ -36,6 +36,30 @@ docs/                 progress / deploy / decisions / tech-debt 等账本
 
 平台与计费现状:模型走 Cloudflare AI Gateway Unified Billing(OpenRouter 留 fallback);计费引擎 Polar(钱包本体 / MoR)+ RevenueCat(iOS),门禁走 WalletDO。
 
+## 配置
+
+App 端的后端坐标全部集中在 `apps/pendingbot/Sources/Networking/HostedConfig.swift`。
+这份文件里的 `isConfigured` / `isEmailSignInConfigured` 是**「哪条线通、哪条线不通」的唯一真值** ——
+这里不另写一份能力清单，因为两份一定会漂。要知道当前这份 clone 能做什么，读那两个判据。
+
+判据比的是常量有没有从占位值换成真的：
+
+| 判据 | 依赖的常量 | 决定 |
+|---|---|---|
+| `isConfigured` | `workerURL`、`supabaseURL`、`supabasePublishableKey` | 整条托管线：登录、聊天、联系人 |
+| `isEmailSignInConfigured` | 上面三个 + `turnstileSiteKey`、`turnstileHost` | 只多管邮箱验证码那条路 |
+
+要接自己的后端，改 `Environment.remote` 分支下那几个常量即可（**别动 `Placeholder`
+里的字面量** —— 那是判据的参照物，改了判据就永远为真，app 会退回静默失败）。
+
+没配好时不会在启动时弹任何东西：只跑本地栈的人一辈子用不到云端常量，
+对他喊一句他做不了任何事的警告是假警报。判据只在**入口真被按下去**时读一次 ——
+点了 Apple / Google / 邮箱登录，才告诉你这份仓库没带这个坐标、去哪儿填。
+
+本地栈（`supabase start` + `wrangler dev`）走 `Environment.dev` 分支，坐标是
+localhost，判据恒为「已配置」。目前切换靠改 `HostedConfig.environment` 的默认值，
+还没有运行时开关（见 `docs/tech-debt.md`）。
+
 ## 工作约定 / 文档
 
 - 分支模型、worktree、合并、迁移、部署的完整约定见仓库根 [`CLAUDE.md`](CLAUDE.md)。
