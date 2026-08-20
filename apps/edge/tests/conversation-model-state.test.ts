@@ -91,7 +91,9 @@ describe('GET /v1/conversations/:id/model', () => {
   });
 
   it('still ships the drawn model slug while unrevealed (blind box is client-side only)', async () => {
-    // Recorded, not endorsed — see docs/tech-debt.md 🟡「猜模型」protocol note.
+    // Deliberate, not an oversight: the blind box is a toy with no reward
+    // attached (author's call, 2026-08-20), so a packet-sniffing "cheat" wins
+    // nothing. See the 🟡 entry in docs/tech-debt.md.
     botConfig.value = { blindBox: { revealMode: 'surprise' } };
     const body = await getState(conv(false));
     expect(body.model_revealed).toBe(false);
