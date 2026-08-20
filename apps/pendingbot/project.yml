@@ -87,6 +87,7 @@ targets:
         excludes:
           - "Info.plist"
           - "PendingBot.entitlements"
+          - "PendingBot-macOS.entitlements"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.pendingname.pendingbot
@@ -94,6 +95,11 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Info.plist
         CODE_SIGN_ENTITLEMENTS: Resources/PendingBot.entitlements
+        # Mac 端单独一份 —— 差异只有「没有推送」那一条,理由写在文件里。
+        # 共用那份的 `aps-environment` 是 iOS 专有键,拿到 macOS 上会被 Xcode
+        # **静默剥掉**(不报错/照样签/照样公证),发版脚本那道「源里声明的键产物
+        # 里必须还在」的断言就会永远红着。2026-08-20 真构建实测,不是推测。
+        "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": Resources/PendingBot-macOS.entitlements
         # 1 = iPhone, 2 = iPad
         TARGETED_DEVICE_FAMILY: "1,2"
         ENABLE_PREVIEWS: YES

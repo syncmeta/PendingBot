@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Mac 端专用。跟 iOS 那份（PendingBot.entitlements）逐键的差异只有一条：
+       **这里没有推送**。
+
+       为什么要分家（2026-08-20 实测，不是照抄别人的经验）：
+       共用那份里的 `aps-environment` 是 **iOS 专有键**，macOS 对应的是
+       `com.apple.developer.aps-environment`（两个不同的键）。拿 iOS 那份去
+       archive macOS，Xcode 会把它**静默剥掉** —— 不报错、照样签、照样能公证，
+       产物里就是没有。发版脚本里那道「源里声明的每个键，产物里必须真的还在」
+       的断言，因此会永远红着，于是那道断言的全部价值（键被吞的时候会响）就
+       没了。
+
+       为什么是「去掉」而不是「换成 macOS 版的推送键」：Mac 端根本没有推送
+       代码 —— `Sources/Networking/PushService.swift` 整个文件包在
+       `#if os(iOS)` 里。声明一个用不上的能力只会让产物多带一条 entitlement。
+       哪天 Mac 真要推送，往这儿加 `com.apple.developer.aps-environment`
+       （Developer ID 描述文件里已经授权了这个键，值是 production）。 -->
+  <key>com.apple.developer.applesignin</key>
+  <array>
+    <string>Default</string>
+  </array>
+  <key>com.apple.developer.associated-domains</key>
+  <array>
+    <string>applinks:bot.pendingname.com</string>
+  </array>
+  <key>keychain-access-groups</key>
+  <array>
+    <string>$(AppIdentifierPrefix)com.pendingname.pendingbot</string>
+    <!-- 家族 SSO 共享组：与 PendingCrew 同组，双方经 kSecAttrAccessGroup 显式
+         读写家族凭据(pfa_)。keychain group 无需 portal 配置(profile 自动允许
+         TEAMID.* 下所有组)。spec: 2026-06-08-pendingcrew-login-sso-design.md -->
+    <string>$(AppIdentifierPrefix)com.pendingname.shared</string>
+  </array>
+</dict>
+</plist>
