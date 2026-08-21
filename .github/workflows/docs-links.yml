@@ -1,0 +1,39 @@
+name: Docs links
+
+# Gate for the reader-facing markdown: every link in README / README_EN /
+# CONTRIBUTING / SECURITY must actually resolve.
+#
+# NOT wired to every push/PR on purpose. These links point at the outside
+# world — TestFlight betas expire, docs sites get published later, releases
+# appear only when someone cuts one — so a per-PR job would go red for
+# reasons that have nothing to do with the PR, and a job that is usually red
+# teaches everyone to ignore it. Instead it runs where a dead link actually
+# costs something:
+#
+#   * on a version tag — the release gate. A dead link on the front page is
+#     the first thing a visitor hits, and a release is when visitors arrive.
+#   * weekly — links rot on their own; nobody edits the README the day the
+#     TestFlight build expires.
+#   * on demand — before flipping a repo public, run it by hand.
+#
+# Locally: `bun run docs:links` (add --offline to skip the network).
+
+on:
+  push:
+    tags:
+      - 'v*'
+  schedule:
+    # Mondays 03:00 UTC
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+
+jobs:
+  check-links:
+    name: reader-facing links resolve
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # No bun/node needed — the checker is bash + python3 + curl, all of
+      # which ubuntu-latest already has.
+      - name: Check links
+        run: bash scripts/check-readme-links.sh

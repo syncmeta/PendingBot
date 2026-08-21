@@ -15,6 +15,7 @@
     "test": "bun --filter '*' test",
     "supabase:advisor:gate": "bun scripts/supabase-advisor-gate.ts --allowlist docs/supabase-advisor-allowlist.json",
     "supabase:advisor:test": "bun scripts/test-supabase-advisor-gate.ts",
+    "docs:links": "bash scripts/check-readme-links.sh",
     "prepare": "lefthook install"
   },
   "devDependencies": {
