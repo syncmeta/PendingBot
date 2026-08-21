@@ -1537,3 +1537,20 @@
 - **修法（已落地）**: ① 脚本每次构建都从 Apple 重新下载，本机那份只当缓存（本来就是这样，现在在报错里说出来）；② 报错里打出描述文件**自己记的 `CreationDate` 和 UUID** —— 这两个不变就等于「后台那条记录从来没被重新生成过」，是区分两种情况的硬凭据；③ 明写「能力在 App ID 上勾着还不够」这条反直觉的事实：描述文件是生成那一刻的快照，之后加的能力不会自动补进已有文件，所以「后台看着是勾的」和「文件里没有」可以同时为真。
 - **一般化的教训**: 任何「我读到的东西不对」类断言，都该在报错里带上**它读的是哪一份、那一份是什么时候的**。否则断言只完成了一半 —— 它说了「不对」，没说「按哪份判的」。
 - **状态**: ✅ 已修。
+
+### 🔴 已发布的 Mac 版「用 Apple 登录」实际失效 —— 授权被签名步骤静默剥掉
+- **发现**: 2026-08-21 · `chore/macos-release-pipeline`（做发版脚本时顺手查了本机装着的那份）
+- **位置**: `/Applications/PendingBot.app`（2026-08-07 构建，Developer ID 签名 + 已公证，`0.1.0 (3426)`）；根因在 Apple 后台的描述文件 `PendingBotDistribute`（`MAC_APP_DIRECT`，生成于 2026-08-07 06:57:19）
+- **事实**（都是直接读产物读出来的，不是推断）:
+  - 装着那份的签名 entitlements 是：`com.apple.application-identifier` / `com.apple.developer.aps-environment` / `com.apple.developer.associated-domains` / `com.apple.developer.team-identifier` / `keychain-access-groups`。**没有 `com.apple.developer.applesignin`。**
+  - 它嵌的 `embedded.provisionprofile` 就是 `PendingBotDistribute`，那张文件里也没有这个键。
+  - 源 entitlements 里**有**这个键；Mac 登录页上**有**「Apple」按钮（`Sources/Mac/MacWelcomeView.swift`，Apple / Google / 邮箱三条路）。
+  - 同一份源码用**开发**身份签出来的产物**有**这个键（开发描述文件 `Mac Team Provisioning Profile`，生成于 2026-05-28，授权了它）。所以能力在 App ID 上早就开着，问题只在发布那条路径。
+- **为什么两周没人发现**: Xcode 在这条路径上会把描述文件没授权的键**静默剥掉** —— 签名有效、公证通过、Gatekeeper 放行、app 正常启动，**全链路零报错**。只有真去点那个按钮才会发现。作者平时用 Google / 邮箱登录，或本来就登着没退过。
+- **同一族病**: 跟 `aps-environment` 被吞（见本轮上面那条「Mac 端单独一份 entitlements」）是同一个机制的两次发作 —— **「源里声明了、产物里没有、没有任何一处会响」**。这也正是发版脚本第 ⑤ 道断言（源 entitlements 逐项正面比对）和第 0.5 道前置断言（描述文件授权的键 ⊇ 源声明的键）存在的全部理由：它们拦的不是假想风险，就是这条。
+- **未定的部分（别当成已知）**: `PendingBotDistribute` 从来没被重新生成过（UUID 和 CreationDate 至今未变）。所以「Apple 到底给不给『直接分发的 Mac 应用』这项能力」**尚未证实** —— 判定方法是去后台点一次 Generate，新文件里有就是文件旧、没有就是 Apple 不给。这一步要人在 portal 上做，截至记录时还没做。
+- **两种结局对应两种修法**（都还没做）:
+  - 文件旧 → 重新生成描述文件即可，产物自然带上，按钮恢复可用。
+  - Apple 不给 → Mac 端要么把 Apple 按钮藏掉（只留 Google + 邮箱），要么改走 Mac App Store 分发。这是产品取舍。
+- **顺带的对外风险**: 开源 README 若放 Mac 登录页截图（图上有 Apple 按钮），而下载 `.dmg` 的人点它没反应，就等于 README 上写了一句外部人做不到的事。结论出来之前，那张图别用。
+- **状态**: 待办 —— 病因已坐实、修法待一次 portal 判定实验。
