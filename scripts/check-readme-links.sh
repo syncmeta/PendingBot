@@ -10,6 +10,11 @@
 # What it checks, by link kind:
 #
 #   https://…        HTTP request. Anything that isn't 2xx is a failure.
+#                    Some hosts get a content assertion on top — see the
+#                    body_rules table in section 3. Status code alone is not
+#                    enough: an expired TestFlight beta and an App Store page
+#                    outside your storefront both answer 200 while giving the
+#                    reader nothing.
 #   <https://…>      Same (markdown autolink).
 #   ./relative.md    The file must exist on disk.
 #   #anchor          A heading (or an explicit HTML id/name) with that slug
@@ -29,6 +34,9 @@
 #   scripts/check-readme-links.sh --offline           # skip HTTP, local only
 #   scripts/check-readme-links.sh --repo owner/name   # resolve ../../ links
 #
+# Env overrides: LINK_CHECK_APP_NAME (the name the TestFlight page must
+# show), LINK_CHECK_TIMEOUT / _RETRIES / _JOBS / _UA / _REPO.
+#
 # Exit codes: 0 all good · 1 at least one dead link · 2 bad usage.
 
 set -uo pipefail
@@ -46,7 +54,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --offline) offline=1; shift ;;
     --repo) repo_slug="${2:-}"; shift 2 ;;
-    -h|--help) sed -n '2,33p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,41p' "$0"; exit 0 ;;
     -*) echo "unknown flag: $1" >&2; exit 2 ;;
     *) files+=("$1"); shift ;;
   esac
@@ -211,18 +219,32 @@ done < "$work/links.tsv"
 
 # ── 3. HTTP checks ──────────────────────────────────────────────────────────
 #
-# Status code alone is not enough for every link. A TestFlight public link
-# whose builds have all expired answers **HTTP 200** and renders "This beta
-# isn't accepting any new testers right now" — from the reader's side that is
-# every bit as dead as a 404, and it is exactly the link a first-time visitor
-# taps. So some hosts get a body assertion on top of the status check.
+# Status code alone is not enough, and the links where it isn't enough are the
+# dangerous ones. A TestFlight public link whose builds have all expired
+# answers **HTTP 200** and renders "This beta isn't accepting any new testers
+# right now" — from the reader's side that is every bit as dead as a 404, and
+# it is the first thing a visitor taps. An App Store link for an app that
+# isn't in the visitor's storefront answers 200 too, after quietly redirecting
+# to the store's front page.
 #
-# Add a rule as: <url-substring> <TAB> <case-insensitive regex that must NOT
-# appear in the rendered body> <TAB> <what to tell the human>
+# So these hosts get a rule, and the rule is written as a POSITIVE assertion,
+# fail-closed:
+#
+#   * `must_appear` — a regex that has to be in the rendered page. Absent =>
+#     red. A denylist of Apple's current wording would have the opposite
+#     failure mode: reword the page and the check goes silently green. Here
+#     the only way to pass is for the page to actually still say the thing
+#     that makes the link useful.
+#   * `keep_token` — a regex pulled out of the ORIGINAL url whose match must
+#     survive into the effective url after redirects. Catches "200, but it
+#     bounced you somewhere else".
+#
+# Both are per-rule optional (`-` = not applicable).
+# Format: <url-substring> TAB <must_appear|-> TAB <keep_token|-> TAB <why>
 body_rules() {
-  cat <<'RULES'
-testflight.apple.com/join/	isn.t accepting any new testers|beta (is|was) full|no longer accepting|this beta has ended	TestFlight 链接活着但这个 beta 不收人了（构建过期或名额满）
-apps.apple.com/	app is (currently )?not available|not available in your country	App Store 页面在该区域不可用
+  cat <<RULES
+testflight.apple.com/join/	${LINK_CHECK_APP_NAME:-PendingBot|大绿豆}	-	页面上根本没出现 App 名字 —— beta 不收人 / 构建过期时 Apple 就回这种通用页（照样 200）。真开着的公开链接一定会写出 App 名字。名字变了就改 LINK_CHECK_APP_NAME
+apps.apple.com/	-	(id[0-9]{6,})	链接被重定向走了，最终落点已经不含这个 App 的 id。多半是该 App 在**跑这次检查的这台机器所在的商店区域**不上架 —— 换个区域跑可能是绿的，判定前先看下面打印的最终 URL
 RULES
 }
 
@@ -244,17 +266,25 @@ PY
 # HEAD first (cheap), then a ranged GET: plenty of hosts — Apple's among them —
 # answer HEAD with 403/405 while the page itself is perfectly fine.
 probe_url() {
-  local file="$1" line="$2" url="$3" code rule pattern why body tmp
+  local file="$1" line="$2" url="$3" code body tmp
+  local needle must_appear keep_token why
+  local r_appear="" r_keep="" r_why="" matched=0 token effective
 
-  rule=""
-  while IFS=$'\t' read -r needle pattern why; do
-    case "$url" in *"$needle"*) rule="$pattern"$'\t'"$why"; break ;; esac
+  while IFS=$'\t' read -r needle must_appear keep_token why; do
+    [ -z "${needle:-}" ] && continue
+    case "$url" in
+      *"$needle"*) r_appear="$must_appear"; r_keep="$keep_token"; r_why="$why"; matched=1; break ;;
+    esac
   done < <(body_rules)
 
-  if [ -n "$rule" ]; then
-    # This link needs its body read, so go straight to a full GET.
+  if [ "$matched" -eq 1 ]; then
+    # This link needs its body and its landing URL, so go straight to a
+    # full GET and record where the redirects ended up.
     tmp="$(mktemp)"
     code=$(curl -sS -o "$tmp" -w '%{http_code}' -L \
+             --max-time "$TIMEOUT" --retry "$RETRIES" --retry-connrefused \
+             -A "$UA" "$url" 2>/dev/null)
+    effective=$(curl -sS -o /dev/null -w '%{url_effective}' -L \
              --max-time "$TIMEOUT" --retry "$RETRIES" --retry-connrefused \
              -A "$UA" "$url" 2>/dev/null)
     case "$code" in
@@ -262,15 +292,31 @@ probe_url() {
       000) rm -f "$tmp"; printf 'FAIL\t%s\t%s\t%s\t%s\n' "$file" "$line" "$url" "no response (DNS / TLS / timeout)"; return ;;
       *)   rm -f "$tmp"; printf 'FAIL\t%s\t%s\t%s\t%s\n' "$file" "$line" "$url" "HTTP $code"; return ;;
     esac
-    pattern="${rule%%$'\t'*}"
-    why="${rule#*$'\t'}"
-    body="$(render_body "$tmp")"
-    rm -f "$tmp"
-    if printf '%s' "$body" | grep -qiE "$pattern"; then
-      printf 'FAIL\t%s\t%s\t%s\t%s\n' "$file" "$line" "$url" "HTTP $code 但页面内容是死的 —— $why"
-    else
-      printf 'OK\t%s\t%s\t%s\t%s\n' "$file" "$line" "$url" "$code +body"
+
+    # (a) did the redirects carry us away from the thing we asked for?
+    if [ "$r_keep" != "-" ] && [ -n "$r_keep" ]; then
+      token=$(printf '%s' "$url" | grep -oE "$r_keep" | head -1)
+      if [ -n "$token" ] && ! printf '%s' "$effective" | grep -qF "$token"; then
+        rm -f "$tmp"
+        printf 'FAIL\t%s\t%s\t%s\t%s\n' "$file" "$line" "$url" \
+          "HTTP $code 但落点变了（$token 不在最终 URL 里）→ $effective —— $r_why"
+        return
+      fi
     fi
+
+    # (b) does the page still say the thing that makes the link useful?
+    if [ "$r_appear" != "-" ] && [ -n "$r_appear" ]; then
+      body="$(render_body "$tmp")"
+      if ! printf '%s' "$body" | grep -qiE "$r_appear"; then
+        rm -f "$tmp"
+        printf 'FAIL\t%s\t%s\t%s\t%s\n' "$file" "$line" "$url" \
+          "HTTP $code 但正文里找不到 /$r_appear/ —— $r_why"
+        return
+      fi
+    fi
+
+    rm -f "$tmp"
+    printf 'OK\t%s\t%s\t%s\t%s\n' "$file" "$line" "$url" "$code +内容断言"
     return
   fi
 
@@ -291,7 +337,7 @@ probe_url() {
   esac
 }
 export -f probe_url body_rules render_body
-export TIMEOUT RETRIES UA
+export TIMEOUT RETRIES UA LINK_CHECK_APP_NAME
 
 http_count=$(wc -l < "$work/http.tsv" | tr -d ' ')
 http_ok=0
