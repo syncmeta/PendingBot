@@ -1553,12 +1553,13 @@
   - **官方**: Apple DTS 在 <https://developer.apple.com/forums/thread/129263> 明确答复「Sign in with Apple 这项能力不支持 Developer ID …要用它必须走 App Store」；有人提 bug 后 Apple 回的是「**此行为符合预期**，Sign in with Apple 不可用于 Developer ID 签名的 app」。该帖里 Apple 工程师举的证据与我们这儿完全一致：开发描述文件里有、Developer ID 的没有。
   - **结论**: **只要 Mac 版走 Developer ID 直接分发，就带不了「用 Apple 登录」。这是 Apple 的规则，不是我们配置错了。**
 - **为什么作者一直觉得「之前都正常用」**: 他日常跑的是 Xcode 的**开发**构建，走 2026-05-28 那张开发描述文件，**带着**这项授权。同一份源码、两条分发路径，一条有一条没有 —— 两个说法都为真，不矛盾。（App ID 页面上 SIWA 勾着也是真的：那一栏列的是「App ID 开了什么」，不是「这张描述文件里嵌了什么」；旁边的 In-App Purchase 同样在页面上、不在文件里。）
-- **修法（要产品拍板，尚未做）**:
-  1. **推荐**：Mac 端在非 App Store 构建里把 Apple 按钮藏掉，只留 Google + 邮箱。损失一条登录方式，但**不再有假按钮**——当前状态（按钮在、点了没用）是最糟的一种。
-  2. Mac 改走 Mac App Store 分发，保住 Apple 登录。
-  3. 留着按钮 + README 注明「只有开发版能用」。**不建议**：等于在 README 上写一句外部人做不到的事。
-  - ⚠️ **光把这个键从 `PendingBot-macOS.entitlements` 里删掉是不够的** —— 那样按钮还在、还是死的，等于把这条债原样保留，只是让构建能过。要删就得和「藏掉按钮」一起做。
-- **对发版流水线的直接影响**: 在做出上述取舍之前，`scripts/release/build-macos-dmg.sh` 的第 0.5 道断言会持续拦住构建（源里声明了 SIWA、描述文件给不了）。**这是断言在正确工作**，不是脚本的毛病。
-- **顺带的对外风险**: 开源 README 若放 Mac 登录页截图（图上有 Apple 按钮），而下载 `.dmg` 的人点它没反应，就等于 README 上写了一句外部人做不到的事。取舍定下来之前，那张图别用。
+- **✅ 已处理（2026-08-21，上级拍板走「保持 .dmg」）**: Mac 登录页的 Apple 入口**在拿不到这项授权的包里不显示**，同时把该键从 `apps/pendingbot/Resources/PendingBot-macOS.entitlements` 移除。两处都留了成段的原因注释，不是 TODO。
+  - **不是 `#if os(macOS)` 编译掉，代码原样留着**：真正的分界线不是「macOS」，是「Developer ID 这条分发路径」—— 同一个 macOS 走 App Store 就有。判定在 `Sources/Mac/MacWelcomeView.swift` 的 `appleSignInAvailable`：读嵌进包里的描述文件、看这个包**实际拿到**了什么授权（与 `Networking/PushService.swift` 读 `aps-environment` 那段同源）。于是开发构建照常有按钮、我们自己发的 .dmg 里没有。
+  - **判不出来时默认不显示**（fail-closed）：显示一个点了没反应的按钮，比少一个按钮糟得多 —— 这正是 2026-08-07 那版的状态。
+  - **两处必须一起改**：只删授权 → 死按钮留在界面上；只藏按钮 → `exportArchive` 仍会失败。
+  - iOS 一行没动（`Networking/AppleSignIn.swift` 跨平台，`PendingBot.entitlements` 照常声明）。
+- **🔁 什么时候翻回来（触发条件写死，别当 bug 再查一遍）**: **改走 TestFlight / Mac App Store 分发的那一刻。** 那条路的描述文件带这项授权，`appleSignInAvailable` 会自动判成 true、按钮自己回来，只需把该键加回 `PendingBot-macOS.entitlements`。除此之外没有别的触发条件 —— **在 Developer ID 这条路上它永远拿不到，不要再去 portal 上点 Generate 试**（2026-08-21 已经试过一次，新文件里照样没有）。
+- **走 TestFlight 的代价（当时一并查过，留个底）**: Mac 的 TestFlight 走 App Store 那条线，**要求 App Sandbox**（`com.apple.security.app-sandbox`，没有会在上传校验时被拒）。我们现在是非沙盒的 Developer ID 形态，切过去要付：沙盒相关 entitlement（网络客户端等）、本地数据落到容器路径（本地库是**缓存**、服务端才是真相源，所以是缓存重建不是数据丢失）、与 PendingCrew 共用的钥匙串组 `M42BKJN82S.*` 在「沙盒 MAS app ↔ 非沙盒 Developer ID app」之间还能不能互通（**未核实**）、Mac 的分发证书与 `MAC_APP_STORE` 描述文件（本账号目前只有 DEVELOPMENT + DEVELOPER_ID_APPLICATION 两张证书，ASC 上也**还没有 macOS 平台的 app 记录**，只有 IOS）、以及每个新版本的首个构建要过一次 Beta App Review。
+- **顺带的对外风险（已随上面的处理消解）**: 开源 README 若放带 Apple 按钮的 Mac 登录页截图，而下载 `.dmg` 的人点它没反应，就等于 README 上写了一句外部人做不到的事。**藏掉按钮之后 `login.png` 必须重截**，否则图和产物对不上。
 - **一处没有实测证据、明说**: 没有真去点那个按钮观察它怎么失败（弹框 / 报错 / 静默无反应）。要点它得先退出登录，而登录态那条钥匙串记录（`supabase.gotrue.swift`）与 PendingCrew 同属家族共用组，为一次观察去动它不划算。定性依据是 Apple 的官方答复 + 我们自己重新生成的文件，**运行时的具体表现仍属未知**。
-- **状态**: 待办 —— **根因已定、且已确认无法在 Developer ID 路径上修好**；剩下的是产品取舍（藏按钮 / 转 App Store），要人拍。
+- **状态**: ✅ 已处理（隐藏入口 + 移除授权，2026-08-21）。**债本身没有消失** —— Mac 版在当前分发形态下就是少一条登录路，只是不再有假按钮。翻回来的触发条件见上。
