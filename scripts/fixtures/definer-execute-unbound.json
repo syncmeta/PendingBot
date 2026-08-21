@@ -1,0 +1,15 @@
+{
+  "rows": [
+    {
+      "finding": "authenticated_no_caller_binding",
+      "severity": "yellow",
+      "schema": "pendingbot",
+      "function": "some_future_probe",
+      "args": "p_other_user_id uuid",
+      "anon_execute": false,
+      "authenticated_execute": true,
+      "public_execute": false,
+      "acl": "{postgres=X/postgres,service_role=X/postgres,authenticated=X/postgres}"
+    }
+  ]
+}

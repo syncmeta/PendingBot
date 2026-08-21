@@ -7,7 +7,10 @@
       "anon_execute": true,
       "public_execute": true,
       "anon_schema_usage": true,
-      "acl": "{=X/postgres,postgres=X/postgres,service_role=X/postgres}"
+      "acl": "{=X/postgres,postgres=X/postgres,service_role=X/postgres}",
+      "finding": "public_or_anon_execute",
+      "severity": "red",
+      "authenticated_execute": true
     }
   ]
 }
