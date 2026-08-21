@@ -31,6 +31,8 @@ Swift 5 / SwiftUI（iOS 17+ · iPadOS · macOS 14+，单一代码库三端）· 
 
 补充可选项（视版面取舍）：
 - **20 个模型可调用工具**，注册表存在数据库里，后台开关 60 秒内全局生效、无需部署（`apps/edge/src/lib/tools-registry.ts`）
+- **集成 15 家外部供应商、31 项具体服务**（Cloudflare 11 项 / Supabase 3 / Apple 3 / Google 2 / OpenAI 2 / Anthropic · OpenRouter · Honcho · Langfuse · Polar · RevenueCat · Sentry · PostHog · Grafana Cloud · Exa 各 1）；核对方式：`apps/edge/wrangler.jsonc` 的绑定 + `grep -rhoE "env\.[A-Z][A-Z0-9_]+" apps/edge/src` 的 60 个环境变量/绑定名 + `apps/pendingbot/project.yml` 的 9 个 SPM 依赖
+- **第三方库：36 个直接依赖**（npm 27 + Swift Package Manager 9），锁文件解析出 **559 个 npm 包**
 - **零 VPS**：全部 serverless，无自管服务器
 - **pre-commit 强制门禁**：改数据库迁移必须同时提交 TypeScript 类型，边缘代码必带类型检查（`lefthook.yml`）
 
