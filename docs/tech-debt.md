@@ -1483,6 +1483,19 @@
 - **已知边界（不是疏漏，是取舍）**: CI 那一跑是**重放迁移账本**，因此看不见直接在生产上做的授权变更（例如从 Supabase 后台点出来的）。覆盖那一面的是 `bun run db:definer:gate:linked`，它需要 linked 项目凭据，按本仓库「凭据不上云」的原则**故意不进 Actions**，作为部署前的人工步骤。
 - **它是枚举全部、不是钉死这一个（2026-08-21 现场验证）**: audit SQL 里没有任何函数名过滤，判据只有「`prosecdef` 为真 **且** anon 或 PUBLIC 持有 EXECUTE」；`upsert_self_machine` 这个名字在整套闸门代码里只出现在注释和报错提示里。为免停在「看代码」这一步，在本地库上现造了一个它从没见过的 `pendingbot.some_future_rpc(uuid,text)`（SECURITY DEFINER + 只写 `grant to service_role`、故意不写 revoke，即明天最可能犯的错法）→ 闸门当场红、退出码 1、点名的是这个新函数；删掉后退出码回 0。
 - **状态**: ✅ 已加。用法：`bun run db:definer:test`（fixture）/ `bun run db:definer:gate:local`（本地重放）/ `bun run db:definer:gate:linked`（线上只读，部署前跑）。
+- **2026-08-21 加了第二条维度（黄）**: SECURITY DEFINER + `authenticated` 可执行 + **调用路径上从不读 `auth.uid()`** → 报黄。理由：第一条维度只是把门票从「免费」改成「注册一个账号」；函数体若收 id 又不问调用者是谁，任何登录用户都能拿它去打别人。黄色**不自己拦**，但也不静默放行 —— 必须带**书面理由 + 过期日**登记，且**每次跑都照样打印 WARN**（「有人写下了为什么」不等于「处理过了」）。
+- **让这条规则可用的是传递解析**: 函数可以自己不提 `auth.uid()` 而仍然安全（把校验委托给 `_assert_group_role` / `_grp_require_caller` / `subject_has_user_access` 这类共用守卫）。纯文本规则在本库抓出 16 个、只有 4 个是真的（75% 噪音 = 一道没人看的闸）；沿调用图做传递闭包后**正好返回 4 个，且与另一 session 逐个读完 72 个函数体的独立人工排查结论完全一致**（`.claude/audit/definer-authenticated-triage.md`）。两条独立路径同一个答案。
+- **黄色维度的现场验证（同样是现造一个它没见过的样本去考它，不是给人看代码）**: 在本地重放库上种了两个函数 —— ① 真正未绑定的 → **BLOCK [yellow]**、点名、退出码 1；② 只靠 `subject_has_user_access` 传递保护、自己函数体一个 `auth.uid()` 都没有的 → **不报**（即机长点名担心的那种误报形状确实被挡住了）。两个在 REVOKE 掉 PUBLIC 默认之前都先被 **红色**抓到 —— 第一维度在底下照常工作。删掉两个样本后退出码回 0。
+
+### 🟡 4 个 `authenticated` 可执行的 SECURITY DEFINER 函数不校验调用者归属 — 已登记进闸门，**未处置**
+- **发现**: 2026-08-21 · 另一 session 逐个读完线上 72 个 `authenticated` 可执行 definer 函数的函数体（`.claude/audit/definer-authenticated-triage.md`），本 session 用闸门的传递闭包独立复现出同一份名单
+- **位置**: `pendingbot.resolve_crew_responsibility_shares(uuid)`、`are_mutual_friends(uuid,uuid)`、`is_bot_invitee(uuid,uuid)`、`user_has_conv_with_bot(uuid,uuid)`
+- **问题**: 都是 SECURITY DEFINER、对 `authenticated` 开放、函数体（及其调用链）从不读 `auth.uid()`。任何登录用户传别人的 id 就能问出不该给他的答案。
+- **性质要分清，别和 `upsert_self_machine` 混为一谈**: 那条是**写**（传谁的 id 就往谁头上写）；这 4 条**全是读**，一条都不能写，是信息泄露 / 探测口。且都受 uuid 不可枚举保护 —— 得先知道目标的 uuid 才能问，不是谁都能扫。按严重度：`resolve_crew_responsibility_shares`（直接返回数据行：整个 crew 的责任分账结构，递归分支还把父 crew 的一起摊出来）> `are_mutual_friends`（社交图谱探测）> `is_bot_invitee` ≈ `user_has_conv_with_bot`（各返回 1 bit）。
+- **病因**: `20260524180643_bind_definer_helpers_to_auth_uid.sql` 声称要把「接受 `p_user_id` 的 definer helper 绑到 `auth.uid()`」，实际覆盖 11 个。`is_bot_invitee` / `user_has_conv_with_bot` 的参数名**就叫 `p_user_id`、本来就在射程内、被漏掉**；`are_mutual_friends` 参数叫 `a`/`b`，按名字筛没匹配上；`resolve_crew_responsibility_shares` 根本不收 user id，不在那次的思路里。跟 `upsert_self_machine` 同一族病 —— 那次是加固之后新长的没被覆盖，这次是**加固当时就没覆盖全**，共同点都是靠人记得、没有机器兜底。
+- **修的代价（已核实，都很低）**: `resolve_crew_responsibility_shares` 三个调用方全是库内 definer 函数（以 postgres 身份嵌套执行）、无 RLS 策略引用、无 app 代码引用 → 单行 REVOKE 即可，不动函数体。`are_mutual_friends` 两个真实调用方都已保证第一个参数是调用者自己 → 加一条 `auth.uid() is null or a = auth.uid() or b = auth.uid()` 不打断任何调用。`is_bot_invitee` 唯一调用方（RLS `bots_visible_read`）传的第二个参数就是 `auth.uid()` → 绑定对它是 no-op。`user_has_conv_with_bot` **零调用方**（RLS / 库内函数 / app 代码三处都查过）= 死代码，最干净的处置是直接 revoke 或 drop。
+- **状态**: **未处置，只登记**。本次任务边界是「只加检查，不推任何 REVOKE」，REVOKE 与否等人类拍板。四条已登记进 `docs/definer-execute-allowlist.json` 的黄色区，**每条理由第一句都写着「REAL FINDING, not cleared」**，闸门每次跑都会把它们打印出来，**2026-09-21 过期后会重新变成拦截**。登记 ≠ 判定为安全。
+- **未核实**: 4 条都**没有实际发一次 RPC 去验证**（要拿真实账号 JWT + 目标 uuid 构造请求）。证据是「函数定义全文 + 授权位 + 调用方全量检索 + 两条独立方法交叉一致」，但「实际打一发看到返回值」这一步没做 —— 要坐实到那一步，缺的就是这一步。
 
 ### 🟡 旧 Supabase 项目 `sslzhblojwkxfdyisity` 只暂停、没删除 — 恢复即回到 2026-05 审计里的洞
 - **发现**: 2026-08-20 · 核实旧安全审计的 session 查出，本 session 如实登记（**只登记，未处置**）
