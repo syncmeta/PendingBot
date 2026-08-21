@@ -4,6 +4,8 @@
 
 <h1 align="center">PendingBot · 大绿豆</h1>
 
+> 以下内容暂时由 Claude 撰写。
+
 <p align="center">
   一个会反驳你的 AI 朋友。<br>
   iOS / iPadOS / macOS 原生客户端 + Cloudflare Workers 后端 + Supabase。
