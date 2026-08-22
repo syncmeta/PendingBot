@@ -149,3 +149,44 @@ describe('preset epoch timestamps', () => {
     expect(epochMigration).toMatch(/preset_epoch_window_end\(\)/);
   });
 });
+
+// ── 第二轮:用户回过话的会话也要重新盖戳 ────────────────────────────────
+//
+// 第一版只挪「用户一次都没回过话」的会话,理由是沿用 0025/20260520102713 的
+// 老套路 —— 但那套路防的是**替换会话内容**,而这里只是给预置消息重盖时间戳,
+// 真实消息一根汗毛都不碰。结果就是:线上有一个用户在 lorem 那条预设会话里回过
+// 一句,那条会话的 8 条预置消息就永远停在 1970-01-01,和其它会话读出来不一样。
+//
+// 新判据落在**消息**上而不是会话上:窗口内的消息重盖戳,窗口外的原样不动。
+
+const restampMigration = readFileSync(
+  migrationPath('_preset_epoch_restamp_replied_convs.sql'),
+  'utf8',
+);
+
+describe('preset epoch restamp — 有真实回复的会话', () => {
+  it('不再按会话整条排除,判据落到单条消息上', () => {
+    const fn = restampMigration.match(
+      /function\s+pendingbot\.restamp_preset_epoch_conversations[\s\S]*?\$\$;/i,
+    );
+    expect(fn).not.toBeNull();
+    // 老写法:会话里只要有一条窗口外的消息就整条跳过 —— 正是漏那一条的原因。
+    expect(fn![0]).not.toMatch(/not\s+exists\s*\([\s\S]{0,200}created_at\s*>=\s*win/i);
+    // 新写法:重盖戳的消息集合自己被窗口圈住。
+    expect(fn![0]).toMatch(/where\s+conversation_id\s*=[\s\S]{0,120}created_at\s*<\s*win/i);
+  });
+
+  it('跑完之后断言窗口里没有落在基准分钟之外的预置消息', () => {
+    const guard = restampMigration.match(/DO \$\$[\s\S]*\$\$;/i);
+    expect(guard).not.toBeNull();
+    expect(guard![0]).toMatch(/raise\s+exception/i);
+    // 「还有预置消息停在老那一天」必须是一条会炸的断言,不是靠人去查。
+    expect(guard![0]).toMatch(/created_at\s*<\s*base/i);
+  });
+
+  it('复用上一条迁移的常量,不再抄一遍字面量', () => {
+    expect(code(restampMigration)).not.toMatch(/19\d\d-\d\d-\d\d \d\d:\d\d/);
+    expect(restampMigration).toMatch(/preset_epoch_base_ts\(\)/);
+    expect(restampMigration).toMatch(/preset_epoch_window_end\(\)/);
+  });
+});
