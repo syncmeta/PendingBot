@@ -114,6 +114,17 @@ targets:
         # 部分 Components 自然进入 Mac build,给 Sources/Mac/ 的真实视图
         # 提供数据底座。剩余 iOS-only 业务(Features/* 等)的 Mac 接入
         # 见 docs/tech-debt.md 中的 T0.1 P1+P2 条目。
+    # 版本戳:把「这个产物是从哪个 commit 出的」写进产物 Info.plist,iOS /
+    # macOS 两端都打。跑在 code signing 之前,所以不会让签名失效。
+    # basedOnDependencyAnalysis: false —— 没有输入/输出文件可声明,必须每次
+    # 构建都跑,否则增量构建会沿用上一次的戳,戳就成了谎报。
+    # 读的一侧在 Sources/AppBuildStamp.swift;发版侧的硬闸在
+    # scripts/release/build-macos-dmg.sh 第 ⑨ 道断言(unknown / dirty 一律拒绝出包)。
+    postBuildScripts:
+      - name: Stamp build info
+        script: |
+          "$SRCROOT/../../scripts/release/stamp-build-info.sh"
+        basedOnDependencyAnalysis: false
     dependencies:
       - package: GRDB
         product: GRDB
