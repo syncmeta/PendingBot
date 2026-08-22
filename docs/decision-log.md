@@ -202,7 +202,12 @@ D4 和 R1 各自都在文件里补了「⚠️ 已过时」的警告 —— 这�
 - **理由**：闸门第二维度的提交正文把话说得最清楚 ——
   > Dimension 1 (anon/PUBLIC may EXECUTE) only changes the ticket price from "free" to "register an account". If the body then takes an id and never asks whether the caller owns it, any logged-in user can aim it at anyone else.
 - **一个方法论级的副产品**：闸门规则第一版是「函数体里没出现 `auth.uid()` 就报黄」，**在这个库上会点名 16 个，其中只有 4 个是真的 —— 75% 噪音**。提交正文的判断是：`a gate people learn to ignore`。改成**传递解析调用图**（一个函数可以不自己念 `auth.uid()`，而是委托给 `_assert_group_role` / `subject_has_user_access` 这类守卫）之后，返回**恰好 4 个**，与另一次独立人工审计（`.claude/audit/definer-authenticated-triage.md`，72 个逐个读函数体）的第 3 档**完全一致**。两种独立方法，同样四个。
-- **今天**：⚠️ **洞已在生产修掉（有线上前后对照），但这六条提交至今没有合进 `main`** —— 它们在分支 `fix/definer-execute-revoke` 上（领先 main 6 个提交）。**`main` 上没有那条 revoke 迁移，也没有那两道闸门。** 我核过：`grep -rn "revoke.*upsert_self_machine" supabase/migrations/` 在 main 上零命中，`.github/workflows/security-gates.yml` 在 main 上只有 advisor 一道。
+- **今天**：✅ **洞已在生产修掉（有线上前后对照），代码也已于 2026-08-22 合进 `main`**（`dda56f41`）。核实：`git ls-tree -r main` 能看到 `supabase/migrations/20260820073931_revoke_public_execute_upsert_self_machine.sql`，`.github/workflows/security-gates.yml` 现有三个 job（advisor + `definer-execute-gate-fixtures` + `definer-execute-gate-ledger`）。
+  > ⚠️ **本文上一版这条写的是「至今没有合进 main」，那在写的时候是对的（2026-08-22T09:47Z），合并发生在之后。** 保留这句，因为它正是本文自己反复强调的那件事：**结论会过期，所以每条都得带查询时刻。**
+- **合并时还多长出一条防线，值得单记**（`02ffb7b3`）：那份黄色 allowlist 是**机器读的**，所以它会随任何公开快照一起出门 —— 而它原来的理由栏写着每条洞泄露什么、一行修法是什么，**等于一份「4 个未修读权限洞 + 修法」的说明书**。改法有两层，且都是机器挡不是约定：
+  1. 理由改成**指针**（类别 + `confirmed real and NOT cleared` + 指向私有登记册），细节留在 `tech-debt.md`。fixture 测试**强制**每条理由必须指向私有登记册，并拒绝匹配「revoke 配方 / 零调用方 / 死代码 / `auth.uid()` 片段 / 文件:行号」这些操作性模式 —— 两条断言都用「把详细理由偷渡回去」现造样本考过。
+  2. 新增 `docs/public-snapshot-exclude.txt` + `scripts/check-public-snapshot.sh`：一份**永不发布**的路径清单 + 校验器（当前列着 `tech-debt.md`、`.claude/audit`、`progress.md`、`docs/handwrite`）。
+  原文一句话概括了动机：**`so that stops depending on someone noticing at snapshot time`** —— 和闸门那句 `"Someone wrote down why" is not "it was dealt with"` 是同一条纪律的两次应用。
 - **另外四条真发现没有被清掉，是被登记着的**：`resolve_crew_responsibility_shares`（唯一直接返回数据行的，能拿到整个 crew 的责任分账结构 + 顺着 `crew_parent_links` 带出上级组织）、`are_mutual_friends`、`is_bot_invitee`、`user_has_conv_with_bot`。**四条全是读、没有一条能写**，且受 UUID 不可枚举限制。每条登记的理由第一句都被写死成 `REAL FINDING, not cleared`，2026-09-21 过期后重新拦截。
 
 #### 定义 RLS 的谓词必须绕开 RLS
@@ -700,12 +705,11 @@ D4 和 R1 各自都在文件里补了「⚠️ 已过时」的警告 —— 这�
 
 这不是某一条决策，是一个**结构性状况** —— 而且它和 6.2 那条埋点断层是同一个病：**做完了、验证过了，但没进任何一本账**。
 
-`main` @ `27df42c0`，以下 6 个分支共 **34 个提交**领先于它：
+**截至 2026-08-22T10:00Z**，`main` @ `dda56f41`，以下 **5 个分支共 28 个提交**领先于它：
 
 | 分支 | 领先 | 里面是什么 | 为什么要紧 |
 |---|---|---|---|
 | `chore/macos-release-pipeline` | 11 | macOS 出包流水线（八道断言 / 公证 / staple）+ **Apple 登录那条策略死线的全部证据与结论** | [§3.6](#apple-把描述文件里没有的授权静默剥掉--全链路零报错两周没人发现) 那条的唯一载体 |
-| `fix/definer-execute-revoke` | 6 | **未鉴权写入洞的修复迁移 + 两道 CI 闸门 + 72 函数判档** | 洞已在生产修掉，但 **`main` 上既没有那条 revoke 迁移，也没有那两道闸门** |
 | `chore/fail-loud-config` | 6 | `isConfigured` 判定 + **「不许降级 anon」从约定变成机制**（发请求前就炸）+ 13 例判据测试 | 这是三轮误诊那个病根的**根治**，见 [§3.2](#三轮误诊permission-denied-for-table-users-的真因是模拟器没签名) |
 | `feat/ios-unit-tests` | 4 | **PendingBot 的第一个自动化测试 target** + 三批测试 | `retrospective.md` §8「回来第一天做什么」的第 5 项 |
 | `chore/self-host-docs` | 4 | 自建指南 + `.env.example` + 两条 release/开源 blocker | — |
@@ -713,7 +717,10 @@ D4 和 R1 各自都在文件里补了「⚠️ 已过时」的警告 —— 这�
 
 **这意味着 `retrospective.md` 第八章「回来第一天做什么」那张表，今天已经部分过时** —— 第 2 项和第 5 项的代码都写完并各自验过了，卡在合并这一步，不是卡在实现。
 
-- **今天**：⚠️ 状态属实，逐条核过（`git rev-list --count main..<branch>`）。**这份文档不动它们**（边界是只读 + 写文档），但把它作为一条要事记下来。
+> 📌 **本条在本文写作期间就变了一次，过程照录**：上一版（2026-08-22T09:47Z）写的是 **6 个分支 34 个提交**，其中 `fix/definer-execute-revoke`（未鉴权写入洞的修复 + 两道闸门）被单列为最要紧的一条。**这条报告发出后，那个分支当天就被合进了 `main`（`dda56f41`），并在合并时额外加了一层公开快照泄漏防线**（见 [§3.1.1](#311-未鉴权写入洞--postgres-的-public-默认从来没人-revoke)）。
+> 这正是这份文档反复在说的那件事的又一次现场演示：**「今天还成立吗」这一栏的保质期可以短到几十分钟，所以它必须带查询时刻，而不是带一个「现在」。**
+
+- **今天**：✅ 状态逐条核过（`git rev-list --count main..<branch>`，2026-08-22T10:00Z）。**这份文档不动这些分支**（边界是只读 + 写文档），只把状态记下来。
 
 ### 6.2 PostHog 埋点断层：两边都以为对方在发
 - **核实日期**：2026-08-22，全部回代码核过。
