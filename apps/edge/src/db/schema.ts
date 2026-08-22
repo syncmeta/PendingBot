@@ -5015,6 +5015,15 @@ export type Database = {
       open_self_conv: { Args: never; Returns: string }
       open_user_bot_conv: { Args: { p_bot_id: string }; Returns: string }
       open_user_user_conv: { Args: { p_other_user_id: string }; Returns: Json }
+      preset_epoch_base_ts: { Args: never; Returns: string }
+      preset_epoch_offsets: {
+        Args: never
+        Returns: {
+          offset_seconds: number
+          slug: string
+        }[]
+      }
+      preset_epoch_window_end: { Args: never; Returns: string }
       random_place_name: { Args: never; Returns: string }
       register_runner_host: {
         Args: {
@@ -5037,6 +5046,7 @@ export type Database = {
           subject_id: string
         }[]
       }
+      restamp_preset_epoch_conversations: { Args: never; Returns: number }
       revoke_family_sso_credential: {
         Args: { p_family_id: string }
         Returns: undefined
