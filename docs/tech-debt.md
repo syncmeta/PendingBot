@@ -1456,3 +1456,59 @@
 - **不修，且这是个决定不是拖延**: 本条最初写的触发条件是"给猜对加奖励/排行/成就之前先修"，作者当场排除了这个前提。**要修才有意义的那个未来已经被否掉了**，所以这条不是待办、不必再复核。真要哪天推翻这个定性（给猜对加了奖励/排行/成就），再回来看下一行。
 - **万一将来要修，怎么修**: 未揭晓时服务端不下发真名（`current_model_slug: null`），改由揭晓接口返回；iOS 的 pill 在未揭晓时本来就不用真名，`SwitchModelSheet` 的 `SwitchResult` 也只在用户主动切换后读。代价是"未揭晓 → 已揭晓"必须重新拉一次状态，而客户端本来就在揭晓后调 `loadConvModelState()`。
 - **状态**: ✅ 已定性、不修。留在册子里只是为了记住"这是知情的选择"，免得后人当成疏漏又查一遍。`tests/conversation-model-state.test.ts` 里那条测试同时也是这个选择的书面记录。
+
+---
+
+## 2026-08-20 未鉴权写入洞 + 防复发闸门（`fix/definer-execute-revoke`）
+
+### 🔴 `upsert_self_machine` 对 PUBLIC 开放 EXECUTE — 任何人不登录就能往机器表写入 — ✅ 已解决 2026-08-21（迁移已上生产 + 线上实测复验）
+- **发现**: 2026-08-20 · `fix/definer-execute-revoke`（承接 `.claude/audit/security-audit-verification.md` 里核出的那条新洞）
+- **位置**: `supabase/migrations/20260614123749_machine_table.sql:50-62`（建函数处）→ 线上 `pendingbot.upsert_self_machine(uuid,text,text)`
+- **问题**: 该函数是 SECURITY DEFINER（以库主身份跑、绕过一切 RLS），但建它的迁移只写了 `grant execute ... to service_role`，**没写 `revoke execute ... from public`**，于是继承了 Postgres「新函数默认 EXECUTE TO PUBLIC」的内建行为。`pendingbot` 是 PostgREST 暴露 schema、publishable key 设计上公开，所以 `POST /rest/v1/rpc/upsert_self_machine` 是一个**无需登录**的写入端点；函数体里也没有任何调用者身份校验，`p_subject_id` 直接来自调用方。
+- **影响**: `machine_self_*` 四条 RLS 策略在这条路径上全部失效。未认证攻击者可对任意 `subject_id` 插入伪造机器行、覆写他人机器的 `display_name`、把他人机器刷成 `online`、无限灌行。读不到别人数据（函数只 `returning id`），但写入面完全敞开。
+- **实证（本地 `supabase db reset` 全量重放，端到端）**: 用 anon key POST 该 RPC → **HTTP 200**，在受害者 subject 下插入了一行 `display_name='PWNED by anon'`。加上修复迁移后同一请求 → **HTTP 401 `permission denied for function upsert_self_machine`**，表里 0 行；service_role 路径（Edge 走的那条）照常成功；把 EXECUTE 临时补回给 `authenticated` 后，指向他人 subject 的调用被函数体内的守卫以 `42501` 拒绝、指向自己 subject 的调用正常。
+- **病因（比洞本身重要）**: 这是 2026-05 那批加固**之后**新长出来的同类洞。同一个病 5 月修过一批、8 月又长一个，说明缺的不是细心，是一道机器检查 —— 已补，见下一条。
+- **状态**: ✅ **已解决 2026-08-21** —— 迁移 `supabase/migrations/20260820073931_revoke_public_execute_upsert_self_machine.sql`（commit `e9348ad9`）经人类拍板后 `supabase db push --linked` 应用到生产。
+- **线上复验（实测，不是推断）**: 同一个 anon 请求推前 **HTTP 409**（外键错 —— 说明未登录的请求已经进到函数体、进到 INSERT 那一行，权限根本没拦；探测用的是不存在的 subject_id，所以零写入）→ 推后 **HTTP 401 `42501 permission denied for function upsert_self_machine`**。再用**真实存在的** subject_id 打一次同样 401。生产 `machine` 表前后均 2 行，两次探测一行没写。函数 ACL `{=X/postgres,...}` → `{postgres=X,service_role=X}`，anon/authenticated 由 true 变 false；线上函数定义已拉下来核对，与本地验证过的那份逐字节相同。闸门对生产跑：修前红 → 修后绿（0 行）。
+- **`schema.ts` 确认不需要 regen**: `bun --filter='@pendingbot/edge' run types:db` 跑过，产物前后 md5 完全一致（函数签名未变）。`typecheck` 绿。
+- **唯一未在生产坐实的一点**: service_role 那条路（Edge 调用路径）没在生产上真调一次 —— 那是往生产写数据，没做也不绕。可坐实的是：线上 service_role 的 EXECUTE 仍在；线上函数体与本地跑通过的那份相同；守卫第一个条件是 `auth.uid() is not null`，而 service_role 的 `auth.uid()` 恒为 null，整段跳过、插入路径与改动前一致。**留一条真机 QA 尾巴**：从 app 真连一次机器，确认机器上线/改名照常。
+- **顺带处理**: 同一迁移重跑了 2026-05 那道 schema 级 `REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA pendingbot FROM anon, PUBLIC`，把另外四个飘回 PUBLIC 的非 definer 辅助函数（`bot_friend_inquiries_touch_updated` / `prevent_crew_parent_cycle` / `tg_short_links_touch_updated_at` 三个触发器函数 + 纯函数 `normalize_email`）一并收掉。收之前核过：触发器函数在触发时不检查调用者的 EXECUTE 权限（本地实测确认），`normalize_email` 没有被任何 DEFAULT / CHECK / 索引表达式引用，且没有任何函数靠 PUBLIC 给 `authenticated` 兜底权限。
+- **关联**: `.claude/audit/security-audit-verification.md`（那份旧安全审计的逐条核实，原始 13 条已全关，这条是新的）
+
+### 🟢 CI 闸门：anon / PUBLIC 能执行的 SECURITY DEFINER 函数 — ✅ 已加（2026-08-20）
+- **发现**: 2026-08-20 · `fix/definer-execute-revoke`
+- **位置**: `scripts/sql/definer-execute-audit.sql` + `scripts/definer-execute-gate.ts` + `docs/definer-execute-allowlist.json` + `.github/workflows/security-gates.yml`（commit `535842ff`）
+- **为什么**: 这类洞的失败模式是「忘了写 REVOKE」而不是「写错了 GRANT」，靠人记不住 —— 已复发两次。闸门照 `supabase:advisor:*` 的形状做：一段只读 introspection SQL + 一个吃 JSON 的评估脚本 + 一份**默认为空**的 allowlist（fail closed，条目要写理由和过期日）。
+- **验证（对真库跑过，不只是 fixture）**: 去掉修复迁移重放账本 → BLOCK、exit 1；带上修复迁移 → 0 行通过；对线上 linked 项目只读跑 → BLOCK（即它确实抓得住此刻线上开着的那个洞）。fixture 测试另覆盖空 allowlist 失败闭合、allowlist 过期后重新拦、只有 PUBLIC 授权（anon 未单独授）也拦。
+- **已知边界（不是疏漏，是取舍）**: CI 那一跑是**重放迁移账本**，因此看不见直接在生产上做的授权变更（例如从 Supabase 后台点出来的）。覆盖那一面的是 `bun run db:definer:gate:linked`，它需要 linked 项目凭据，按本仓库「凭据不上云」的原则**故意不进 Actions**，作为部署前的人工步骤。
+- **它是枚举全部、不是钉死这一个（2026-08-21 现场验证）**: audit SQL 里没有任何函数名过滤，判据只有「`prosecdef` 为真 **且** anon 或 PUBLIC 持有 EXECUTE」；`upsert_self_machine` 这个名字在整套闸门代码里只出现在注释和报错提示里。为免停在「看代码」这一步，在本地库上现造了一个它从没见过的 `pendingbot.some_future_rpc(uuid,text)`（SECURITY DEFINER + 只写 `grant to service_role`、故意不写 revoke，即明天最可能犯的错法）→ 闸门当场红、退出码 1、点名的是这个新函数；删掉后退出码回 0。
+- **状态**: ✅ 已加。用法：`bun run db:definer:test`（fixture）/ `bun run db:definer:gate:local`（本地重放）/ `bun run db:definer:gate:linked`（线上只读，部署前跑）。
+- **2026-08-21 加了第二条维度（黄）**: SECURITY DEFINER + `authenticated` 可执行 + **调用路径上从不读 `auth.uid()`** → 报黄。理由：第一条维度只是把门票从「免费」改成「注册一个账号」；函数体若收 id 又不问调用者是谁，任何登录用户都能拿它去打别人。黄色**不自己拦**，但也不静默放行 —— 必须带**书面理由 + 过期日**登记，且**每次跑都照样打印 WARN**（「有人写下了为什么」不等于「处理过了」）。
+- **让这条规则可用的是传递解析**: 函数可以自己不提 `auth.uid()` 而仍然安全（把校验委托给 `_assert_group_role` / `_grp_require_caller` / `subject_has_user_access` 这类共用守卫）。纯文本规则在本库抓出 16 个、只有 4 个是真的（75% 噪音 = 一道没人看的闸）；沿调用图做传递闭包后**正好返回 4 个，且与另一 session 逐个读完 72 个函数体的独立人工排查结论完全一致**（`.claude/audit/definer-authenticated-triage.md`）。两条独立路径同一个答案。
+- **黄色维度的现场验证（同样是现造一个它没见过的样本去考它，不是给人看代码）**: 在本地重放库上种了两个函数 —— ① 真正未绑定的 → **BLOCK [yellow]**、点名、退出码 1；② 只靠 `subject_has_user_access` 传递保护、自己函数体一个 `auth.uid()` 都没有的 → **不报**（即机长点名担心的那种误报形状确实被挡住了）。两个在 REVOKE 掉 PUBLIC 默认之前都先被 **红色**抓到 —— 第一维度在底下照常工作。删掉两个样本后退出码回 0。
+
+### 🟡 4 个 `authenticated` 可执行的 SECURITY DEFINER 函数不校验调用者归属 — 已登记进闸门，**未处置**
+- **发现**: 2026-08-21 · 另一 session 逐个读完线上 72 个 `authenticated` 可执行 definer 函数的函数体（`.claude/audit/definer-authenticated-triage.md`），本 session 用闸门的传递闭包独立复现出同一份名单
+- **位置**: `pendingbot.resolve_crew_responsibility_shares(uuid)`、`are_mutual_friends(uuid,uuid)`、`is_bot_invitee(uuid,uuid)`、`user_has_conv_with_bot(uuid,uuid)`
+- **问题**: 都是 SECURITY DEFINER、对 `authenticated` 开放、函数体（及其调用链）从不读 `auth.uid()`。任何登录用户传别人的 id 就能问出不该给他的答案。
+- **性质要分清，别和 `upsert_self_machine` 混为一谈**: 那条是**写**（传谁的 id 就往谁头上写）；这 4 条**全是读**，一条都不能写，是信息泄露 / 探测口。且都受 uuid 不可枚举保护 —— 得先知道目标的 uuid 才能问，不是谁都能扫。按严重度：`resolve_crew_responsibility_shares`（直接返回数据行：整个 crew 的责任分账结构，递归分支还把父 crew 的一起摊出来）> `are_mutual_friends`（社交图谱探测）> `is_bot_invitee` ≈ `user_has_conv_with_bot`（各返回 1 bit）。
+- **病因**: `20260524180643_bind_definer_helpers_to_auth_uid.sql` 声称要把「接受 `p_user_id` 的 definer helper 绑到 `auth.uid()`」，实际覆盖 11 个。`is_bot_invitee` / `user_has_conv_with_bot` 的参数名**就叫 `p_user_id`、本来就在射程内、被漏掉**；`are_mutual_friends` 参数叫 `a`/`b`，按名字筛没匹配上；`resolve_crew_responsibility_shares` 根本不收 user id，不在那次的思路里。跟 `upsert_self_machine` 同一族病 —— 那次是加固之后新长的没被覆盖，这次是**加固当时就没覆盖全**，共同点都是靠人记得、没有机器兜底。
+- **修的代价（已核实，都很低）**: `resolve_crew_responsibility_shares` 三个调用方全是库内 definer 函数（以 postgres 身份嵌套执行）、无 RLS 策略引用、无 app 代码引用 → 单行 REVOKE 即可，不动函数体。`are_mutual_friends` 两个真实调用方都已保证第一个参数是调用者自己 → 加一条 `auth.uid() is null or a = auth.uid() or b = auth.uid()` 不打断任何调用。`is_bot_invitee` 唯一调用方（RLS `bots_visible_read`）传的第二个参数就是 `auth.uid()` → 绑定对它是 no-op。`user_has_conv_with_bot` **零调用方**（RLS / 库内函数 / app 代码三处都查过）= 死代码，最干净的处置是直接 revoke 或 drop。
+- **状态**: **未处置，只登记**。本次任务边界是「只加检查，不推任何 REVOKE」，REVOKE 与否等人类拍板。四条已登记进 `docs/definer-execute-allowlist.json` 的黄色区，**每条理由第一句都写着「REAL FINDING, not cleared」**，闸门每次跑都会把它们打印出来，**2026-09-21 过期后会重新变成拦截**。登记 ≠ 判定为安全。
+- **未核实**: 4 条都**没有实际发一次 RPC 去验证**（要拿真实账号 JWT + 目标 uuid 构造请求）。证据是「函数定义全文 + 授权位 + 调用方全量检索 + 两条独立方法交叉一致」，但「实际打一发看到返回值」这一步没做 —— 要坐实到那一步，缺的就是这一步。
+
+### 🟡 旧 Supabase 项目 `sslzhblojwkxfdyisity` 只暂停、没删除 — 恢复即回到 2026-05 审计里的洞
+- **发现**: 2026-08-20 · 核实旧安全审计的 session 查出，本 session 如实登记（**只登记，未处置**）
+- **位置**: Supabase 组织下的项目 `sslzhblojwkxfdyisity`，状态 `INACTIVE`（已暂停）
+- **问题**: 暂停 ≠ 删除。数据还在、一键可恢复，恢复出来就是 2026-05 那份审计里「anon 能调计费函数」的那个状态。当前项目已迁到 `zafhoiwwpanpuashtnxy`（EU），旧项目没有任何在用途径。
+- **影响**: 暂停期间不对外服务，所以不是正在流血的口子；但它是一个「随时可以被恢复成已知有洞的生产库」的存量资产，且账号一旦被接管就是现成的历史数据出口。
+- **建议**: 跟人类确认不需要取历史数据后**删掉项目**（不是删审计文档）。删项目属于不可逆动作，必须人类拍板。
+- **状态**: 待办 —— 等人类确认历史数据不再需要。本 session 按边界未做任何处置。
+
+### 🟡 `bun audit` 回归到 48 条（1 critical / 18 high）— 闸门三个月没跑，上游出了新公告
+- **发现**: 2026-08-20 · 核实旧安全审计的 session 查出，本 session 如实登记（**只登记，未升级依赖**）
+- **位置**: 全仓依赖树；其中 `apps/admin` 的 react-router DoS 值得单独排期
+- **问题**: 不是之前的修复被回滚，是**三个月没跑这道闸门**、期间上游陆续出了新公告累积成 48 条。依赖公告本来就是公开信息，不影响开源与否的判断。
+- **影响**: 数量本身说明的是流程缺口（没有定期跑），比任何单条公告更值得处理。
+- **建议**: ① 把 `bun audit` 接进 `.github/workflows/security-gates.yml`，配一份带理由和过期日的 allowlist（可直接照 `docs/definer-execute-allowlist.json` 的形状）；② react-router 那条单独排期升级。**别顺手升依赖** —— 那是独立的一摊活，会把当前任务滚大。
+- **状态**: 待办 —— 只登记，未动。
