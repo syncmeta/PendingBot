@@ -368,15 +368,21 @@ echo "✓ 签名 / Gatekeeper / 公证票，app 和 dmg 都过了"
 # ===========================================================================
 # 第 8 阶段 —— tag（只在构建 main 时）
 # ===========================================================================
-tag="v$version-preview"
+# tag 就是 `v<MARKETING_VERSION>`，不带 pre-release 后缀。
+#
+# 原本定的是 `v0.1.0-preview.N`，但 2026-08-21 实际发出去的那一版用的是
+# **`v0.1.0`**（公开仓 syncmeta/PendingBot 的 Release 就叫这个）。既然已经
+# 公开过一个不带后缀的，就跟着它走 —— **和已经发出去的东西保持一致，比守住
+# 一个更好看的命名重要**。想要 pre-release 语义的话，GitHub Release 上有
+# `--prerelease` 这个标记，那才是表达它的地方。
+tag="v$version"
 if [ "$ref" = "main" ]; then
   step "8. 打 tag"
-  # preview 序号从已有 tag 推，不需要任何外部状态。
-  n=1
-  while git -C "$root" rev-parse -q --verify "refs/tags/$tag.$n" >/dev/null; do
-    n=$((n + 1))
-  done
-  tag="$tag.$n"
+  if git -C "$root" rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+    fail "tag $tag 已经存在。**不要拿同一个版本号挂一个不同的二进制** ——
+  已经下载过的人和新下载的人会拿到不一样的东西，而版本号说它们是同一个。
+  先把 apps/pendingbot/project.yml 里的 MARKETING_VERSION 提一位。"
+  fi
   git -C "$root" tag -a "$tag" "$snap_sha" -m "$app_name $version (build $build_number)"
   echo "打了 tag $tag（本地，没有推 origin）"
 else
@@ -388,22 +394,31 @@ fi
 step "完成"
 echo "产物：$dmg"
 echo
-echo "接下来由人来按（脚本刻意不做）："
-echo "  git push origin $tag"
-echo "  gh release create $tag --draft --prerelease --title \"$app_name $version\" \\"
-echo "      --notes '只有 1v1 文字聊天是真被用过的；群聊 / 语音 / 附件线上数据全是 0。' \\"
-echo "      '$dmg'"
-echo
-echo "为什么不由脚本代劳：gh release create 要求 tag 已经在 origin 上，"
-echo "等于顺带做了一次 push —— 那是对外动作，得是人明确要的，不能是构建的副作用。"
+cat <<NOTE
 
-if [ "${PENDING_DRAFT_RELEASE:-0}" = "1" ]; then
-  [ "$ref" = "main" ] || fail "PENDING_DRAFT_RELEASE=1 只在构建 main 时有意义"
-  step "9. gh release create --draft（你明确要求的）"
-  git -C "$root" push origin "$tag"
-  gh release create "$tag" --draft --prerelease \
-    --title "$app_name $version" \
-    --notes '只有 1v1 文字聊天是真被用过的；群聊 / 语音 / 附件线上数据全是 0。' \
-    "$dmg"
-  echo "草稿建好了 —— 最后那下「发布」仍然由人按。"
-fi
+接下来由人来按（脚本刻意不做）。**注意 Release 不在这个仓库里**：
+
+  这个仓库（私有）是**构建来源**；对外的 Release 挂在**公开仓
+  syncmeta/PendingBot** 上，那是一份把后端坐标换成占位值的快照，
+  两边的 commit sha **不是同一套**。
+
+  所以「把这个仓库的 tag 推上去」不是发布路径。正确做法是在公开仓那边
+  建 tag + Release，并把这里产出的 .dmg 作为附件传上去：
+
+    gh release create $tag --repo syncmeta/PendingBot --draft --prerelease \\
+        --title "$app_name $version" --notes-file <正文> \\
+        "$dmg"
+
+  ⚠️ **正文里别写「这个 sha 能复现这个包」** —— 包是从私有仓打的，
+  公开仓那份换了坐标、编出来连不上任何后端。产物里的版本戳
+  （$snap_sha）是给我们自己排查用的，外部读者查不到那个 commit。
+  这一条要在正文里说明白，不要让读者以为能自己复现。
+
+为什么不由脚本代劳：建 Release 是对外动作，得是人明确要的，
+不能是构建的副作用。
+NOTE
+
+# 没有 PENDING_DRAFT_RELEASE 这类开关了：Release 建在**另一个仓库**（公开仓）
+# 上，而这个脚本只认识自己所在的这个仓库。让它去动另一个仓库的 tag 和 Release，
+# 既容易搞错对象，又把「构建」和「对外发布」两件事糊在一起。上面那段说明里
+# 有现成的命令，人复制一下就行。
