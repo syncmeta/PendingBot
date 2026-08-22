@@ -1512,10 +1512,11 @@
 - **影响**: 数量本身说明的是流程缺口（没有定期跑），比任何单条公告更值得处理。
 - **建议**: ① 把 `bun audit` 接进 `.github/workflows/security-gates.yml`，配一份带理由和过期日的 allowlist（可直接照 `docs/definer-execute-allowlist.json` 的形状）；② react-router 那条单独排期升级。**别顺手升依赖** —— 那是独立的一摊活，会把当前任务滚大。
 - **状态**: 待办 —— 只登记，未动。
-### 🔴 干净库重放账本 ≠ 线上：预设会话有一半播不出来（seeds 的 bot 名单和模板对不上）
+### 🔴 预设会话有一半根本播不出来 —— 模板引用的 bot slug 在 seeds 和线上都不存在
 - **发现**: 2026-08-22 · Todo #7「预设消息时间改 1970-01-02 12:34」（为了给迁移取证，第一次在本地把整本账本重放了一遍）
-- **事实（本地实测，不是推断）**: `supabase db reset` 起一个干净库 → 建一个用户跑 `bootstrap_user_id`，只长出 **3 条**预设会话（lorem / sit / amet），预设群 **0 条消息**。原因：`supabase/seeds/01_preset_bots.sql` 播的 6 个 bot 是 `amet / consectetur / eiusmod / lorem / sit / tempor`，而 `preset_conversation_templates.bot_slug` 引用的是 `lorem / ipsum / sit / amet / dolor / adipiscing` —— **ipsum / dolor / adipiscing 三个 slug 在干净库里根本不存在**，`_resolve_preset_bot_for_user` 返回 null，对应会话和群消息被静默跳过（`continue`，不报错）。线上这三个 bot 是有的，所以线上看不出来。
+- **事实（本地实测，不是推断）**: `supabase db reset` 起一个干净库 → 建一个用户跑 `bootstrap_user_id`，只长出 **3 条**预设会话（lorem / sit / amet），预设群 **0 条消息**。原因：`supabase/seeds/01_preset_bots.sql` 播的 6 个 bot 是 `amet / consectetur / eiusmod / lorem / sit / tempor`，而 `preset_conversation_templates.bot_slug` 引用的是 `lorem / ipsum / sit / amet / dolor / adipiscing` —— **ipsum / dolor / adipiscing 三个 slug 根本不存在**，`_resolve_preset_bot_for_user` 返回 null，对应会话和群消息被静默跳过（`continue`，不报错）。
+- **线上同样如此（2026-08-22 只读核实，不是推断）**: 线上 `bots where creator_id is null` 就是 seeds 那 6 个（`amet / consectetur / eiusmod / lorem / sit / tempor`）；纪元窗口内的消息只落在 lorem / sit / amet 三个基准上，预设群 0 条消息，5 个用户共 20 条预设会话 = 每人 3 条单聊 + 1 个空群。**所以这不是「本地和线上不一致」，是线上本身就缺一半** —— 我一开始按 brief 假设线上是全的，实测推翻了。
 - **和已登记条目的关系**: 上面「系统级 model slug 全是硬编码常量」那条的影响行里已经点到「`preset_conversation_templates`〔ipsum 悬空〕+ `preset_group_templates`〔dolor/adipiscing 悬空〕」—— 同一个根。这里补的是**它的后果被实测坐实了**：账本 + seeds 复现不出线上的预设体验，一半的 onboarding 内容在干净库上是空的。
-- **影响**: ① 任何"在干净库上验证预设相关改动"的取证都会漏掉一半会话（本次是手工补了这三个 bot 才验全的）；② 悬空引用是静默跳过，不是报错——新环境/新开发者不会被告知缺东西；③ 开源之后，别人 clone 下来跑起来看到的 onboarding 和作者的不一样。
+- **影响**: ① **真实用户的 onboarding 少了一半内容** —— 「公有私有机器人」「Grok - 群」「Gemini 打电话」三条预设会话和那个预设群，线上注册的人一条都没收到；② 悬空引用是静默跳过、不是报错，所以没人被告知缺东西；③ 任何「在干净库上验证预设相关改动」的取证也会跟着漏（本次是手工补了这三个 bot 才验全的）。
 - **建议**: 让 seeds 和模板表同源——要么把 ipsum/dolor/adipiscing 补进 `01_preset_bots.sql`（连同线上那份 model_id/visibility），要么把 bot 名单也做成模板表驱动；另外给 `_resolve_preset_bot_for_user` 的 null 分支加一条 `raise warning`，别再静默跳过。
 - **状态**: 待办 —— 本次只记录不修（超出 Todo #7 的边界）。本地取证时的临时补数据没有进仓库。
