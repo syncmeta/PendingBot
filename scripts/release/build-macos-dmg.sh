@@ -311,6 +311,11 @@ got_build=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/I
 [ "$got_build" = "$build_number" ] || fail "产物 CFBundleVersion 是「$got_build」，应该是「$build_number」"
 echo "⑧ 版本号写对了：$got_short ($got_build)"
 
+# ⑨ 产物必须能被**一个 commit 完整复现**。构建期打戳那一侧是宽的（外部人从
+#    tarball 编写 unknown、开发时脏工作区标 dirty，都照常编得过）；这里是严的
+#    那一侧 —— 没戳 / unknown / dirty / 戳跟本次快照对不上，四种一律拒绝出包。
+"$root/scripts/release/verify-build-stamp.sh" "$app" "$snap_sha"
+
 # ===========================================================================
 # 第 5 阶段 —— 公证 app
 # ===========================================================================
