@@ -1,29 +1,30 @@
 {
-  "version": 2,
-  "reviewed_at": "2026-08-21",
+  "version": 3,
+  "reviewed_at": "2026-08-22",
   "_comment_red": "allowed_definer_functions — SECURITY DEFINER functions in PostgREST-exposed schemas that anon/PUBLIC may execute on purpose. Empty is the correct steady state: an entry here means an unauthenticated caller can run privileged, RLS-bypassing code.",
   "allowed_definer_functions": [],
 
-  "_comment_yellow": "registered_unbound_definer_functions — SECURITY DEFINER functions that `authenticated` may execute where nothing on the call path reads auth.uid(). Registering one does NOT mean it is safe; it means someone wrote down what it is and why it is still here. The gate prints every entry as WARN on each run and blocks again once expires_on passes. Signatures must match scripts/sql/definer-execute-audit.sql output exactly: schema.function(identity args).",
+  "_comment_yellow": "registered_unbound_definer_functions — SECURITY DEFINER functions that `authenticated` may execute where nothing on the call path reads auth.uid(). Registering one does NOT mean it is safe; it means someone wrote down that it exists and is being tracked. The gate prints every entry as WARN on each run and blocks again once expires_on passes.",
+  "_comment_reasons_are_deliberately_terse": "Reasons here name the category and point at the private risk register — they do NOT describe what an entry leaks or how to reach it. That is deliberate and enforced by scripts/test-definer-execute-gate.ts: this file is machine-read and will travel into any public snapshot of this repo, and a list of open findings with their impact and one-line exploit path is an instruction manual. Keep the detail in the private register; keep the pointer here. Do not 'helpfully' restore the detail.",
   "registered_unbound_definer_functions": [
     {
       "signature": "pendingbot.resolve_crew_responsibility_shares(p_crew_conversation_id uuid)",
-      "reason": "REAL FINDING, not cleared. Returns a crew's whole responsibility-share table (subject_id/share_bps/source) plus, via the recursive branch, the parent crew's — to any logged-in caller who knows a crew conversation uuid. Confirmed by hand audit 2026-08-21 (.claude/audit/definer-authenticated-triage.md). Not revoked here because this branch was scoped to adding the check, not to changing grants; the revoke is a one-liner with zero call-site cost (its only 3 callers are in-database SECURITY DEFINER functions running as postgres, no RLS policy and no app code reference it) and is waiting on a human decision.",
+      "reason": "Unbound caller check, confirmed real and NOT cleared. Tracked in the private risk register (docs/tech-debt.md, 2026-08-21). Pending a decision on the grant.",
       "expires_on": "2026-09-21"
     },
     {
       "signature": "pendingbot.are_mutual_friends(a uuid, b uuid)",
-      "reason": "REAL FINDING, not cleared. Any logged-in user can ask whether two arbitrary strangers are mutual friends — a social-graph probe. Both real callers already pass the caller's own id as `a` (RLS envelope_insert_human_mutual asserts author_user_id = auth.uid(); apps/edge/src/routes/envelope.ts:247 passes the caller), so adding `auth.uid() is null or a = auth.uid() or b = auth.uid()` breaks nothing. Waiting on a human decision.",
+      "reason": "Unbound caller check, confirmed real and NOT cleared. Tracked in the private risk register (docs/tech-debt.md, 2026-08-21). Pending a decision on the grant.",
       "expires_on": "2026-09-21"
     },
     {
       "signature": "pendingbot.is_bot_invitee(p_bot_id uuid, p_user_id uuid)",
-      "reason": "REAL FINDING, not cleared. Answers 'is arbitrary user X invited to arbitrary bot Y'. Its only caller, RLS bots_visible_read, already passes auth.uid() as p_user_id, so binding p_user_id to auth.uid() is a no-op for it. Note this one was already inside the stated scope of 20260524180643_bind_definer_helpers_to_auth_uid.sql (its parameter is literally named p_user_id) and was missed. Waiting on a human decision.",
+      "reason": "Unbound caller check, confirmed real and NOT cleared. Tracked in the private risk register (docs/tech-debt.md, 2026-08-21). Pending a decision on the grant.",
       "expires_on": "2026-09-21"
     },
     {
       "signature": "pendingbot.user_has_conv_with_bot(p_bot_id uuid, p_user_id uuid)",
-      "reason": "REAL FINDING, not cleared. Answers 'has arbitrary user X ever talked to arbitrary bot Y'. It has zero callers anywhere — no RLS policy, no other function, no app code — i.e. dead code, so the cleanest fix is to revoke or drop it outright. Also inside 20260524180643's stated scope and missed. Waiting on a human decision.",
+      "reason": "Unbound caller check, confirmed real and NOT cleared. Tracked in the private risk register (docs/tech-debt.md, 2026-08-21). Pending a decision on the grant.",
       "expires_on": "2026-09-21"
     }
   ]

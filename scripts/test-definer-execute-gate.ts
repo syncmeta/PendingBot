@@ -23,7 +23,24 @@ assert.equal(
 );
 
 // Yellow may carry entries, but a registration is only worth anything if it
-// says why and comes back. Both are enforced, not conventions.
+// says something and comes back. Both are enforced, not conventions.
+//
+// The third assertion is the one that is easy to undo by accident: this file is
+// machine-read and travels into any public snapshot of this repo, so a reason
+// that spells out what an open finding leaks and how to reach it is an
+// instruction manual for the findings we have not fixed yet. Reasons name the
+// category and point at the private register; the detail lives there. Someone
+// will eventually want to make this file "more useful" — this test is what
+// tells them not to.
+const OPERATIONAL_DETAIL = [
+  /revoke\s+execute/i,
+  /zero\s+callers?/i,
+  /no\s+callers?/i,
+  /dead\s+code/i,
+  /auth\.uid\(\)\s*(is\s+null|=)/i,
+  /select\s+/i,
+  /\.ts:\d+/,
+];
 for (const entry of shipped.registered_unbound_definer_functions ?? []) {
   assert.ok(
     entry.reason && entry.reason.length > 40,
@@ -33,6 +50,18 @@ for (const entry of shipped.registered_unbound_definer_functions ?? []) {
     entry.expires_on,
     `${entry.signature}: a registration must expire, otherwise it is a permanent hole with paperwork`,
   );
+  assert.match(
+    entry.reason,
+    /private risk register/i,
+    `${entry.signature}: the reason must point at the private risk register rather than restate the finding`,
+  );
+  for (const pattern of OPERATIONAL_DETAIL) {
+    assert.doesNotMatch(
+      entry.reason,
+      pattern,
+      `${entry.signature}: reason matches ${pattern} — this file ships publicly, keep impact and remedy in the private register`,
+    );
+  }
 }
 
 // --- red -------------------------------------------------------------------
