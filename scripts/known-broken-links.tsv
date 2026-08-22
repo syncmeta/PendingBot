@@ -1,0 +1,22 @@
+# Links that are known to be dead and that we cannot fix ourselves.
+#
+# Why this file exists: a gate that is red every single run stops being read.
+# Two weeks of "yes, still those four" and the fifth — a real, new one — goes
+# past unnoticed. So red is reserved for **a dead link nobody has accounted
+# for**, and everything in here downgrades to a WARN that still prints on
+# every run.
+#
+# It is deliberately NOT a way to make something quiet:
+#   * a registered link still prints, every run;
+#   * every row carries an owner and a date. On that date it goes back to
+#     being red, with no further action from anyone. "We are waiting on X"
+#     is only true for so long;
+#   * matching is exact-string, never a glob, so a row cannot accidentally
+#     cover some other link that breaks later;
+#   * a row whose link has recovered is reported too — as "delete this row".
+#     The registry is not allowed to quietly outlive its reason.
+#
+# Format (tab-separated):
+#   <link exactly as written in the markdown> <TAB> <expires YYYY-MM-DD> <TAB> <owner> <TAB> <what we are waiting for>
+
+https://apps.apple.com/app/testflight/id899247664	2026-09-05	跑这个检查的人	不带商店区域的 App Store 链接：从中国区 IP 打开会被重定向到商店首页（落点里没有 id899247664）。多半只在特定区域为真 —— 等 CI（美国 runner）真跑一次再决定是改成带区域的链接、还是直接删掉这行
