@@ -39,7 +39,7 @@ settings:
     # **别手工填** —— 以前是手工填 + 拿 commit 数当值,仓库重建后提交数从 3571
     # 掉到 3178,build 号倒退、ASC 直接拒收。
     # 详见 docs/deploy.md 的「iOS build 号 — 纪元日时间戳 + 防倒退闸」一节。
-    CURRENT_PROJECT_VERSION: "20686.48872"
+    CURRENT_PROJECT_VERSION: "20687.52097"
 packages:
   GRDB:
     url: https://github.com/duckduckgo/GRDB.swift
