@@ -1,0 +1,64 @@
+# What may and may not appear in the public snapshot.
+#
+# Two rules, on purpose, and they are NOT the same shape. Please do not
+# "unify" them — the asymmetry is the point:
+#
+#   docs/**          ALLOW list. Nothing under docs/ ships unless it is
+#                    registered here.
+#   everything else  BLOCK list. Ships by default; registered paths do not.
+#
+# Why docs/ is inverted:
+#
+# 1. It encodes a decision that was already made. The author's words were
+#    "现有文档放到其它目录下，不入库。文档用我新写的" — that IS an allow
+#    list. A deny list would encode the opposite default and then patch it
+#    one entry at a time.
+#
+# 2. The registration cost lands on the rare side. Seven doc files belong in
+#    the public repo; internal documents are produced continuously (a
+#    decision log, tech-debt entries, audit reports — several this week
+#    alone). Make the rare thing cost one line, and the common thing is safe
+#    by default.
+#
+# 3. This one decides it: the two failure modes are not symmetric.
+#      deny list misses one  → an internal document is published. Irreversible.
+#      allow list misses one → a document that should be public isn't.
+#                              Fixed next time; costs some embarrassment.
+#    Between irreversible and embarrassing, always choose embarrassing.
+#
+# Outside docs/ the deny list stays, because there the default (ship the code)
+# is the correct one and the exceptions are few and named.
+#
+# Format (tab-separated):
+#   ALLOW|BLOCK <TAB> path or glob <TAB> 判词 —— why, in one or two sentences
+#
+# A BLOCK row is not "this is embarrassing". Write what it actually costs a
+# reader to have it, or say plainly that it is executing a decision rather
+# than a risk judgement — see the handbook row for an example of the latter.
+
+# ── docs/ allow list — the only things under docs/ that ship ────────────────
+ALLOW	docs/self-hosting.md	自建指南。这是给外部读者的，跟内部账本不同 —— 公开仓里唯一一份真正要人读的文档
+ALLOW	docs/app-icon.png	README 首屏的 app 图标
+ALLOW	docs/screenshots/main.png	README 首屏截图，真运行产物
+ALLOW	docs/screenshots/contacts.png	README 首屏截图，真运行产物
+ALLOW	docs/screenshots/letter.png	README 首屏截图，真运行产物
+ALLOW	docs/definer-execute-allowlist.json	CI 闸门（db:definer:gate）按路径读它，不进快照 CI 直接挂。文件本身只留指针不留配方
+ALLOW	docs/supabase-advisor-allowlist.json	同上，supabase advisor 闸门按路径读它
+
+# ── BLOCK —— 这些不进公开仓 ─────────────────────────────────────────────────
+BLOCK	docs/retrospective.md	§「危险区」整节是全仓信息密度最高的一页攻击清单，一屏看完 9 条；另有用户规模与营收规模的完整披露。这不是「回顾读起来尴尬」，是把「我们哪里是漏的」按条列好了
+BLOCK	docs/deploy.md	部署 runbook，含 ASC 凭据的存放路径。路径本身不是凭据，但它把「去哪儿找」这一步免费送出去了；而且对外部读者零价值 —— 他们要的是 self-hosting.md，不是我们怎么发版。无收益、有成本，不进
+BLOCK	docs/handbook/**	注意：这一份审计时的结论是「大部分可原样公开」—— 讲的是产品逻辑与设计取舍，data-visibility-rls.md 甚至是正面文档。只有两处真敏感：shared/concepts/wallet-pnc.md:13（未发布的换算率 +「降低消费痛感」的设计动机原文），以及 pendingbot/vision.md 与 pendingcrew/vision.md 里「PendingBot 不开源」的定性 —— 那条现在已经和事实相反，公开出去是自相矛盾。但它 BLOCK 的真正理由是：人类已经决定文档换成他自己那份 vault。这里写「不进」是执行他的决定，不是我们判整本 handbook 有问题
+BLOCK	.claude/decision-mining/**	230 条原始决策底表。现在靠 gitignore 挡着，但快照是「拷贝」不是「clone」，gitignore 在那一步不一定生效，而且 gitignore 本身是可以被改的。别把防线建在另一条防线上
+BLOCK	CLAUDE.md	仓库内部协作约定（分支模型、worktree、合并、账本纪律）。对外部读者是噪音，对我们是内部流程
+BLOCK	AGENTS.md	同上，编码 agent 的本地约定
+BLOCK	.claude/**	编码 agent 的本地配置与审计产物
+BLOCK	.codex/**	同上
+BLOCK	.superpowers/**	同上
+BLOCK	.pendingcrew/**	crew 的 worktree 与本地状态，每份里都有一套配置副本
+BLOCK	.agents/**	vendored 的第三方 agent skill，属内部工具链，不是本项目代码
+BLOCK	skills-lock.json	上一条的锁文件
+BLOCK	deploy.sh	自陈含生产基础设施默认值
+BLOCK	infra/grafana/**	变现漏斗的定义、成本归因维度、三条运营告警阈值。纯商业口径，跟别人能不能把项目跑起来无关
+BLOCK	infra/dashboards/**	同上，运营看板的编排
+BLOCK	apps/ios/**	旧工程残留，含历史 TestFlight 归档
