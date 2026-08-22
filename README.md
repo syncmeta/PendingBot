@@ -1,24 +1,33 @@
 <p align="center">
-  <img src="docs/app-icon.png" alt="" width="120">
+  <img src="docs/app-icon.png" width="128" alt="大绿豆 应用图标" />
 </p>
-
 <h1 align="center">PendingBot · 大绿豆</h1>
 
-> 以下内容暂时由 Claude 撰写。
-
 <p align="center">
-  一个会反驳你的 AI 朋友。<br>
-  iOS / iPadOS / macOS 原生客户端 + Cloudflare Workers 后端 + Supabase。
+  Honest with each other. Curious together. Proactive, candid, a VC for ideas.
+  <br />
+  <em>不躲，不藏，不绕，不夸。稳稳接住你，还要打开你</em>
 </p>
 
----
+<p align="center">
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue" /></a>
+  <a href="https://bun.sh"><img alt="Bun" src="https://img.shields.io/badge/runtime-Bun-fbf0df?logo=bun&logoColor=black" /></a>
+  <img alt="TypeScript" src="https://img.shields.io/badge/lang-TypeScript-3178c6?logo=typescript&logoColor=white" />
+  <img alt="Swift" src="https://img.shields.io/badge/lang-Swift-F05138?logo=swift&logoColor=white" />
+  <img alt="Platform" src="https://img.shields.io/badge/platform-iOS%20%C2%B7%20iPadOS%20%C2%B7%20macOS-lightgrey" />
+</p>
+
+知道自己错了的 AI。主动上网冲浪还要处处想着你。形态跟微信差不多。
+
+<!-- 截图位：等一张 PendingBot 的真运行截图。
+     docs/screenshots/01-onboarding.png 是设计稿，画的是还没实现的自建连接引导，
+     不能拿来冒充运行截图，所以这里先空着。 -->
 
 > **这是一个人的实验项目，不是产品。**
 >
-> 没有上线运营，没有真实用户，没有支持承诺。作者一个人写了四个月，
-> 现在把当前的代码原样公开——不是"开源发布"，只是把东西放出来。
-> 下面的「状态」一节写清了哪些功能真的跑通过、哪些只是代码在那儿。
-> 读之前先接受一件事：**你 clone 下来，开箱什么也做不了**，得先接上你自己的后端。
+> 没有上线运营，没有真实用户，没有支持承诺。下面的「状态」一节写清了哪些功能
+> 真的跑通过、哪些只是代码在那儿。读之前先接受一件事：**你 clone 下来，开箱什么也做不了**，
+> 得先接上你自己的后端。
 >
 > 界面和文档都是中文的。
 >
@@ -26,18 +35,78 @@
 > Nothing here is hosted for you — you have to run your own backend;
 > see [`docs/self-hosting.md`](docs/self-hosting.md).)*
 
-## 这是什么
+## 快速开始
 
-一个想做成"朋友"而不是"助手"的 AI 聊天 app：会指出你的错、给你新视角、不谄媚。
-围绕这个定位，设计上有三件不需要你催、它自己会做的事：
+**想直接用**
 
-- **复盘 / 校正彼此** —— 每聊 N 轮回看对话，自己哪儿说糊涂了、你哪儿有盲区，回来讲。
-- **网上冲浪** —— 自己出门找对你有价值的信息，挑值得讲的带回来。
-- **一群 Bot 议论你** —— 你日常聊的几只 Bot 拉群讨论你，多角度旁观。
+- **macOS** —— 从 [Releases](../../releases) 下 `.dmg`，签名并经 Apple 公证，双击就能装。
+- **iPhone / iPad** —— 只能走 TestFlight。<!-- TestFlight 邀请链接待补 -->
 
-这三件里，**只有第一件写完了代码，而且线上一次都没真正产出过**。
-第二件在生产环境必然失败（唯一的抓取通道从未部署凭据）。第三件写了但零线上数据。
-详见下一节——这一节讲的是**想做成什么**，不是**现在能做什么**。
+⚠️ **装上之后，还需要接你自己的后端才能真正聊起来。** 这份仓库不带任何真实的后端坐标，
+点登录会明确告诉你没配置，而不是静默失败。怎么接见 [`docs/self-hosting.md`](docs/self-hosting.md)。
+
+**想自己跑一遍代码**
+
+```bash
+bun install                                      # bun 1.3.11+
+bun --filter='@pendingbot/edge' run typecheck    # 应为 0 错
+cd apps/edge && ./node_modules/.bin/vitest run   # 695 例
+```
+
+## 文档
+
+<https://docs.pendingname.com>
+
+## 主要功能
+
+- 不断回顾、查证你和 AI 之间的对话，不仅是它自己反省，还要批评你，发现你自身认知的错误和局限，让大家都持续进化、变得更好。
+- 深挖互联网，主动探索，到处苦苦寻觅对你有价值的、让你眼前一亮的信息。
+- 主动地实现上述功能，不是你喊了才动，问一句答一句。
+
+## 两大目标
+
+- **及时复盘、校正彼此** — 免得聊着聊着就被AI带偏、被骗了、不清醒了。当局者迷，旁观者清。
+- **探索未知 做信息的 VC** — 缓解一下我们局限的视野和信息茧房
+
+不是助手，不是又一个什么 Agent 什么虾——助手类应用大把人做，我才不重复造轮子。
+
+也不是标准的 AI 陪伴——它不是个听话的宝宝。它是给你带来新视角、新发现的朋友。
+
+## 架构
+
+四个部分，一条主链路。
+
+```
+  iOS / iPadOS / macOS          Cloudflare Worker              Supabase
+  ┌──────────────────┐          ┌──────────────────┐          ┌──────────────┐
+  │  SwiftUI 客户端   │  HTTPS   │  Hono 路由        │  Postgres│  80 张表      │
+  │                  │ ───────► │  186 个接口       │ ───────► │  130 条 RLS   │
+  │  本地缓存 / 会话  │ ◄─────── │  10 个 DO         │ ◄─────── │  212 个迁移   │
+  └──────────────────┘  Realtime└──────────────────┘          └──────────────┘
+                                        │
+                                        ▼
+                                ┌──────────────────┐
+                                │  AI Gateway       │
+                                │  4 家供应商 → 1 个 │
+                                │  出口，20 个工具   │
+                                └──────────────────┘
+```
+
+- **客户端**（`apps/pendingbot`）—— 一套 SwiftUI 源码编三端，xcodegen 生成工程。
+  后端坐标集中在 `HostedConfig.swift`，那里的 `isConfigured` 是「哪条线通」的唯一真值。
+- **Edge**（`apps/edge`）—— Cloudflare Worker + Hono，业务主体。Durable Object 管有状态的东西
+  （会话轮次、限流、实时投影）。695 个测试全在这一层。
+- **数据库**（`supabase/`）—— Postgres + RLS。所有跨用户的读写都由 RLS 兜底，
+  `SECURITY DEFINER` 函数有一道 CI 闸门盯着，防止权限飘回 PUBLIC。
+- **后台**（`apps/admin`）—— Refine SPA，打包进 Worker 的静态资源，前面挡一道 Cloudflare Access。
+
+**两个外部依赖值得单独说：**
+
+- **Prompt 的唯一事实源是 Langfuse，仓库里没有副本。** 这是有意的——避免代码里一份、
+  线上一份、迟早对不上。代价是自建时必须先在 Langfuse 里逐字建好那 18 条 prompt，
+  否则对话链路直接 500。
+- **4 家 LLM 供应商统一到一个 AI Gateway 出口**，模型可调用的工具有 20 个。
+  换供应商不用改业务代码。
 
 ## 状态：能用到什么程度
 
@@ -108,15 +177,7 @@
 完整步骤（含每一个外部服务要开什么、拿什么）在 [`docs/self-hosting.md`](docs/self-hosting.md)。
 那份指南是在一个干净 checkout 上实跑核对过的，包括哪些步骤**没**跑通。
 
-最短路径：
-
-```bash
-bun install                                      # bun 1.3.11+
-bun --filter='@pendingbot/edge' run typecheck    # 应为 0 错
-cd apps/edge && ./node_modules/.bin/vitest run   # 695 例
-```
-
-三个组件各自：
+最短路径就是上面「快速开始」里那三条。三个组件各自：
 
 - **Edge（后端）** —— `bun --filter='@pendingbot/admin' run build` 先出 admin 的静态资源，
   再 `cd apps/edge && wrangler dev --local`。裸跑只证明 Worker 起得来；业务路由要本地 Supabase。
@@ -186,3 +247,8 @@ issue 和 PR 都欢迎，但作者不保证响应速度，也不承诺路线。
   见 [`apps/edge/prompts/skills/anthropic/NOTICE.md`](apps/edge/prompts/skills/anthropic/NOTICE.md)
   和同目录下的 `LICENSE.txt`。
 - 运行时 / 库：Cloudflare Workers · Hono · Supabase · Bun · Zod 等，各遵其原协议。
+
+---
+
+<sub>产品定位、功能与目标由作者撰写。技术章节（架构、状态盘点、自建与配置）由 Claude 补写，
+其中的数字与结论均来自实际运行的命令或线上只读查询，不是从旧文档转抄。</sub>
