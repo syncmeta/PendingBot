@@ -1530,3 +1530,55 @@
   2. 报告用**分母**说话：「15 条里 15 条」而不是「已生效」。这次第一版报告的正文写清了 14/15 和为什么，但抬头一句「线上已生效」把分母吞了——转述出去就会变成错的。
   3. 修法先问一句「我排除的这一类，是不是其实只需要排除它的一部分」。
 - **状态**: ✅ 已落实 —— `20260822141327` 补齐了漏掉的那条，判据下沉到消息级，并带上了无前提断言（负向验证过：留一条旧戳的消息，自检会 raise）。这条留作规矩，不是待办。
+
+## 2026-08-20 macOS 本地出包流水线（开源准备 C）
+
+### 🟡 macOS 的 build 号没有防倒退闸 —— 只靠时钟单调，没有账本可比
+- **发现**: 2026-08-20 · `chore/macos-release-pipeline`
+- **位置**: `scripts/release/build-macos-dmg.sh`（调 `ios-build-number.sh --print-only`）
+- **背景**: iOS 那条有真闸 —— 查 ASC 上已收到的最高 build 号，不严格递增就拒绝发版（`asc_highest_build.py`，拿不到数据也拒绝，fail-closed）。macOS 走 Developer ID 直接分发，**不上 App Store Connect，没有任何账本可比**：ASC 上没有 Mac 包的记录，我们也没有 Sparkle / 自更新通道，眼下没有任何消费方按 `CFBundleVersion` 排先后。
+- **为什么现在不补**: 硬把 iOS 那道闸接过来是**比错了对象**（拿 iOS TestFlight 的最高 build 去卡 Mac 包），而且会把「能不能出 Mac 包」绑死在 ASC 可达上 —— 一道拦不住真事故、却会因为网络问题假报警的闸，比没有更糟。单调性目前由时钟本身保证（build 号 = 纪元日「天.秒」，天生递增，不依赖仓库状态）。
+- **什么时候必须补**: **Mac 端一旦有了更新通道**（Sparkle appcast、或任何按 `CFBundleVersion` 判新旧的东西），必须在 `build-macos-dmg.sh` 里补一道对着那个通道的 fail-closed 闸。PendingCrew 的 `scripts/release/build-macos-update.sh` 里有现成写法：比线上 appcast feed 的最大值，且**拉不到 feed 就拒绝构建**（他们踩过的坑正是 `curl … || true` 让「网络失败」和「首发」共用一条放行路径，闸静默失效）。
+- **残余风险**: 系统时钟被往回调、或有人手工传过一个未来的 build 号。两种都会让新包的号不大于旧包，而现在没有东西会拦。发生概率低，后果也仅限于「哪天接上更新通道后，那一版推不出去」。
+- **状态**: 待办（触发条件明确：接更新通道的那一刻）。
+
+### 🟢 Developer ID 描述文件是手工在 Apple 后台维护的，能力变更不会自动跟上
+- **发现**: 2026-08-20 · 同上
+- **位置**: Apple 后台的 `PendingBotDistribute`（`MAC_APP_DIRECT`）；消费方 `scripts/release/asc-macos-profile.py`
+- **问题**: Mac 发布身份不能走 Xcode 自动签名 —— 自动签名要的是「云端托管发布证书」，本机这个账号申请它会被 Apple 挡回来（403 `You haven't been given access to cloud-managed distribution certificates.`）。所以描述文件是手工建的，而**手工建的文件不会随 App ID 上的能力变更自动重生**：2026-08-20 就撞上了，App ID 上 Sign in with Apple 开着，描述文件是早先生成的、没带上，Mac 端登录会因此签不出来。
+- **为什么是 🟢 不是 🟡**: 已经有断言兜住了。`build-macos-dmg.sh` 第 0.5 道在 archive **之前**比对「描述文件授权的键 ⊇ 源 entitlements 声明的键」，缺了就当场停并打印去哪个页面点什么；同时每次构建都从 Apple 重拉描述文件（本机那份只当缓存），所以后台改好之后不会出现「后台已改、构建还在用旧的」的错位。过期也在同一处检查。
+- **状态**: 已被断言覆盖，不另行处理。真嫌烦的话正解是拿到云端托管发布证书的权限、切回自动签名。
+
+### 🟢 断言报「描述文件缺某个键」时，必须自己证明读的不是过期副本
+- **发现**: 2026-08-20 · 同上（机长指出：这个结论跟人类说的对不上，要能区分「文件真缺」和「我读的是缓存」）
+- **位置**: `scripts/release/build-macos-dmg.sh` 第 0.5 道断言
+- **问题**: 描述文件有两个来源 —— Apple 后台那条记录，和本机 `~/Library/…/Provisioning Profiles/` 里的副本。断言只说「缺 X」的话，读者没法判断是哪一种，而两种的修法完全不同（重新生成 vs 重新下载）。这类含糊会让人跑去 portal 反复确认一个本来就勾着的开关。
+- **修法（已落地）**: ① 脚本每次构建都从 Apple 重新下载，本机那份只当缓存（本来就是这样，现在在报错里说出来）；② 报错里打出描述文件**自己记的 `CreationDate` 和 UUID** —— 这两个不变就等于「后台那条记录从来没被重新生成过」，是区分两种情况的硬凭据；③ 明写「能力在 App ID 上勾着还不够」这条反直觉的事实：描述文件是生成那一刻的快照，之后加的能力不会自动补进已有文件，所以「后台看着是勾的」和「文件里没有」可以同时为真。
+- **一般化的教训**: 任何「我读到的东西不对」类断言，都该在报错里带上**它读的是哪一份、那一份是什么时候的**。否则断言只完成了一半 —— 它说了「不对」，没说「按哪份判的」。
+- **状态**: ✅ 已修。
+
+### 🔴 已发布的 Mac 版「用 Apple 登录」实际失效 —— 授权被签名步骤静默剥掉
+- **发现**: 2026-08-21 · `chore/macos-release-pipeline`（做发版脚本时顺手查了本机装着的那份）
+- **位置**: `/Applications/PendingBot.app`（2026-08-07 构建，Developer ID 签名 + 已公证，`0.1.0 (3426)`）；根因在 Apple 后台的描述文件 `PendingBotDistribute`（`MAC_APP_DIRECT`，生成于 2026-08-07 06:57:19）
+- **事实**（都是直接读产物读出来的，不是推断）:
+  - 装着那份的签名 entitlements 是：`com.apple.application-identifier` / `com.apple.developer.aps-environment` / `com.apple.developer.associated-domains` / `com.apple.developer.team-identifier` / `keychain-access-groups`。**没有 `com.apple.developer.applesignin`。**
+  - 它嵌的 `embedded.provisionprofile` 就是 `PendingBotDistribute`，那张文件里也没有这个键。
+  - 源 entitlements 里**有**这个键；Mac 登录页上**有**「Apple」按钮（`Sources/Mac/MacWelcomeView.swift`，Apple / Google / 邮箱三条路）。
+  - 同一份源码用**开发**身份签出来的产物**有**这个键（开发描述文件 `Mac Team Provisioning Profile`，生成于 2026-05-28，授权了它）。所以能力在 App ID 上早就开着，问题只在发布那条路径。
+- **为什么两周没人发现**: Xcode 在这条路径上会把描述文件没授权的键**静默剥掉** —— 签名有效、公证通过、Gatekeeper 放行、app 正常启动，**全链路零报错**。只有真去点那个按钮才会发现。作者平时用 Google / 邮箱登录，或本来就登着没退过。
+- **同一族病**: 跟 `aps-environment` 被吞（见本轮上面那条「Mac 端单独一份 entitlements」）是同一个机制的两次发作 —— **「源里声明了、产物里没有、没有任何一处会响」**。这也正是发版脚本第 ⑤ 道断言（源 entitlements 逐项正面比对）和第 0.5 道前置断言（描述文件授权的键 ⊇ 源声明的键）存在的全部理由：它们拦的不是假想风险，就是这条。
+- **根因已定（2026-08-21 当天证实，两路证据）**:
+  - **实测**: 作者在 portal 上重新生成了一张 `PendingBotDistribute`（新 UUID `e55ffe55-…`，CreationDate `2026-08-21 04:12:39`）。**新文件里仍然没有 `com.apple.developer.applesignin`。** 所以不是「文件太旧」。
+  - **官方**: Apple DTS 在 <https://developer.apple.com/forums/thread/129263> 明确答复「Sign in with Apple 这项能力不支持 Developer ID …要用它必须走 App Store」；有人提 bug 后 Apple 回的是「**此行为符合预期**，Sign in with Apple 不可用于 Developer ID 签名的 app」。该帖里 Apple 工程师举的证据与我们这儿完全一致：开发描述文件里有、Developer ID 的没有。
+  - **结论**: **只要 Mac 版走 Developer ID 直接分发，就带不了「用 Apple 登录」。这是 Apple 的规则，不是我们配置错了。**
+- **为什么作者一直觉得「之前都正常用」**: 他日常跑的是 Xcode 的**开发**构建，走 2026-05-28 那张开发描述文件，**带着**这项授权。同一份源码、两条分发路径，一条有一条没有 —— 两个说法都为真，不矛盾。（App ID 页面上 SIWA 勾着也是真的：那一栏列的是「App ID 开了什么」，不是「这张描述文件里嵌了什么」；旁边的 In-App Purchase 同样在页面上、不在文件里。）
+- **✅ 已处理（2026-08-21，上级拍板走「保持 .dmg」）**: Mac 登录页的 Apple 入口**在拿不到这项授权的包里不显示**，同时把该键从 `apps/pendingbot/Resources/PendingBot-macOS.entitlements` 移除。两处都留了成段的原因注释，不是 TODO。
+  - **不是 `#if os(macOS)` 编译掉，代码原样留着**：真正的分界线不是「macOS」，是「Developer ID 这条分发路径」—— 同一个 macOS 走 App Store 就有。判定在 `Sources/Mac/MacWelcomeView.swift` 的 `appleSignInAvailable`：读嵌进包里的描述文件、看这个包**实际拿到**了什么授权（与 `Networking/PushService.swift` 读 `aps-environment` 那段同源）。于是开发构建照常有按钮、我们自己发的 .dmg 里没有。
+  - **判不出来时默认不显示**（fail-closed）：显示一个点了没反应的按钮，比少一个按钮糟得多 —— 这正是 2026-08-07 那版的状态。
+  - **两处必须一起改**：只删授权 → 死按钮留在界面上；只藏按钮 → `exportArchive` 仍会失败。
+  - iOS 一行没动（`Networking/AppleSignIn.swift` 跨平台，`PendingBot.entitlements` 照常声明）。
+- **🔁 什么时候翻回来（触发条件写死，别当 bug 再查一遍）**: **改走 TestFlight / Mac App Store 分发的那一刻。** 那条路的描述文件带这项授权，`appleSignInAvailable` 会自动判成 true、按钮自己回来，只需把该键加回 `PendingBot-macOS.entitlements`。除此之外没有别的触发条件 —— **在 Developer ID 这条路上它永远拿不到，不要再去 portal 上点 Generate 试**（2026-08-21 已经试过一次，新文件里照样没有）。
+- **走 TestFlight 的代价（当时一并查过，留个底）**: Mac 的 TestFlight 走 App Store 那条线，**要求 App Sandbox**（`com.apple.security.app-sandbox`，没有会在上传校验时被拒）。我们现在是非沙盒的 Developer ID 形态，切过去要付：沙盒相关 entitlement（网络客户端等）、本地数据落到容器路径（本地库是**缓存**、服务端才是真相源，所以是缓存重建不是数据丢失）、与 PendingCrew 共用的钥匙串组 `M42BKJN82S.*` 在「沙盒 MAS app ↔ 非沙盒 Developer ID app」之间还能不能互通（**未核实**）、Mac 的分发证书与 `MAC_APP_STORE` 描述文件（本账号目前只有 DEVELOPMENT + DEVELOPER_ID_APPLICATION 两张证书，ASC 上也**还没有 macOS 平台的 app 记录**，只有 IOS）、以及每个新版本的首个构建要过一次 Beta App Review。
+- **顺带的对外风险（已随上面的处理消解）**: 开源 README 若放带 Apple 按钮的 Mac 登录页截图，而下载 `.dmg` 的人点它没反应，就等于 README 上写了一句外部人做不到的事。**藏掉按钮之后 `login.png` 必须重截**，否则图和产物对不上。
+- **一处没有实测证据、明说**: 没有真去点那个按钮观察它怎么失败（弹框 / 报错 / 静默无反应）。要点它得先退出登录，而登录态那条钥匙串记录（`supabase.gotrue.swift`）与 PendingCrew 同属家族共用组，为一次观察去动它不划算。定性依据是 Apple 的官方答复 + 我们自己重新生成的文件，**运行时的具体表现仍属未知**。
+- **状态**: ✅ 已处理（隐藏入口 + 移除授权，2026-08-21）。**债本身没有消失** —— Mac 版在当前分发形态下就是少一条登录路，只是不再有假按钮。翻回来的触发条件见上。

@@ -191,6 +191,7 @@
 		FB00D4A903E342738907E282 /* GroupWalletView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D2B2B8D8BD1DE4D364525C4 /* GroupWalletView.swift */; };
 		FC8F6706A2705C7F8913F790 /* GroupInviteAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6007B7AC7A2508EA9C7C04C9 /* GroupInviteAPI.swift */; };
 		FCD54979BEFA6D687994FF09 /* GroupWalletShared.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54EA631014F4D2F3E5F0B510 /* GroupWalletShared.swift */; };
+		FDC80D8E6BF681286B220064 /* AppBuildStamp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0829FC1CB871B48B88A5529E /* AppBuildStamp.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -200,6 +201,7 @@
 		05749CCA7DC81C13CE7D3C84 /* EnvelopeThinkingTrace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvelopeThinkingTrace.swift; sourceTree = "<group>"; };
 		0689D829BCC97AF9D3099F61 /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
 		0767E4C8060BA86E1484AB2E /* SupabaseStack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseStack.swift; sourceTree = "<group>"; };
+		0829FC1CB871B48B88A5529E /* AppBuildStamp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppBuildStamp.swift; sourceTree = "<group>"; };
 		0952FBAFFA7B0819B8B70672 /* CallSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallSession.swift; sourceTree = "<group>"; };
 		09C163D426D19FF2D59C580E /* ToolTraceEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolTraceEvent.swift; sourceTree = "<group>"; };
 		0A39758A2179809248593753 /* ConversationSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationSettingsView.swift; sourceTree = "<group>"; };
@@ -658,6 +660,7 @@
 		B55F4D5F9BCB8BB93E2C2D48 /* Sources */ = {
 			isa = PBXGroup;
 			children = (
+				0829FC1CB871B48B88A5529E /* AppBuildStamp.swift */,
 				7E8968AA681D3F8FCDCF3160 /* Log.swift */,
 				3BD3256170D29AD9138939C3 /* PendingBotApp.swift */,
 				1FC28CEA4A1CCB6739CFFCFA /* Components */,
@@ -753,6 +756,7 @@
 				65F7DAB3D50FA1D92EC0F8BB /* Sources */,
 				49321AEA4AC04FCB01280B8E /* Resources */,
 				98B97DDECE2DD7036F70C709 /* Frameworks */,
+				4225AF8EE1D36E57AE8B46AF /* Stamp build info */,
 			);
 			buildRules = (
 			);
@@ -834,6 +838,29 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		4225AF8EE1D36E57AE8B46AF /* Stamp build info */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/$(INFOPLIST_PATH)",
+			);
+			name = "Stamp build info";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/../../scripts/release/stamp-build-info.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		65F7DAB3D50FA1D92EC0F8BB /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -847,6 +874,7 @@
 				5DC1DDF2BCFD9284F2421B38 /* ActiveCallBanner.swift in Sources */,
 				81C3A1F5BC0BEEAC5D96DE66 /* ActiveVoiceCallStore.swift in Sources */,
 				8C5BA9B67A199694684F4D25 /* AddMeMethodsView.swift in Sources */,
+				FDC80D8E6BF681286B220064 /* AppBuildStamp.swift in Sources */,
 				1816ED8661FB6122D66EA671 /* AppCommands.swift in Sources */,
 				D981A37D61DA1B2B0EDF9F14 /* AppEnvironment.swift in Sources */,
 				232CB5FD82ABC5A3C6724863 /* AppearanceMode.swift in Sources */,
@@ -1021,6 +1049,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Resources/PendingBot.entitlements;
+				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "Resources/PendingBot-macOS.entitlements";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				ENABLE_PREVIEWS = YES;
 				"EXCLUDED_SOURCE_FILE_NAMES[sdk=iphone*]" = "Mac/* Mac/**/*";
@@ -1046,6 +1075,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Resources/PendingBot.entitlements;
+				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "Resources/PendingBot-macOS.entitlements";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				ENABLE_PREVIEWS = YES;
 				"EXCLUDED_SOURCE_FILE_NAMES[sdk=iphone*]" = "Mac/* Mac/**/*";
@@ -1124,7 +1154,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.1.1;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -1188,7 +1218,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.1.1;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
