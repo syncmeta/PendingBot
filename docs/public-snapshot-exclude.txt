@@ -28,3 +28,12 @@ docs/progress.md
 # Organisational philosophy written in the author's own voice; treated as
 # commercial-confidential rather than documentation.
 docs/handwrite
+
+# --- process archaeology ----------------------------------------------------
+# The decision log: every problem this project hit, what was tried, what was
+# decided and why, plus a per-entry re-check of whether it still holds. It
+# quotes open findings verbatim (including the unauthenticated-write hole and
+# its root cause) and reconstructs internal reasoning that was never meant to
+# ship. Unsafe published for the same reason tech-debt.md is, and additionally
+# because it names decisions that were reversed.
+docs/decision-log.md
