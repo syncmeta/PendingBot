@@ -17,6 +17,10 @@
   <img alt="Platform" src="https://img.shields.io/badge/platform-iOS%20%C2%B7%20iPadOS%20%C2%B7%20macOS-lightgrey" />
 </p>
 
+<p align="center">
+  <a href="README.md">中文</a> · <a href="README_EN.md">English</a>
+</p>
+
 知道自己错了的 AI。主动上网冲浪还要处处想着你。形态跟微信差不多。
 
 <p align="center">
@@ -40,7 +44,7 @@
 **想直接用**
 
 - **macOS** —— 从 [Releases](../../releases) 下 `.dmg`，签名并经 Apple 公证，双击就能装。
-- **iPhone / iPad** —— 只能走 TestFlight。<!-- TestFlight 邀请链接待补 -->
+- **iPhone / iPad** —— 只能走 TestFlight：<https://testflight.apple.com/join/K6Ju9qqP>
 
 ⚠️ **装上之后，还需要接你自己的后端才能真正聊起来。** 这份仓库不带任何真实的后端坐标，
 点登录会明确告诉你没配置，而不是静默失败。怎么接见 [`docs/self-hosting.md`](docs/self-hosting.md)。
