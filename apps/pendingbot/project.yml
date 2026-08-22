@@ -124,6 +124,12 @@ targets:
       - name: Stamp build info
         script: |
           "$SRCROOT/../../scripts/release/stamp-build-info.sh"
+        # inputFiles 声明的是**顺序依赖**,不是为了增量:新构建系统按任务图排
+        # 顺序,不按 build phase 的先后。不声明的话这个脚本会跑在 Xcode 处理
+        # Info.plist **之前**,写进去的戳当场被覆盖掉 —— 2026-08-22 实测踩过,
+        # 脚本日志明明打印了正确的 sha,产物里一个键都没有。
+        inputFiles:
+          - $(BUILT_PRODUCTS_DIR)/$(INFOPLIST_PATH)
         basedOnDependencyAnalysis: false
     dependencies:
       - package: GRDB
