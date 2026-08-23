@@ -1,0 +1,31 @@
+{
+  "version": 3,
+  "reviewed_at": "2026-08-22",
+  "_comment_red": "allowed_definer_functions — SECURITY DEFINER functions in PostgREST-exposed schemas that anon/PUBLIC may execute on purpose. Empty is the correct steady state: an entry here means an unauthenticated caller can run privileged, RLS-bypassing code.",
+  "allowed_definer_functions": [],
+
+  "_comment_yellow": "registered_unbound_definer_functions — SECURITY DEFINER functions that `authenticated` may execute where nothing on the call path reads auth.uid(). Registering one does NOT mean it is safe; it means someone wrote down that it exists and is being tracked. The gate prints every entry as WARN on each run and blocks again once expires_on passes.",
+  "_comment_reasons_are_deliberately_terse": "Reasons here name the category and point at the private risk register — they do NOT describe what an entry leaks or how to reach it. That is deliberate and enforced by scripts/test-definer-execute-gate.ts: this file is machine-read and will travel into any public snapshot of this repo, and a list of open findings with their impact and one-line exploit path is an instruction manual. Keep the detail in the private register; keep the pointer here. Do not 'helpfully' restore the detail.",
+  "registered_unbound_definer_functions": [
+    {
+      "signature": "pendingbot.resolve_crew_responsibility_shares(p_crew_conversation_id uuid)",
+      "reason": "Unbound caller check, confirmed real and NOT cleared. Tracked in the private risk register (docs/tech-debt.md, 2026-08-21). Pending a decision on the grant.",
+      "expires_on": "2026-09-21"
+    },
+    {
+      "signature": "pendingbot.are_mutual_friends(a uuid, b uuid)",
+      "reason": "Unbound caller check, confirmed real and NOT cleared. Tracked in the private risk register (docs/tech-debt.md, 2026-08-21). Pending a decision on the grant.",
+      "expires_on": "2026-09-21"
+    },
+    {
+      "signature": "pendingbot.is_bot_invitee(p_bot_id uuid, p_user_id uuid)",
+      "reason": "Unbound caller check, confirmed real and NOT cleared. Tracked in the private risk register (docs/tech-debt.md, 2026-08-21). Pending a decision on the grant.",
+      "expires_on": "2026-09-21"
+    },
+    {
+      "signature": "pendingbot.user_has_conv_with_bot(p_bot_id uuid, p_user_id uuid)",
+      "reason": "Unbound caller check, confirmed real and NOT cleared. Tracked in the private risk register (docs/tech-debt.md, 2026-08-21). Pending a decision on the grant.",
+      "expires_on": "2026-09-21"
+    }
+  ]
+}

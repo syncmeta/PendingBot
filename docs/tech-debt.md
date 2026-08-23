@@ -1456,3 +1456,129 @@
 - **不修，且这是个决定不是拖延**: 本条最初写的触发条件是"给猜对加奖励/排行/成就之前先修"，作者当场排除了这个前提。**要修才有意义的那个未来已经被否掉了**，所以这条不是待办、不必再复核。真要哪天推翻这个定性（给猜对加了奖励/排行/成就），再回来看下一行。
 - **万一将来要修，怎么修**: 未揭晓时服务端不下发真名（`current_model_slug: null`），改由揭晓接口返回；iOS 的 pill 在未揭晓时本来就不用真名，`SwitchModelSheet` 的 `SwitchResult` 也只在用户主动切换后读。代价是"未揭晓 → 已揭晓"必须重新拉一次状态，而客户端本来就在揭晓后调 `loadConvModelState()`。
 - **状态**: ✅ 已定性、不修。留在册子里只是为了记住"这是知情的选择"，免得后人当成疏漏又查一遍。`tests/conversation-model-state.test.ts` 里那条测试同时也是这个选择的书面记录。
+
+---
+
+## 2026-08-20 未鉴权写入洞 + 防复发闸门（`fix/definer-execute-revoke`）
+
+### 🔴 `upsert_self_machine` 对 PUBLIC 开放 EXECUTE — 任何人不登录就能往机器表写入 — ✅ 已解决 2026-08-21（迁移已上生产 + 线上实测复验）
+- **发现**: 2026-08-20 · `fix/definer-execute-revoke`（承接 `.claude/audit/security-audit-verification.md` 里核出的那条新洞）
+- **位置**: `supabase/migrations/20260614123749_machine_table.sql:50-62`（建函数处）→ 线上 `pendingbot.upsert_self_machine(uuid,text,text)`
+- **问题**: 该函数是 SECURITY DEFINER（以库主身份跑、绕过一切 RLS），但建它的迁移只写了 `grant execute ... to service_role`，**没写 `revoke execute ... from public`**，于是继承了 Postgres「新函数默认 EXECUTE TO PUBLIC」的内建行为。`pendingbot` 是 PostgREST 暴露 schema、publishable key 设计上公开，所以 `POST /rest/v1/rpc/upsert_self_machine` 是一个**无需登录**的写入端点；函数体里也没有任何调用者身份校验，`p_subject_id` 直接来自调用方。
+- **影响**: `machine_self_*` 四条 RLS 策略在这条路径上全部失效。未认证攻击者可对任意 `subject_id` 插入伪造机器行、覆写他人机器的 `display_name`、把他人机器刷成 `online`、无限灌行。读不到别人数据（函数只 `returning id`），但写入面完全敞开。
+- **实证（本地 `supabase db reset` 全量重放，端到端）**: 用 anon key POST 该 RPC → **HTTP 200**，在受害者 subject 下插入了一行 `display_name='PWNED by anon'`。加上修复迁移后同一请求 → **HTTP 401 `permission denied for function upsert_self_machine`**，表里 0 行；service_role 路径（Edge 走的那条）照常成功；把 EXECUTE 临时补回给 `authenticated` 后，指向他人 subject 的调用被函数体内的守卫以 `42501` 拒绝、指向自己 subject 的调用正常。
+- **病因（比洞本身重要）**: 这是 2026-05 那批加固**之后**新长出来的同类洞。同一个病 5 月修过一批、8 月又长一个，说明缺的不是细心，是一道机器检查 —— 已补，见下一条。
+- **状态**: ✅ **已解决 2026-08-21** —— 迁移 `supabase/migrations/20260820073931_revoke_public_execute_upsert_self_machine.sql`（commit `e9348ad9`）经人类拍板后 `supabase db push --linked` 应用到生产。
+- **线上复验（实测，不是推断）**: 同一个 anon 请求推前 **HTTP 409**（外键错 —— 说明未登录的请求已经进到函数体、进到 INSERT 那一行，权限根本没拦；探测用的是不存在的 subject_id，所以零写入）→ 推后 **HTTP 401 `42501 permission denied for function upsert_self_machine`**。再用**真实存在的** subject_id 打一次同样 401。生产 `machine` 表前后均 2 行，两次探测一行没写。函数 ACL `{=X/postgres,...}` → `{postgres=X,service_role=X}`，anon/authenticated 由 true 变 false；线上函数定义已拉下来核对，与本地验证过的那份逐字节相同。闸门对生产跑：修前红 → 修后绿（0 行）。
+- **`schema.ts` 确认不需要 regen**: `bun --filter='@pendingbot/edge' run types:db` 跑过，产物前后 md5 完全一致（函数签名未变）。`typecheck` 绿。
+- **唯一未在生产坐实的一点**: service_role 那条路（Edge 调用路径）没在生产上真调一次 —— 那是往生产写数据，没做也不绕。可坐实的是：线上 service_role 的 EXECUTE 仍在；线上函数体与本地跑通过的那份相同；守卫第一个条件是 `auth.uid() is not null`，而 service_role 的 `auth.uid()` 恒为 null，整段跳过、插入路径与改动前一致。**留一条真机 QA 尾巴**：从 app 真连一次机器，确认机器上线/改名照常。
+- **顺带处理**: 同一迁移重跑了 2026-05 那道 schema 级 `REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA pendingbot FROM anon, PUBLIC`，把另外四个飘回 PUBLIC 的非 definer 辅助函数（`bot_friend_inquiries_touch_updated` / `prevent_crew_parent_cycle` / `tg_short_links_touch_updated_at` 三个触发器函数 + 纯函数 `normalize_email`）一并收掉。收之前核过：触发器函数在触发时不检查调用者的 EXECUTE 权限（本地实测确认），`normalize_email` 没有被任何 DEFAULT / CHECK / 索引表达式引用，且没有任何函数靠 PUBLIC 给 `authenticated` 兜底权限。
+- **关联**: `.claude/audit/security-audit-verification.md`（那份旧安全审计的逐条核实，原始 13 条已全关，这条是新的）
+
+### 🟢 CI 闸门：anon / PUBLIC 能执行的 SECURITY DEFINER 函数 — ✅ 已加（2026-08-20）
+- **发现**: 2026-08-20 · `fix/definer-execute-revoke`
+- **位置**: `scripts/sql/definer-execute-audit.sql` + `scripts/definer-execute-gate.ts` + `docs/definer-execute-allowlist.json` + `.github/workflows/security-gates.yml`（commit `535842ff`）
+- **为什么**: 这类洞的失败模式是「忘了写 REVOKE」而不是「写错了 GRANT」，靠人记不住 —— 已复发两次。闸门照 `supabase:advisor:*` 的形状做：一段只读 introspection SQL + 一个吃 JSON 的评估脚本 + 一份**默认为空**的 allowlist（fail closed，条目要写理由和过期日）。
+- **验证（对真库跑过，不只是 fixture）**: 去掉修复迁移重放账本 → BLOCK、exit 1；带上修复迁移 → 0 行通过；对线上 linked 项目只读跑 → BLOCK（即它确实抓得住此刻线上开着的那个洞）。fixture 测试另覆盖空 allowlist 失败闭合、allowlist 过期后重新拦、只有 PUBLIC 授权（anon 未单独授）也拦。
+- **已知边界（不是疏漏，是取舍）**: CI 那一跑是**重放迁移账本**，因此看不见直接在生产上做的授权变更（例如从 Supabase 后台点出来的）。覆盖那一面的是 `bun run db:definer:gate:linked`，它需要 linked 项目凭据，按本仓库「凭据不上云」的原则**故意不进 Actions**，作为部署前的人工步骤。
+- **它是枚举全部、不是钉死这一个（2026-08-21 现场验证）**: audit SQL 里没有任何函数名过滤，判据只有「`prosecdef` 为真 **且** anon 或 PUBLIC 持有 EXECUTE」；`upsert_self_machine` 这个名字在整套闸门代码里只出现在注释和报错提示里。为免停在「看代码」这一步，在本地库上现造了一个它从没见过的 `pendingbot.some_future_rpc(uuid,text)`（SECURITY DEFINER + 只写 `grant to service_role`、故意不写 revoke，即明天最可能犯的错法）→ 闸门当场红、退出码 1、点名的是这个新函数；删掉后退出码回 0。
+- **状态**: ✅ 已加。用法：`bun run db:definer:test`（fixture）/ `bun run db:definer:gate:local`（本地重放）/ `bun run db:definer:gate:linked`（线上只读，部署前跑）。
+- **2026-08-21 加了第二条维度（黄）**: SECURITY DEFINER + `authenticated` 可执行 + **调用路径上从不读 `auth.uid()`** → 报黄。理由：第一条维度只是把门票从「免费」改成「注册一个账号」；函数体若收 id 又不问调用者是谁，任何登录用户都能拿它去打别人。黄色**不自己拦**，但也不静默放行 —— 必须带**书面理由 + 过期日**登记，且**每次跑都照样打印 WARN**（「有人写下了为什么」不等于「处理过了」）。
+- **让这条规则可用的是传递解析**: 函数可以自己不提 `auth.uid()` 而仍然安全（把校验委托给 `_assert_group_role` / `_grp_require_caller` / `subject_has_user_access` 这类共用守卫）。纯文本规则在本库抓出 16 个、只有 4 个是真的（75% 噪音 = 一道没人看的闸）；沿调用图做传递闭包后**正好返回 4 个，且与另一 session 逐个读完 72 个函数体的独立人工排查结论完全一致**（`.claude/audit/definer-authenticated-triage.md`）。两条独立路径同一个答案。
+- **黄色维度的现场验证（同样是现造一个它没见过的样本去考它，不是给人看代码）**: 在本地重放库上种了两个函数 —— ① 真正未绑定的 → **BLOCK [yellow]**、点名、退出码 1；② 只靠 `subject_has_user_access` 传递保护、自己函数体一个 `auth.uid()` 都没有的 → **不报**（即机长点名担心的那种误报形状确实被挡住了）。两个在 REVOKE 掉 PUBLIC 默认之前都先被 **红色**抓到 —— 第一维度在底下照常工作。删掉两个样本后退出码回 0。
+
+### 🟡 4 个 `authenticated` 可执行的 SECURITY DEFINER 函数不校验调用者归属 — 已登记进闸门，**未处置**
+- **发现**: 2026-08-21 · 另一 session 逐个读完线上 72 个 `authenticated` 可执行 definer 函数的函数体（`.claude/audit/definer-authenticated-triage.md`），本 session 用闸门的传递闭包独立复现出同一份名单
+- **位置**: `pendingbot.resolve_crew_responsibility_shares(uuid)`、`are_mutual_friends(uuid,uuid)`、`is_bot_invitee(uuid,uuid)`、`user_has_conv_with_bot(uuid,uuid)`
+- **问题**: 都是 SECURITY DEFINER、对 `authenticated` 开放、函数体（及其调用链）从不读 `auth.uid()`。任何登录用户传别人的 id 就能问出不该给他的答案。
+- **性质要分清，别和 `upsert_self_machine` 混为一谈**: 那条是**写**（传谁的 id 就往谁头上写）；这 4 条**全是读**，一条都不能写，是信息泄露 / 探测口。且都受 uuid 不可枚举保护 —— 得先知道目标的 uuid 才能问，不是谁都能扫。按严重度：`resolve_crew_responsibility_shares`（直接返回数据行：整个 crew 的责任分账结构，递归分支还把父 crew 的一起摊出来）> `are_mutual_friends`（社交图谱探测）> `is_bot_invitee` ≈ `user_has_conv_with_bot`（各返回 1 bit）。
+- **病因**: `20260524180643_bind_definer_helpers_to_auth_uid.sql` 声称要把「接受 `p_user_id` 的 definer helper 绑到 `auth.uid()`」，实际覆盖 11 个。`is_bot_invitee` / `user_has_conv_with_bot` 的参数名**就叫 `p_user_id`、本来就在射程内、被漏掉**；`are_mutual_friends` 参数叫 `a`/`b`，按名字筛没匹配上；`resolve_crew_responsibility_shares` 根本不收 user id，不在那次的思路里。跟 `upsert_self_machine` 同一族病 —— 那次是加固之后新长的没被覆盖，这次是**加固当时就没覆盖全**，共同点都是靠人记得、没有机器兜底。
+- **修的代价（已核实，都很低）**: `resolve_crew_responsibility_shares` 三个调用方全是库内 definer 函数（以 postgres 身份嵌套执行）、无 RLS 策略引用、无 app 代码引用 → 单行 REVOKE 即可，不动函数体。`are_mutual_friends` 两个真实调用方都已保证第一个参数是调用者自己 → 加一条 `auth.uid() is null or a = auth.uid() or b = auth.uid()` 不打断任何调用。`is_bot_invitee` 唯一调用方（RLS `bots_visible_read`）传的第二个参数就是 `auth.uid()` → 绑定对它是 no-op。`user_has_conv_with_bot` **零调用方**（RLS / 库内函数 / app 代码三处都查过）= 死代码，最干净的处置是直接 revoke 或 drop。
+- **状态**: **未处置，只登记**。本次任务边界是「只加检查，不推任何 REVOKE」，REVOKE 与否等人类拍板。四条已登记进 `docs/definer-execute-allowlist.json` 的黄色区，**每条理由第一句都写着「REAL FINDING, not cleared」**，闸门每次跑都会把它们打印出来，**2026-09-21 过期后会重新变成拦截**。登记 ≠ 判定为安全。
+- **未核实**: 4 条都**没有实际发一次 RPC 去验证**（要拿真实账号 JWT + 目标 uuid 构造请求）。证据是「函数定义全文 + 授权位 + 调用方全量检索 + 两条独立方法交叉一致」，但「实际打一发看到返回值」这一步没做 —— 要坐实到那一步，缺的就是这一步。
+
+### 🟡 旧 Supabase 项目 `sslzhblojwkxfdyisity` 只暂停、没删除 — 恢复即回到 2026-05 审计里的洞
+- **发现**: 2026-08-20 · 核实旧安全审计的 session 查出，本 session 如实登记（**只登记，未处置**）
+- **位置**: Supabase 组织下的项目 `sslzhblojwkxfdyisity`，状态 `INACTIVE`（已暂停）
+- **问题**: 暂停 ≠ 删除。数据还在、一键可恢复，恢复出来就是 2026-05 那份审计里「anon 能调计费函数」的那个状态。当前项目已迁到 `zafhoiwwpanpuashtnxy`（EU），旧项目没有任何在用途径。
+- **影响**: 暂停期间不对外服务，所以不是正在流血的口子；但它是一个「随时可以被恢复成已知有洞的生产库」的存量资产，且账号一旦被接管就是现成的历史数据出口。
+- **建议**: 跟人类确认不需要取历史数据后**删掉项目**（不是删审计文档）。删项目属于不可逆动作，必须人类拍板。
+- **状态**: 待办 —— 等人类确认历史数据不再需要。本 session 按边界未做任何处置。
+
+### 🟡 `bun audit` 回归到 48 条（1 critical / 18 high）— 闸门三个月没跑，上游出了新公告
+- **发现**: 2026-08-20 · 核实旧安全审计的 session 查出，本 session 如实登记（**只登记，未升级依赖**）
+- **位置**: 全仓依赖树；其中 `apps/admin` 的 react-router DoS 值得单独排期
+- **问题**: 不是之前的修复被回滚，是**三个月没跑这道闸门**、期间上游陆续出了新公告累积成 48 条。依赖公告本来就是公开信息，不影响开源与否的判断。
+- **影响**: 数量本身说明的是流程缺口（没有定期跑），比任何单条公告更值得处理。
+- **建议**: ① 把 `bun audit` 接进 `.github/workflows/security-gates.yml`，配一份带理由和过期日的 allowlist（可直接照 `docs/definer-execute-allowlist.json` 的形状）；② react-router 那条单独排期升级。**别顺手升依赖** —— 那是独立的一摊活，会把当前任务滚大。
+- **状态**: 待办 —— 只登记，未动。
+### 🔴 预设会话有一半根本播不出来 —— 模板引用的 bot slug 在 seeds 和线上都不存在
+- **发现**: 2026-08-22 · Todo #7「预设消息时间改 1970-01-02 12:34」（为了给迁移取证，第一次在本地把整本账本重放了一遍）
+- **事实（本地实测，不是推断）**: `supabase db reset` 起一个干净库 → 建一个用户跑 `bootstrap_user_id`，只长出 **3 条**预设会话（lorem / sit / amet），预设群 **0 条消息**。原因：`supabase/seeds/01_preset_bots.sql` 播的 6 个 bot 是 `amet / consectetur / eiusmod / lorem / sit / tempor`，而 `preset_conversation_templates.bot_slug` 引用的是 `lorem / ipsum / sit / amet / dolor / adipiscing` —— **ipsum / dolor / adipiscing 三个 slug 根本不存在**，`_resolve_preset_bot_for_user` 返回 null，对应会话和群消息被静默跳过（`continue`，不报错）。
+- **线上同样如此（2026-08-22 只读核实，不是推断）**: 线上 `bots where creator_id is null` 就是 seeds 那 6 个（`amet / consectetur / eiusmod / lorem / sit / tempor`）；纪元窗口内的消息只落在 lorem / sit / amet 三个基准上，预设群 0 条消息，5 个用户共 20 条预设会话 = 每人 3 条单聊 + 1 个空群。**所以这不是「本地和线上不一致」，是线上本身就缺一半** —— 我一开始按 brief 假设线上是全的，实测推翻了。
+- **和已登记条目的关系**: 上面「系统级 model slug 全是硬编码常量」那条的影响行里已经点到「`preset_conversation_templates`〔ipsum 悬空〕+ `preset_group_templates`〔dolor/adipiscing 悬空〕」—— 同一个根。这里补的是**它的后果被实测坐实了**：账本 + seeds 复现不出线上的预设体验，一半的 onboarding 内容在干净库上是空的。
+- **影响**: ① **真实用户的 onboarding 少了一半内容** —— 「公有私有机器人」「Grok - 群」「Gemini 打电话」三条预设会话和那个预设群，线上注册的人一条都没收到；② 悬空引用是静默跳过、不是报错，所以没人被告知缺东西；③ 任何「在干净库上验证预设相关改动」的取证也会跟着漏（本次是手工补了这三个 bot 才验全的）。
+- **建议**: 让 seeds 和模板表同源——要么把 ipsum/dolor/adipiscing 补进 `01_preset_bots.sql`（连同线上那份 model_id/visibility），要么把 bot 名单也做成模板表驱动；另外给 `_resolve_preset_bot_for_user` 的 null 分支加一条 `raise warning`，别再静默跳过。
+- **状态**: 待办 —— 本次只记录不修（超出 Todo #7 的边界）。本地取证时的临时补数据没有进仓库。
+
+### 🟡 修数据的迁移必须带一条「不带前提」的完成断言 —— 否则「做完了」和「全做完了」长得一模一样
+- **发现**: 2026-08-22 · Todo #7（第一版迁移上线后，机长不信结论自己去查，才查出线上是 14/15）
+- **事情经过**: `20260822132304` 把预设消息挪到新基准，写了自检，但自检的口径是**带前提的**——「**没被真人回过话的**预设会话必须全部落在基准分钟里」。这条断言在只挪干净会话的实现下永远为真，所以它对「还有一条没挪」这件事天生是瞎的。本地重放也覆盖了这个场景，还专门断言了「有真实回复的会话原样不动」——**测试忠实地把当时的意图钉住了，问题是那个意图本身不对**。
+- **根因不是漏了一维测试，是判据下沉得不够**: 排除条件挂在「会话」上（会话里有真实回复 → 整条跳过），而要保护的东西其实挂在「消息」上（真实消息不能动）。判据比要保护的对象粗一格，就一定会误伤一批。
+- **规矩（对以后所有修数据的迁移）**:
+  1. 完成断言要写成**不带前提**的全称句：「跑完之后，属于 X 的行里不该再有任何还停在旧形态的」。带前提的断言只能证明「我改的那些改对了」，不能证明「该改的都改了」。
+  2. 报告用**分母**说话：「15 条里 15 条」而不是「已生效」。这次第一版报告的正文写清了 14/15 和为什么，但抬头一句「线上已生效」把分母吞了——转述出去就会变成错的。
+  3. 修法先问一句「我排除的这一类，是不是其实只需要排除它的一部分」。
+- **状态**: ✅ 已落实 —— `20260822141327` 补齐了漏掉的那条，判据下沉到消息级，并带上了无前提断言（负向验证过：留一条旧戳的消息，自检会 raise）。这条留作规矩，不是待办。
+
+## 2026-08-20 macOS 本地出包流水线（开源准备 C）
+
+### 🟡 macOS 的 build 号没有防倒退闸 —— 只靠时钟单调，没有账本可比
+- **发现**: 2026-08-20 · `chore/macos-release-pipeline`
+- **位置**: `scripts/release/build-macos-dmg.sh`（调 `ios-build-number.sh --print-only`）
+- **背景**: iOS 那条有真闸 —— 查 ASC 上已收到的最高 build 号，不严格递增就拒绝发版（`asc_highest_build.py`，拿不到数据也拒绝，fail-closed）。macOS 走 Developer ID 直接分发，**不上 App Store Connect，没有任何账本可比**：ASC 上没有 Mac 包的记录，我们也没有 Sparkle / 自更新通道，眼下没有任何消费方按 `CFBundleVersion` 排先后。
+- **为什么现在不补**: 硬把 iOS 那道闸接过来是**比错了对象**（拿 iOS TestFlight 的最高 build 去卡 Mac 包），而且会把「能不能出 Mac 包」绑死在 ASC 可达上 —— 一道拦不住真事故、却会因为网络问题假报警的闸，比没有更糟。单调性目前由时钟本身保证（build 号 = 纪元日「天.秒」，天生递增，不依赖仓库状态）。
+- **什么时候必须补**: **Mac 端一旦有了更新通道**（Sparkle appcast、或任何按 `CFBundleVersion` 判新旧的东西），必须在 `build-macos-dmg.sh` 里补一道对着那个通道的 fail-closed 闸。PendingCrew 的 `scripts/release/build-macos-update.sh` 里有现成写法：比线上 appcast feed 的最大值，且**拉不到 feed 就拒绝构建**（他们踩过的坑正是 `curl … || true` 让「网络失败」和「首发」共用一条放行路径，闸静默失效）。
+- **残余风险**: 系统时钟被往回调、或有人手工传过一个未来的 build 号。两种都会让新包的号不大于旧包，而现在没有东西会拦。发生概率低，后果也仅限于「哪天接上更新通道后，那一版推不出去」。
+- **状态**: 待办（触发条件明确：接更新通道的那一刻）。
+
+### 🟢 Developer ID 描述文件是手工在 Apple 后台维护的，能力变更不会自动跟上
+- **发现**: 2026-08-20 · 同上
+- **位置**: Apple 后台的 `PendingBotDistribute`（`MAC_APP_DIRECT`）；消费方 `scripts/release/asc-macos-profile.py`
+- **问题**: Mac 发布身份不能走 Xcode 自动签名 —— 自动签名要的是「云端托管发布证书」，本机这个账号申请它会被 Apple 挡回来（403 `You haven't been given access to cloud-managed distribution certificates.`）。所以描述文件是手工建的，而**手工建的文件不会随 App ID 上的能力变更自动重生**：2026-08-20 就撞上了，App ID 上 Sign in with Apple 开着，描述文件是早先生成的、没带上，Mac 端登录会因此签不出来。
+- **为什么是 🟢 不是 🟡**: 已经有断言兜住了。`build-macos-dmg.sh` 第 0.5 道在 archive **之前**比对「描述文件授权的键 ⊇ 源 entitlements 声明的键」，缺了就当场停并打印去哪个页面点什么；同时每次构建都从 Apple 重拉描述文件（本机那份只当缓存），所以后台改好之后不会出现「后台已改、构建还在用旧的」的错位。过期也在同一处检查。
+- **状态**: 已被断言覆盖，不另行处理。真嫌烦的话正解是拿到云端托管发布证书的权限、切回自动签名。
+
+### 🟢 断言报「描述文件缺某个键」时，必须自己证明读的不是过期副本
+- **发现**: 2026-08-20 · 同上（机长指出：这个结论跟人类说的对不上，要能区分「文件真缺」和「我读的是缓存」）
+- **位置**: `scripts/release/build-macos-dmg.sh` 第 0.5 道断言
+- **问题**: 描述文件有两个来源 —— Apple 后台那条记录，和本机 `~/Library/…/Provisioning Profiles/` 里的副本。断言只说「缺 X」的话，读者没法判断是哪一种，而两种的修法完全不同（重新生成 vs 重新下载）。这类含糊会让人跑去 portal 反复确认一个本来就勾着的开关。
+- **修法（已落地）**: ① 脚本每次构建都从 Apple 重新下载，本机那份只当缓存（本来就是这样，现在在报错里说出来）；② 报错里打出描述文件**自己记的 `CreationDate` 和 UUID** —— 这两个不变就等于「后台那条记录从来没被重新生成过」，是区分两种情况的硬凭据；③ 明写「能力在 App ID 上勾着还不够」这条反直觉的事实：描述文件是生成那一刻的快照，之后加的能力不会自动补进已有文件，所以「后台看着是勾的」和「文件里没有」可以同时为真。
+- **一般化的教训**: 任何「我读到的东西不对」类断言，都该在报错里带上**它读的是哪一份、那一份是什么时候的**。否则断言只完成了一半 —— 它说了「不对」，没说「按哪份判的」。
+- **状态**: ✅ 已修。
+
+### 🔴 已发布的 Mac 版「用 Apple 登录」实际失效 —— 授权被签名步骤静默剥掉
+- **发现**: 2026-08-21 · `chore/macos-release-pipeline`（做发版脚本时顺手查了本机装着的那份）
+- **位置**: `/Applications/PendingBot.app`（2026-08-07 构建，Developer ID 签名 + 已公证，`0.1.0 (3426)`）；根因在 Apple 后台的描述文件 `PendingBotDistribute`（`MAC_APP_DIRECT`，生成于 2026-08-07 06:57:19）
+- **事实**（都是直接读产物读出来的，不是推断）:
+  - 装着那份的签名 entitlements 是：`com.apple.application-identifier` / `com.apple.developer.aps-environment` / `com.apple.developer.associated-domains` / `com.apple.developer.team-identifier` / `keychain-access-groups`。**没有 `com.apple.developer.applesignin`。**
+  - 它嵌的 `embedded.provisionprofile` 就是 `PendingBotDistribute`，那张文件里也没有这个键。
+  - 源 entitlements 里**有**这个键；Mac 登录页上**有**「Apple」按钮（`Sources/Mac/MacWelcomeView.swift`，Apple / Google / 邮箱三条路）。
+  - 同一份源码用**开发**身份签出来的产物**有**这个键（开发描述文件 `Mac Team Provisioning Profile`，生成于 2026-05-28，授权了它）。所以能力在 App ID 上早就开着，问题只在发布那条路径。
+- **为什么两周没人发现**: Xcode 在这条路径上会把描述文件没授权的键**静默剥掉** —— 签名有效、公证通过、Gatekeeper 放行、app 正常启动，**全链路零报错**。只有真去点那个按钮才会发现。作者平时用 Google / 邮箱登录，或本来就登着没退过。
+- **同一族病**: 跟 `aps-environment` 被吞（见本轮上面那条「Mac 端单独一份 entitlements」）是同一个机制的两次发作 —— **「源里声明了、产物里没有、没有任何一处会响」**。这也正是发版脚本第 ⑤ 道断言（源 entitlements 逐项正面比对）和第 0.5 道前置断言（描述文件授权的键 ⊇ 源声明的键）存在的全部理由：它们拦的不是假想风险，就是这条。
+- **根因已定（2026-08-21 当天证实，两路证据）**:
+  - **实测**: 作者在 portal 上重新生成了一张 `PendingBotDistribute`（新 UUID `e55ffe55-…`，CreationDate `2026-08-21 04:12:39`）。**新文件里仍然没有 `com.apple.developer.applesignin`。** 所以不是「文件太旧」。
+  - **官方**: Apple DTS 在 <https://developer.apple.com/forums/thread/129263> 明确答复「Sign in with Apple 这项能力不支持 Developer ID …要用它必须走 App Store」；有人提 bug 后 Apple 回的是「**此行为符合预期**，Sign in with Apple 不可用于 Developer ID 签名的 app」。该帖里 Apple 工程师举的证据与我们这儿完全一致：开发描述文件里有、Developer ID 的没有。
+  - **结论**: **只要 Mac 版走 Developer ID 直接分发，就带不了「用 Apple 登录」。这是 Apple 的规则，不是我们配置错了。**
+- **为什么作者一直觉得「之前都正常用」**: 他日常跑的是 Xcode 的**开发**构建，走 2026-05-28 那张开发描述文件，**带着**这项授权。同一份源码、两条分发路径，一条有一条没有 —— 两个说法都为真，不矛盾。（App ID 页面上 SIWA 勾着也是真的：那一栏列的是「App ID 开了什么」，不是「这张描述文件里嵌了什么」；旁边的 In-App Purchase 同样在页面上、不在文件里。）
+- **✅ 已处理（2026-08-21，上级拍板走「保持 .dmg」）**: Mac 登录页的 Apple 入口**在拿不到这项授权的包里不显示**，同时把该键从 `apps/pendingbot/Resources/PendingBot-macOS.entitlements` 移除。两处都留了成段的原因注释，不是 TODO。
+  - **不是 `#if os(macOS)` 编译掉，代码原样留着**：真正的分界线不是「macOS」，是「Developer ID 这条分发路径」—— 同一个 macOS 走 App Store 就有。判定在 `Sources/Mac/MacWelcomeView.swift` 的 `appleSignInAvailable`：读嵌进包里的描述文件、看这个包**实际拿到**了什么授权（与 `Networking/PushService.swift` 读 `aps-environment` 那段同源）。于是开发构建照常有按钮、我们自己发的 .dmg 里没有。
+  - **判不出来时默认不显示**（fail-closed）：显示一个点了没反应的按钮，比少一个按钮糟得多 —— 这正是 2026-08-07 那版的状态。
+  - **两处必须一起改**：只删授权 → 死按钮留在界面上；只藏按钮 → `exportArchive` 仍会失败。
+  - iOS 一行没动（`Networking/AppleSignIn.swift` 跨平台，`PendingBot.entitlements` 照常声明）。
+- **🔁 什么时候翻回来（触发条件写死，别当 bug 再查一遍）**: **改走 TestFlight / Mac App Store 分发的那一刻。** 那条路的描述文件带这项授权，`appleSignInAvailable` 会自动判成 true、按钮自己回来，只需把该键加回 `PendingBot-macOS.entitlements`。除此之外没有别的触发条件 —— **在 Developer ID 这条路上它永远拿不到，不要再去 portal 上点 Generate 试**（2026-08-21 已经试过一次，新文件里照样没有）。
+- **走 TestFlight 的代价（当时一并查过，留个底）**: Mac 的 TestFlight 走 App Store 那条线，**要求 App Sandbox**（`com.apple.security.app-sandbox`，没有会在上传校验时被拒）。我们现在是非沙盒的 Developer ID 形态，切过去要付：沙盒相关 entitlement（网络客户端等）、本地数据落到容器路径（本地库是**缓存**、服务端才是真相源，所以是缓存重建不是数据丢失）、与 PendingCrew 共用的钥匙串组 `M42BKJN82S.*` 在「沙盒 MAS app ↔ 非沙盒 Developer ID app」之间还能不能互通（**未核实**）、Mac 的分发证书与 `MAC_APP_STORE` 描述文件（本账号目前只有 DEVELOPMENT + DEVELOPER_ID_APPLICATION 两张证书，ASC 上也**还没有 macOS 平台的 app 记录**，只有 IOS）、以及每个新版本的首个构建要过一次 Beta App Review。
+- **顺带的对外风险（已随上面的处理消解）**: 开源 README 若放带 Apple 按钮的 Mac 登录页截图，而下载 `.dmg` 的人点它没反应，就等于 README 上写了一句外部人做不到的事。**藏掉按钮之后 `login.png` 必须重截**，否则图和产物对不上。
+- **一处没有实测证据、明说**: 没有真去点那个按钮观察它怎么失败（弹框 / 报错 / 静默无反应）。要点它得先退出登录，而登录态那条钥匙串记录（`supabase.gotrue.swift`）与 PendingCrew 同属家族共用组，为一次观察去动它不划算。定性依据是 Apple 的官方答复 + 我们自己重新生成的文件，**运行时的具体表现仍属未知**。
+- **状态**: ✅ 已处理（隐藏入口 + 移除授权，2026-08-21）。**债本身没有消失** —— Mac 版在当前分发形态下就是少一条登录路，只是不再有假按钮。翻回来的触发条件见上。

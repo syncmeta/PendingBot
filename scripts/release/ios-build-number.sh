@@ -66,6 +66,20 @@
 #   scripts/release/ios-build-number.sh              # 只打印，不改文件
 #   scripts/release/ios-build-number.sh --apply      # 顺便写进 project.yml + xcodegen
 #   scripts/release/ios-build-number.sh --check      # 只核 project.yml 里现有的值够不够大
+#   scripts/release/ios-build-number.sh --print-only # 只算并打印，跳过 ASC 防倒退闸
+#
+# --print-only 是给 **macOS Developer ID 直发**（scripts/release/build-macos-dmg.sh）
+# 用的，它要的只是「同一套 build 号格式」这一条，不要 ASC 那道闸：
+#   - Mac 包不上 App Store Connect，ASC 上根本没有它的账本，拿 iOS 的最高
+#     build 去比是比错了对象；
+#   - 我们没有 Sparkle / 自更新通道，眼下没有任何消费方按 CFBundleVersion
+#     排先后，闸拦不住任何真实事故；
+#   - 而它会把「能不能出 Mac 包」绑死在 ASC 可达上 —— 一道拦不住真事故、
+#     却会假报警的闸，比没有更糟。
+# 单调性由时钟本身保证（见上面的格式论证），不由这道闸保证。
+# **哪天 Mac 端真有了更新通道，必须在 build-macos-dmg.sh 里补一道对着那个
+# 通道的 fail-closed 闸**（PendingCrew 就是这么做的：比线上 appcast feed 的
+# 最大值，且拉不到 feed 就拒绝构建）。已记进 docs/tech-debt.md。
 #
 # --check 是给「archive 之前」用的断言：写进 project.yml 的 build 号是**一次性
 # 快照**，谁绕过 --apply 直接 archive，号就不动（PendingCrew 机长 4-1 指出 ——
@@ -81,10 +95,12 @@ guard="$repo_root/scripts/release/asc_highest_build.py"
 
 apply=0
 check=0
+print_only=0
 for arg in "$@"; do
   case "$arg" in
     --apply) apply=1 ;;
     --check) check=1 ;;
+    --print-only) print_only=1 ;;
     -h|--help)
       # 打印文件头整段注释（到第一行非注释为止），别写死行号 —— 写死过就会漂。
       awk 'NR>1 && !/^#/ { exit } NR>1 { sub(/^# ?/, ""); print }' "${BASH_SOURCE[0]}"
@@ -129,6 +145,14 @@ fi
 
 # --- 2. 防倒退闸：跟 ASC 上已有的最高 build 号比 ----------------------------
 # 取不到就停，不放行。ASC 瞬时故障由 asc_highest_build.py 内部有限重试兜。
+if [ "$print_only" = "1" ]; then
+  [ "$apply" = "0" ] && [ "$check" = "0" ] \
+    || { echo "--print-only 不能和 --apply / --check 一起用" >&2; exit 2; }
+  echo "$candidate"
+  echo "build $candidate = $now_human（--print-only：跳过 ASC 闸，理由见文件头）" >&2
+  exit 0
+fi
+
 highest="$(/usr/bin/python3 "$guard")"
 
 if ! /usr/bin/python3 "$guard" --greater "$candidate" "$highest"; then
