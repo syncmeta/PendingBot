@@ -343,6 +343,14 @@ struct WelcomeView: View {
 
     /// Google sign-in button. Same internal pill layout as `appleButton`,
     /// so the logos sit at matching X positions.
+    ///
+    /// The pill stays the app's frosted-glass capsule. Google's branding
+    /// guidelines only clear the full-colour G to sit on one of their three
+    /// published fills, so this is a knowing deviation the author chose in
+    /// favour of visual consistency with the rest of the login screen —
+    /// logged in `docs/tech-debt.md`. The G artwork itself is Google's own
+    /// full-colour asset with a transparent background, and the label takes
+    /// their prescribed ink (`Theme.Palette.googleInk`).
     private var googleButton: some View {
         Button { Task { await vm.beginGoogle() } } label: {
             brandPillContent(
