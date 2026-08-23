@@ -185,12 +185,11 @@ struct MacWelcomeView: View {
                 // 扫码胶囊固定 56(只放一个 qrcode 图标),Google 吃掉剩余宽(≈124,
                 // 比之前略窄)。三者总宽 = 下方邮箱行宽,所以输入框天然与这排对齐。
                 HStack(spacing: 10) {
-                    // Apple 这颗在「直接分发」的包里不出现 —— 见
-                    // `appleSignInAvailable` 的说明。Google 会自动吃掉腾出来的宽度。
-                    if Self.appleSignInAvailable {
-                        appleButton
-                            .frame(width: 110)
-                    }
+                    // Apple 这颗现在两端分发形态都出现:拿得到原生授权就走原生,
+                    // 拿不到(我们自己发的 .dmg)就走网页 OAuth —— 见
+                    // `appleSignInAvailable` 的说明与 `appleButton` 的动作分支。
+                    appleButton
+                        .frame(width: 110)
                     googleButton
                     qrLoginButton
                         .frame(width: 56)
@@ -453,8 +452,26 @@ struct MacWelcomeView: View {
         return entitlements["com.apple.developer.applesignin"] != nil
     }()
 
+    /// 点下去走哪条路,按**这个包实际拿到的授权**分:
+    ///   - 授权在(开发构建 / 将来的 Mac App Store)→ 原生 `ASAuthorizationController`,
+    ///     体验更好(系统面板,不开浏览器)。
+    ///   - 授权不在(我们自己发的 Developer ID `.dmg`)→ 网页 OAuth。它不依赖那项
+    ///     授权,正是为这条分发路径写的。
+    ///
+    /// 两条路最终都落到同一个 Supabase 用户 —— 前提是 Apple 后台的 Services ID
+    /// `com.pendingname.pendingbot.web` 正确分组在 `com.pendingname.pendingbot`
+    /// 之下。这一条已由作者配好、机长隔着网线核过 client_id 与 Return URL,但
+    /// **「是不是同一行 auth.users」必须靠真登录一次才能坐实**(研究文档第 5 节)。
     private var appleButton: some View {
-        Button { Task { await vm.beginApple() } } label: {
+        Button {
+            Task {
+                if Self.appleSignInAvailable {
+                    await vm.beginApple()
+                } else {
+                    await vm.beginAppleWeb()
+                }
+            }
+        } label: {
             brandPillContent(logo: appleLogoImage, text: "Apple", textColor: Theme.Palette.onApplePill)
                 .frame(maxWidth: .infinity)
                 .frame(height: 48)
