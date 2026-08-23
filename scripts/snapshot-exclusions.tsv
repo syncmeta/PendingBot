@@ -1,0 +1,102 @@
+# What may and may not appear in the public snapshot.
+#
+# ONE rule now: an allow list, over the whole tree. Nothing ships unless it is
+# registered here.
+#
+# This used to be two rules — docs/** was an allow list, everything else a
+# block list — and the header said at length that the asymmetry was
+# deliberate. It was, for the repo that existed then: a full mirror of the
+# private monorepo, where "ship the code" really was the right default and the
+# exceptions were few and named.
+#
+# 那个前提没了。The public repo is now the client only. Of ~800 files in the
+# private tree, ~230 go out. **默认值反过来了** —— 绝大部分内容不该出去，所以
+# 默认必须是「不发」。A block list on top of that default would be a list of
+# 570 rows that has to stay complete forever, and the day someone adds a new
+# backend directory it is silently incomplete.
+#
+# 三条理由，第三条自己就够：
+#
+# 1. 它编码的是已经做过的决定。「公开仓只放客户端」是一句关于**留什么**的话，
+#    不是一句关于**去掉什么**的话。allow list 就是那句话的原样；block list 是
+#    它的补集，每加一条就离原话远一点。
+#
+# 2. 登记成本落在少的那一边。客户端子树一行就登记完了；后端、数据库、运营
+#    看板、内部账本是持续产出的，而且以后只会更多。让少的那件事花一行，多的
+#    那件事默认安全。
+#
+# 3. 两种失败方式不对称（这条是从上一版原样留下来的，因为它没变）：
+#      block list 漏一条 → 内部东西被公开。不可逆。
+#      allow list 漏一条 → 该公开的没公开。下次补上，只是丢人。
+#    在不可逆和丢人之间，永远选丢人。
+#
+# 翻过来之后，「以后新加一个后端目录、没人记得往清单里加」这个失败模式直接
+# 消失了 —— 新目录默认就在外面。
+#
+# ── BLOCK 还留着，但它不再是防线 ────────────────────────────────────────────
+#
+# 在 allow list 底下，一条 BLOCK 行对**安全**已经不承重了：没登记的东西本来
+# 就出不去。留着它有两个用处，都不是防线：
+#
+#   * **在一片 ALLOW 里挖洞。** BLOCK 优先于 ALLOW，这是它唯一的机械作用。
+#     `ALLOW apps/pendingbot/**` 底下要排掉某个文件，只能靠 BLOCK。
+#   * **记住「已经想过了，答案是不」。** 有些东西看着完全可以公开，会有人
+#     隔几个月又提一次。判词写在这儿，省掉那一轮。
+#
+# 正因为 BLOCK 优先，**别写一条会盖住某个 ALLOW 行的 BLOCK** —— 那等于把那行
+# ALLOW 写了个寂寞。check-snapshot-exclusions.sh 会检出这种自相矛盾并直接报错，
+# 不会让它悄悄生效。
+#
+# Format (tab-separated):
+#   ALLOW|BLOCK <TAB> path or glob <TAB> 判词 —— why, in one or two sentences
+#
+# `**` 结尾表示「以及底下的一切」。
+#
+# 一条 ALLOW 行不是「这个没问题」，是「外部读者拿它有用，而且我们确认过它可以
+# 公开」。两句都要成立才写。
+
+
+# ── 客户端本体 ─────────────────────────────────────────────────────────────
+ALLOW	apps/pendingbot/**	公开仓的全部理由就是这个子树：SwiftUI 三端客户端。纯 Swift，SPM 依赖全是远程 GitHub URL，不依赖 packages/identity（那是给 Worker 的 TypeScript）也不依赖根 package.json —— 删掉后端不影响它编译，实测过
+ALLOW	scripts/release/stamp-build-info.sh	**这个是客户端构建的一部分，不是发版脚本**。project.yml 的 postBuildScripts 和 pbxproj 里各有一处调它（$SRCROOT/../../scripts/release/stamp-build-info.sh），少了它 Xcode 那道 phase 直接失败。脚本自己也写着「外部人从 tarball 编 → unknown，照常编得过，这条路径就是给开源用户的」
+
+# ── 读者面向的文档 ─────────────────────────────────────────────────────────
+ALLOW	README.md	首页
+ALLOW	README_EN.md	英文首页
+ALLOW	CONTRIBUTING.md	参与方式。先摆平期望，省掉一堆来回
+ALLOW	SECURITY.md	私下报告漏洞的通道。不给这个，报告就会变成公开 issue
+ALLOW	SNAPSHOT-PROVENANCE.md	写给下一个重新生成这份快照的人。它放在公开仓里，因为那个人手上一定有公开仓，不一定有别的东西
+ALLOW	LICENSE	MIT。没有它，"开源"这两个字不成立
+ALLOW	docs/building.md	怎么从源码编出这个 app。公开仓里唯一一份真正要人读的操作文档
+ALLOW	docs/app-icon.png	README 首屏的 app 图标
+ALLOW	docs/screenshots/main.png	README 首屏截图，真运行产物
+ALLOW	docs/screenshots/contacts.png	README 截图，真运行产物
+ALLOW	docs/screenshots/letter.png	README 截图，真运行产物
+ALLOW	icon.svg	仓库图标源文件
+ALLOW	docs/snapshot-drops/**	每次快照口径变化时删掉了哪些已发布文件，一次一份、逐条精确路径。放在公开仓里是因为将来问「当初到底删了哪些」的人手上一定有公开仓；超集闸门也用 --allow-drop-file 直接读它
+
+# ── 仓库自身的配置与协作模板 ───────────────────────────────────────────────
+ALLOW	.gitignore	不带它，任何人 clone 下来第一次构建就是一屏未跟踪文件
+ALLOW	.gitleaks.toml	凭据扫描的配置。公开出去反而是好事：它说明我们在扫，也说明哪些占位值是故意的
+ALLOW	.github/ISSUE_TEMPLATE/bug.yml	bug 模板
+ALLOW	.github/ISSUE_TEMPLATE/idea.yml	想法模板
+ALLOW	.github/ISSUE_TEMPLATE/config.yml	issue 入口的分流链接（安全走 advisory、自建先看文档）
+ALLOW	.github/pull_request_template.md	PR 模板
+ALLOW	.github/workflows/client-build.yml	公开仓唯一一道 CI：macOS runner 上编一遍 iOS Simulator。CONTRIBUTING 里写着"CI 会跑这些"，不给一道真的 CI，那句话就是假的
+
+# ── BLOCK —— 已经想过了，答案是不 ──────────────────────────────────────────
+# 下面这些在 allow list 底下本来就出不去。写在这里是为了留住判词，省掉「这个
+# 看着可以公开吧」的重复讨论。
+BLOCK	docs/retrospective.md	§「危险区」整节是全仓信息密度最高的一页攻击清单，一屏看完 9 条；另有用户规模与营收规模的完整披露。这不是「回顾读起来尴尬」，是把「我们哪里是漏的」按条列好了
+BLOCK	docs/deploy.md	部署 runbook，含 ASC 凭据的存放路径。路径本身不是凭据，但它把「去哪儿找」这一步免费送出去了；而且对外部读者零价值 —— 瘦身之后连"自建"这条路都没了，更没人要读我们怎么发版
+BLOCK	docs/handbook/**	注意：这一份审计时的结论是「大部分可原样公开」—— 讲的是产品逻辑与设计取舍，data-visibility-rls.md 甚至是正面文档。只有两处真敏感：shared/concepts/wallet-pnc.md:13（未发布的换算率 +「降低消费痛感」的设计动机原文），以及两份 vision.md 里「PendingBot 不开源」的定性 —— 那条现在已经和事实相反。但它 BLOCK 的真正理由是：人类已经决定文档换成他自己那份 vault。这里写「不进」是执行他的决定，不是我们判整本 handbook 有问题
+BLOCK	CLAUDE.md	仓库内部协作约定（分支模型、worktree、合并、账本纪律）。对外部读者是噪音，对我们是内部流程
+BLOCK	AGENTS.md	同上，编码 agent 的本地约定
+BLOCK	.claude/decision-mining/**	230 条原始决策底表。现在靠 gitignore 挡着，但快照是「拷贝」不是「clone」，gitignore 在那一步不一定生效，而且 gitignore 本身是可以被改的。别把防线建在另一条防线上
+BLOCK	infra/grafana/**	变现漏斗的定义、成本归因维度、三条运营告警阈值。纯商业口径，跟别人能不能编出这个 app 无关
+BLOCK	apps/ios/**	旧工程残留，含历史 TestFlight 归档
+BLOCK	docs/tech-debt.md	结构风险登记册。按设计它就是一份「这个项目哪里弱、在哪个文件哪一行」的清单，含尚未关闭的条目。内部有多有用，公开就有多危险 —— 同一个理由
+BLOCK	docs/decision-log.md	决策底账：每个撞上的问题、试过什么、定了什么、为什么，外加逐条复核它还成不成立。它逐字引用过尚未修复的发现（含未鉴权写入那个洞和它的根因），并重建了从来不打算外发的内部推理；还有一层是它记着哪些决定被推翻过
+BLOCK	docs/progress.md	实时状态流水：什么坏了、什么部署了、试过什么
+BLOCK	docs/handwrite/**	作者本人口吻写的组织哲学。按商业机密处理，不是文档
+BLOCK	.claude/audit/**	原始审计产物：暴露面清单、密钥扫描结果、对旧安全审计的复核。跟 tech-debt.md 一个反对理由，而且更未经过滤

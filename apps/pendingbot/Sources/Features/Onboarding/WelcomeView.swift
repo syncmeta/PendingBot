@@ -42,6 +42,10 @@ struct WelcomeView: View {
                         .transition(.opacity)
                 }
 
+                if let noticeText = vm.noticeText {
+                    noticeBlock(text: noticeText)
+                        .padding(.top, 12)
+                }
                 if let errorText = vm.errorText {
                     errorBlock(text: errorText)
                         .padding(.top, 12)
@@ -481,6 +485,16 @@ struct WelcomeView: View {
         Text(text)
             .font(Theme.Fonts.caption)
             .foregroundStyle(.red)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Neutral-ink counterpart to `errorBlock` — used when a sign-in method
+    /// simply has no coordinate in this build. Deliberately not red: this
+    /// isn't a failure, it's what a public clone ships.
+    private func noticeBlock(text: String) -> some View {
+        Text(text)
+            .font(Theme.Fonts.caption)
+            .foregroundStyle(Theme.Palette.inkMuted)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 

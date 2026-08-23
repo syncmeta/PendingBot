@@ -1,0 +1,65 @@
+name: Bug
+description: 有个东西的行为跟它应该有的行为不一样
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **这个仓库只有 Swift 客户端**，后端不开源、也不在这里。你 clone 下来编出的 app
+        没有可连的后端 —— 点登录会明确告诉你没配坐标，那是**预期行为，不是 bug**。
+
+        另外请先看一眼 README 的「状态」一节。里面列了一批**代码在但从未接通**的功能
+        （群聊 bot 回复、语音、附件、主动复盘、邀请、加好友……）。
+        那些不算 bug，是已知的半成品，报了也只会得到「是的，知道」。
+
+        安全问题请不要用这个模板，走 [SECURITY.md](https://github.com/syncmeta/PendingBot/blob/main/SECURITY.md)。
+  - type: dropdown
+    id: component
+    attributes:
+      label: 哪个部分
+      options:
+        - 客户端 —— iPhone / iPad (apps/pendingbot)
+        - 客户端 —— macOS (apps/pendingbot)
+        - 构建 / Xcode 工程 (project.yml, scripts/release/stamp-build-info.sh)
+        - 文档
+        - 从外部观察到的后端行为（后端不在这个仓库，但照样可以报）
+        - 说不好
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么
+      description: 你做了什么、期望看到什么、实际看到什么。有报错原文就贴原文。
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: 怎么复现
+      placeholder: |
+        1. …
+        2. …
+        3. 看到 …
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: 你测的是哪个 commit
+      placeholder: git rev-parse --short HEAD
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: 环境
+      description: 相关的才填 —— macOS / iOS 版本、设备型号、Xcode 版本、是模拟器还是真机。
+  - type: checkboxes
+    id: config
+    attributes:
+      label: 你跑的是哪个包
+      options:
+        - label: 我用的是 Releases / TestFlight 的官方包（连作者的后端）
+        - label: 我是自己从源码编的，并且已经把后端坐标换成了我自己的（不是占位值）
+        - label: 我是自己从源码编的，坐标还是仓库里的占位值

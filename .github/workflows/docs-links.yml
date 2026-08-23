@@ -36,4 +36,6 @@ jobs:
       # No bun/node needed — the checker is bash + python3 + curl, all of
       # which ubuntu-latest already has.
       - name: Check links
+        # No flags on purpose: which repo this README is read on is baked
+        # into the script, not something each caller has to remember.
         run: bash scripts/check-readme-links.sh

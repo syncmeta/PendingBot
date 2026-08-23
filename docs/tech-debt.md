@@ -1583,6 +1583,135 @@
 - **一处没有实测证据、明说**: 没有真去点那个按钮观察它怎么失败（弹框 / 报错 / 静默无反应）。要点它得先退出登录，而登录态那条钥匙串记录（`supabase.gotrue.swift`）与 PendingCrew 同属家族共用组，为一次观察去动它不划算。定性依据是 Apple 的官方答复 + 我们自己重新生成的文件，**运行时的具体表现仍属未知**。
 - **状态**: ✅ 已处理（隐藏入口 + 移除授权，2026-08-21）。**债本身没有消失** —— Mac 版在当前分发形态下就是少一条登录路，只是不再有假按钮。翻回来的触发条件见上。
 
+## 2026-08-20 fail-loud 配置盘点（开源准备，`chore/fail-loud-config`）
+
+本次只动了三处：`HostedConfig.isConfigured` 判定、登录入口按下时的说明、
+supabase-swift 匿名写的硬失败闸。下面是**看到但按边界不动**的，逐条登记。
+配套的完整分档清单在 `.claude/audit/silent-failure-inventory.md`（gitignored）。
+
+### 🟡 匿名写闸把 `/rest/v1/rpc/` 留在判据之外 —— 写语义 RPC 仍只有调用点约定护着
+- **发现**: 2026-08-20 · 做 `SupabaseAnonWriteGuard` 时自己划的边界（本条是"自己挖的洞自己登记"）
+- **位置**: `apps/pendingbot/Sources/Networking/SupabaseAnonWriteGuard.swift` 的 `isAnonWrite(_:)`
+- **是什么**: 那道闸拦 `POST/PATCH/PUT/DELETE` → `/rest/v1/<table>` 且 `Authorization` 仍是 publishable key 的请求，在发出前失败。但 `/rest/v1/rpc/…` 被显式排除。
+- **为什么排除**: PostgREST 的 RPC 一律走 POST，**HTTP 这一层分不出只读 rpc 和写 rpc**。`BotManagement.swift:1102` 的 `list_bot_invitees` 今天就是只读的，一并拦掉会误伤登出态下本来能走的读 —— 误判和漏判一样坏。
+- **影响**: `ConversationView.swift:1525/1575`（`open_user_bot_conv` / `open_self_conv`）、`BotManagement.swift:1123`（`bot_invites_add`）这几个**写语义 RPC**现在走的是 `authedClient()`，正确；但如果哪天有人换成 `shared.rpc(...)`，闸不会响，退回 A1 那个"误诊两次"的形状。
+- **怎么修（要修的话）**: 给 RPC 分类 —— 要么在客户端维护一份写语义 RPC 名单喂给闸，要么服务端给写 RPC 换一条带前缀的路径（`/rpc/w_*`）。两条都不是顺手能做的，属于独立一摊。
+- **状态**: 知情的选择，不是疏漏。写在这里是为了让下一个人看到闸的边界，别以为它全覆盖。
+
+### 🟡 `HostedConfig.environment` 全仓没有任何赋值点 —— `.dev` 整档实际不可达
+- **发现**: 2026-08-20 · 同上
+- **位置**: `apps/pendingbot/Sources/Networking/HostedConfig.swift:` `static var environment: Environment = .remote`
+- **实证**: `grep -rn "environment = " Sources --include='*.swift'` 只命中文件头注释里那句 `HostedConfig.environment = .dev`。**没有任何代码给它赋过值**，也没有 debug 菜单、启动参数或编译条件。
+- **问题**: 注释写着"iOS Debug build flips `HostedConfig.environment = .dev`"，实际上没有任何东西会 flip 它。整个 `.dev` 分支（localhost worker + localhost supabase + Turnstile 测试 key）是**编译得进去、跑不到的死档**。对自建者的直接后果：clone 下来直接跑就指向现网端点，要跑本地栈**必须改源码**——「自建跑通」那位在指南里已按现状标成手工改动。
+- **为什么不顺手接**: 加运行时开关＝把一条没接通的线接上，越出"开源准备"的边界。这条明确留给以后。
+- **状态**: 待办。
+
+### 🟡 `GIDClientID` 住在 Info.plist，在 `isConfigured` 的视野之外
+- **发现**: 2026-08-20 · 同上
+- **位置**: `apps/pendingbot/Info.plist:38`（反转 client id 作 URL scheme）、`:43`（`GIDClientID`）
+- **问题**: 本次新加的 `HostedConfig.isConfigured` 只看 Swift 常量，看不到 plist。Google 登录的真 client id 因此**不在唯一真值的管辖内**：占位化那天如果只换 Swift 常量，plist 里还是作者的真 id，判据照样说"已配置"。
+- **缓解**: `PendingGoogleSignIn.configureIfNeeded()` 自己已经是档 1 —— 空值 / `YOUR_` 前缀 / 反转形态都抛类型化错误。所以不会静默，只是判据不覆盖。
+- **怎么修**: 要么把 client id 搬进 `HostedConfig`（动构建配置 + URL scheme 仍得留在 plist，只解决一半），要么在占位化时把 plist 一并纳入检查清单。
+- **状态**: 待办，与"公开版换不换占位坐标"那个拍板项绑在一起。
+
+### 🟢 读路径上的 `try?` / `?? ""` 集中登记 —— 判断正确，但登录态整体丢失时表现为"界面到处空"
+- **发现**: 2026-08-20 · 同上
+- **位置**: `Components/ServerImage.swift:51`、`Components/UserAvatar.swift:66`、`Features/Friends/BotManagement.swift:306 / 794`、`Features/Group/GroupWalletView.swift:42`、`Features/Message/SubConversationView.swift:153`
+- **为什么现在是对的**: 这些都是"用户没主动要"的读 —— 一张头像、一个列表兜底。按分档第 3 档，不该为它们弹任何东西，静默是正确行为。
+- **为什么还是登记**: 单看每一处都合理，合起来的失败模式是"登录态没了 → 整个界面到处是空位，但一句话都没有"。真出这种事时，人只能靠 A1 那道闸在写路径上先响。**如果哪天有写请求混进这些 `try?` 里，就直接长成 A1 那个坑**。
+- **状态**: 不修，登记留档。
+
+### 🟢 `Telemetry.swift` 头注释与代码不符 —— 说 RevenueCat key 为空，实际已填
+- **发现**: 2026-08-20 · 同上
+- **位置**: `apps/pendingbot/Sources/Networking/Telemetry.swift` 头注释 "The RevenueCat key is currently empty (account not provisioned)…"；实际 `HostedConfig.Environment.revenueCatKey` 的 `.remote` 分支是 `appl_OHpl…`
+- **状态**: 待办（改注释即可）。
+
+### 🟢 `GroupWalletView.swift:143` 群钱包成员只有 user_id，显示名未接通
+- **发现**: 2026-08-20 · 同上
+- **位置**: `apps/pendingbot/Sources/Features/Group/GroupWalletView.swift:143` 的 `TODO(待定稿)`
+- **是什么**: 接口只返回 `user_id`，界面暂显示"我"/短 id。属于"没接通的线"，按边界不接。
+- **状态**: 待办。
+
+### 🟢 `OPENAI_API_KEY` 未配时的文案把"我方没配"说成"上游挂了"
+- **发现**: 2026-08-20 · 同上（顺手核 edge 侧同类形状时看到）
+- **位置**: `apps/edge/src/routes/realtime.ts:479` —— `jsonError(503, 'upstream_unavailable', t('voice.upstream_failed', locale))`
+- **是什么**: 行为本身是对的（不静默，直接 503）。但对自建者来说，"上游失败"会把他推去查 OpenAI 状态页，而真因是他自己没填 `OPENAI_API_KEY`。同一个坑的小号版本：报错点离病因不远，但**指错了方向**。
+- **怎么修**: 未配置和上游真挂了分成两个 code / 两句文案。
+- **状态**: 待办（edge 侧本次零改动）。
+
+---
+
+## 2026-08-23 公开仓改为「仅客户端」（`pendingcrew/session-a0307d`）
+
+### 🔴 超集闸门有一个结构性盲区：路径相同、内容被换掉，它不报 — **未补，目前只有人眼**
+- **发现**: 2026-08-23 · 做「只放客户端」的快照口径改造时撞上，**纯属运气**
+- **位置**: `scripts/check-public-snapshot-superset.sh`
+- **是什么**: 那道闸门比对的是**路径集合**（已发布的每个路径都还在不在候选快照里），
+  不比对内容。所以「一个已发布的文件被换成另一份内容」这类漂移它一声不吭。
+- **怎么被撞上的**: 核丢弃清单时看到三个 `apps/pendingbot/` 下的文件被列进「故意删掉」，
+  往下查才发现 `SupabaseAnonWriteGuard`（把「不许静默降级 anon」从约定变成机制的那道闸）
+  **只活在未合并的 `chore/fail-loud-config` 和已发布的公开仓里，私有 main 上没有**。
+  真正让人注意到的是同一个文件里两句注释的差别 ——
+  公开仓 `SupabaseStack.swift` 写 *Enforcement is mechanical*，main 写 *Enforcement is by code review*。
+  **靠的是人眼读到这两句话。** 换个人、换个时间点，这道已经发布出去的安全机制会被一份
+  「靠代码评审」的约定悄悄换掉，全程零告警。
+- **量化（2026-08-23 实测，公开仓 `5b194c5` × 本分支）**:
+  ```
+  两边同路径的文件      795
+  同路径内容不同         39   其中客户端子树 12
+  公开仓那份内容在私有仓对象库里找不到（= 真·只活在公开仓）  16
+  ```
+  16 处按成因拆开：**换坐标产物** 5（两份 Info.plist / HostedConfig / Localizable /
+  两个登录页里的邮箱）· **生成物** 1（`project.pbxproj`）· **后端文件** 6（都要随
+  后端一起出局，不影响）· **本次有意重写** 2（README 相关）·
+  **真·无法解释的编辑漂移** 2：`.gitignore` 和 `LICENSE`。
+- **`.gitignore` 已处理**: 取两边并集（公开仓那份多出 Xcode 本地生成物、发版产物、
+  以及 `.agents/` `.pendingcrew/` `CLAUDE.md` `GEMINI.md` 几条保护性规则）。
+- **`LICENSE` 等人拍板，但已经不靠「记得」了**: 公开仓写的是
+  `Copyright (c) 2026 Yanze Tan`，私有仓一直写 `Copyright (c) 2026 syncmeta`。
+  重出快照会**把一份已经发布出去的 MIT 许可里的版权人从真名换成 GitHub handle** ——
+  这是身份/法律层面的事，不是我们能定的，跟「登录页里那个私人邮箱是不是有意的」
+  是同一族问题。
+  **已经做成 fail-closed**：`scripts/snapshot-coordinates.tsv` 里一条 `HOLD` 行 ——
+  只要候选快照的 LICENSE 里还带着 handle 那份，替换脚本非零退出、坐标闸门报红，
+  **生成当场中止**。原来的状态是「问题写在群里、答案还没有，而生成器已经能跑了」，
+  任何人跑一次就会静默地改掉那行版权 —— 正是这个分支从头到尾在消灭的形状。
+  作者答了之后，那一行要么改成 SWAP，要么删掉。
+- **为什么没补成机器闸（说清楚，不假装）**: 能想到的形状是「候选快照里每个同路径文件的
+  内容，要么与已发布那份一致，要么差异属于一条**登记过的**成因（换坐标 / 生成物 /
+  本次有意重写）」。做成 fail-closed 的难点不在实现，在那份「登记过的成因」——
+  它一旦写得松就等于没有，写得紧就会在每次正常迭代时红。**这一版没有建它**，
+  因为定义那份成因清单不该由一个 session 自己拍。
+- **在补上之前，人眼那一步至少有工具**（provenance 里也写了这条）:
+  ```bash
+  git -C <公开仓> ls-tree -r HEAD | awk '{print $3"\t"$4}' | sort -k2 > /tmp/pub.blobs
+  git -C <私有仓> ls-tree -r HEAD | awk '{print $3"\t"$4}' | sort -k2 > /tmp/pri.blobs
+  join -1 2 -2 2 -o 0,1.1,2.1 /tmp/pub.blobs /tmp/pri.blobs \
+    | awk '$2!=$3{print $1, $2}' \
+    | while read -r path blob; do
+        git -C <私有仓> cat-file -e "$blob" 2>/dev/null || echo "只活在公开仓: $path"
+      done
+  ```
+  最后那一列每多一行，就是一段重出快照会让它消失的东西。
+- **关联**: 这是「反向漂移」的第五次发作，也是第一次咬到**代码**而不是文档
+  （前四次：一条安全迁移 / `SNAPSHOT-PROVENANCE.md` / `README_EN.md` / `README.md`）。
+
+### 🟡 快照生成里「换掉真坐标」那一步，一直没有脚本也没有闸门 — ✅ 已补（2026-08-23）
+- **发现**: 2026-08-23 · 按 `SNAPSHOT-PROVENANCE.md` 写的方式生成候选快照时，
+  真坐标原封不动进了候选目录，包括作者的私人邮箱
+- **病因**: provenance 里那句「所有指向作者线上服务的坐标换成了占位值」背后没有任何
+  东西执行或检查它。v0.1.0 那份是人手做的，而且**做对了** —— 公开仓里零命中。
+  正因为做对了，没人发现这一步有多脆：它全靠一个人那一次没漏。
+- **已补**: `scripts/snapshot-coordinates.tsv`（真值 → 占位值 → 判词，10 条）+
+  `apply-snapshot-coordinates.sh`（在候选目录里替换，拒绝对着 git 工作区跑）+
+  `check-snapshot-coordinates.sh`（fail-closed 复查）。两个脚本读同一份清单。
+- **验证**: 换前红（13 处逐条打印）· 换后绿 · 指向 git 工作区被拒 exit 2 ·
+  把 `HostedConfig.swift` 单独 swiftc 编成探针实跑，候选那份
+  `isConfigured=false / isEmailSignInConfigured=false`，私有仓那份 `true / true`。
+- **留下的边界**: 清单漏一条，闸门就绿着放行 —— 它只查它知道的针。这一版已经踩过一次
+  （第一版把针写成 `https://api.pendingname.com`，于是注释里那句裸的
+  `api.pendingname.com` 两边都没抓到）。清单要有人 review，不能只靠它自己。
+
 ### 🟢 Google 登录按钮的底色 / 文案 / logo 尺寸偏离官方指南（logo 素材本身已合规）
 - **发现**: 2026-08-23 · 「Google logo 深色模式白底」session（人类 Todo #8，查官方 Identity 品牌指南时顺带核出来的）
 - **位置**: `apps/pendingbot/Sources/Features/Onboarding/WelcomeView.swift:googleButton` / `Sources/Mac/MacWelcomeView.swift:googleButton`
