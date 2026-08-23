@@ -280,6 +280,24 @@ while IFS=$'\t' read -r file line url; do
       target="$(dirname "$file")/${url%%#*}"
       target="${target#./}"
       if [ -e "$target" ]; then
+        # A cross-file anchor is checked too, not just the file. `other.md#foo`
+        # used to pass on the strength of other.md existing, which makes the
+        # gate blind to exactly the link that breaks when someone renames a
+        # heading. One of those headings is load-bearing: the app's own
+        # "see the 配置 section of the README" notice is compiled into the
+        # binary, so that heading cannot be renamed without shipping a build.
+        frag="${url#*#}"
+        if [ "$frag" != "$url" ] && [ -n "$frag" ] && case "$target" in *.md) true ;; *) false ;; esac; then
+          want="$(slugify "$frag")"
+          cache="$work/anchors.$(echo "$target" | tr '/' '_')"
+          [ -f "$cache" ] || anchors_of "$target" > "$cache"
+          if grep -qxF "$want" "$cache"; then
+            local_ok=$((local_ok + 1))
+          else
+            printf '%s\t%s\t%s\t%s\n' "$file" "$line" "$url" "no heading with that anchor in $target" >> "$work/fail.tsv"
+          fi
+          continue
+        fi
         local_ok=$((local_ok + 1))
       elif [ -n "$repo_slug" ] && [ "$offline" -eq 0 ] \
            && probe_path_in_published_repo "$target"; then
