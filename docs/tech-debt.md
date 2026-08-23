@@ -1594,3 +1594,20 @@
 - **影响**: 实质风险很低。这是品牌规范的一致性问题，不影响登录功能、也不涉及数据或安全。真要较真，最坏情况是 Google 品牌审核时被要求改底色/文案。
 - **修法（真要改的时候）**: 底色那条要先推翻作者的决定才谈得上改，别单方面动。文案那条两颗按钮一起动，别只动 Google 那颗 —— 文案改成「使用 Google 账号登录」就必然要重新处理与 Apple 胶囊的宽度/对齐关系，那是一次小的登录页重排，不是改个字符串。或者反过来，两颗都改成 icon-only 变体。
 - **状态**: 待办（低优先）。**作者知情**：2026-08-23 的 Todo #8 报告里明确列出了这几处偏离；底色那条是作者当场拍板保留玻璃胶囊，文案 / logo 尺寸两条是说明了为什么本次没动。
+
+### 🔴 Apple client secret 有 6 个月硬过期 —— 到期当天 Mac 端 Apple 登录会毫无预兆全挂
+- **发现**: 2026-08-23 · `feat/mac-apple-web-oauth`（写网页 OAuth 链路时，这是它自带的一条尾巴）
+- **位置**: Supabase Dashboard → Authentication → Providers → Apple → **Secret Key (for OAuth)**。生成脚本 `scripts/apple-client-secret.mjs`（自测 `scripts/apple-client-secret.test.mjs`）。
+- **问题**: Apple 的 client secret 是一个**自带 `exp` 的 JWT**，有效期上限被 Apple 写死在 15777000 秒（6 个月），没有更长的选项，也没有任何自动续期通道 —— 官方原文见 [Creating a client secret](https://developer.apple.com/documentation/AccountOrganizationalDataSharing/creating-a-client-secret)。到 `exp` 那一刻，Apple 开始拒绝我们的授权请求，回 `invalid_client`。
+- **为什么按 🔴 记**（不是"到时候改个配置"那么轻）:
+  - **零预警**。Apple 不发提醒，Supabase 不发提醒，我们自己也没有任何探针。失效的第一个信号是**用户报「Mac 上登不进去」**。
+  - **过期形态和配错一模一样**：都是 `invalid_client`。所以真到期那天，第一反应很可能是去查 Services ID 配错没有，而不是查日期 —— 白烧排查时间。（`AppleWebCallback.humanMessage` 里 `invalid_client` 那条提示已经把"或 secret 已过期"写进去了，就是为了压这一次误判。）
+  - **半边天塌**：iOS 原生登录**不受影响**（走 `signInWithIdToken`，Supabase 只做 JWKS 验签，根本不碰这个 secret）。所以线上看起来"Apple 登录还好好的"，只有 Mac 那一半死了，更容易被当成个别用户的环境问题。
+  - **6 个月足够长到没人记得**。这不是持续暴露的风险，是一颗定时的哑雷。
+- **影响**: 到期后 Mac 端「用 Apple 登录」100% 失败。用户仍有 Google / 邮箱验证码 / 扫码三条路，所以不是完全锁死，但对已经用 Apple 账号注册过的人来说就是登不进自己的号。
+- **需要的流程（两件，缺一不可）**:
+  1. **日历提醒** —— 生成 secret 时脚本会把到期时刻（本地 + UTC）打在 stderr 上，**当场记进日历，并往前挪两周**。这一步只能人做，没法自动化。
+  2. **续期步骤**（很轻，但必须写下来，否则半年后要重新摸索）：用**同一把 `.p8`** 重跑 `node scripts/apple-client-secret.mjs --p8 … --key-id … --team-id … --services-id …`，把新 JWT 换进 Supabase 的 Secret Key 字段。**不需要**回 Apple 后台，也不需要重新下载 `.p8`（那玩意只能下一次，别去动它）。换完新的日历提醒照记。
+- **更彻底的解法（现在不做，记在这里免得以后重新想）**: 写一个定时任务（cron / GitHub Action）把 `.p8` 存成密钥，按月重签并通过 Supabase Management API 更新 provider 配置，让它自己滚。代价是要把这把私钥放进一个自动化系统里 —— 而这把私钥能替我们团队给任何人签发 Apple 登录凭据，风险不比手工续期低。**单人项目、半年一次的手工动作，眼下不值得为它引入一个长期持有私钥的自动化。** 真要做，先解决私钥托管，再谈自动化。
+- **状态**: 待办 —— **时钟还没开始走**。作者尚未在 Apple 后台建 Services ID、也尚未在 Supabase 配 Apple provider，所以此刻还没有任何 secret 存在。**第一次生成 secret 的那一刻，就是这条债开始计时的时刻**，日历必须在那一刻记上。
+- **关联**: 上面那条「Developer ID 分发拿不到 `com.apple.developer.applesignin`」—— 正是因为原生那条路在直发的 `.dmg` 里用不了，才有了这条依赖 client secret 的网页 OAuth 路径。背景与后台配置清单见 `docs/apple-web-oauth-research.md`。
