@@ -1,56 +1,61 @@
 # GoogleG asset
 
-Google's full-colour "G" — 20×20pt, transparent background, @1x/@2x/@3x.
-Shared by `WelcomeView` (iOS) and `MacWelcomeView` (Mac).
+Google's full-colour "G", 20×20.43pt, transparent background, one SVG with
+`preserves-vector-representation`. Shared by `WelcomeView` (iOS) and
+`MacWelcomeView` (Mac).
 
 ## Provenance
 
-Sliced by `scripts/slice-google-g-logo.py` from the master the author supplied
-out of Google's own brand pack:
+Prepared by `scripts/trim-google-g-svg.py` from the file the author supplied out
+of Google's own brand pack:
 
 | | |
 |---|---|
-| file | `GoogleG_FullColor_RGB.png` — 2820×2820, RGBA, real alpha |
-| sha256 | `4d5cfbd85af19c003770a74f8de210156ca42c54ac0a4cb0d95572c286c882a6` |
-| sibling | `GoogleG_FullColor_RGB.eps` — Illustrator 30.0, 12/10/25, bbox 1024×1024, sha256 `86ed2344ec60582f709e49884ba0b41b994a53fdf425445d293a83dd595f8c0b` |
+| file | `GoogleG_FullColor_RGB_alpha.svg` — Illustrator 30.0 export, 1024×1024 artboard |
+| sha256 | `eb6f54ece379580a587d22bafd07b62ac526538a3fbe18b4c7cecd1b4f5bddd0` |
 
-The mark occupies a 920×940 box in the middle of that 2820px canvas; the rest is
-transparent clear space. The script trims the empty canvas and scales the mark to
-Google's own geometry — their 44pt sign-in button draws a 20pt-tall G — then
-centres it in a square box. **No pixel of the mark is recoloured, cropped, or
-redrawn.** The masters are not in the repo (3.6 MB of binary); they live in the
-author's brand pack, and the hashes above identify exactly which files these came
-from.
+**The only edit is the root `<svg>` element** — `width` / `height` / `viewBox`,
+i.e. crop the canvas to the mark and declare a 20pt natural size. Nothing inside
+the document is touched: not the clip path, not the artwork, not one colour.
+Without the crop, Xcode would treat the asset as 1024pt and rasterise its
+fallback bitmap at 3072px.
 
 ```
-python3 scripts/slice-google-g-logo.py <GoogleG_FullColor_RGB.png> \
-  apps/pendingbot/Resources/Assets.xcassets/GoogleG.imageset/
+python3 scripts/trim-google-g-svg.py <GoogleG_FullColor_RGB_alpha.svg> \
+  apps/pendingbot/Resources/Assets.xcassets/GoogleG.imageset/g-logo.svg
 ```
 
-## Why raster and not vector — this was tried and rejected on evidence
+## What this SVG actually is, and why it still wins
 
-Vector would have been nicer: one file, every scale, no ladder to keep in sync.
-The EPS converts to a genuine vector PDF (shading dictionaries, no embedded
-raster), and Xcode accepts it with `preserves-vector-representation`. It shipped
-and rendered. It was still wrong, for two independent reasons:
+It is not a pure-vector drawing. Illustrator exported the mark as **one vector
+clip path (the G outline) filled by an embedded 1049×1076 RGBA bitmap** carrying
+the gradient. So the *silhouette* is resolution-independent; the *colour* is not.
 
-1. **The colours came out wrong.** Ghostscript's EPS→PDF step shifts the
-   gradient: Google blue `#3186FF` renders as roughly `#4B79C6`, green `#0EBC5E`
-   as `#21B04A`, mean ΔRGB ≈ 15/255 across the mark. `-dColorConversionStrategy`
-   set to `/RGB` and to `/LeaveColorUnchanged` were both tried and neither
-   recovers it. In the simulator it reads visibly duller and slightly dithered
-   next to the raster. Recolouring the mark is exactly what the branding
-   guidelines forbid, so a lossy colour path disqualifies itself.
-2. **940 KB.** That is what Xcode stored as the vector representation in
-   `Assets.car`, for a mark that is never drawn above 20pt. The three PNGs are
-   8 KB in total.
+That is still the best option available, measured against the two alternatives:
 
-These slices land within ΔRGB ≈ 2–5 of Google's own @1x/@2x/@3x button renders
-(vs ≈ 15 for the vector route), i.e. inside small-raster resampling noise.
+| route | colour fidelity | on-screen at 19pt | in `Assets.car` |
+|---|---|---|---|
+| **this SVG** | exact (ΔRGB ≈ 2 vs the master, pure resampling noise) | crispest | 147 KB vector + 4 KB fallback |
+| PNG slices from `GoogleG_FullColor_RGB.png` | exact | visibly softer — the mark is only 920×940 in that master, so 60px is a double downsample | 8 KB |
+| EPS → PDF via ghostscript | **wrong** — Google blue `#3186FF` renders `#4B79C6`, mean ΔRGB ≈ 15 | dull, dithered | 940 KB |
 
-If Google's brand pack ever yields a **PDF or SVG straight from Google** — not
-one we converted — vector becomes worth revisiting; the objection is to our
-conversion, not to vector.
+The PDF route was rejected on colour: recolouring the mark is exactly what the
+guidelines forbid, and `-dColorConversionStrategy` at `/RGB` and at
+`/LeaveColorUnchanged` both failed to recover it. Between the remaining two, the
+SVG renders visibly better at 19pt for 139 KB more — the outline is rasterised
+straight to the target size instead of being resampled twice.
+
+## Google's own distributed SVGs do not work outside a browser — checked, closed
+
+`signin-assets.zip` does ship 24 SVGs. They are unusable here, and this is not a
+matter of taste: the G's gradient is a CSS `conic-gradient` inside a
+`<foreignObject>` (plus seven `feGaussianBlur` filters), with **no plain-SVG
+fallback** — zero `<linearGradient>`, `<radialGradient>` or `<stop>` elements in
+the file. `foreignObject` content is HTML, so any renderer that is not a browser
+drops it. Rendered with `rsvg-convert`, Google's own dark icon comes out as a
+few red and blue smears on black, off by mean ΔRGB ≈ 50 inside the G box.
+
+So: **there is no Google-distributed true-vector G.** Don't go looking again.
 
 ## One asset, not a light/dark pair
 
@@ -63,7 +68,7 @@ theming belongs to the button, not the mark.
 The mark's counter (the enclosed space inside the G) is transparent, so on the
 dark button it shows the dark fill through. That is not a hole to be patched —
 it is exactly how Google's own dark button renders, verified pixel-for-pixel
-against their `Theme=Dark, Show text=No` artwork.
+against their `Theme=Dark, Show text=No` artwork (max delta 1.08/255).
 
 ## Rules that constrain this asset
 
