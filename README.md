@@ -14,7 +14,7 @@
   <img alt="Platform" src="https://img.shields.io/badge/platform-iOS%20%7C%20iPadOS%20%7C%20macOS-lightgrey" />
   <img alt="Client" src="https://img.shields.io/badge/client-SwiftUI-f05138?logo=swift&logoColor=white" />
   <img alt="Backend" src="https://img.shields.io/badge/backend-Cloudflare%20Workers-f38020?logo=cloudflare&logoColor=white" />
-  <a href="https://bun.sh"><img alt="Bun" src="https://img.shields.io/badge/runtime-Bun-fbf0df?logo=bun&logoColor=black" /></a>
+  <a href="https://bun.sh"><img alt="Bun" src="https://img.shields.io/badge/toolchain-Bun-fbf0df?logo=bun&logoColor=black" /></a>
   <img alt="TypeScript" src="https://img.shields.io/badge/lang-TypeScript-3178c6?logo=typescript&logoColor=white" />
 </p>
 
