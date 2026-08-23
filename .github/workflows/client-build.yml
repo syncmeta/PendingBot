@@ -7,9 +7,9 @@ name: Client build
 # 真的。删掉的话贡献者拿到的是零，所以给一道。
 #
 # 它的边界写在这儿，也写在 CONTRIBUTING 和 PR 模板里，免得一道弱 CI 冒充强保证：
-#   * **测试覆盖很薄。** apps/pendingbot/Tests/ 下只有两组独立测试（共 45 条断言，
-#     跑 4 秒），覆盖的是两个纯 Foundation 的小模块。没有 UI 测试、没有网络层测试。
-#     绿基本上只代表「没把编译弄坏」。
+#   * **测试覆盖很薄。** apps/pendingbot/Tests/ 下有三组独立测试（共 58 条断言，
+#     跑几秒），覆盖三个只依赖 Foundation 的模块。没有 UI 测试，没有真正的
+#     网络层测试。绿基本上只代表「没把编译弄坏」。
 #   * **只编 iOS Simulator 一个目标。** macOS 目标不编 —— 它跟 iOS 共用绝大部分
 #     源码，多编一遍的边际收益低于它占的 runner 时间；改了 Sources/Mac/** 或任何
 #     #if os(macOS) 的地方请自己在本机编一遍，CONTRIBUTING 里也这么写。
@@ -80,11 +80,16 @@ jobs:
             build
 
       - name: 独立单元测试
-        # apps/pendingbot/Tests/ 下这两组是 swiftc 直接编了跑的，不需要模拟器、
-        # 不需要签名，两组加起来 4 秒。工程里还没有 xcodebuild test 目标
-        # （那条线在 feat/ios-unit-tests 上），等它落地之后这一步该换成
-        # `xcodebuild test`，并把这两个脚本并进去。
+        # apps/pendingbot/Tests/ 下这三组是 swiftc 直接编了跑的，不需要模拟器、
+        # 不需要签名，加起来几秒。工程里还没有 xcodebuild test 目标（那条线在
+        # feat/ios-unit-tests 上），等它落地之后这一步该换成 `xcodebuild test`，
+        # 并把这三个脚本并进去。
+        #
+        # 匿名写闸那组值得单独说一句：它守的是 supabase-swift 拿不到 session 时
+        # 把写请求以 anon 发出去这件事 —— 那个形状我们误诊过两次，都当成后端 bug。
+        # 那道闸是把「不许降级 anon」从约定变成机制；这组测试是看着那道闸的。
         run: |
           cd apps/pendingbot
           bash Tests/run-model-reveal-policy-tests.sh
           bash Tests/run-preset-epoch-tests.sh
+          bash Tests/run-supabase-anon-write-guard-tests.sh

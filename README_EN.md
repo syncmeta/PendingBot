@@ -210,10 +210,10 @@ A few more, stated precisely:
 - **Short links / remote-control index** — the tables exist in production, the repository has no
   code for them (lost along with a commit-loss incident).
 - **Automated test coverage on the three client platforms is thin** — `apps/pendingbot/Tests/`
-  holds two standalone suites (45 assertions, 4 seconds) covering two pure-Foundation modules.
-  There is no `xcodebuild test` target yet, no UI tests and no networking tests. This repository's
-  CI runs exactly that: an iOS Simulator build plus those two suites. (The 695 tests live in the
-  backend, which is not public.)
+  holds three standalone suites (58 assertions) covering three Foundation-only modules. There is no
+  `xcodebuild test` target yet, no UI tests and no real networking tests. This repository's CI runs
+  exactly that: an iOS Simulator build plus those three suites. (The 695 tests live in the backend,
+  which is not public.)
 
 ### Not there yet
 

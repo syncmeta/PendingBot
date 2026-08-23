@@ -43,9 +43,10 @@ cd apps/pendingbot
 xcodebuild -project PendingBot.xcodeproj -scheme PendingBot \
   -destination 'generic/platform=iOS Simulator' build
 
-# ② 独立单元测试（CI 也跑，两组加起来 4 秒，不需要模拟器）
+# ② 独立单元测试（CI 也跑，三组加起来几秒，不需要模拟器）
 bash Tests/run-model-reveal-policy-tests.sh
 bash Tests/run-preset-epoch-tests.sh
+bash Tests/run-supabase-anon-write-guard-tests.sh
 
 # ③ macOS 构建（CI 不跑）
 xcodebuild -project PendingBot.xcodeproj -scheme PendingBot \
@@ -53,8 +54,8 @@ xcodebuild -project PendingBot.xcodeproj -scheme PendingBot \
 ```
 
 **CI 跑 ① 和 ②**（`.github/workflows/client-build.yml`，macOS runner，不签名）。
-但请别高估它：② 只有 45 条断言，覆盖两个纯 Foundation 的小模块，工程里还没有
-`xcodebuild test` 目标，没有 UI 测试也没有网络层测试。**CI 绿基本上只代表
+但请别高估它：② 一共 58 条断言，覆盖三个只依赖 Foundation 的模块，工程里还没有
+`xcodebuild test` 目标，没有 UI 测试也没有真正的网络层测试。**CI 绿基本上只代表
 「没把编译弄坏」。**
 
 ③ 的 macOS 目标 CI 不跑 —— 改了 `Sources/Mac/**` 或任何带 `#if os(macOS)` 的

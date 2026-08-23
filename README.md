@@ -192,10 +192,11 @@ xcodebuild -project PendingBot.xcodeproj -scheme PendingBot \
 - **"网上冲浪"在生产必然失败** —— 唯一的搜索抓取通道是 Exa MCP，而它的 API key 从未部署，调用直接抛错。
   （区分：**聊天里现查网页**不走这条，走各家模型自带的服务端工具，那半可能是通的。）
 - **短链 / 遥控索引** —— 线上有表，仓库零代码（随一次提交丢失事故一起没了）。
-- **三端的自动化测试很薄** —— `apps/pendingbot/Tests/` 下只有两组独立测试
-  （共 45 条断言，跑 4 秒），覆盖两个纯 Foundation 的小模块；工程里还没有
-  `xcodebuild test` 目标，没有 UI 测试，也没有网络层测试。本仓库的 CI 跑的就是
-  「编一遍 iOS Simulator + 这两组测试」。（那 695 个测试全在后端，那个仓库不公开。）
+- **三端的自动化测试很薄** —— `apps/pendingbot/Tests/` 下有三组独立测试
+  （共 58 条断言），覆盖三个只依赖 Foundation 的模块；工程里还没有
+  `xcodebuild test` 目标，没有 UI 测试，也没有真正的网络层测试。本仓库的 CI
+  跑的就是「编一遍 iOS Simulator + 这三组测试」。（那 695 个测试全在后端，
+  那个仓库不公开。）
 
 ### 还没有的
 
