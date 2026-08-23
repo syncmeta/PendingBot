@@ -1,0 +1,40 @@
+# 快照里必须换掉的坐标：真值 → 占位值。
+#
+# 这一步一直存在，只是从来没写下来过 —— v0.1.0 那份快照是人手改的，
+# SNAPSHOT-PROVENANCE 里那句「所有指向作者线上服务的坐标换成了占位值」背后
+# 没有任何脚本、任何闸门。2026-08-23 做「只放客户端」的候选快照时，
+# 按「从提交里 git archive」生成，真坐标原封不动地进了候选目录。这份清单
+# 就是把那一步从「记得改」变成机器保证。
+#
+# 谁读它：
+#   scripts/apply-snapshot-coordinates.sh   —— 在候选目录里做替换
+#   scripts/check-snapshot-coordinates.sh   —— fail-closed 复查，还有真值就红
+# 两个都读同一份，所以「换了什么」和「查什么」不可能对不上。
+#
+# ⚠️ 为什么要换，说准了免得将来被当笑话：
+#   **这里绝大多数不是机密。** publishable key / Turnstile site key /
+#   Google client id 按设计就印在已经发出去的二进制里，谁都读得到。
+#   换掉它们的真正理由有两条：
+#     1. 占位值是 HostedConfig 里 isConfigured / isEmailSignInConfigured 的
+#        **参照物**。留着真值，判据永远为真，app 从「明说没配」退回静默失败 ——
+#        换坐标不是打码，是让那套 fail-loud 判定成立。
+#     2. 发出去等于让每个自己编译的人默认指向作者的生产后端，
+#        而 SECURITY.md 明写着别打线上。
+#   只有最后一行是真的敏感：作者的私人邮箱，属于个人信息。
+#
+# Format (tab-separated):
+#   <路径或 glob> <TAB> <真值> <TAB> <占位值> <TAB> 判词
+#
+# 路径写 `**` = 整棵树。写具体文件 = 只在那个文件里换 —— 有的值在别处是
+# **故意保留**的，见 turnstileHost 那一行。
+
+**	https://api.pendingname.com	https://api.example.com	作者生产 Worker 的地址。发出去等于让每个自己编译的人默认打作者的线上环境 —— SECURITY.md 里明写着别做这件事
+**	zafhoiwwpanpuashtnxy	YOUR-PROJECT	Supabase 项目 ref。裸值替换是有意的：它同时出现在 URL 和文件头注释里，只换 URL 会留下一个指名道姓的注释
+**	sb_publishable_DobbxW0fIrpb21noFfMdXg_3xPrbm1d	sb_publishable_REPLACE_ME	Supabase publishable key。它不是机密（设计上就印在已发出去的二进制里），换掉的理由是 Placeholder 值是 isConfigured 的参照物 —— 留着真值，判据永远为真，app 退回静默失败
+**	0x4AAAAAADLy8thL0jSFWJKF	0x0000000000000000000000	Turnstile site key。同上：公开值，但它是 isEmailSignInConfigured 的参照物
+apps/pendingbot/Sources/Networking/HostedConfig.swift	https://bot.pendingname.com	https://example.com	Turnstile host。**只在这一个文件里换** —— bot.pendingname.com 在 AASA / entitlements / 分享链接 / 二维码里是故意保留的（换品牌时读者自己搜索替换，README 里说了）。整棵树一把换会把那些也一起改掉
+**	"phc_nKLCnaLAKNMzMdZLVhvjxkvVUzi5AC5Aa2ENTDMv8gT5"	""	PostHog 项目 key。只写不读的采集 key，不算凭据，但发出去等于把作者的用量额度交给任何人刷。空串 = 关闭，是这三个遥测 key 的既定表达
+**	"https://0b8b942c3f67dcf696ca0e57bbfd9f1e@o4511505418027008.ingest.de.sentry.io/4511529880911952"	""	Sentry DSN。同上，只写不读，空串 = 关闭
+**	"appl_OHplTtFSfcqsgKJvjZajkelEOJo"	""	RevenueCat public SDK key。同上，空串 = 关闭
+**	842392349572-bh7pmohnadkkb8nd3aq3v9p9pbh3pubs	YOUR_GOOGLE_CLIENT_ID	Google 登录 client id。两份 Info.plist 里各有一处（反转 URL scheme 和 GIDClientID），裸值替换同时覆盖
+**	kipper_yonder.0u@icloud.com	hello@pendingname.com	**作者的私人邮箱。** 这一条跟上面几条性质不同 —— 那些是公开值只是不该指向作者的部署，这一条是个人信息，任何情况下都不该进公开仓
