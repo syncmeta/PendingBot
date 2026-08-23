@@ -73,6 +73,7 @@ ALLOW	docs/screenshots/main.png	README 首屏截图，真运行产物
 ALLOW	docs/screenshots/contacts.png	README 截图，真运行产物
 ALLOW	docs/screenshots/letter.png	README 截图，真运行产物
 ALLOW	icon.svg	仓库图标源文件
+ALLOW	docs/snapshot-drops/**	每次快照口径变化时删掉了哪些已发布文件，一次一份、逐条精确路径。放在公开仓里是因为将来问「当初到底删了哪些」的人手上一定有公开仓；超集闸门也用 --allow-drop-file 直接读它
 
 # ── 仓库自身的配置与协作模板 ───────────────────────────────────────────────
 ALLOW	.gitignore	不带它，任何人 clone 下来第一次构建就是一屏未跟踪文件
