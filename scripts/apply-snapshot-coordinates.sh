@@ -6,6 +6,11 @@
 # check-snapshot-coordinates.sh reads — one list, so "what got swapped" and
 # "what gets checked" cannot drift apart.
 #
+# SWAP rows get replaced. **HOLD rows do not** — a HOLD is an open
+# disagreement that a tool must not settle, so this script leaves the file
+# alone and exits non-zero. Generation stops there rather than continuing with
+# a warning nobody reads.
+#
 # **Only ever point this at a candidate snapshot directory.** It rewrites files
 # in place. It refuses to run on a git working tree, because the one thing it
 # must never do is quietly replace the real coordinates in the private repo —
@@ -44,9 +49,26 @@ if git -C "$candidate" rev-parse --git-dir >/dev/null 2>&1; then
 fi
 
 changed=0
-while IFS=$'\t' read -r scope real ph why; do
-  case "${scope:-}" in ''|'#'*) continue ;; esac
+held=0
+while IFS=$'\t' read -r mode scope real ph why; do
+  case "${mode:-}" in ''|'#'*) continue ;; esac
+  case "$mode" in
+    SWAP|HOLD) ;;
+    *) echo "bad mode in $list: '$mode' (must be SWAP or HOLD)" >&2; exit 2 ;;
+  esac
   [ -n "${real:-}" ] || continue
+
+  # HOLD: an open disagreement. Do not touch the file, do not pick a side —
+  # picking one silently is exactly the failure this row exists to prevent.
+  if [ "$mode" = HOLD ]; then
+    if { [ "$scope" = '**' ] && grep -rqIF -- "$real" "$candidate" 2>/dev/null; } \
+       || { [ -f "$candidate/$scope" ] && grep -qIF -- "$real" "$candidate/$scope" 2>/dev/null; }; then
+      echo "HOLD  $scope  ←  $real"
+      echo "      $why"
+      held=$((held + 1))
+    fi
+    continue
+  fi
 
   # while-read rather than mapfile: macOS still ships bash 3.2 and this script
   # has no business needing a newer one.
@@ -72,4 +94,15 @@ while IFS=$'\t' read -r scope real ph why; do
 done < "$list"
 
 echo
+if [ "$held" -gt 0 ]; then
+  echo "停在这儿：有 $held 条 HOLD 没解决。" >&2
+  echo >&2
+  echo "  HOLD 是「这里有个分歧，而它不该由工具挑边」。上面每一条的判词写了是什么" >&2
+  echo "  分歧、该问谁。拿到答复之后，把 $list 里那一行" >&2
+  echo "  改成 SWAP 或者删掉，再重跑。" >&2
+  echo >&2
+  echo "  已经做掉的 $changed 处替换留在候选目录里了 —— 但这份候选**不许出**，" >&2
+  echo "  check-snapshot-coordinates.sh 也会红。" >&2
+  exit 2
+fi
 echo "替换了 $changed 处。现在跑 check-snapshot-coordinates.sh 复查 —— 替换脚本自己说没问题不算数。"

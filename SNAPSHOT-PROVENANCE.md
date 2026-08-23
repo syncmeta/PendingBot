@@ -102,6 +102,11 @@ git archive <私有仓的提交> \
 #    私有仓里 HostedConfig / 两份 Info.plist / Localizable / 两个登录页带着作者的
 #    真坐标，其中一条是他的私人邮箱。占位值同时是 isConfigured 的参照物 ——
 #    不换，那套 fail-loud 判定整个失效。
+#
+#    ⚠️ 清单里还有一种 HOLD 行：**有分歧、而且不该由工具挑边**的东西
+#    （现在挂着一条：已发布的 MIT 许可里版权人写谁）。碰到 HOLD 这个脚本
+#    **不动那个文件、直接非零退出**，闸门也会红 —— 生成到此为止。
+#    那不是故障，是设计：一件要人拍板的事，不该只活在「记得」里。
 scripts/apply-snapshot-coordinates.sh --candidate "$CAND"
 ```
 
