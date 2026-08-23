@@ -26,13 +26,10 @@ An AI that knows when it got something wrong. It goes out and reads the web on i
 
 > **This is one person's experiment, not a product.**
 >
-> Nothing is operated for you, there are no real users, and there is no support commitment.
-> The [Status](#status-how-far-does-it-actually-go) section below spells out which features have
-> genuinely run and which are only code sitting there.
+> Not launched yet. Some features do not work.
 >
-> **This repository contains the client only.** The backend (Cloudflare Worker + Supabase) is not
-> open source and is not here. So accept one thing before you read on: **you can build the app from
-> this repository, but it has no backend to talk to.**
+> **This repository contains the client only** — the backend is not open source and is not here.
+> You can build the app; it has no backend to talk to.
 >
 > The app UI and the documentation are in Chinese. This file is the only English translation;
 > it tracks [`README.md`](README.md), which is the original.
@@ -41,8 +38,8 @@ An AI that knows when it got something wrong. It goes out and reads the web on i
 
 **Just want to use it**
 
-- **macOS** — grab the `.dmg` from [Releases](../../releases). It is signed and notarized by Apple, so it installs on a double-click.
-- **iPhone / iPad** — TestFlight only: <https://testflight.apple.com/join/K6Ju9qqP>
+- **macOS** — grab the `.dmg` from [Releases](../../releases)
+- **iPhone / iPad** — TestFlight: <https://testflight.apple.com/join/K6Ju9qqP>
 
 ⚠️ Both of those builds talk to **the author's own backend**. An app you build from this repository
 does not — the backend coordinates here are all placeholders, and the backend itself is not open
@@ -239,6 +236,11 @@ No Bun / Node / Docker / Supabase CLI needed. Those are the backend's toolchain 
 not in this repository.
 
 ## Configuration
+
+> This section is load-bearing on the Chinese side. The in-app notice quoted under Quick start is
+> compiled into the binary and points at **「配置」 in [`README.md`](README.md#配置)** by name — that
+> heading cannot be renamed without shipping a new build. This English section is the mirror of it;
+> renaming *this* one is harmless, but keep the pair in sync.
 
 All backend coordinates for the app live in `HostedConfig.swift`; edit the constants under the
 `Environment.remote` branch. **Do not touch the literals in `Placeholder`** — they are what the two

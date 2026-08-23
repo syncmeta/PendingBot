@@ -120,6 +120,12 @@ scripts/apply-snapshot-coordinates.sh --candidate "$CAND"
 
 四道都在私有仓的 `scripts/` 下，**都是 fail-closed** —— 读不到参照物也算不通过。
 
+⚠️ **先跑闸门，再编。** 候选目录不是 git 仓库，闸门只能扫磁盘上的文件；而编一次
+客户端会在里面留下被 `.gitignore` 忽略的产物（`Package.resolved` 就是一个），
+磁盘扫描分不出来，排除闸门会把它报成「未登记」。要么闸门跑在构建之前，
+要么在候选目录里先 `git init -q && git add -A` —— 那样 `.gitignore` 生效，
+闸门会自动走「tracked files」那条路。
+
 ```bash
 # 1. 不许弄丢任何已经发布出去的东西。参照物是「此刻线上公开仓的 main」，
 #    从 remote 现读，不是任何人维护的清单（清单会漂，而且漂了没人知道）。

@@ -20,32 +20,22 @@
   <a href="README.md">中文</a> · <a href="README_EN.md">English</a>
 </p>
 
-知道自己错了的 AI。主动上网冲浪还要处处想着你。形态跟微信差不多。
+知道自己错了的 AI。主动上网冲浪还要处处想着你。形态跟微信差不多，想象微信上有很多 AI 好友。
 
 <p align="center">
   <img src="docs/screenshots/main.png" width="820" alt="主界面：左边会话列表，右边正在跟一个机器人聊天" />
 </p>
 
-> **这是一个人的实验项目，不是产品。**
+> 还没正式上线。部分功能不可用。
 >
-> 没有上线运营，没有真实用户，没有支持承诺。下面的「状态」一节写清了哪些功能
-> 真的跑通过、哪些只是代码在那儿。
->
-> **这个仓库只有客户端。** 后端（Cloudflare Worker + Supabase）不开源，也不在这里。
-> 所以读之前先接受一件事：**你 clone 下来能编出一个 app，但它没有可连的后端。**
->
-> 界面和文档都是中文的。
->
-> *(A personal experiment, not a product. Chinese-language UI and docs.
-> **This repository contains the client only** — the backend is not open source
-> and is not here. You can build the app; it has no backend to talk to.)*
+> **这个仓库只有客户端**，后端不开源、不在这里 —— 你能编出这个 app，但它没有可连的后端。
 
 ## 快速开始
 
 **想直接用**
 
-- **macOS** —— 从 [Releases](../../releases) 下 `.dmg`，签名并经 Apple 公证，双击就能装。
-- **iPhone / iPad** —— 只能走 TestFlight：<https://testflight.apple.com/join/K6Ju9qqP>
+- **macOS** —— 从 [Releases](../../releases) 下 `.dmg`
+- **iPhone / iPad** —— TestFlight：<https://testflight.apple.com/join/K6Ju9qqP>
 
 ⚠️ 上面这两个包连的是**作者自己的后端**。你从这份仓库编出来的 app 不连那台机器 ——
 仓库里的后端坐标全是占位值，而后端本身不开源，你得指向一个自己实现的。
