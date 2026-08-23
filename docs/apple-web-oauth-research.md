@@ -137,12 +137,41 @@ Client secret 的 `sub` claim 必须等于用来发起请求的 `client_id`，�
 
 5. **Client IDs**：改成 `com.pendingname.pendingbot.web,com.pendingname.pendingbot`
    —— **Services ID 必须在前**（见第 4 节；顺序反了只会坏 Mac，不会坏 iOS）。
-6. **Secret Key (for OAuth)**：用第 4 步的 `.p8` + Key ID + Team ID 生成 client secret，
-   **JWT 的 `sub` 填 Services ID**（`com.pendingname.pendingbot.web`）。
-   Supabase 文档页自带一个纯浏览器端的生成工具（Safari 不支持，用 Chrome/Firefox）。
-7. Authentication → URL Configuration → **Redirect URLs** 里加上 app 的回调
-   （`pendingbot://` scheme 已经注册在 Info.plist 里，具体路径我在实现时定下来后回来告诉你补）。
-8. 把生成 secret 时用的 **到期时间记进日历**（Apple 上限 6 个月，见 tech-debt）。
+6. **Secret Key (for OAuth)**：用第 4 步的 `.p8` + Key ID + Team ID 生成 client secret。
+   **别用 Supabase 文档页上那个浏览器端小工具** —— 那要求把 `.p8` 私钥粘进一个网页，
+   而这把私钥能替我们团队给任何人签发 Apple 登录凭据。仓库里有本地版：
+
+   ```
+   node scripts/apple-client-secret.mjs \
+     --p8 ~/Downloads/AuthKey_XXXXXXXXXX.p8 \
+     --key-id XXXXXXXXXX \
+     --team-id M42BKJN82S \
+     --services-id com.pendingname.pendingbot.web
+   ```
+
+   零依赖（只用 Node 内置 `node:crypto`）。stdout 只有 JWT 一行，可直接粘；
+   说明和**到期时刻**打在 stderr 上。`sub` 由脚本填成 `--services-id` 的值
+   （网页流程的 `client_id` 是 Services ID，不是 App ID —— 见第 4 节）。
+   Key ID / Team ID 位数不对、`.p8` 不是 P-256 的 EC 私钥、有效期超过 Apple
+   上限，脚本都会当场拒绝 —— 这些错法在 Apple 那边一律以 `invalid_client`
+   收场，分辨不出来，所以在本地就挡掉。
+   自测：`node scripts/apple-client-secret.test.mjs`。
+7. Authentication → URL Configuration → **Redirect URLs** 里加上 app 的回调，
+   逐字就是这一串：
+
+   ```
+   pendingbot://auth-callback
+   ```
+
+   （scheme `pendingbot` 早就注册在 `Resources/Info.plist` 里；host 另挑了一个，
+   免得和 `bot.pendingname.com/b|g/<token>` 那两种邀请链接撞上。代码里的唯一
+   出处是 `Sources/Networking/AppleWebCallback.swift` 的 `AppleWebCallback.url`，
+   单测钉着这个值。）
+8. 把生成 secret 时打印出来的**到期时间记进日历**，往前挪两周提醒。
+   Apple 上限 6 个月且没有自动续期，到期当天 Mac 端 Apple 登录会**毫无预兆
+   全部失败**，而且报错形态（`invalid_client`）和"Services ID 配错"一模一样。
+   详见 `docs/tech-debt.md` 里那条 🔴。续期只需用同一把 `.p8` 重跑第 6 步的脚本、
+   把新 JWT 换进 Supabase，**不用回 Apple 后台、不用重新下载 `.p8`**。
 
 **C. 然后叫我** —— 我做第 5 节那次实测，出结果再往下写代码。
 
@@ -156,6 +185,30 @@ Client secret 的 `sub` claim 必须等于用来发起请求的 `client_id`，�
 不影响可行性（`pendingbot://` scheme 已在 `Resources/Info.plist` 注册，`supabase-swift` 的
 `signInWithOAuth` 底下走 `ASWebAuthenticationSession`），但工作量和风险要按「新链路」估，
 不能按「照抄 Google」估。
+
+## 8. 实现状态（2026-08-23 · 分支 `feat/mac-apple-web-oauth`）
+
+代码写完了，**入口是关着的，也没有合进 main**。
+
+已落地:
+- `scripts/apple-client-secret.mjs` + `.test.mjs` —— 第 6 节第 6 步那个本地生成器。25 条断言过。
+- `Sources/Networking/AppleWebCallback.swift` —— 回调地址常量 + 纯解析。23 条断言过
+  （`apps/pendingbot/Tests/run-apple-web-callback-tests.sh`），做过变异校验。
+- `Sources/Networking/AppleWebSignIn.swift` —— `signInWithOAuth` →
+  `ASWebAuthenticationSession` → 回跳 → 换会话，外加一道 fail-loud 断言：
+  会话必须真的落盘（supabase-swift 的 `SessionStorage.store` 把写失败吞掉只打日志，
+  不补这一道的话 Keychain 写失败会以「permission denied for table …」的形态
+  在很久以后冒出来 —— 本项目已经误诊过不止一次）。
+- `WelcomeViewModel.beginAppleWeb()` —— 入口方法，**没有任何界面调它**。
+
+验到哪一步（说清楚，别当成做完了）:
+- ✅ iOS Simulator + macOS 两端 `xcodebuild` BUILD SUCCEEDED
+- ✅ 上面两组单测
+- ❌ **端到端登录一次都没跑过** —— 缺第 6 节那些后台配置，现在跑不了。
+
+放出按钮的前提，仍然是第 5 节那次实测（同一个 Apple 账号在 iPhone 和 Mac 上
+必须落在**同一行** `auth.users`）。翻开要改的两处写在
+`Sources/Mac/MacWelcomeView.swift` 的 `appleSignInAvailable` 上方，留作单独一笔提交。
 
 ---
 
