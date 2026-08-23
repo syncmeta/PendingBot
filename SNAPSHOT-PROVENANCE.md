@@ -19,15 +19,22 @@
 |---|---|
 | 私有仓 | `syncmeta/PendingBot-dev`（本机 `~/Untitled/Pendingname/PendingBot/dev`） |
 | 上一份快照 | `5d44ed2`（本仓 tag `v0.1.0`），私有 main @ `329792ac` + 四条未合分支，798 个文件 |
-| 本次基点 | 私有分支 `pendingcrew/session-a0307d` @ `50e3d7df`（待合入 main —— **发布前把这里换成 main 上的实际提交** ） |
+| 本次基点 | 私有分支 `pendingcrew/session-a0307d`（已并入 `chore/snapshot-and-link-gates` 与 `chore/fail-loud-config`）@ `50e3d7df`（待合入 main —— **发布前把这里换成 main 上的实际提交** ） |
 
 ## v0.1.0 → 现在，发生了什么
 
-**一次范围变化，不是一次内容更新。** 798 个文件 → 237 个。
+**一次范围变化，不是一次内容更新。** 798 个文件 → 240 个。
 
-删掉的 570 个文件**逐条**记在
+删掉的 567 个文件**逐条**记在
 [`docs/snapshot-drops/2026-08-23-client-only.txt`](docs/snapshot-drops/2026-08-23-client-only.txt) —— 精确路径，一条一行，没有通配符。
 将来问「当初到底删了哪些」，答案在那儿，不在任何人的记忆里。
+
+⚠️ **那份清单不能只靠算。** 第一版是从「已发布 − 候选」机械算出来的，
+里面混进了三个 `apps/pendingbot/` 下的文件 —— 一道**已经发布出去的安全机制**
+（`SupabaseAnonWriteGuard`，拦 supabase-swift 静默降级成 anon 的写请求），
+只活在未合并的 `chore/fail-loud-config` 和公开仓里，私有 main 上没有。
+超集闸门做了它该做的事：红了、把这三条逐条打印了。**能不能接住，取决于有没有
+人真的读那几百行。** 一份自动生成的丢弃清单会让这道闸门失效。
 
 ⚠️ **删掉 ≠ 取消发布。** 那 570 个文件仍然留在这个仓库的历史里、留在
 `v0.1.0` 那个 tag 上，任何人还能拿到 —— 包括那 213 个数据库迁移。
@@ -51,6 +58,8 @@
   两边对不上就等于把那套 fail-loud 判定废掉了。
 - **迁移参数化那一条不再需要**（`20260516073714_realtime_webhooks.sql` 曾经写死过
   作者的 worker 地址）：整个 `supabase/` 都不出去了。
+- **换坐标这一步现在是脚本，不是人手。** 见下面「怎么生成」第 2 步。
+  以前它只是 provenance 里的一句话，背后没有任何东西执行或检查它。
 - **内部账本一概不进**，规则和逐条判词在私有仓的 `scripts/snapshot-exclusions.tsv`。
   那份清单**现在是整棵树的 allow list**：没登记就不进，默认「不发」。
 
@@ -70,6 +79,12 @@ git archive <私有仓的提交> \
   docs/screenshots/main.png docs/screenshots/contacts.png docs/screenshots/letter.png \
   .github/ISSUE_TEMPLATE .github/pull_request_template.md .github/workflows/client-build.yml \
   | tar -x -C "$CAND"
+
+# 2. 换坐标。**这一步不能省，也不要用手做。**
+#    私有仓里 HostedConfig / 两份 Info.plist / Localizable / 两个登录页带着作者的
+#    真坐标，其中一条是他的私人邮箱。占位值同时是 isConfigured 的参照物 ——
+#    不换，那套 fail-loud 判定整个失效。
+scripts/apply-snapshot-coordinates.sh --candidate "$CAND"
 ```
 
 ⚠️ **上面这串路径是准入清单的一份手抄，两处会漂 —— 这是已知缺口。** 两个方向
@@ -83,9 +98,9 @@ git archive <私有仓的提交> \
 后果只是「该公开的没公开」，下次补上。这正是 allow list 那条判词说的：
 在不可逆和丢人之间选丢人。
 
-## 重新生成时必须跑的三道闸门
+## 重新生成时必须跑的四道闸门
 
-三道都在私有仓的 `scripts/` 下，**都是 fail-closed** —— 读不到参照物也算不通过。
+四道都在私有仓的 `scripts/` 下，**都是 fail-closed** —— 读不到参照物也算不通过。
 
 ```bash
 # 1. 不许弄丢任何已经发布出去的东西。参照物是「此刻线上公开仓的 main」，
@@ -95,7 +110,14 @@ scripts/check-public-snapshot-superset.sh --candidate "$CAND"
 # 2. 不许把不该公开的带进来。整棵树 allow list：没登记就不进。
 scripts/check-snapshot-exclusions.sh --candidate "$CAND"
 
-# 3. 读者会点的每一条链接都得是活的。默认解析目标仓是 syncmeta/PendingBot。
+# 3. 一条真坐标都不许留下。跟第 2 步读同一份清单，所以「换了什么」和
+#    「查什么」不会对不上 —— 替换脚本自己说没问题不算数。
+scripts/check-snapshot-coordinates.sh --candidate "$CAND"
+
+# 4. 读者会点的每一条链接都得是活的。默认解析目标仓是 syncmeta/PendingBot。
+#    **在候选目录里也跑一遍**才有意义：在私有树里跑，指向 apps/edge/… 的链接
+#    照样解析得到（文件还在树上），瘦身之后才死。把检查器临时拷进候选目录跑，
+#    跑完删掉。
 bun run docs:links   # 在私有仓根目录跑
 ```
 

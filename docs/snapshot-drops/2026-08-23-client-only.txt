@@ -5,18 +5,28 @@
 # 用 `--allow-drop-file` 读它，逐条比对，一条对不上就红。
 #
 # 参照物：公开仓 syncmeta/PendingBot@main `5b194c5`，798 个文件。
-# 之后的快照 236 个文件。570 条差额全在下面，一条一行、精确路径、没有通配。
+# 之后的快照 240 个文件。567 条差额全在下面，一条一行、精确路径、没有通配。
 #
 # 为什么不用一条 `--allow-drop 'supabase/**'` 一把过：那道闸门存在的意义，
-# 就是让「丢东西」变成一个被打印出来的、故意的动作。一个通配符能让 570 个
-# 文件消失而没有任何人真的看过它们；570 行做不到这件事。
+# 就是让「丢东西」变成一个被打印出来的、故意的动作。一个通配符能让几百个
+# 文件消失而没有任何人真的看过它们；几百行做不到这件事。
+#
+# ⚠️ **这份清单是算出来的，但不能只靠算。** 第一版是从
+# 「已发布 − 候选」机械算出来的 567+3 条，里面混进了三个 `apps/pendingbot/`
+# 下的文件（`SupabaseAnonWriteGuard.swift` 及其两个测试）—— 一道**已经发布
+# 出去的安全机制**，只活在未合并的 `chore/fail-loud-config` 分支和公开仓里，
+# 私有 main 上没有。差一点就被连同另外 567 条一起签掉。
+# **一份自动生成的丢弃清单会让超集闸门失效。** 闸门做了它该做的事（红了、
+# 逐条打印了），能不能接住取决于有没有人真的读那几百行。这一版是逐类看过的：
+# apps/edge · apps/admin · apps/voice-container · supabase · packages/identity ·
+# 后端闸门与发版脚本 · 后端 CI —— 没有一条属于客户端。
 #
 # ⚠️ 「从 main 的树里删掉」不等于「取消发布」。这些文件仍然留在这个仓库的
 # 历史里、留在 v0.1.0 那个 tag 上。任何人还能拿到它们 —— 包括那 213 个迁移。
 # 这一点是 --scope-change 那道额外闸门放行的前提。
 #
 # 分布：
-#   apps/        318   edge worker(276) / admin(25) / voice-container(14) / 其余
+#   apps/        315   edge worker(276) / admin(25) / voice-container(14)
 #   supabase/    219   213 个迁移 + config / seeds / README
 #   scripts/      17   后端闸门、发版与公证脚本、fixtures
 #   packages/      7   identity（给 Worker 的 TypeScript 鉴权中间件）
@@ -27,6 +37,9 @@
 # 单独说一句 docs/self-hosting.md：它不是「被删了」，是**整篇作废**。
 # 后端不开源之后，自建那条路不存在了；取代它的是 docs/building.md，
 # 只讲怎么从源码编出这个 app。
+#
+# 另外说一句 scripts/release/：五个出局，但 stamp-build-info.sh **留下了** ——
+# 它是 project.yml 的 build phase 调的，是客户端构建的一部分，不是发版脚本。
 
 .env.example
 .github/workflows/edge-checks.yml
@@ -332,9 +345,6 @@ apps/edge/tests/title-projection.test.ts
 apps/edge/tests/upload.test.ts
 apps/edge/tsconfig.json
 apps/edge/wrangler.jsonc
-apps/pendingbot/Sources/Networking/SupabaseAnonWriteGuard.swift
-apps/pendingbot/Tests/SupabaseAnonWriteGuardTests.swift
-apps/pendingbot/Tests/run-supabase-anon-write-guard-tests.sh
 apps/voice-container/.dockerignore
 apps/voice-container/Dockerfile
 apps/voice-container/package.json
