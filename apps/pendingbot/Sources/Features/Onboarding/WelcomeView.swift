@@ -340,12 +340,13 @@ struct WelcomeView: View {
     /// Google sign-in button. Same internal pill layout as `appleButton`,
     /// so the logos sit at matching X positions.
     ///
-    /// Deliberately *not* a glass capsule: Google's branding guidelines only
-    /// clear the full-colour G to sit on one of their three published fills,
-    /// so the pill takes `googlePill` + its 1pt inside stroke (see
-    /// `Theme.Palette`) and flips with the colour scheme the way their Light /
-    /// Dark themes prescribe. Same reasoning as the Apple pill next to it,
-    /// which follows Apple's black-on-light / white-on-dark rule.
+    /// The pill stays the app's frosted-glass capsule. Google's branding
+    /// guidelines only clear the full-colour G to sit on one of their three
+    /// published fills, so this is a knowing deviation the author chose in
+    /// favour of visual consistency with the rest of the login screen —
+    /// logged in `docs/tech-debt.md`. The G artwork itself is Google's own
+    /// full-colour asset with a transparent background, and the label takes
+    /// their prescribed ink (`Theme.Palette.googleInk`).
     private var googleButton: some View {
         Button { Task { await vm.beginGoogle() } } label: {
             brandPillContent(
@@ -355,8 +356,7 @@ struct WelcomeView: View {
             )
             .frame(maxWidth: .infinity)
             .frame(height: 52)
-            .background(Capsule().fill(Theme.Palette.googlePill))
-            .overlay(Capsule().strokeBorder(Theme.Palette.googlePillStroke, lineWidth: 1))
+            .glassCapsule()
             .shadow(color: .black.opacity(0.08), radius: 10, y: 4)
         }
         .buttonStyle(.plain)

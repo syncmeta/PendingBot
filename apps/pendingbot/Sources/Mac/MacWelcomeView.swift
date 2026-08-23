@@ -450,9 +450,10 @@ struct MacWelcomeView: View {
         .accessibilityLabel("Sign in with Apple")
     }
 
-    /// 和 iOS 端同一套规矩:Google 只允许全彩 G 落在他们公布的三套底色上,
-    /// 所以这颗按钮不用玻璃胶囊,改用 `Theme.Palette.googlePill` + 1pt 内描边,
-    /// 跟随浅/深色在他们的 Light / Dark 主题之间切。
+    /// 和 iOS 端同一套规矩:底仍是本 app 的玻璃胶囊。Google 品牌指南只核准
+    /// 全彩 G 落在他们公布的三套底色上,这里是作者拍板的取舍——按钮与登录页
+    /// 其余部分保持同一材质,偏离已记进 `docs/tech-debt.md`。G 本身用的是
+    /// Google 官方透明底资源,文字取他们规定的 `Theme.Palette.googleInk`。
     private var googleButton: some View {
         Button { Task { await vm.beginGoogle() } } label: {
             brandPillContent(
@@ -462,9 +463,8 @@ struct MacWelcomeView: View {
             )
             .frame(maxWidth: .infinity)
             .frame(height: 48)
-            .contentShape(Capsule())   // 整片胶囊可点(同 qrLoginButton)
-            .background(Capsule().fill(Theme.Palette.googlePill))
-            .overlay(Capsule().strokeBorder(Theme.Palette.googlePillStroke, lineWidth: 1))
+            .contentShape(Capsule())   // 玻璃胶囊整片可点(同 qrLoginButton)
+            .macGlassCapsule()
             .shadow(color: .black.opacity(0.08), radius: 10, y: 4)
         }
         .buttonStyle(.plain)
