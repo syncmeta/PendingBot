@@ -5,7 +5,7 @@
 # 用 `--allow-drop-file` 读它，逐条比对，一条对不上就红。
 #
 # 参照物：公开仓 syncmeta/PendingBot@main `5b194c5`，798 个文件。
-# 之后的快照 240 个文件。567 条差额全在下面，一条一行、精确路径、没有通配。
+# 之后的快照 241 个文件。568 条差额全在下面，一条一行、精确路径、没有通配。
 #
 # 为什么不用一条 `--allow-drop 'supabase/**'` 一把过：那道闸门存在的意义，
 # 就是让「丢东西」变成一个被打印出来的、故意的动作。一个通配符能让几百个
@@ -19,7 +19,15 @@
 # **一份自动生成的丢弃清单会让超集闸门失效。** 闸门做了它该做的事（红了、
 # 逐条打印了），能不能接住取决于有没有人真的读那几百行。这一版是逐类看过的：
 # apps/edge · apps/admin · apps/voice-container · supabase · packages/identity ·
-# 后端闸门与发版脚本 · 后端 CI —— 没有一条属于客户端。
+# 后端闸门与发版脚本 · 后端 CI —— 除了下面单独说明的那一个，没有别的客户端文件。
+#
+# **唯一一条客户端文件，单独说清楚**：
+#   apps/pendingbot/Resources/Assets.xcassets/GoogleG.imageset/g-logo.png
+# 它不是被这次瘦身删的，是 main 上把 Google 登录按钮的 G 换成官方 SVG 时替换掉的
+# （`4e9844c6` 起的那一串，作者拍过板）。同一个 imageset 里现在是 g-logo.svg，
+# 资源本身没丢，只是换了形式。它出现在这份清单里，是因为**它已经发布出去了**，
+# 而超集闸门的职责就是不许任何已发布文件悄悄消失 —— 哪怕原因完全正当。
+# 这一条恰好演示了这道闸门为什么值得留着：合 main 的那一刻它就红了。
 #
 # ── 凭什么删：这一次 --scope-change 的理由原文 ──────────────────────────────
 #
@@ -41,7 +49,8 @@
 # 这一点是 --scope-change 那道额外闸门放行的前提。
 #
 # 分布：
-#   apps/        315   edge worker(276) / admin(25) / voice-container(14)
+#   apps/        316   edge worker(276) / admin(25) / voice-container(14)
+#                      + 1 个客户端资源（见上面的单独说明）
 #   supabase/    219   213 个迁移 + config / seeds / README
 #   scripts/      17   后端闸门、发版与公证脚本、fixtures
 #   packages/      7   identity（给 Worker 的 TypeScript 鉴权中间件）
@@ -360,6 +369,7 @@ apps/edge/tests/title-projection.test.ts
 apps/edge/tests/upload.test.ts
 apps/edge/tsconfig.json
 apps/edge/wrangler.jsonc
+apps/pendingbot/Resources/Assets.xcassets/GoogleG.imageset/g-logo.png
 apps/voice-container/.dockerignore
 apps/voice-container/Dockerfile
 apps/voice-container/package.json
