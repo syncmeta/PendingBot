@@ -20,7 +20,8 @@
 #        换坐标不是打码，是让那套 fail-loud 判定成立。
 #     2. 发出去等于让每个自己编译的人默认指向作者的生产后端，
 #        而 SECURITY.md 明写着别打线上。
-#   只有最后一行是真的敏感：作者的私人邮箱，属于个人信息。
+#   只有最后一行涉及个人信息：作者的私人邮箱。**注意那一行是默认值，不是结论** ——
+#   个人信息该不该公开只有本人能定，清单只在他没表态时给一个安全的默认值。
 #
 # Format (tab-separated):
 #   SWAP <TAB> <路径或 glob> <TAB> <真值> <TAB> <占位值> <TAB> 判词
@@ -53,7 +54,7 @@ SWAP	**	"phc_nKLCnaLAKNMzMdZLVhvjxkvVUzi5AC5Aa2ENTDMv8gT5"	""   // fill in your 
 SWAP	**	"https://0b8b942c3f67dcf696ca0e57bbfd9f1e@o4511505418027008.ingest.de.sentry.io/4511529880911952"	""   // fill in your own Sentry DSN ("" = off)	Sentry DSN。同上，只写不读，空串 = 关闭
 SWAP	**	"appl_OHplTtFSfcqsgKJvjZajkelEOJo"	""   // fill in your own RevenueCat public SDK key ("" = off)	RevenueCat public SDK key。同上，空串 = 关闭
 SWAP	**	842392349572-bh7pmohnadkkb8nd3aq3v9p9pbh3pubs	YOUR_GOOGLE_CLIENT_ID	Google 登录 client id。两份 Info.plist 里各有一处（反转 URL scheme 和 GIDClientID），裸值替换同时覆盖
-SWAP	**	kipper_yonder.0u@icloud.com	hello@pendingname.com	**作者的私人邮箱。** 这一条跟上面几条性质不同 —— 那些是公开值只是不该指向作者的部署，这一条是个人信息，任何情况下都不该进公开仓
+SWAP	**	kipper_yonder.0u@icloud.com	hello@pendingname.com	**作者的私人邮箱 —— 这一行是默认值，不是结论。** 跟上面几条性质不同：那些是公开值、只是不该指向作者的部署；这一条是**他的**个人信息，而个人信息该不该公开**只有本人能定**。所以这里写的是「作者未就此表态前，默认不进公开仓」，不是「任何情况下都不该」—— 后者等于工具拿一句铁律去覆盖机主对自己信息的决定，跟 LICENSE 那条 HOLD 犯的是同一个越权，只不过方向恰好是我们认为对的那个，所以不刺眼。他明确说要用私人地址的话，把这一行改成 HOLD 交回给他
 
 # ── HOLD —— 有分歧，等人拍板；在那之前谁也别想出快照 ─────────────────────
 HOLD	LICENSE	Copyright (c) 2026 syncmeta	-	**已发布的 MIT 许可里，版权人写的是谁？** 公开仓 `5b194c5` 写的是 `Copyright (c) 2026 Yanze Tan`（真名），私有仓一直写 `Copyright (c) 2026 syncmeta`（GitHub handle）。从私有仓重出快照会把一份**已经生效的法律声明**里的版权人从真名换成 handle —— 而做这件事的人不会知道自己做了。往那个方向改只能由本人做；反过来把私有仓那份改成真名，倒可能才是修 bug。**工具不许替他挑边**，所以这里是 HOLD 不是 SWAP：只要候选快照的 LICENSE 里还带着 handle 那份，生成就中止。作者答了之后，这一行要么变成一条 SWAP（handle → 他定的那个名字），要么直接删掉（因为私有仓那份已经改对了）
