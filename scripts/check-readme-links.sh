@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Check every link in the reader-facing markdown (README / README_EN /
-# CONTRIBUTING / SECURITY) and fail if any of them is dead.
+# Check every link in the reader-facing markdown and fail if any of them is
+# dead. "Reader-facing" = anything a visitor to the public repo might click
+# through; the default set is listed under Usage below.
 #
 # Why this exists: the release checklist used to say "click every link before
 # publishing". Anything that depends on a person remembering eventually gets
@@ -30,6 +31,11 @@
 #
 # Usage:
 #   scripts/check-readme-links.sh                     # default file set
+#                                                     # (README · README_EN ·
+#                                                     #  CONTRIBUTING · SECURITY ·
+#                                                     #  SNAPSHOT-PROVENANCE ·
+#                                                     #  docs/building.md ·
+#                                                     #  apps/pendingbot/README.md)
 #   scripts/check-readme-links.sh README.md …         # explicit files
 #   scripts/check-readme-links.sh --offline           # skip HTTP, local only
 #   scripts/check-readme-links.sh --repo owner/name   # override the published repo
@@ -73,8 +79,13 @@ done
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root" || exit 2
 
+# The default set is "every markdown file a visitor to the public repo might
+# click through". Guarded by -f because the set differs between the private
+# tree and a candidate snapshot — a missing file is not an error, it just is
+# not there to check.
 if [ ${#files[@]} -eq 0 ]; then
-  for f in README.md README_EN.md CONTRIBUTING.md SECURITY.md; do
+  for f in README.md README_EN.md CONTRIBUTING.md SECURITY.md \
+           SNAPSHOT-PROVENANCE.md docs/building.md apps/pendingbot/README.md; do
     [ -f "$f" ] && files+=("$f")
   done
 fi
@@ -233,7 +244,32 @@ while IFS=$'\t' read -r file line url; do
       fi
       ;;
     ../../*)
-      if [ -n "$repo_slug" ] && [ "$offline" -eq 0 ]; then
+      # `../../x` is ambiguous and both readings are real:
+      #
+      #   ../../releases            from the root README — a GitHub UI path.
+      #                             There is no such file; GitHub resolves it
+      #                             against the repo URL.
+      #   ../../docs/building.md    from apps/pendingbot/README.md — an
+      #                             ordinary relative path to a file that
+      #                             exists. GitHub resolves it the same way a
+      #                             browser would, and it works.
+      #
+      # So try the filesystem first and only fall back to the GitHub reading
+      # when nothing is there. Treating every `../../` as a UI path produced a
+      # confident 404 for a link that works for every actual reader — a gate
+      # that cries false is a gate nobody reads.
+      rel_target="$(cd "$(dirname "$file")" 2>/dev/null && cd "$(dirname "${url%%#*}")" 2>/dev/null && pwd)/$(basename "${url%%#*}")"
+      # Must land inside the repo. `../../releases` from the root README walks
+      # out of the tree entirely, and whatever sits up there is not this
+      # repository's file — accepting it would be a false green that depends
+      # on what else the checkout happens to live next to.
+      case "$rel_target" in
+        "$repo_root"/*) ;;
+        *) rel_target="" ;;
+      esac
+      if [ -n "$rel_target" ] && [ -e "$rel_target" ]; then
+        local_ok=$((local_ok + 1))
+      elif [ -n "$repo_slug" ] && [ "$offline" -eq 0 ]; then
         printf '%s\t%s\thttps://github.com/%s/%s\n' "$file" "$line" "$repo_slug" "${url#../../}" >> "$work/http.tsv"
       else
         printf '%s:%s  %s  (github-relative; no origin remote to resolve it against)\n' \

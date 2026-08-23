@@ -19,4 +19,3 @@
 # Format (tab-separated):
 #   <link exactly as written in the markdown> <TAB> <expires YYYY-MM-DD> <TAB> <owner> <TAB> <what we are waiting for>
 
-https://apps.apple.com/app/testflight/id899247664	2026-09-05	跑这个检查的人	不带商店区域的 App Store 链接：从中国区 IP 打开会被重定向到商店首页（落点里没有 id899247664）。多半只在特定区域为真 —— 等 CI（美国 runner）真跑一次再决定是改成带区域的链接、还是直接删掉这行
