@@ -20,6 +20,8 @@
 #   scripts/apply-snapshot-coordinates.sh --candidate <dir>
 #
 # Exit codes: 0 done · 2 usage / refused.
+# ---8<--- help ends here ---8<---
+# （--help 打到这条线为止；写死行号会悄悄切错，见 check-public-snapshot-superset.sh 的说明。）
 
 set -euo pipefail
 
@@ -31,7 +33,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --candidate) candidate="${2:-}"; shift 2 ;;
     --list)      list="${2:-}"; shift 2 ;;
-    -h|--help)   sed -n '2,18p' "$0"; exit 0 ;;
+    -h|--help)     awk 'NR>1{if (/^# ---8<---/) exit; print}' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done

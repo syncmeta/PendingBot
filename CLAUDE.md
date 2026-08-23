@@ -176,28 +176,6 @@ Don't auto-deploy on merge — deploys are deliberate and user-initiated.
 
 Full deploy recipe (Board, Edge secrets, DB push, seed apply, post-merge checklist, gotchas) lives in `docs/deploy.md` — read that file when the session is actually about deploying, not on every session.
 
-## 闸门：冤枉的红是它在工作，不是它坏了
-
-一道闸门**只报事实，不猜动机**。判断「这次是不是有正当理由」是人的活。
-
-> **一道只在坏事发生时才响的闸，必然是在猜动机，而猜错的那次就是它失效的那次。**
-
-实例（2026-08-23，公开仓瘦身）：`GoogleG.imageset/g-logo.png` 换成官方 SVG ——
-作者拍板、资源没丢、只是形式变了，**超集闸门照样红**。它红得对：闸门看到的事实是
-「一个已发布的文件不见了」，这件事必须被打印出来、被人看一眼、被写进档，
-而不是因为理由充分就悄悄过去。
-
-**这条要写下来，是因为不写下来的后果很具体**：下一个人只会觉得这闸门爱误报，
-然后给它加一堆例外。**那才是一道闸真正的死法 —— 不是被拆掉，是被例外淹死。**
-
-推论，同样是规矩：
-
-- **给闸门加例外之前，先问「它这次报的事实对不对」。** 事实对而结论刺眼，
-  该做的是把理由写进档（清单、判词、提交信息），不是让闸门闭嘴。
-- **别拿「上次也是误报」当判据。** 上次正当不代表这次正当 —— 那正是闸门存在的理由。
-- **速查会失效，失效的速查比没有速查更危险**（它便宜、好记，所以还会有人用）。
-  发现一条不成立了，去写它的地方划掉，别只在心里改。
-
 ## Keep an eye on project health — log structural issues to `docs/tech-debt.md`
 
 While doing normal work, stay alert for problems that undermine the project's foundation, not just the task in front of you. When you notice one, **record it** in `docs/tech-debt.md` (the structural-risk register). This is passive vigilance during regular work, not a dedicated audit pass — you're not expected to go hunting.

@@ -25,6 +25,8 @@
 #   scripts/check-snapshot-coordinates.sh --candidate <dir> --list <file>
 #
 # Exit codes: 0 clean · 1 a real coordinate is still in there · 2 usage.
+# ---8<--- help ends here ---8<---
+# （--help 打到这条线为止；写死行号会悄悄切错，见 check-public-snapshot-superset.sh 的说明。）
 
 set -uo pipefail
 
@@ -36,7 +38,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --candidate) candidate="${2:-}"; shift 2 ;;
     --list)      list="${2:-}"; shift 2 ;;
-    -h|--help)   sed -n '2,22p' "$0"; exit 0 ;;
+    -h|--help)     awk 'NR>1{if (/^# ---8<---/) exit; print}' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done

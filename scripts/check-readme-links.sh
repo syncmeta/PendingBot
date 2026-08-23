@@ -50,6 +50,8 @@
 # show), LINK_CHECK_TIMEOUT / _RETRIES / _JOBS / _UA / _REPO.
 #
 # Exit codes: 0 all good · 1 at least one dead link · 2 bad usage.
+# ---8<--- help ends here ---8<---
+# （--help 打到这条线为止；写死行号会悄悄切错，见 check-public-snapshot-superset.sh 的说明。）
 
 set -uo pipefail
 
@@ -70,7 +72,7 @@ while [ $# -gt 0 ]; do
     --repo) repo_slug="${2:-}"; shift 2 ;;
     --known-broken) registry="${2:-}"; shift 2 ;;
     --no-known-broken) registry=""; shift ;;
-    -h|--help) sed -n '2,41p' "$0"; exit 0 ;;
+    -h|--help)     awk 'NR>1{if (/^# ---8<---/) exit; print}' "$0"; exit 0 ;;
     -*) echo "unknown flag: $1" >&2; exit 2 ;;
     *) files+=("$1"); shift ;;
   esac
