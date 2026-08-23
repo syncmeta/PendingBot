@@ -13,6 +13,8 @@ enum SupabaseStack {
     /// has had a chance to override it (e.g. from a debug menu).
     static let shared: SupabaseClient = {
         let env = HostedConfig.environment
+        // Arm the anon-write tripwire before the first request can be built.
+        SupabaseAnonWriteGuard.arm(publishableKey: env.supabasePublishableKey)
         return SupabaseClient(
             supabaseURL: env.supabaseURL,
             supabaseKey: env.supabasePublishableKey,
@@ -32,10 +34,23 @@ enum SupabaseStack {
                     // password. See DataProtectionKeychainStorage.
                     storage: DataProtectionKeychainStorage(),
                     emitLocalSessionAsInitialSession: true
+                ),
+                global: SupabaseClientOptions.GlobalOptions(
+                    session: guardedSession()
                 )
             )
         )
     }()
+
+    /// A private `URLSession` with `SupabaseAnonWriteGuard` first in the
+    /// protocol chain. The guard claims only requests that already violate
+    /// the invariant below, so everything else loads exactly as it would on
+    /// `URLSession.shared`.
+    private static func guardedSession() -> URLSession {
+        let config = URLSessionConfiguration.default
+        config.protocolClasses = [SupabaseAnonWriteGuard.self] + (config.protocolClasses ?? [])
+        return URLSession(configuration: config)
+    }
 
     // ─────────────────────────────────────────────────────────────────
     // MARK: - Fail-loud write gate
@@ -56,9 +71,17 @@ enum SupabaseStack {
     // Read paths may keep using `shared`; anon reads fail visibly as
     // empty results, not as corrupt-looking permission errors.
     //
-    // Enforcement is by code review: new write call sites must use
-    // `try await SupabaseStack.authedClient()`. The library's `adapt`
-    // remains `try?` upstream — we deliberately do not fork it.
+    // Enforcement is mechanical, not just review: `SupabaseAnonWriteGuard`
+    // is registered on this client's own URLSession and fails any
+    // `/rest/v1/<table>` write still bearing the publishable key **before
+    // the request leaves the device** (assertionFailure in Debug). The
+    // library's `adapt` remains `try?` upstream — we deliberately do not
+    // fork it; we refuse the request instead.
+    //
+    // `/rest/v1/rpc/...` stays outside the tripwire because read-only and
+    // write RPCs are indistinguishable at the HTTP layer — write-semantic
+    // RPCs still rely on the `authedClient()` convention. See
+    // docs/tech-debt.md.
     // ─────────────────────────────────────────────────────────────────
 
     /// Returns the shared client only after proving a usable auth session

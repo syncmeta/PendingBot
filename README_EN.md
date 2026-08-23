@@ -245,9 +245,12 @@ All backend coordinates for the app live in `HostedConfig.swift`; edit the const
 predicates above compare against. Change them and the predicates become permanently true, and the
 app falls back to failing silently.
 
-While the predicates are `false`, all three sign-in entry points show the line quoted under Quick
-start, in place — not a dialog, not a spinner, not a silent failure. That was measured by actually
-tapping all three on a build with unfilled coordinates; it is not a statement of intent.
+While the predicates are `false`, **nothing is raised at launch** — someone running only a local
+stack never touches the hosted constants, and warning them about something they cannot act on is a
+false alarm. The predicates are read once, at the moment an entry point is actually pressed: tap
+Apple / Google / email sign-in and it tells you, in place, that this repository does not carry that
+coordinate. The line quoted under Quick start is that message verbatim, measured by actually tapping
+all three on a build with unfilled coordinates — it is not a statement of intent.
 
 The `.dev` branch points at `localhost:8787` and `localhost:54321`, which the predicates treat as
 configured. It exists for "a backend running on this machine" — and that backend is not in this

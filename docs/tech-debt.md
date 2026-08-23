@@ -1582,3 +1582,59 @@
 - **顺带的对外风险（已随上面的处理消解）**: 开源 README 若放带 Apple 按钮的 Mac 登录页截图，而下载 `.dmg` 的人点它没反应，就等于 README 上写了一句外部人做不到的事。**藏掉按钮之后 `login.png` 必须重截**，否则图和产物对不上。
 - **一处没有实测证据、明说**: 没有真去点那个按钮观察它怎么失败（弹框 / 报错 / 静默无反应）。要点它得先退出登录，而登录态那条钥匙串记录（`supabase.gotrue.swift`）与 PendingCrew 同属家族共用组，为一次观察去动它不划算。定性依据是 Apple 的官方答复 + 我们自己重新生成的文件，**运行时的具体表现仍属未知**。
 - **状态**: ✅ 已处理（隐藏入口 + 移除授权，2026-08-21）。**债本身没有消失** —— Mac 版在当前分发形态下就是少一条登录路，只是不再有假按钮。翻回来的触发条件见上。
+
+## 2026-08-20 fail-loud 配置盘点（开源准备，`chore/fail-loud-config`）
+
+本次只动了三处：`HostedConfig.isConfigured` 判定、登录入口按下时的说明、
+supabase-swift 匿名写的硬失败闸。下面是**看到但按边界不动**的，逐条登记。
+配套的完整分档清单在 `.claude/audit/silent-failure-inventory.md`（gitignored）。
+
+### 🟡 匿名写闸把 `/rest/v1/rpc/` 留在判据之外 —— 写语义 RPC 仍只有调用点约定护着
+- **发现**: 2026-08-20 · 做 `SupabaseAnonWriteGuard` 时自己划的边界（本条是"自己挖的洞自己登记"）
+- **位置**: `apps/pendingbot/Sources/Networking/SupabaseAnonWriteGuard.swift` 的 `isAnonWrite(_:)`
+- **是什么**: 那道闸拦 `POST/PATCH/PUT/DELETE` → `/rest/v1/<table>` 且 `Authorization` 仍是 publishable key 的请求，在发出前失败。但 `/rest/v1/rpc/…` 被显式排除。
+- **为什么排除**: PostgREST 的 RPC 一律走 POST，**HTTP 这一层分不出只读 rpc 和写 rpc**。`BotManagement.swift:1102` 的 `list_bot_invitees` 今天就是只读的，一并拦掉会误伤登出态下本来能走的读 —— 误判和漏判一样坏。
+- **影响**: `ConversationView.swift:1525/1575`（`open_user_bot_conv` / `open_self_conv`）、`BotManagement.swift:1123`（`bot_invites_add`）这几个**写语义 RPC**现在走的是 `authedClient()`，正确；但如果哪天有人换成 `shared.rpc(...)`，闸不会响，退回 A1 那个"误诊两次"的形状。
+- **怎么修（要修的话）**: 给 RPC 分类 —— 要么在客户端维护一份写语义 RPC 名单喂给闸，要么服务端给写 RPC 换一条带前缀的路径（`/rpc/w_*`）。两条都不是顺手能做的，属于独立一摊。
+- **状态**: 知情的选择，不是疏漏。写在这里是为了让下一个人看到闸的边界，别以为它全覆盖。
+
+### 🟡 `HostedConfig.environment` 全仓没有任何赋值点 —— `.dev` 整档实际不可达
+- **发现**: 2026-08-20 · 同上
+- **位置**: `apps/pendingbot/Sources/Networking/HostedConfig.swift:` `static var environment: Environment = .remote`
+- **实证**: `grep -rn "environment = " Sources --include='*.swift'` 只命中文件头注释里那句 `HostedConfig.environment = .dev`。**没有任何代码给它赋过值**，也没有 debug 菜单、启动参数或编译条件。
+- **问题**: 注释写着"iOS Debug build flips `HostedConfig.environment = .dev`"，实际上没有任何东西会 flip 它。整个 `.dev` 分支（localhost worker + localhost supabase + Turnstile 测试 key）是**编译得进去、跑不到的死档**。对自建者的直接后果：clone 下来直接跑就指向现网端点，要跑本地栈**必须改源码**——「自建跑通」那位在指南里已按现状标成手工改动。
+- **为什么不顺手接**: 加运行时开关＝把一条没接通的线接上，越出"开源准备"的边界。这条明确留给以后。
+- **状态**: 待办。
+
+### 🟡 `GIDClientID` 住在 Info.plist，在 `isConfigured` 的视野之外
+- **发现**: 2026-08-20 · 同上
+- **位置**: `apps/pendingbot/Info.plist:38`（反转 client id 作 URL scheme）、`:43`（`GIDClientID`）
+- **问题**: 本次新加的 `HostedConfig.isConfigured` 只看 Swift 常量，看不到 plist。Google 登录的真 client id 因此**不在唯一真值的管辖内**：占位化那天如果只换 Swift 常量，plist 里还是作者的真 id，判据照样说"已配置"。
+- **缓解**: `PendingGoogleSignIn.configureIfNeeded()` 自己已经是档 1 —— 空值 / `YOUR_` 前缀 / 反转形态都抛类型化错误。所以不会静默，只是判据不覆盖。
+- **怎么修**: 要么把 client id 搬进 `HostedConfig`（动构建配置 + URL scheme 仍得留在 plist，只解决一半），要么在占位化时把 plist 一并纳入检查清单。
+- **状态**: 待办，与"公开版换不换占位坐标"那个拍板项绑在一起。
+
+### 🟢 读路径上的 `try?` / `?? ""` 集中登记 —— 判断正确，但登录态整体丢失时表现为"界面到处空"
+- **发现**: 2026-08-20 · 同上
+- **位置**: `Components/ServerImage.swift:51`、`Components/UserAvatar.swift:66`、`Features/Friends/BotManagement.swift:306 / 794`、`Features/Group/GroupWalletView.swift:42`、`Features/Message/SubConversationView.swift:153`
+- **为什么现在是对的**: 这些都是"用户没主动要"的读 —— 一张头像、一个列表兜底。按分档第 3 档，不该为它们弹任何东西，静默是正确行为。
+- **为什么还是登记**: 单看每一处都合理，合起来的失败模式是"登录态没了 → 整个界面到处是空位，但一句话都没有"。真出这种事时，人只能靠 A1 那道闸在写路径上先响。**如果哪天有写请求混进这些 `try?` 里，就直接长成 A1 那个坑**。
+- **状态**: 不修，登记留档。
+
+### 🟢 `Telemetry.swift` 头注释与代码不符 —— 说 RevenueCat key 为空，实际已填
+- **发现**: 2026-08-20 · 同上
+- **位置**: `apps/pendingbot/Sources/Networking/Telemetry.swift` 头注释 "The RevenueCat key is currently empty (account not provisioned)…"；实际 `HostedConfig.Environment.revenueCatKey` 的 `.remote` 分支是 `appl_OHpl…`
+- **状态**: 待办（改注释即可）。
+
+### 🟢 `GroupWalletView.swift:143` 群钱包成员只有 user_id，显示名未接通
+- **发现**: 2026-08-20 · 同上
+- **位置**: `apps/pendingbot/Sources/Features/Group/GroupWalletView.swift:143` 的 `TODO(待定稿)`
+- **是什么**: 接口只返回 `user_id`，界面暂显示"我"/短 id。属于"没接通的线"，按边界不接。
+- **状态**: 待办。
+
+### 🟢 `OPENAI_API_KEY` 未配时的文案把"我方没配"说成"上游挂了"
+- **发现**: 2026-08-20 · 同上（顺手核 edge 侧同类形状时看到）
+- **位置**: `apps/edge/src/routes/realtime.ts:479` —— `jsonError(503, 'upstream_unavailable', t('voice.upstream_failed', locale))`
+- **是什么**: 行为本身是对的（不静默，直接 503）。但对自建者来说，"上游失败"会把他推去查 OpenAI 状态页，而真因是他自己没填 `OPENAI_API_KEY`。同一个坑的小号版本：报错点离病因不远，但**指错了方向**。
+- **怎么修**: 未配置和上游真挂了分成两个 code / 两句文案。
+- **状态**: 待办（edge 侧本次零改动）。

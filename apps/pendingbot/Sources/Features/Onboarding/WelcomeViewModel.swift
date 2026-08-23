@@ -61,8 +61,36 @@ final class WelcomeViewModel: ObservableObject {
     /// grey countdown; ==0 ⇒ "重发" is tappable again.
     @Published var resendCooldown: Int = 0
     @Published var errorText: String?
+    /// Non-error copy shown when the tapped sign-in method has no backend
+    /// coordinate in this build. Kept separate from `errorText` so it can be
+    /// rendered in neutral ink — nothing failed, the coordinate simply isn't
+    /// in a public clone. Set on tap, never at launch.
+    @Published var noticeText: String?
 
     // MARK: - Derived state
+
+    // MARK: Configured-or-not
+    //
+    // Both read `HostedConfig`, which is the single source of truth (README
+    // cites it too). We check at the moment a method is *tapped* rather than
+    // disabling the buttons at launch: a dead control with no explanation is
+    // exactly the "this software is broken" impression this is meant to avoid.
+
+    /// Worker + Supabase coordinates present — Apple / Google sign-in can run.
+    var isHostedConfigured: Bool { HostedConfig.isConfigured }
+
+    /// Above, plus a real Turnstile site key — the email-code path can run.
+    var isEmailSignInConfigured: Bool { HostedConfig.isEmailSignInConfigured }
+
+    /// Sets `noticeText` and returns false when the hosted line is missing.
+    private func requireHostedConfigured() -> Bool {
+        guard isHostedConfigured else {
+            errorText = nil
+            noticeText = HostedConfig.unconfiguredNotice
+            return false
+        }
+        return true
+    }
 
     /// True once we're ready to surface the verify-code block: Turnstile
     /// has handed us a token (we just need the user to tap 发送), an OTP
@@ -105,6 +133,7 @@ final class WelcomeViewModel: ObservableObject {
     func backToEmailEntry() {
         if isVerifying { return }
         errorText = nil
+        noticeText = nil
         humanChoice = .undecided
         turnstileToken = nil
         awaitingTurnstileSend = false
@@ -123,7 +152,14 @@ final class WelcomeViewModel: ObservableObject {
     @discardableResult
     func advanceToHumanCheck() -> Bool {
         guard emailLooksValid else { return false }
+        guard requireHostedConfigured() else { return false }
+        guard isEmailSignInConfigured else {
+            errorText = nil
+            noticeText = HostedConfig.emailSignInUnconfiguredNotice
+            return false
+        }
         errorText = nil
+        noticeText = nil
         humanChoice = .undecided
         turnstileToken = nil
         awaitingTurnstileSend = false
@@ -248,7 +284,9 @@ final class WelcomeViewModel: ObservableObject {
     // MARK: - Apple / Google
 
     func beginApple() async {
+        guard requireHostedConfigured() else { return }
         errorText = nil
+        noticeText = nil
         isVerifying = true
         defer { isVerifying = false }
         do {
@@ -263,7 +301,9 @@ final class WelcomeViewModel: ObservableObject {
     }
 
     func beginGoogle() async {
+        guard requireHostedConfigured() else { return }
         errorText = nil
+        noticeText = nil
         isVerifying = true
         defer { isVerifying = false }
         do {
