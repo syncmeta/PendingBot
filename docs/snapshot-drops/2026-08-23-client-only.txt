@@ -21,7 +21,12 @@
 # apps/edge · apps/admin · apps/voice-container · supabase · packages/identity ·
 # 后端闸门与发版脚本 · 后端 CI —— 除了下面单独说明的那一个，没有别的客户端文件。
 #
-# **唯一一条客户端文件，单独说清楚**：
+# ⚠️ **别把「清单里不该有 apps/pendingbot/ 条目」当速查。** 这条一度成立，现在
+# 不成立了 —— 下面就有一条正当的客户端条目。**客户端子树的条目不是禁止的，
+# 但每一条都要单独写清为什么。** 这类失效的速查最危险：它便宜、好记，
+# 所以下次还会有人用，而用的时候它已经会给出错误答案了。
+#
+# **本清单里唯一一条客户端文件，单独说清楚**：
 #   apps/pendingbot/Resources/Assets.xcassets/GoogleG.imageset/g-logo.png
 # 它不是被这次瘦身删的，是 main 上把 Google 登录按钮的 G 换成官方 SVG 时替换掉的
 # （`4e9844c6` 起的那一串，作者拍过板）。同一个 imageset 里现在是 g-logo.svg，
