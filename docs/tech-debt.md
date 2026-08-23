@@ -1638,3 +1638,71 @@ supabase-swift 匿名写的硬失败闸。下面是**看到但按边界不动**�
 - **是什么**: 行为本身是对的（不静默，直接 503）。但对自建者来说，"上游失败"会把他推去查 OpenAI 状态页，而真因是他自己没填 `OPENAI_API_KEY`。同一个坑的小号版本：报错点离病因不远，但**指错了方向**。
 - **怎么修**: 未配置和上游真挂了分成两个 code / 两句文案。
 - **状态**: 待办（edge 侧本次零改动）。
+
+---
+
+## 2026-08-23 公开仓改为「仅客户端」（`pendingcrew/session-a0307d`）
+
+### 🔴 超集闸门有一个结构性盲区：路径相同、内容被换掉，它不报 — **未补，目前只有人眼**
+- **发现**: 2026-08-23 · 做「只放客户端」的快照口径改造时撞上，**纯属运气**
+- **位置**: `scripts/check-public-snapshot-superset.sh`
+- **是什么**: 那道闸门比对的是**路径集合**（已发布的每个路径都还在不在候选快照里），
+  不比对内容。所以「一个已发布的文件被换成另一份内容」这类漂移它一声不吭。
+- **怎么被撞上的**: 核丢弃清单时看到三个 `apps/pendingbot/` 下的文件被列进「故意删掉」，
+  往下查才发现 `SupabaseAnonWriteGuard`（把「不许静默降级 anon」从约定变成机制的那道闸）
+  **只活在未合并的 `chore/fail-loud-config` 和已发布的公开仓里，私有 main 上没有**。
+  真正让人注意到的是同一个文件里两句注释的差别 ——
+  公开仓 `SupabaseStack.swift` 写 *Enforcement is mechanical*，main 写 *Enforcement is by code review*。
+  **靠的是人眼读到这两句话。** 换个人、换个时间点，这道已经发布出去的安全机制会被一份
+  「靠代码评审」的约定悄悄换掉，全程零告警。
+- **量化（2026-08-23 实测，公开仓 `5b194c5` × 本分支）**:
+  ```
+  两边同路径的文件      795
+  同路径内容不同         39   其中客户端子树 12
+  公开仓那份内容在私有仓对象库里找不到（= 真·只活在公开仓）  16
+  ```
+  16 处按成因拆开：**换坐标产物** 5（两份 Info.plist / HostedConfig / Localizable /
+  两个登录页里的邮箱）· **生成物** 1（`project.pbxproj`）· **后端文件** 6（都要随
+  后端一起出局，不影响）· **本次有意重写** 2（README 相关）·
+  **真·无法解释的编辑漂移** 2：`.gitignore` 和 `LICENSE`。
+- **`.gitignore` 已处理**: 取两边并集（公开仓那份多出 Xcode 本地生成物、发版产物、
+  以及 `.agents/` `.pendingcrew/` `CLAUDE.md` `GEMINI.md` 几条保护性规则）。
+- **`LICENSE` 未处理，等人拍板**: 公开仓写的是 `Copyright (c) 2026 Yanze Tan`，
+  私有仓一直写 `Copyright (c) 2026 syncmeta`。重出快照会**把一份已经发布出去的
+  MIT 许可里的版权人从真名换成 GitHub handle** —— 这是身份/法律层面的事，不是我们能定的。
+  跟「登录页里那个私人邮箱是不是有意的」是同一族问题，一起等人类回答。
+  **在回答之前，快照不能发。**
+- **为什么没补成机器闸（说清楚，不假装）**: 能想到的形状是「候选快照里每个同路径文件的
+  内容，要么与已发布那份一致，要么差异属于一条**登记过的**成因（换坐标 / 生成物 /
+  本次有意重写）」。做成 fail-closed 的难点不在实现，在那份「登记过的成因」——
+  它一旦写得松就等于没有，写得紧就会在每次正常迭代时红。**这一版没有建它**，
+  因为定义那份成因清单不该由一个 session 自己拍。
+- **在补上之前，人眼那一步至少有工具**（provenance 里也写了这条）:
+  ```bash
+  git -C <公开仓> ls-tree -r HEAD | awk '{print $3"\t"$4}' | sort -k2 > /tmp/pub.blobs
+  git -C <私有仓> ls-tree -r HEAD | awk '{print $3"\t"$4}' | sort -k2 > /tmp/pri.blobs
+  join -1 2 -2 2 -o 0,1.1,2.1 /tmp/pub.blobs /tmp/pri.blobs \
+    | awk '$2!=$3{print $1, $2}' \
+    | while read -r path blob; do
+        git -C <私有仓> cat-file -e "$blob" 2>/dev/null || echo "只活在公开仓: $path"
+      done
+  ```
+  最后那一列每多一行，就是一段重出快照会让它消失的东西。
+- **关联**: 这是「反向漂移」的第五次发作，也是第一次咬到**代码**而不是文档
+  （前四次：一条安全迁移 / `SNAPSHOT-PROVENANCE.md` / `README_EN.md` / `README.md`）。
+
+### 🟡 快照生成里「换掉真坐标」那一步，一直没有脚本也没有闸门 — ✅ 已补（2026-08-23）
+- **发现**: 2026-08-23 · 按 `SNAPSHOT-PROVENANCE.md` 写的方式生成候选快照时，
+  真坐标原封不动进了候选目录，包括作者的私人邮箱
+- **病因**: provenance 里那句「所有指向作者线上服务的坐标换成了占位值」背后没有任何
+  东西执行或检查它。v0.1.0 那份是人手做的，而且**做对了** —— 公开仓里零命中。
+  正因为做对了，没人发现这一步有多脆：它全靠一个人那一次没漏。
+- **已补**: `scripts/snapshot-coordinates.tsv`（真值 → 占位值 → 判词，10 条）+
+  `apply-snapshot-coordinates.sh`（在候选目录里替换，拒绝对着 git 工作区跑）+
+  `check-snapshot-coordinates.sh`（fail-closed 复查）。两个脚本读同一份清单。
+- **验证**: 换前红（13 处逐条打印）· 换后绿 · 指向 git 工作区被拒 exit 2 ·
+  把 `HostedConfig.swift` 单独 swiftc 编成探针实跑，候选那份
+  `isConfigured=false / isEmailSignInConfigured=false`，私有仓那份 `true / true`。
+- **留下的边界**: 清单漏一条，闸门就绿着放行 —— 它只查它知道的针。这一版已经踩过一次
+  （第一版把针写成 `https://api.pendingname.com`，于是注释里那句裸的
+  `api.pendingname.com` 两边都没抓到）。清单要有人 review，不能只靠它自己。
