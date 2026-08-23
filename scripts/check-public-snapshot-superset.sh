@@ -93,10 +93,57 @@ done
 if [ -n "$allow_drop_file" ] && [ ! -f "$allow_drop_file" ]; then
   echo "no such drop file: $allow_drop_file" >&2; exit 2
 fi
+
+# The drop file has to be a committed file, not a scratch file or a pipe.
+# Its whole reason for existing is that someone can answer "what exactly did we
+# delete back then" years later; a list that only existed for the length of one
+# command answers nothing. Enforced rather than documented, because the sentence
+# right above is the kind people agree with and then skip.
+if [ -n "$allow_drop_file" ]; then
+  gate_repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  if ! git -C "$gate_repo" ls-files --error-unmatch -- "$allow_drop_file" >/dev/null 2>&1; then
+    echo "refusing: $allow_drop_file is not tracked by git in $gate_repo." >&2
+    echo >&2
+    echo "  The drop list must be committed. It is the only later answer to" >&2
+    echo "  \"what exactly did we delete\" — a temp file answers nothing, and a" >&2
+    echo "  list nobody can review is the same as a wildcard." >&2
+    exit 2
+  fi
+fi
+
 if [ -n "$scope_change" ] && [ -z "$allow_drop_file" ]; then
   echo "--scope-change needs --allow-drop-file: a migration may only be dropped" >&2
   echo "when it is also listed by exact path. Two deliberate acts, not one flag." >&2
   exit 2
+fi
+
+# --scope-change is the one switch here that can make an already-published
+# database migration disappear. It is meant to be typed, once, by a person who
+# has just decided that this repository no longer contains a database.
+#
+# Writing that in a comment would make it a convention, and this whole gate
+# exists to stop conventions from being the thing that protects us. So: it
+# refuses to run unattended. Wire it into CI or a script and it fails loudly
+# instead of quietly doing the irreversible thing.
+if [ -n "$scope_change" ]; then
+  unattended=""
+  [ -t 0 ] || unattended="stdin is not a terminal"
+  for v in CI GITHUB_ACTIONS GITLAB_CI BUILDKITE JENKINS_URL TEAMCITY_VERSION; do
+    eval "val=\${$v:-}"
+    [ -n "$val" ] && unattended="\$$v is set"
+  done
+  if [ -n "$unattended" ]; then
+    echo "refusing --scope-change: $unattended." >&2
+    echo >&2
+    echo "  This switch drops already-published database migrations. It is only" >&2
+    echo "  allowed when a person types it in a terminal — deciding that the" >&2
+    echo "  repository no longer contains a database is not a thing automation" >&2
+    echo "  gets to decide on its own." >&2
+    echo >&2
+    echo "  Everything else this gate does still works unattended; run it" >&2
+    echo "  without --scope-change." >&2
+    exit 2
+  fi
 fi
 
 work="$(mktemp -d)"
