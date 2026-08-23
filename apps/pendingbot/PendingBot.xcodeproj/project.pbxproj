@@ -44,6 +44,7 @@
 		26BF32DE6C12E211FC91F64E /* CodeRunnerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F74C5B9B7D89D583C48817E /* CodeRunnerSheet.swift */; };
 		275EBB90F22BDCDFEE0D5F84 /* ToolTraceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAB29CAABC38BF9B5380C3DE /* ToolTraceView.swift */; };
 		277A70078E8E41FAB006EEAD /* ModelRevealPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D48064D39B52115985DB0D8 /* ModelRevealPolicy.swift */; };
+		2A0CF25EB5447254B5B3907A /* AppleWebSignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04E37E3D13AED272B6B8A460 /* AppleWebSignIn.swift */; };
 		2A2A57D4494DB9D43B074897 /* SupabaseStack.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0767E4C8060BA86E1484AB2E /* SupabaseStack.swift */; };
 		2A83FD0E0DB5D7BEAB180B85 /* UserUserPeer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 398ED7C99CCFD9735C8B9480 /* UserUserPeer.swift */; };
 		2B5FBDBE4E766F40C3B0D349 /* ServerImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F1FA831F2107CCFDA665DF7 /* ServerImage.swift */; };
@@ -70,6 +71,7 @@
 		4A5309E0E4F017816DF8FE43 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E091E71F22CA1A5DE2A1ECE /* APIClient.swift */; };
 		4A9EAC2D6CFA7821D4E42BC8 /* CrewListStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C64B7684626EF8B4F4F573F /* CrewListStore.swift */; };
 		4BB4C2FB26A507B0A0BCBBDA /* SplitNav.swift in Sources */ = {isa = PBXBuildFile; fileRef = 669D712A76A1F12D4F8171E8 /* SplitNav.swift */; };
+		4C49949374124C6F57022D9E /* AppleWebCallback.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33CA6F99DD8CB69D111A5A4E /* AppleWebCallback.swift */; };
 		4D643B36DC9C4F4911A4B845 /* WelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F7C3B5C578F1BE2095D0B00 /* WelcomeView.swift */; };
 		4E89381BBE7BB2A1B7E978C4 /* WideRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49F01F9B87EF2ADEAEFA4BD3 /* WideRootView.swift */; };
 		5042BAAF9E26EC2AFC0226DF /* PlatformImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9142C17F5B4C0AC7A9AA91ED /* PlatformImage.swift */; };
@@ -197,6 +199,7 @@
 /* Begin PBXFileReference section */
 		023C318B8EB2B3A4CC9F8594 /* EmailSignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmailSignIn.swift; sourceTree = "<group>"; };
 		03D2467ADBD40F4F8755863A /* CrewSessionAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrewSessionAPI.swift; sourceTree = "<group>"; };
+		04E37E3D13AED272B6B8A460 /* AppleWebSignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleWebSignIn.swift; sourceTree = "<group>"; };
 		0535C2EB32C3F6E1DFE0EA95 /* TabRoot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabRoot.swift; sourceTree = "<group>"; };
 		05749CCA7DC81C13CE7D3C84 /* EnvelopeThinkingTrace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvelopeThinkingTrace.swift; sourceTree = "<group>"; };
 		0689D829BCC97AF9D3099F61 /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
@@ -241,6 +244,7 @@
 		2EA1B13DB170E604F3CB03B8 /* SettingsScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsScene.swift; sourceTree = "<group>"; };
 		2F1FA831F2107CCFDA665DF7 /* ServerImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerImage.swift; sourceTree = "<group>"; };
 		30A4F6059E2AA9AF9E1CF05E /* WelcomeViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeViewModel.swift; sourceTree = "<group>"; };
+		33CA6F99DD8CB69D111A5A4E /* AppleWebCallback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleWebCallback.swift; sourceTree = "<group>"; };
 		3717FA37BE983343D22F54C1 /* ChatComposerAccessory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatComposerAccessory.swift; sourceTree = "<group>"; };
 		38FE558CFE957C64782A15FA /* AppearanceMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppearanceMode.swift; sourceTree = "<group>"; };
 		398ED7C99CCFD9735C8B9480 /* UserUserPeer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserUserPeer.swift; sourceTree = "<group>"; };
@@ -416,6 +420,8 @@
 			children = (
 				7E091E71F22CA1A5DE2A1ECE /* APIClient.swift */,
 				1FEFDBE4DFE6AB93D06D2015 /* AppleSignIn.swift */,
+				33CA6F99DD8CB69D111A5A4E /* AppleWebCallback.swift */,
+				04E37E3D13AED272B6B8A460 /* AppleWebSignIn.swift */,
 				847B06C1CE436AE865AD9AAE /* BillingService.swift */,
 				AC6DBF492E7DD84630FAE567 /* BotContactsFetch.swift */,
 				6A5442547F63F7CF41B54C46 /* BotInviteAPI.swift */,
@@ -879,6 +885,8 @@
 				D981A37D61DA1B2B0EDF9F14 /* AppEnvironment.swift in Sources */,
 				232CB5FD82ABC5A3C6724863 /* AppearanceMode.swift in Sources */,
 				3F6C2CE574F1B2E1D65677E9 /* AppleSignIn.swift in Sources */,
+				4C49949374124C6F57022D9E /* AppleWebCallback.swift in Sources */,
+				2A0CF25EB5447254B5B3907A /* AppleWebSignIn.swift in Sources */,
 				12A200D2EF7DE9FE9E8C436C /* BillingService.swift in Sources */,
 				B5B71DE9781BE668FF81DE91 /* BlinkingCursor.swift in Sources */,
 				F7AE57D22B8A151AF452E63F /* BotAvatar.swift in Sources */,

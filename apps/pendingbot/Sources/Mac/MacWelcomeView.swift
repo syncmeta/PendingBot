@@ -418,6 +418,21 @@ struct MacWelcomeView: View {
     ///
     /// iOS 与 Mac App Store 分发不受本条影响；`Networking/AppleSignIn.swift` 是
     /// 跨平台的，一行没动。
+    ///
+    /// ── 网页 OAuth 那条替代路（尚未启用）────────────────────────────────
+    /// `Networking/AppleWebSignIn.swift` 已经把「浏览器授权 → 回跳
+    /// `pendingbot://auth-callback` → 建立会话」整条链路写好了，它**不依赖**
+    /// 上面那项授权，正是为直接分发的包准备的。入口挂在
+    /// `WelcomeViewModel.beginAppleWeb()`。
+    ///
+    /// **但现在故意不接上。** 放出按钮的前提是 `docs/apple-web-oauth-research.md`
+    /// 第 5 节那次实测通过：同一个 Apple 账号在 iPhone 和 Mac 上必须落在**同一行**
+    /// `auth.users`。Apple 后台的 Services ID 若没正确分组到
+    /// `com.pendingname.pendingbot` 之下，会**不报任何错**地给同一个人开出第二个
+    /// 账号 —— 和上面 2026-08-07 那次「全链路零报错、两周没人发现」是同一种病。
+    ///
+    /// 实测通过后要改的就两处，单独一笔提交：这个判据改成「授权在 → 用原生，
+    /// 授权不在 → 用网页」，`appleButton` 的动作换成 `vm.beginAppleWeb()`。
     private static let appleSignInAvailable: Bool = {
         // 读法与 `Networking/PushService.swift` 里读 `aps-environment` 的那段同源。
         // macOS 的描述文件在 Contents/ 下，不在 Resources 里，所以不能用

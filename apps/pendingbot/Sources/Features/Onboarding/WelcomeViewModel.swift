@@ -262,6 +262,33 @@ final class WelcomeViewModel: ObservableObject {
         }
     }
 
+    /// Apple 登录的**网页 OAuth** 路径（`AppleWebSignIn`），给 Mac 直接分发的包用 ——
+    /// 那种包拿不到 `com.apple.developer.applesignin`，`beginApple()` 那条原生路
+    /// 在里面根本用不了。
+    ///
+    /// ⚠️ **目前没有任何界面调到这里，这是故意的。** 放出入口之前必须先做完
+    /// `docs/apple-web-oauth-research.md` 第 5 节那次实测：同一个 Apple 账号在
+    /// iPhone 和 Mac 上必须落在**同一行** `auth.users`。Apple 后台的 Services ID
+    /// 如果没有正确分组到 `com.pendingname.pendingbot` 之下，会**不报任何错**地
+    /// 给同一个人开出第二个账号，事后只能手工合并数据库。
+    ///
+    /// 实测通过后，把 `MacWelcomeView` 的 Apple 按钮改成调这里（见那边
+    /// `appleSignInAvailable` 上方的注释），单独一笔提交。
+    func beginAppleWeb() async {
+        errorText = nil
+        isVerifying = true
+        defer { isVerifying = false }
+        do {
+            _ = try await AppleWebSignIn.run()
+            Haptics.success()
+        } catch AppleWebSignIn.Error.userCancelled {
+            // 用户自己关掉了授权窗口 —— 不报错，停在原地(同 beginApple)
+        } catch {
+            errorText = error.localizedDescription
+            Haptics.error()
+        }
+    }
+
     func beginGoogle() async {
         errorText = nil
         isVerifying = true
