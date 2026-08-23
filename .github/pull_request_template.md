@@ -12,13 +12,14 @@
 如实填。跑不了的写「跑不了，因为 …」，比假装全绿有用得多。
 -->
 
-- [ ] iOS Simulator 目标编译通过（CI 也跑这一条）
+- [ ] iOS Simulator 目标编译通过（CI 也跑这条）
+- [ ] `bash Tests/run-model-reveal-policy-tests.sh` + `bash Tests/run-preset-epoch-tests.sh`（CI 也跑）
 - [ ] macOS 目标编译通过（改了 `Sources/Mac/**` 或任何 `#if os(macOS)` 时；**CI 不跑这条**）
 - [ ] 改了 `project.yml` 的话，重新跑了 `xcodegen` 并把生成的 `.xcodeproj` 一起提交了
 - [ ] 跑不了的项目，以及为什么：
 
-<sub>Swift 侧没有单元测试，所以 CI 绿只代表「没把编译弄坏」，不代表改动是对的。
-下面那一栏因此更重要。</sub>
+<sub>那两组测试一共 45 条断言，覆盖两个纯 Foundation 的小模块 —— CI 绿基本上只代表
+「没把编译弄坏」。下面那一栏因此更重要。</sub>
 
 ## 需要人工验的
 

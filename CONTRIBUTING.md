@@ -38,19 +38,27 @@ open PendingBot.xcodeproj
 
 ```bash
 cd apps/pendingbot
+
+# ① iOS Simulator 构建（CI 也跑这条）
 xcodebuild -project PendingBot.xcodeproj -scheme PendingBot \
   -destination 'generic/platform=iOS Simulator' build
 
+# ② 独立单元测试（CI 也跑，两组加起来 4 秒，不需要模拟器）
+bash Tests/run-model-reveal-policy-tests.sh
+bash Tests/run-preset-epoch-tests.sh
+
+# ③ macOS 构建（CI 不跑）
 xcodebuild -project PendingBot.xcodeproj -scheme PendingBot \
   -destination 'platform=macOS' build
 ```
 
-**CI 只跑上面第一条**（`.github/workflows/client-build.yml`，macOS runner 上的
-iOS Simulator 构建，不签名）。它只证明「编得出来」—— **Swift 侧没有单元测试**，
-所以 CI 绿不代表你的改动是对的，只代表它没把编译弄坏。
+**CI 跑 ① 和 ②**（`.github/workflows/client-build.yml`，macOS runner，不签名）。
+但请别高估它：② 只有 45 条断言，覆盖两个纯 Foundation 的小模块，工程里还没有
+`xcodebuild test` 目标，没有 UI 测试也没有网络层测试。**CI 绿基本上只代表
+「没把编译弄坏」。**
 
-macOS 目标 CI 不跑，改了 `Sources/Mac/**` 或任何带 `#if os(macOS)` 的地方，
-请自己在本机编一遍 Mac 目标。
+③ 的 macOS 目标 CI 不跑 —— 改了 `Sources/Mac/**` 或任何带 `#if os(macOS)` 的
+地方，请自己在本机编一遍。
 
 **不要提交红的分支。** 如果某项检查你在本机跑不了（比如没有 Apple 开发者账号、
 只能编模拟器不能装真机），在 PR 里如实说一句你跑了哪些、没跑哪些 ——

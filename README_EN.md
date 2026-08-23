@@ -209,9 +209,11 @@ A few more, stated precisely:
   vendor's own server-side tools, and that half may well work.)
 - **Short links / remote-control index** — the tables exist in production, the repository has no
   code for them (lost along with a commit-loss incident).
-- **Zero automated tests on the three client platforms** — there are no unit tests on the Swift
-  side. This repository's CI does exactly one thing: build the iOS Simulator target on a macOS
-  runner, to prove it still compiles. (All 695 tests live in the backend, which is not public.)
+- **Automated test coverage on the three client platforms is thin** — `apps/pendingbot/Tests/`
+  holds two standalone suites (45 assertions, 4 seconds) covering two pure-Foundation modules.
+  There is no `xcodebuild test` target yet, no UI tests and no networking tests. This repository's
+  CI runs exactly that: an iOS Simulator build plus those two suites. (The 695 tests live in the
+  backend, which is not public.)
 
 ### Not there yet
 
