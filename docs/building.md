@@ -6,14 +6,6 @@
 
 先把这件事说清楚，免得你编到一半才发现：**你 clone 下来，开箱什么也做不了。**
 
-<!--
-TODO-VERIFY-SIGNIN —— 待实测后再落笔的一句话。
-另一条线正在真编 app、真点三个登录入口取证。如果确认「未填坐标时点登录会得到
-一句明确的『这份仓库没带后端坐标』」，把下面「后端坐标」一节里那句谨慎的说法
-换成这句更具体的；如果不是，就保持现在这样。
-在拿到那份证据之前，不要在任何对外文档里替产品断言这个行为。
--->
-
 ## 你需要什么
 
 | 工具 | 用途 |
@@ -60,6 +52,16 @@ Signing Team** —— 仓库里那个是作者的，你签不了。
 真值**，这份文档不另写一份能力清单，因为两份一定会漂。没填坐标时它们返回
 `false`。
 
+**这时候点登录会怎样：不会静默失败。** 三个入口（Apple / Google / 邮箱验证码）
+都会原地显示同一句提示，不转圈也不崩：
+
+> 本仓库只带占位后端坐标，登录走不通。要接自己的 Cloudflare Worker + Supabase，见 README 的「配置」一节。
+
+这是在一份未填坐标的构建上真点过三个入口测出来的，不是设计意图。顺带一件
+反直觉的事：因为这道判据挡在最前面，**Google 的 `GIDClientID` 占位和 Turnstile
+的占位都走不到** —— 你不会看到 `missingClientID`，也不会看到关于 Turnstile 的
+提示，只会看到上面那一句。
+
 要指向你自己的后端，改 `Environment.remote` 分支下那几个常量：Worker URL、
 Supabase URL 与 publishable key、Turnstile site key / host，以及你需要的遥测 key。
 
@@ -69,8 +71,8 @@ Supabase URL 与 publishable key、Turnstile site key / host，以及你需要�
 还有两处零散的：
 
 - **Google 登录** —— `Info.plist` 和 `Resources/Info.plist` 里的 `GIDClientID`
-  与反转 URL scheme 也是占位（`YOUR_GOOGLE_CLIENT_ID`）。没填就点 Google 登录会抛
-  `missingClientID`，不会静默。
+  与反转 URL scheme 也是占位（`YOUR_GOOGLE_CLIENT_ID`）。填了后端坐标之后这一处
+  才轮得到，见上面那条实测说明。
 - **Universal Links / 分享链接** —— AASA 域名、Associated Domains entitlement 和
   代码里的分享链接域名仍然是作者的。换成你自己的域名时这三处要一起改。
 
