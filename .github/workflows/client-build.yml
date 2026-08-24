@@ -36,9 +36,25 @@ on:
 jobs:
   ios-simulator:
     name: xcodebuild · iOS Simulator
-    runs-on: macos-15
+    # 钉 macos-26 + Xcode 26.5，不用 macos-15/默认 Xcode ——
+    # 仓库里用了 Liquid Glass 那批 API（.glassEffect 等，7 个文件 13 处），只在
+    # iOS/macOS 26 SDK 里才有符号；#available 只管运行时可用性，管不了 SDK 里
+    # 有没有这个符号，拿旧 SDK 编就是编不过（2026-08-24 run 32693260106 就是
+    # macos-15/Xcode 16.4/iOS 18.5 SDK 编出的两条 error）。发布用的 .dmg 是本机
+    # Xcode 26.5（Build 17F42）打的，这里选同一个 build 号，让 CI 的绿等价于
+    # 「发出去的包编得过」。
+    #
+    # macos-26 runner 已 GA（2026-02-26 起，见 actions/runner-images 变更日志），
+    # image 里同时装了 26.0.1 / 26.1.1 / 26.2 / 26.3 / 26.4.1 / 26.5 / 26.6(默认)
+    # 七个 Xcode（images/macos/macos-26-Readme.md，2026-07-29 image 版本）。默认
+    # 版本会随 image 更新漂移，所以显式 xcode-select 到 26.5 而不是依赖默认值——
+    # 下次升级本机 Xcode 时，把这里也一起改，别让两边分叉。
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
+
+      - name: 选 Xcode 26.5（跟发布机一致）
+        run: sudo xcode-select -s /Applications/Xcode_26.5.app
 
       - name: xcodegen 的输出必须跟提交的 .xcodeproj 一致
         # 改了 project.yml 却忘了重新生成、或者生成了忘了提交，是外部 PR 最容易
