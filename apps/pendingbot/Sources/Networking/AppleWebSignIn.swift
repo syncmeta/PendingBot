@@ -119,64 +119,121 @@ enum AppleWebSignIn {
     ///   2. 能在把回调交给 supabase 之前先看一眼 —— provider 回的错误码是后台
     ///      配错时**唯一**的线索，必须原样带出来。
     private static func presentAuthorization(_ authorizationURL: URL) async throws -> URL {
-        let anchorProvider = PresentationAnchorProvider()
-        // 强引用住会话本体直到回调结束。`ASWebAuthenticationSession` 不由系统替我们
-        // 持有 —— 只是个局部变量的话，`start()` 之后它可能当场被释放、会话被取消，
-        // 症状恰恰就是「浏览器起来了但什么都不发生」。Google 那条路没这个问题，是
-        // 因为 AppAuth 拿实例变量存着（OIDExternalUserAgentMac 的
-        // `_webAuthenticationSession`）；我们这条一开始漏了。
-        var retainedSession: ASWebAuthenticationSession?
-        return try await withCheckedThrowingContinuation { continuation in
-            let webSession = ASWebAuthenticationSession(
-                url: authorizationURL,
-                callbackURLScheme: AppleWebCallback.scheme
-            ) { callbackURL, error in
-                defer {
-                    // 把 anchorProvider 拉活到回调结束：ASWebAuthenticationSession
-                    // 对 presentationContextProvider 只持弱引用。
-                    _ = anchorProvider
-                    retainedSession = nil
-                }
-
-                if let error {
-                    if let asError = error as? ASWebAuthenticationSessionError,
-                       asError.code == .canceledLogin {
-                        continuation.resume(throwing: Error.userCancelled)
-                    } else {
-                        continuation.resume(throwing: Error.underlying(error))
-                    }
-                    return
-                }
-                guard let callbackURL else {
-                    // 文档保证 url / error 至少有一个，但不拿 fatalError 赌
-                    // ——这条链路在真机上还一次都没跑过。
-                    continuation.resume(throwing: Error.unrecognizedCallback(authorizationURL))
-                    return
-                }
-
-                switch AppleWebCallback.classify(callbackURL) {
-                case .providerError(let code, let description):
-                    continuation.resume(throwing: Error.provider(code: code, description: description))
-                case .notACallback:
-                    continuation.resume(throwing: Error.unrecognizedCallback(callbackURL))
-                case .authorizationCode:
-                    // 授权码本身交给 supabase-swift 的 `session(from:)` 去换，
-                    // 它同时负责 PKCE 的 code_verifier。
-                    continuation.resume(returning: callbackURL)
-                }
+        let flow = BrowserAuthorizationFlow()
+        // `withTaskCancellationHandler` 不是锦上添花,是这条链路唯一的兜底:
+        // Task 被取消(用户离开界面、上层 await 被丢掉)时 continuation 不会被恢复,
+        // 而**系统侧那个请求会一直挂着**。已经实测过它挂了 30 小时的样子 ——
+        // 见下面 `BrowserAuthorizationFlow` 的注释。
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                flow.start(url: authorizationURL, continuation: continuation)
             }
-            webSession.presentationContextProvider = anchorProvider
-            retainedSession = webSession
-            // `start()` 的返回值必须看 —— 它回 false（拿不到 anchor、浏览器起不来）
-            // 时不会走 completionHandler，丢掉它等于把失败咽了，界面就永远停在
-            // 「验证中」。
-            guard webSession.start() else {
-                retainedSession = nil
-                continuation.resume(throwing: Error.browserDidNotOpen)
-                return
-            }
+        } onCancel: {
+            flow.cancel()
         }
     }
+}
+
+/// 一次浏览器授权的全部可变状态:会话本体、anchor provider、continuation。
+///
+/// **为什么要单独一个类,而不是几个局部变量** —— 这是本文件最要紧的一条,
+/// 有实测账在后面:
+///
+/// `ASWebAuthenticationSession` 的请求活在**系统进程**(`SafariLaunchAgent`)里,
+/// 不在我们进程里。而那个 agent **一次只派发一个请求**,后来的一律排队等着。
+/// 所以一个没被 `cancel()` 掉的请求不是"泄漏了一点内存"那么轻 —— 它会把
+/// **整台机器上所有 app 的浏览器授权**堵死,直到有人重启那个 agent。
+///
+/// 2026-08-24 查 Mac 登录打不开登录页时,系统日志里就是这个:我们 8-23 11:40
+/// 发出的一个 Apple 授权请求(UUID 9567F751)一直是 "in progress",**挂了 30 个
+/// 小时**;从那以后这台机器上每一次授权(我们的 Google、我们的 Apple)都只
+/// `Enqueued` 从不 `Dispatching`。表现就是:授权框弹出来、点继续、Safari 起来了、
+/// 然后什么都不发生,而且**没有任何报错**。
+///
+/// 所以这里有三条硬要求:
+///   1. 会话本体要被强引用住 —— 系统不替我们持有,被释放不等于被取消。
+///   2. Task 取消时必须显式 `cancel()`,把系统侧那个请求真的撤掉。
+///   3. continuation 恰好恢复一次 —— 完成回调和取消可能抢,用锁挡住。
+private final class BrowserAuthorizationFlow: @unchecked Sendable {
+    private let lock = NSLock()
+    private var session: ASWebAuthenticationSession?
+    private var continuation: CheckedContinuation<URL, Swift.Error>?
+    /// anchor provider 要活到回调结束:`ASWebAuthenticationSession` 对
+    /// `presentationContextProvider` 只持弱引用。
+    private var anchorProvider: PresentationAnchorProvider?
+
+    @MainActor
+    func start(url: URL, continuation: CheckedContinuation<URL, Swift.Error>) {
+        let webSession = ASWebAuthenticationSession(
+            url: url,
+            callbackURLScheme: AppleWebCallback.scheme
+        ) { [weak self] callbackURL, error in
+            guard let self else { return }
+
+            if let error {
+                if let asError = error as? ASWebAuthenticationSessionError,
+                   asError.code == .canceledLogin {
+                    self.finish(.failure(AppleWebSignIn.Error.userCancelled))
+                } else {
+                    self.finish(.failure(AppleWebSignIn.Error.underlying(error)))
+                }
+                return
+            }
+            guard let callbackURL else {
+                // 文档保证 url / error 至少有一个,但不拿 fatalError 赌
+                // ——这条链路在真机上还一次都没跑过。
+                self.finish(.failure(AppleWebSignIn.Error.unrecognizedCallback(url)))
+                return
+            }
+
+            switch AppleWebCallback.classify(callbackURL) {
+            case .providerError(let code, let description):
+                self.finish(.failure(AppleWebSignIn.Error.provider(code: code, description: description)))
+            case .notACallback:
+                self.finish(.failure(AppleWebSignIn.Error.unrecognizedCallback(callbackURL)))
+            case .authorizationCode:
+                // 授权码本身交给 supabase-swift 的 `session(from:)` 去换,
+                // 它同时负责 PKCE 的 code_verifier。
+                self.finish(.success(callbackURL))
+            }
+        }
+
+        let anchor = PresentationAnchorProvider()
+        webSession.presentationContextProvider = anchor
+
+        lock.lock()
+        self.continuation = continuation
+        self.session = webSession
+        self.anchorProvider = anchor
+        lock.unlock()
+        // `start()` 的返回值必须看 —— 它回 false(拿不到 anchor、浏览器起不来)时
+        // **不会**走 completionHandler,丢掉它等于把失败咽了,界面就永远停在
+        // 「验证中」。
+        if !webSession.start() {
+            finish(.failure(AppleWebSignIn.Error.browserDidNotOpen))
+        }
+    }
+
+    /// Task 被取消:把系统侧那个请求真的撤掉,别留给下一个人堵队列。
+    func cancel() {
+        lock.lock()
+        let webSession = session
+        lock.unlock()
+        webSession?.cancel()
+        finish(.failure(CancellationError()))
+    }
+
+    /// continuation 恰好恢复一次;顺手放掉会话,不再拖着它。
+    private func finish(_ result: Result<URL, Swift.Error>) {
+        lock.lock()
+        let pending = continuation
+        continuation = nil
+        session = nil
+        anchorProvider = nil
+        lock.unlock()
+        pending?.resume(with: result)
+    }
+
 }
 
 /// key window 查找 —— 与 `AppleSignIn.swift` 里那份同源。
