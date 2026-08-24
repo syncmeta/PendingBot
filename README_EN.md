@@ -41,16 +41,8 @@ An AI that knows when it got something wrong. It goes out and reads the web on i
 - **macOS** — grab the `.dmg` from [Releases](../../releases)
 - **iPhone / iPad** — TestFlight: <https://testflight.apple.com/join/K6Ju9qqP>
 
-⚠️ Both of those builds talk to **the author's own backend**. An app you build from this repository
-does not — the backend coordinates here are all placeholders, and the backend itself is not open
-source, so you would have to point it at one you implemented yourself.
-**With the coordinates unfilled, tapping sign-in does not fail silently**: all three entry points
-(Apple / Google / email code) show the same line, in place:
-
-> 本仓库只带占位后端坐标，登录走不通。要接自己的 Cloudflare Worker + Supabase，见 README 的「配置」一节。
->
-> *("This repository ships placeholder backend coordinates, so sign-in cannot work. To connect your
-> own Cloudflare Worker + Supabase, see the Configuration section of the README.")*
+⚠️ Both of those builds talk to **the author's own backend**. The one you build yourself does not —
+see Configuration below.
 
 **Want to build it yourself**
 
@@ -250,9 +242,16 @@ app falls back to failing silently.
 While the predicates are `false`, **nothing is raised at launch** — someone running only a local
 stack never touches the hosted constants, and warning them about something they cannot act on is a
 false alarm. The predicates are read once, at the moment an entry point is actually pressed: tap
-Apple / Google / email sign-in and it tells you, in place, that this repository does not carry that
-coordinate. The line quoted under Quick start is that message verbatim, measured by actually tapping
-all three on a build with unfilled coordinates — it is not a statement of intent.
+Apple / Google / email sign-in and it says, in place:
+
+> 本仓库只带占位后端坐标，登录走不通。要接自己的 Cloudflare Worker + Supabase，见 README 的「配置」一节。
+>
+> *("This repository ships placeholder backend coordinates, so sign-in cannot work. To connect your
+> own Cloudflare Worker + Supabase, see the Configuration section of the README.")*
+
+All three entry points (Apple / Google / email code) share that one line; no spinner, no silent
+failure. Measured by actually tapping all three on a build with unfilled coordinates — it is not a
+statement of intent.
 
 The `.dev` branch points at `localhost:8787` and `localhost:54321`, which the predicates treat as
 configured. It exists for "a backend running on this machine" — and that backend is not in this
