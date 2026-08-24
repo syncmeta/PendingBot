@@ -1611,3 +1611,19 @@
 - **更彻底的解法（现在不做，记在这里免得以后重新想）**: 写一个定时任务（cron / GitHub Action）把 `.p8` 存成密钥，按月重签并通过 Supabase Management API 更新 provider 配置，让它自己滚。代价是要把这把私钥放进一个自动化系统里 —— 而这把私钥能替我们团队给任何人签发 Apple 登录凭据，风险不比手工续期低。**单人项目、半年一次的手工动作，眼下不值得为它引入一个长期持有私钥的自动化。** 真要做，先解决私钥托管，再谈自动化。
 - **状态**: 待办 —— **时钟还没开始走**。作者尚未在 Apple 后台建 Services ID、也尚未在 Supabase 配 Apple provider，所以此刻还没有任何 secret 存在。**第一次生成 secret 的那一刻，就是这条债开始计时的时刻**，日历必须在那一刻记上。
 - **关联**: 上面那条「Developer ID 分发拿不到 `com.apple.developer.applesignin`」—— 正是因为原生那条路在直发的 `.dmg` 里用不了，才有了这条依赖 client secret 的网页 OAuth 路径。背景与后台配置清单见 `docs/apple-web-oauth-research.md`。
+
+### 🔴 浏览器授权是**全机唯一一条队列** —— 一个没撤掉的请求能把整台 Mac 的登录堵死，而且一声不吭
+- **发现**: 2026-08-24 · `fix/mac-oauth-blank-browser`（查"Mac 点登录 → Safari 开了但空白"时挖出来的）
+- **位置**: `apps/pendingbot/Sources/Networking/AppleWebSignIn.swift`（我们自己起 `ASWebAuthenticationSession` 的那条）；Google 那条在 SDK 里（GoogleSignIn → AppAuth `OIDExternalUserAgentMac`）。
+- **事实（实测，不是推理）**: `ASWebAuthenticationSession` 的请求**不活在我们进程里**，活在系统的 `SafariLaunchAgent` 里，而它**一次只派发一条**，后来的一律 `Enqueued` 排队。系统日志实测：我们 2026-08-23 11:40 发出的一条 Apple 授权请求（UUID `9567F751`）**"进行中"挂了 30 小时**；从那以后这台机器上每一条授权请求 —— 我们的 Google、我们的 Apple —— 全部只有 `Enqueued`、一条 `Dispatching` 都没有。重启该 agent 时它把队列吐出来才看见。
+- **为什么按 🔴 记**:
+  - **爆炸半径超出本 app**。堵住的不是我们的登录，是**这台机器上所有 app 的浏览器授权**。反过来也成立：别的 app（实测见过 ChatGPT.app 占住那个客户端位子）留下的东西同样能堵死我们。
+  - **零信号**。堵住时 `start()` 照样返回 true，completion **永远不来**，continuation 永远悬着。用户看到的是"点了没反应"，开发者看到的是"没有任何日志"。这个故障形状**天然会被误诊成网络/代理/后台配置问题** —— 这次就先后怀疑过 sing-box、Apple Services ID、Supabase provider、沙盒、dmg 运行，全是白工。
+  - **进程死了也不解**。实测：请求的发起 app 已经退出（agent 记 `Could not activate app with pid …`），请求**照样留在队列里**。所以"重启 app"这个最自然的用户自救动作**没有用**。
+- **已修的**（`fix/mac-oauth-blank-browser`，两笔）: 会话对象强引用住（原来是局部变量，出作用域即失控）；`start()` 返回值不再丢弃，回 false 直接抛 `browserDidNotOpen`；套 `withTaskCancellationHandler`，Task 一取消就真的 `cancel()` 掉系统侧那条请求。
+- **没修的尾巴（真正的债在这里）**:
+  1. **app 被强杀 / 崩溃时仍会留下僵尸** —— `withTaskCancellationHandler` 管不到进程直接死。这一条**任何 SDK 都躲不掉**，Google 走的 AppAuth 也一样。
+  2. **卡住时界面仍然永远停在"验证中"**，没有超时、没有出口、没有"改用邮箱验证码"的引导。这是用户唯一能感知到的那一面，**必须补**，且与根因是谁无关。
+  3. **没有任何探针**能告诉我们线上有多少用户正卡在这里。
+- **人工自救手段（写下来免得以后重新摸索）**: `killall SafariLaunchAgent` —— 它会把整条队列连同僵尸请求一起吐掉并被 launchd 重新拉起，**不影响 Safari 的窗口和标签，用户什么都不会丢**。比"完全退出 Safari"轻得多。
+- **状态**: 待办（尾巴 1/2/3）。修好的那三条已提交并 macOS 编译通过；**队列通了之后 Mac 的 Google 登录能不能真正走完，截至记录时尚未被观测到过一次成功** —— 别把"堵塞解除"当成"登录可用"。
