@@ -55,10 +55,14 @@ held=0
 while IFS=$'\t' read -r mode scope real ph why; do
   case "${mode:-}" in ''|'#'*) continue ;; esac
   case "$mode" in
-    SWAP|HOLD) ;;
-    *) echo "bad mode in $list: '$mode' (must be SWAP or HOLD)" >&2; exit 2 ;;
+    SWAP|HOLD|MATCH) ;;
+    *) echo "bad mode in $list: '$mode' (must be SWAP, HOLD or MATCH)" >&2; exit 2 ;;
   esac
   [ -n "${real:-}" ] || continue
+
+  # MATCH 是一条断言，不是一次替换 —— 这个脚本不管它，由
+  # check-snapshot-coordinates.sh 去跟已发布那份逐字节比。
+  [ "$mode" = MATCH ] && continue
 
   # HOLD: an open disagreement. Do not touch the file, do not pick a side —
   # picking one silently is exactly the failure this row exists to prevent.

@@ -19,7 +19,69 @@
 |---|---|
 | 私有仓 | `syncmeta/PendingBot-dev`（本机 `~/Untitled/Pendingname/PendingBot/dev`） |
 | 上一份快照 | `5d44ed2`（本仓 tag `v0.1.0`），私有 main @ `329792ac` + 四条未合分支，798 个文件 |
-| 本次基点 | 私有分支 `pendingcrew/session-a0307d`（已并入 `chore/snapshot-and-link-gates` 与 `chore/fail-loud-config`）@ `50e3d7df`（待合入 main —— **发布前把这里换成 main 上的实际提交** ） |
+| 本次基点 | 私有 `main`（本次改造已合入，含 `chore/snapshot-and-link-gates` 与 `chore/fail-loud-config`）—— **发布前把这里换成实际出快照的那个提交** |
+
+## ⚠️ 「折进了四条未合分支」的代价，不是一句无害的话
+
+上面那行「+ 四条未合分支」听起来只是谱系上的一个脚注。它已经造成过一次**源码与
+二进制在安全机制上的分歧，而且持续了两个版本**。逐条查得到（2026-08-24 实测）：
+
+```
+公开仓 5d44ed2（= v0.1.0）  有  Sources/Networking/SupabaseAnonWriteGuard.swift
+                            有  Tests/SupabaseAnonWriteGuardTests.swift
+私有 769f89f7（0.1.1 dmg 的基准）  没有
+私有 d99e0c46（后一个 dmg 的基准）  没有
+```
+
+`SupabaseAnonWriteGuard` 是把「supabase-swift 拿不到 session 时会把写请求以 anon
+发出去」这件事**从约定变成机制**的那道闸（这个形状误诊过两次，都当成后端 bug）。
+**公开仓的源码从第一份快照起就带着它，而每一个发出去的二进制都没有它** ——
+读者读源码会以为这个 app 有这道防护，他装的包里没有。
+
+成因就是那四条未合分支：这三笔（`isConfigured` / 登录入口的提示 / 这道闸）
+author date 全是 2026-08-20，比两个包的基准都早，但一直躺在没合的
+`chore/fail-loud-config` 上；它们进 main 是 2026-08-23 做「仅客户端」改造时
+（`e13d8f2b`）的副作用，不是发版之后又干的新活。
+
+**现状要同时容得下两件事，别写成「已修复」**：那三笔现在在 `main` 上，
+**下一个包会带上**；而**已经发出去的那两个包永远不会有** —— 二进制发出去就不改了
+（见下面 `v0.1.0` 那一节）。
+
+**可信度的损失只能靠发一版真正带着它的包来还。** 把这句留在这儿，是因为它是
+「要不要为这个不一致单独发一版」那个决定的理由 —— 决定还没做，但理由不该只活在
+某次讨论里。
+
+### 现在是什么状态（2026-08-24 实测，别照抄，自己重量一遍）
+
+**那个缺口关上了。** 拿公开仓客户端子树的 214 个文件逐个查内容在私有仓对象库里
+存不存在，**只剩 8 个**，全是替换步骤的产物：
+
+```
+换坐标产物   apps/pendingbot/Info.plist
+             apps/pendingbot/Resources/Info.plist
+             apps/pendingbot/Sources/Networking/HostedConfig.swift
+换邮箱产物   apps/pendingbot/Sources/Features/Onboarding/WelcomeView.swift
+             apps/pendingbot/Sources/Mac/MacWelcomeView.swift
+             apps/pendingbot/Resources/Localizable.xcstrings
+生成物       apps/pendingbot/PendingBot.xcodeproj/project.pbxproj
+本次重写     apps/pendingbot/README.md
+```
+
+**一条「公开仓有而 `main` 上没有的行为」都不剩了** —— 那三笔已合进 `main`，
+`LICENSE` 署名对齐，`.gitignore` 取了并集。
+（唯一一个「公开仓有、私有仓没有」的文件是
+`GoogleG.imageset/g-logo.png`，那是 main 上换成官方 SVG 之后的旧资源，
+**登记在丢弃清单里**，不是缺口。）
+
+⚠️ **这不是自动保持的，是靠两道闸门**：超集闸门防丢（已发布的东西不许悄悄消失），
+坐标闸门防带真值（也防 `MATCH` 那条对齐被改掉）。**拆掉任何一道，这段话第二天就
+可能不成立。**
+
+### 有几个文件永远不会一致，那是设计
+
+上面那 8 个里前 7 个**永远**不会和私有仓逐字节相同：后端坐标和邮箱被换成占位值的
+那几份，以及 `xcodegen` 生成的 `.xcodeproj`。**那是替换步骤的产物，不是隐藏的实现。**
+看到它们不一致，不要去「修」。
 
 ## v0.1.0 → 现在，发生了什么
 
@@ -64,6 +126,36 @@
 和 `docs/tech-debt.md`。两边各存一份不是冗余：**读者和操作者不是同一批人。**
 
 更一般的那条：**任何已经公开发布过的 Release，产物都不再替换 —— 要改就发新版本号。**
+
+### 这不是道理，是取过一次的（2026-08-24 实测，匿名，无登录态）
+
+「删掉 ≠ 取消发布」这句话在这个仓库里被写了三处（这份文件、丢弃清单的文件头、
+超集闸门的说明）。**论证写了三遍，取证一次都没做过** —— 所以补上：
+
+```
+                                      v0.1.1  v0.1.0   main
+supabase/migrations/0001_init.sql       200     200     404
+docs/self-hosting.md                    200     200     404
+apps/edge/package.json                  200     200     404
+.env.example                            200     200     404
+
+不只是 200，真取到了内容：
+  supabase/migrations/0001_init.sql  →  -- 0001_init — consolidated PendingBot baseline.
+  docs/self-hosting.md               →  # PendingBot 自建指南
+  .env.example                       →  # PendingBot self-hosting configuration inventory.
+
+从 568 条清单里等距抽 6 条（不挑好验的）再验一次，v0.1.1 上全部 200：
+  .github/workflows/security-gates.yml
+  apps/edge/src/lib/attachments-persist.ts
+  apps/edge/src/llm/gemini-adapter.ts
+  apps/edge/tests/projection-rls-guard.test.ts
+  supabase/migrations/0054_start_user_bot_turn.sql
+  supabase/migrations/20260525084751_remove_test_account_logging.sql
+```
+
+**支点是实的。** 而这也把「承重」这个词从抽象变成了具体：**上面每一个 200 都靠那两个
+tag 活着。谁哪天删了它们，这些当场变 404，而那份丢弃清单就从「有据可查」变成
+一张遗物清单。**
 
 ## 快照里做过什么改动
 

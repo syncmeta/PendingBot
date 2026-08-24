@@ -176,6 +176,30 @@ Don't auto-deploy on merge — deploys are deliberate and user-initiated.
 
 Full deploy recipe (Board, Edge secrets, DB push, seed apply, post-merge checklist, gotchas) lives in `docs/deploy.md` — read that file when the session is actually about deploying, not on every session.
 
+## 一条说法有没有被核过，跟它从哪儿来无关
+
+**判据是「这条说法被核过没有」，不是「它从哪个方向来」。** 主语是**任何人** ——
+包括机长、包括你自己、包括你十分钟前写下的东西。
+
+2026-08-23/24 一天里，三次免检，三个不同方向，同一个结论：
+
+| 谁 | 免检的理由（都很自然） | 后果 |
+|---|---|---|
+| 一个 worker | 上级传下来的说法，原样转发，一次 `git log` 都没跑 | 「main 前进了 57 个提交」是假的 —— 那是推送到 origin，方向反了 |
+| 机长 | 拿自己做过的动作当免检前提 | 同上，他就是那个推的人，所以没想到要核 |
+| 另一个 worker | 核了公开仓的每一条、核了 main 的每一条，**没核自己写下的十条判词** | 其中一条越权：拿一句「任何情况下都不该」去覆盖机主对自己个人信息的决定 |
+
+**三个方向：上游、自己的动作、自己的产出。** 没有哪个方向天生可信。
+
+**How to apply**
+- 引用一个数字/状态之前，自己跑一次那条命令 —— 哪怕它是十分钟前别人刚跑过的。
+- 别人报给你的要核，**你自己写下的同样要回头核一遍**。定了一条新原则之后，
+  尤其要扫一遍已经写好的同类条目（只在新出现的地方守规矩，等于没守）。
+- 引用内容时读 commit（`git show <ref>:<path>`），不读工作区 —— 工作区里可能躺着
+  别人未提交的手改，见 [[feedback_read_via_git_show]]。
+- 这条规矩带着三次真实的翻车记录，是有意的：**规矩带着翻车记录才立得住，
+  写成一段漂亮的原则就没人当真。** 后面再翻车，往表里加一行，别把表删掉。
+
 ## Keep an eye on project health — log structural issues to `docs/tech-debt.md`
 
 While doing normal work, stay alert for problems that undermine the project's foundation, not just the task in front of you. When you notice one, **record it** in `docs/tech-debt.md` (the structural-risk register). This is passive vigilance during regular work, not a dedicated audit pass — you're not expected to go hunting.
