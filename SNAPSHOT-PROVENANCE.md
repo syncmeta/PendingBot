@@ -47,6 +47,42 @@ author date 全是 2026-08-20，比两个包的基准都早，但一直躺在没
 **下一个包会带上**；而**已经发出去的那两个包永远不会有** —— 二进制发出去就不改了
 （见下面 `v0.1.0` 那一节）。
 
+**可信度的损失只能靠发一版真正带着它的包来还。** 把这句留在这儿，是因为它是
+「要不要为这个不一致单独发一版」那个决定的理由 —— 决定还没做，但理由不该只活在
+某次讨论里。
+
+### 现在是什么状态（2026-08-24 实测，别照抄，自己重量一遍）
+
+**那个缺口关上了。** 拿公开仓客户端子树的 214 个文件逐个查内容在私有仓对象库里
+存不存在，**只剩 8 个**，全是替换步骤的产物：
+
+```
+换坐标产物   apps/pendingbot/Info.plist
+             apps/pendingbot/Resources/Info.plist
+             apps/pendingbot/Sources/Networking/HostedConfig.swift
+换邮箱产物   apps/pendingbot/Sources/Features/Onboarding/WelcomeView.swift
+             apps/pendingbot/Sources/Mac/MacWelcomeView.swift
+             apps/pendingbot/Resources/Localizable.xcstrings
+生成物       apps/pendingbot/PendingBot.xcodeproj/project.pbxproj
+本次重写     apps/pendingbot/README.md
+```
+
+**一条「公开仓有而 `main` 上没有的行为」都不剩了** —— 那三笔已合进 `main`，
+`LICENSE` 署名对齐，`.gitignore` 取了并集。
+（唯一一个「公开仓有、私有仓没有」的文件是
+`GoogleG.imageset/g-logo.png`，那是 main 上换成官方 SVG 之后的旧资源，
+**登记在丢弃清单里**，不是缺口。）
+
+⚠️ **这不是自动保持的，是靠两道闸门**：超集闸门防丢（已发布的东西不许悄悄消失），
+坐标闸门防带真值（也防 `MATCH` 那条对齐被改掉）。**拆掉任何一道，这段话第二天就
+可能不成立。**
+
+### 有几个文件永远不会一致，那是设计
+
+上面那 8 个里前 7 个**永远**不会和私有仓逐字节相同：后端坐标和邮箱被换成占位值的
+那几份，以及 `xcodegen` 生成的 `.xcodeproj`。**那是替换步骤的产物，不是隐藏的实现。**
+看到它们不一致，不要去「修」。
+
 ## v0.1.0 → 现在，发生了什么
 
 **一次范围变化，不是一次内容更新。** 798 个文件 → 241 个。
