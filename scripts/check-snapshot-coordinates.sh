@@ -64,6 +64,7 @@ trap 'rm -rf "$work"' EXIT
 rows=0
 hits=0
 holds=0
+matches=0
 mismatch=0
 : > "$work/hits.txt"
 : > "$work/holds.txt"
@@ -102,6 +103,7 @@ while IFS=$'\t' read -r mode scope real ph why; do
   rows=$((rows + 1))
 
   if [ "$mode" = MATCH ]; then
+    matches=$((matches + 1))
     fetch_published || exit 1
     cand_file="$candidate/$scope"
     if [ ! -f "$cand_file" ]; then
@@ -148,7 +150,13 @@ echo "list      : $list ($rows coordinates)"
 echo
 
 if [ "$hits" -eq 0 ] && [ "$holds" -eq 0 ] && [ "$mismatch" -eq 0 ]; then
-  echo "clean — 没有真坐标、没有悬而未决的分歧，MATCH 的每一条都与已发布那份逐字节相同。"
+  # 只说真的跑过的检查。清单里一条 MATCH 都没有时还宣称「MATCH 全都一致」，
+  # 是一句空转的真话 —— 而一句空转的真话，正是「绿」这个信号最容易被掏空的方式。
+  if [ "$matches" -gt 0 ]; then
+    echo "clean — 没有真坐标、没有悬而未决的分歧，$matches 条 MATCH 都与已发布那份逐字节相同。"
+  else
+    echo "clean — 没有真坐标、没有悬而未决的分歧。（清单里没有 MATCH 行，所以这一轮没跟已发布那份比过任何东西。）"
+  fi
   exit 0
 fi
 
