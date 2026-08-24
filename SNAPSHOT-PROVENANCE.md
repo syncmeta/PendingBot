@@ -127,6 +127,36 @@ author date 全是 2026-08-20，比两个包的基准都早，但一直躺在没
 
 更一般的那条：**任何已经公开发布过的 Release，产物都不再替换 —— 要改就发新版本号。**
 
+### 这不是道理，是取过一次的（2026-08-24 实测，匿名，无登录态）
+
+「删掉 ≠ 取消发布」这句话在这个仓库里被写了三处（这份文件、丢弃清单的文件头、
+超集闸门的说明）。**论证写了三遍，取证一次都没做过** —— 所以补上：
+
+```
+                                      v0.1.1  v0.1.0   main
+supabase/migrations/0001_init.sql       200     200     404
+docs/self-hosting.md                    200     200     404
+apps/edge/package.json                  200     200     404
+.env.example                            200     200     404
+
+不只是 200，真取到了内容：
+  supabase/migrations/0001_init.sql  →  -- 0001_init — consolidated PendingBot baseline.
+  docs/self-hosting.md               →  # PendingBot 自建指南
+  .env.example                       →  # PendingBot self-hosting configuration inventory.
+
+从 568 条清单里等距抽 6 条（不挑好验的）再验一次，v0.1.1 上全部 200：
+  .github/workflows/security-gates.yml
+  apps/edge/src/lib/attachments-persist.ts
+  apps/edge/src/llm/gemini-adapter.ts
+  apps/edge/tests/projection-rls-guard.test.ts
+  supabase/migrations/0054_start_user_bot_turn.sql
+  supabase/migrations/20260525084751_remove_test_account_logging.sql
+```
+
+**支点是实的。** 而这也把「承重」这个词从抽象变成了具体：**上面每一个 200 都靠那两个
+tag 活着。谁哪天删了它们，这些当场变 404，而那份丢弃清单就从「有据可查」变成
+一张遗物清单。**
+
 ## 快照里做过什么改动
 
 **比以前少得多，因为不该出去的东西现在整棵不出去。**
