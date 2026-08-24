@@ -34,6 +34,9 @@ enum AppleWebSignIn {
         case provider(code: String, description: String?)
         /// 回调 URL 里既没有授权码也没有错误码 —— 形状不认识。
         case unrecognizedCallback(URL)
+        /// `ASWebAuthenticationSession.start()` 直接回了 false —— 浏览器根本没被起来。
+        /// 这个返回值以前是被丢掉的，失败会表现成「点了没反应」。
+        case browserDidNotOpen
         /// **会话没有真正落盘**。见 `run()` 里那段注释，这是本文件最要紧的一条。
         case sessionNotPersisted(underlying: Swift.Error)
         case underlying(Swift.Error)
@@ -46,6 +49,8 @@ enum AppleWebSignIn {
                 return AppleWebCallback.humanMessage(errorCode: code, description: description)
             case .unrecognizedCallback:
                 return "Apple 登录回跳的地址无法识别，请重试一次。"
+            case .browserDidNotOpen:
+                return "没能打开浏览器完成登录。请完全退出 Safari（⌘Q）后重试，或改用邮箱验证码登录。"
             case .sessionNotPersisted:
                 return "登录成功了，但会话没能保存下来，请重试一次。"
             case .underlying(let error):
@@ -115,6 +120,12 @@ enum AppleWebSignIn {
     ///      配错时**唯一**的线索，必须原样带出来。
     private static func presentAuthorization(_ authorizationURL: URL) async throws -> URL {
         let anchorProvider = PresentationAnchorProvider()
+        // 强引用住会话本体直到回调结束。`ASWebAuthenticationSession` 不由系统替我们
+        // 持有 —— 只是个局部变量的话，`start()` 之后它可能当场被释放、会话被取消，
+        // 症状恰恰就是「浏览器起来了但什么都不发生」。Google 那条路没这个问题，是
+        // 因为 AppAuth 拿实例变量存着（OIDExternalUserAgentMac 的
+        // `_webAuthenticationSession`）；我们这条一开始漏了。
+        var retainedSession: ASWebAuthenticationSession?
         return try await withCheckedThrowingContinuation { continuation in
             let webSession = ASWebAuthenticationSession(
                 url: authorizationURL,
@@ -124,6 +135,7 @@ enum AppleWebSignIn {
                     // 把 anchorProvider 拉活到回调结束：ASWebAuthenticationSession
                     // 对 presentationContextProvider 只持弱引用。
                     _ = anchorProvider
+                    retainedSession = nil
                 }
 
                 if let error {
@@ -154,7 +166,15 @@ enum AppleWebSignIn {
                 }
             }
             webSession.presentationContextProvider = anchorProvider
-            webSession.start()
+            retainedSession = webSession
+            // `start()` 的返回值必须看 —— 它回 false（拿不到 anchor、浏览器起不来）
+            // 时不会走 completionHandler，丢掉它等于把失败咽了，界面就永远停在
+            // 「验证中」。
+            guard webSession.start() else {
+                retainedSession = nil
+                continuation.resume(throwing: Error.browserDidNotOpen)
+                return
+            }
         }
     }
 }
