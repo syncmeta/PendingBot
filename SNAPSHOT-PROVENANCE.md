@@ -19,7 +19,33 @@
 |---|---|
 | 私有仓 | `syncmeta/PendingBot-dev`（本机 `~/Untitled/Pendingname/PendingBot/dev`） |
 | 上一份快照 | `5d44ed2`（本仓 tag `v0.1.0`），私有 main @ `329792ac` + 四条未合分支，798 个文件 |
-| 本次基点 | 私有分支 `pendingcrew/session-a0307d`（已并入 `chore/snapshot-and-link-gates` 与 `chore/fail-loud-config`）@ `50e3d7df`（待合入 main —— **发布前把这里换成 main 上的实际提交** ） |
+| 本次基点 | 私有 `main`（本次改造已合入，含 `chore/snapshot-and-link-gates` 与 `chore/fail-loud-config`）—— **发布前把这里换成实际出快照的那个提交** |
+
+## ⚠️ 「折进了四条未合分支」的代价，不是一句无害的话
+
+上面那行「+ 四条未合分支」听起来只是谱系上的一个脚注。它已经造成过一次**源码与
+二进制在安全机制上的分歧，而且持续了两个版本**。逐条查得到（2026-08-24 实测）：
+
+```
+公开仓 5d44ed2（= v0.1.0）  有  Sources/Networking/SupabaseAnonWriteGuard.swift
+                            有  Tests/SupabaseAnonWriteGuardTests.swift
+私有 769f89f7（0.1.1 dmg 的基准）  没有
+私有 d99e0c46（后一个 dmg 的基准）  没有
+```
+
+`SupabaseAnonWriteGuard` 是把「supabase-swift 拿不到 session 时会把写请求以 anon
+发出去」这件事**从约定变成机制**的那道闸（这个形状误诊过两次，都当成后端 bug）。
+**公开仓的源码从第一份快照起就带着它，而每一个发出去的二进制都没有它** ——
+读者读源码会以为这个 app 有这道防护，他装的包里没有。
+
+成因就是那四条未合分支：这三笔（`isConfigured` / 登录入口的提示 / 这道闸）
+author date 全是 2026-08-20，比两个包的基准都早，但一直躺在没合的
+`chore/fail-loud-config` 上；它们进 main 是 2026-08-23 做「仅客户端」改造时
+（`e13d8f2b`）的副作用，不是发版之后又干的新活。
+
+**现状要同时容得下两件事，别写成「已修复」**：那三笔现在在 `main` 上，
+**下一个包会带上**；而**已经发出去的那两个包永远不会有** —— 二进制发出去就不改了
+（见下面 `v0.1.0` 那一节）。
 
 ## v0.1.0 → 现在，发生了什么
 
