@@ -90,9 +90,11 @@ enum Theme {
         static let applePill   = Color.adaptive(light: 0x000000, dark: 0xFFFFFF)
         /// Logo + label sitting ON `applePill` — the inverse of the fill.
         static let onApplePill = Color.adaptive(light: 0xFFFFFF, dark: 0x000000)
-        /// "Google" label on the glass pill. Light: Google's dark-grey text;
-        /// dark: their official dark-theme text grey (#E3E3E3).
-        static let googleInk   = Color.adaptive(light: 0x2E2E33, dark: 0xE3E3E3)
+        /// "Google" label on the glass pill. The pill itself stays the app's
+        /// frosted-glass capsule (an author call — see `docs/tech-debt.md`),
+        /// so only the ink follows Google's guidelines: their Light-theme text
+        /// #1F1F1F on light UI, Dark-theme text #E3E3E3 on dark UI.
+        static let googleInk   = Color.adaptive(light: 0x1F1F1F, dark: 0xE3E3E3)
 
         /// Destructive / error fg — terracotta. Was 12 scattered `0xB14B3C`
         /// literals; centralised so dark mode lifts them in one place.

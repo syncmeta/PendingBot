@@ -2,17 +2,19 @@
 
 PendingBot IM 主客户端 —— iPhone + iPad + macOS 三端 SwiftUI Multiplatform 单工程。
 
-跑起来 / 配置的完整步骤见仓库根的 [`README.md`](../../README.md) 和 [`docs/self-hosting.md`](../../docs/self-hosting.md)。
-
-> 详细的产品设计文档没有随代码一起公开。
+详细设计文档（`docs/superpowers/specs/…`）是内部的，没有公开。源码注释里偶尔会引用
+它们，读到断链的引用不必当成缺失。
 
 ## 平台分布
 
 | 平台 | 状态 |
 |---|---|
 | **iPhone** | 完整功能（v1.0 主目标） |
-| **iPad** | scaffold 完成；regular size class 三栏 view（`PendingBotRegularRootView`）已带过来，待后续 Phase 把"机组"以外的 tab 也接进共享大屏壳 |
-| **macOS** | scaffold —— 占位 View；Mac 端 UI 在 Phase 2+ 实装 |
+| **iPad** | regular size class 三栏 view（`PendingBotRegularRootView`）已接入；还没把全部 tab 都搬进共享大屏壳 |
+| **macOS** | 真实现，不是占位 —— `Sources/Mac/` 下是活的视图，作者自用级 |
+
+> 这张表说的是**客户端各端的完成度**，跟功能本身跑没跑通是两回事。
+> 后者见仓库根 README 的「状态」一节。
 
 ## 工程结构
 
@@ -36,9 +38,12 @@ apps/pendingbot/
     └── Resources -> ../Resources   # Assets.xcassets / xcstrings / xcprivacy
 ```
 
-T0.1 已把代码从老的 `apps/ios/` + `apps/macos/PendingBot/`（占位）+ 老共享 SPM 合到一个单 xcodeproj。
+代码是从老的 `apps/ios/` + `apps/macos/PendingBot/`（占位）+ 老共享 SPM 合到这一个
+单 xcodeproj 的。
 
-iOS 完整 code base 整体 `#if os(iOS)` 隔离，不在 scaffold 阶段重写跨平台。Mac 端 UI 在 Phase 2+ 实装（看 spec §3 「跨设备 SwiftUI」+ §12 三栏布局）。
+iOS-only 的业务文件在自己顶部包 `#if os(iOS)`，让纯 Foundation / SwiftUI 的
+Models / Storage / 部分 Networking / 部分 Components 自然进入 Mac build，
+给 `Sources/Mac/` 的真实视图提供数据底座。
 
 ## Build
 
@@ -59,10 +64,7 @@ xcodebuild -project PendingBot.xcodeproj -scheme PendingBot \
     -destination 'platform=macOS' build
 ```
 
-## 老工程已删
+## 后端坐标
 
-- `apps/ios/PendingBot.xcodeproj` —— 老 iOS xcodeproj
-- `apps/ios/PendingBot/` —— 老 iOS source（整体迁过来了）
-- `apps/ios/PendingBotTests/` —— 老 iOS 测试（scaffold 阶段砍掉,后续按需重建）
-- `apps/macos/PendingBot/` —— 老 Mac 占位 SPM 包
-- 老共享 SPM —— 已并入当前单工程并删除
+`Sources/Networking/HostedConfig.swift`。**后端不在这个仓库里**，
+怎么填见 [`docs/building.md`](../../docs/building.md)。

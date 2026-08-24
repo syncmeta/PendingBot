@@ -11,52 +11,45 @@
 
 <p align="center">
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue" /></a>
-  <img alt="Runtime" src="https://img.shields.io/badge/runtime-Cloudflare%20Workers-f38020?logo=cloudflare&logoColor=white" />
-  <a href="https://bun.sh"><img alt="Bun" src="https://img.shields.io/badge/toolchain-Bun-fbf0df?logo=bun&logoColor=black" /></a>
-  <img alt="TypeScript" src="https://img.shields.io/badge/lang-TypeScript-3178c6?logo=typescript&logoColor=white" />
   <img alt="Swift" src="https://img.shields.io/badge/lang-Swift-F05138?logo=swift&logoColor=white" />
   <img alt="Platform" src="https://img.shields.io/badge/platform-iOS%20%C2%B7%20iPadOS%20%C2%B7%20macOS-lightgrey" />
+  <img alt="Scope" src="https://img.shields.io/badge/repo-client%20only-lightgrey" />
 </p>
 
 <p align="center">
   <a href="README.md">中文</a> · <a href="README_EN.md">English</a>
 </p>
 
-知道自己错了的 AI。主动上网冲浪还要处处想着你。形态跟微信差不多。
+知道自己错了的 AI。主动上网冲浪还要处处想着你。形态跟微信差不多，想象微信上有很多 AI 好友。
 
 <p align="center">
   <img src="docs/screenshots/main.png" width="820" alt="主界面：左边会话列表，右边正在跟一个机器人聊天" />
 </p>
 
-> **这是一个人的实验项目，不是产品。**
+> 还没正式上线。部分功能不可用。
 >
-> 没有上线运营，没有真实用户，没有支持承诺。下面的「状态」一节写清了哪些功能
-> 真的跑通过、哪些只是代码在那儿。读之前先接受一件事：**你 clone 下来，开箱什么也做不了**，
-> 得先接上你自己的后端。
->
-> 界面和文档都是中文的。
->
-> *(A personal experiment, not a product. Chinese-language UI and docs.
-> Nothing here is hosted for you — you have to run your own backend;
-> see [`docs/self-hosting.md`](docs/self-hosting.md).)*
+> **这个仓库只有客户端**，后端不开源、不在这里 —— 你能编出这个 app，但它没有可连的后端。
 
 ## 快速开始
 
 **想直接用**
 
-- **macOS** —— 从 [Releases](../../releases) 下 `.dmg`，签名并经 Apple 公证，双击就能装。
-- **iPhone / iPad** —— 只能走 TestFlight：<https://testflight.apple.com/join/K6Ju9qqP>
+- **macOS** —— 从 [Releases](../../releases) 下 `.dmg`
+- **iPhone / iPad** —— TestFlight：<https://testflight.apple.com/join/K6Ju9qqP>
 
-⚠️ **装上之后，还需要接你自己的后端才能真正聊起来。** 这份仓库不带任何真实的后端坐标，
-点登录会明确告诉你没配置，而不是静默失败。怎么接见 [`docs/self-hosting.md`](docs/self-hosting.md)。
+⚠️ 这两个包连的是**作者自己的后端**。你自己编出来的那份不连它 —— 见下面「配置」。
 
-**想自己跑一遍代码**
+**想自己编一个**
 
 ```bash
-bun install                                      # bun 1.3.11+
-bun --filter='@pendingbot/edge' run typecheck    # 应为 0 错
-cd apps/edge && ./node_modules/.bin/vitest run   # 695 例
+cd apps/pendingbot
+xcodegen                                          # 只在改过 project.yml 后需要
+xcodebuild -project PendingBot.xcodeproj -scheme PendingBot \
+  -destination 'generic/platform=iOS Simulator' build
 ```
+
+不需要 Node / Bun / Docker —— 那些是后端的工具链，不在这个仓库里。
+完整步骤见 [`docs/building.md`](docs/building.md)。
 
 ## 文档
 
@@ -90,7 +83,7 @@ cd apps/edge && ./node_modules/.bin/vitest run   # 695 例
 
 ## 架构
 
-四个部分，一条主链路。
+产品是四个部分、一条主链路。**这个仓库只有最左边那一格。**
 
 ```
   iOS / iPadOS / macOS          Cloudflare Worker              Supabase
@@ -99,40 +92,45 @@ cd apps/edge && ./node_modules/.bin/vitest run   # 695 例
   │                  │ ───────► │  186 个接口       │ ───────► │  130 条 RLS   │
   │  本地缓存 / 会话  │ ◄─────── │  10 个 DO         │ ◄─────── │  212 个迁移   │
   └──────────────────┘  Realtime└──────────────────┘          └──────────────┘
-                                        │
-                                        ▼
-                                ┌──────────────────┐
+     ▲                                  │
+     │                                  ▼
+     └── 本仓库只有这一格        ┌──────────────────┐
                                 │  AI Gateway       │
-                                │  4 家供应商 → 1 个 │
-                                │  出口，20 个工具   │
+         这条竖线右边的一切      │  4 家供应商 → 1 个 │
+         都不开源、也不在这里    │  出口，20 个工具   │
                                 └──────────────────┘
 ```
 
 - **客户端**（`apps/pendingbot`）—— 一套 SwiftUI 源码编三端，xcodegen 生成工程。
   后端坐标集中在 `HostedConfig.swift`，那里的 `isConfigured` 是「哪条线通」的唯一真值。
-- **Edge**（`apps/edge`）—— Cloudflare Worker + Hono，业务主体。Durable Object 管有状态的东西
-  （会话轮次、限流、实时投影）。695 个测试全在这一层。
-- **数据库**（`supabase/`）—— Postgres + RLS。所有跨用户的读写都由 RLS 兜底，
-  `SECURITY DEFINER` 函数有一道 CI 闸门盯着，防止权限飘回 PUBLIC。
-- **后台**（`apps/admin`）—— Refine SPA，打包进 Worker 的静态资源，前面挡一道 Cloudflare Access。
+  **这是本仓库的全部内容。**
+- **Edge · 数据库 · 后台 · AI Gateway** —— Cloudflare Worker + Hono、Supabase Postgres + RLS、
+  一个 Refine 后台控制台，以及统一模型出口。**都不在这里。** 上面那些数字是作者部署上的
+  实测规模，写在这儿是为了让你知道客户端在跟一个什么形状的东西说话 ——
+  不是让你照着搭一个。
 
-**两个外部依赖值得单独说：**
+这个仓库为什么保留 `apps/pendingbot/` 这层路径、而不是把客户端提到根目录：因为它
+**说的是实话**。这是一个 monorepo 里的一个 app，旁边还有别的，只是没开源。
+提到根目录会让它看起来像一个独立仓库，那是装的。
 
-- **Prompt 的唯一事实源是 Langfuse，仓库里没有副本。** 这是有意的——避免代码里一份、
-  线上一份、迟早对不上。代价是自建时必须先在 Langfuse 里逐字建好那 18 条 prompt，
-  否则对话链路直接 500。
-- **4 家 LLM 供应商统一到一个 AI Gateway 出口**，模型可调用的工具有 20 个。
-  换供应商不用改业务代码。
+**接口形状去哪儿找**：`Sources/Networking/` 里的类型和注释是对着 Worker 路由写的，
+里面还留着 `apps/edge/src/routes/…` 这类引用。那些文件不在这里，但注释仍然是
+「这个接口收什么、回什么」最准确的一份记录。
 
 ## 状态：能用到什么程度
 
 > 盘点日期 **2026-08-19**，依据是线上只读查询 + 代码核对，不是文档里的旧结论。
 
-**先说前提**：这份公开仓库不带任何真实的后端坐标。
+**先说前提，而且这一节的前提变了**：下面每一条能力，**都取决于一个你没有的后端**。
+这个仓库只有客户端；Worker、数据库、模型出口都不在这里，也不开源。所以这一节
+读起来更像**产品盘点**而不是**你能跑起来什么** —— 它记的是「作者那套东西真跑到
+哪一步了」。据实写下来，是因为一个只放客户端的仓库更容易让人高估它。
+
+客户端这一侧唯一的真值是
 `apps/pendingbot/Sources/Networking/HostedConfig.swift` 里的
-`isConfigured` / `isEmailSignInConfigured` 是"哪条线通、哪条线不通"的**唯一真值**
-——README 不另写一份能力清单，因为两份一定会漂。
-未填坐标时它返回 `false`，你点登录会被明确告知，而不是静默失败。
+`isConfigured` / `isEmailSignInConfigured`：它们拿仓库里的坐标常量跟
+`Placeholder` 的字面量比对，未填时返回 `false`。README 不另写一份能力清单，
+因为两份一定会漂。
 
 | 判据 | 比对的常量 | 决定 |
 |---|---|---|
@@ -151,14 +149,14 @@ cd apps/edge && ./node_modules/.bin/vitest run   # 695 例
 **这一档的规模要说清楚**：线上一共 **142 条消息，全部**落在 1v1 的 `user_bot` 会话里。
 "真跑通过"= 作者自己用过，不是"经过了实际使用的检验"。
 
-### ② 代码在，但要额外凭据 / 外部服务才动得了
+### ② 后端侧代码在，但要额外凭据 / 外部服务才动得了
 
-接上自己的后端之后，这些还需要各自的钥匙：
+**这一档整档都在后端，也就是整档都不在这个仓库里。** 留着是因为它解释了
+「为什么装上 app 也不会自己活过来」：
 
-- **LLM 对话**（硬门槛）—— prompt 正文的唯一事实源是 Langfuse，**仓库里没有副本**。
-  新部署的缓存是空的、Langfuse 里又没有对应 prompt 时，对话链路直接 500。
-  `LANGFUSE_ENABLED=false` 只关 tracing，绕不过 prompt 加载。要自建就得先在
-  Langfuse 里逐字建好那 18 条 prompt——[`docs/self-hosting.md`](docs/self-hosting.md) 第 6 节列了名字。
+- **LLM 对话**（硬门槛）—— prompt 正文的唯一事实源是 Langfuse，**任何仓库里都没有副本**。
+  缓存是空的、Langfuse 里又没有对应 prompt 时，对话链路直接 500。
+  `LANGFUSE_ENABLED=false` 只关 tracing，绕不过 prompt 加载。
 - **实时推送** —— 需要在 Supabase Vault 里配 `realtime_webhook_url` + `realtime_webhook_secret`，
   并把同一个 secret 配进 Worker。不配就是不推，其余功能照常。
 - **计费 / 充值** —— Polar（钱包本体）+ RevenueCat（iOS）都要自己的账号和 webhook。
@@ -180,7 +178,11 @@ cd apps/edge && ./node_modules/.bin/vitest run   # 695 例
 - **"网上冲浪"在生产必然失败** —— 唯一的搜索抓取通道是 Exa MCP，而它的 API key 从未部署，调用直接抛错。
   （区分：**聊天里现查网页**不走这条，走各家模型自带的服务端工具，那半可能是通的。）
 - **短链 / 遥控索引** —— 线上有表，仓库零代码（随一次提交丢失事故一起没了）。
-- **三端零自动化测试** —— Swift 侧没有 CI 测试；695 个测试全在 Edge（`apps/edge`）。
+- **三端的自动化测试很薄** —— `apps/pendingbot/Tests/` 下有三组独立测试
+  （共 58 条断言），覆盖三个只依赖 Foundation 的模块；工程里还没有
+  `xcodebuild test` 目标，没有 UI 测试，也没有真正的网络层测试。本仓库的 CI
+  跑的就是「编一遍 iOS Simulator + 这三组测试」。（那 695 个测试全在后端，
+  那个仓库不公开。）
 
 ### 还没有的
 
@@ -191,17 +193,15 @@ cd apps/edge && ./node_modules/.bin/vitest run   # 695 例
 
 ## 跑起来
 
-完整步骤（含每一个外部服务要开什么、拿什么）在 [`docs/self-hosting.md`](docs/self-hosting.md)。
-那份指南是在一个干净 checkout 上实跑核对过的，包括哪些步骤**没**跑通。
+完整步骤在 [`docs/building.md`](docs/building.md)。要点：
 
-最短路径就是上面「快速开始」里那三条。三个组件各自：
+- `cd apps/pendingbot`，需要时先 `xcodegen`（只在改过 `project.yml` 之后；
+  `PendingBot.xcodeproj` 是提交在仓库里的，clone 下来直接能开）。
+- 用 `xcodebuild` 编模拟器不需要签名；装到**你自己的真机**要在 Xcode 里换成
+  **你自己的 Signing Team** —— 仓库里那个是作者的。
+- 编出来的 app **没有可连的后端**。这不是配置漏了一步，是这个仓库的边界。
 
-- **Edge（后端）** —— `bun --filter='@pendingbot/admin' run build` 先出 admin 的静态资源，
-  再 `cd apps/edge && wrangler dev --local`。裸跑只证明 Worker 起得来；业务路由要本地 Supabase。
-- **数据库** —— `supabase start` + `supabase db reset --local`。全部迁移和两份 seed
-  在断网的 Docker 网络里跑通过。
-- **App** —— `cd apps/pendingbot && xcodegen`（仓库不带 committed 的 scheme，**新 clone 必须先跑这一步**），
-  然后 Xcode 打开 `PendingBot.xcodeproj`，选自己的 Signing Team 构建。
+不需要 Bun / Node / Docker / Supabase CLI。那些是后端的工具链，不在这个仓库里。
 
 ## 配置
 
@@ -209,13 +209,23 @@ App 端的后端坐标全部集中在 `HostedConfig.swift`，改 `Environment.re
 **别动 `Placeholder` 里的字面量**——那是上面那两个判据的参照物，改了判据就永远为真，
 app 会退回静默失败。
 
-只想在本地跑的，把 `HostedConfig.environment` 的默认值从 `.remote` 改成 `.dev`
-（坐标是 localhost，判据视其为已配置）。目前还没有运行时开关。
+判据为 `false` 时**不会在启动时弹任何东西** —— 只跑本地栈的人一辈子用不到云端
+常量，对他喊一句他做不了任何事的警告是假警报。判据只在**入口真被按下去**时读一次：
+点了 Apple / Google / 邮箱登录，才原地给你一句：
+
+> 本仓库只带占位后端坐标，登录走不通。要接自己的 Cloudflare Worker + Supabase，见 README 的「配置」一节。
+
+三个入口（Apple / Google / 邮箱验证码）共用这一句，不转圈也不静默失败。这是在一份
+未填坐标的构建上真点过三个入口测出来的，不是设计意图。
+
+`.dev` 那个分支指向 `localhost:8787` + `localhost:54321`，判据视其为已配置 ——
+它是给「本地跑着一套后端」用的，而那套后端不在这个仓库里，所以对外部读者来说
+它等价于「指向你自己那台机器」。目前还没有运行时开关，切换只能改默认值这一行。
 
 Google 登录另有一处：两份 `Info.plist` 里的 `GIDClientID` 和反转 URL scheme 也是占位。
 
-Edge 侧的变量、binding、secret 清单见 [`.env.example`](.env.example) 和
-`apps/edge/wrangler.jsonc`——后者里所有形如 `YOUR_…` / `example.com` 的值都是占位。
+Universal Links / AASA 域名、Associated Domains entitlement 和代码里的分享链接域名
+仍然是作者的。换成你自己的域名时这三处要一起改。
 
 ## 下载
 
@@ -229,24 +239,28 @@ macOS 版走的是签名 + 公证的直接分发，下载打开就能装。
 
 ## 仓库结构
 
-bun workspaces 单仓。
-
 ```
 apps/
-├── edge/             Cloudflare Worker + Hono + Supabase + R2 —— 后端主体
-├── pendingbot/       SwiftUI 原生 app（iOS / iPad / macOS，xcodegen 体系）
-├── admin/            Refine SPA 后台控制台（打包进 edge worker 的静态资源）
-└── voice-container/  群语音媒体容器（CF Container + Bun）
-packages/
-└── identity/         Supabase JWT + 鉴权 middleware
-supabase/             migrations / seeds / config
-scripts/              schema-regen 校验、Supabase advisor 闸、SECURITY DEFINER 闸、发版脚本
-docs/                 只留自建指南；内部账本（进度 / 技术债 / 决策记录）不在这份公开仓库里
+└── pendingbot/       SwiftUI 原生 app（iOS / iPad / macOS，xcodegen 体系）
+                      —— 这个仓库的全部内容
+scripts/
+└── release/
+    └── stamp-build-info.sh   构建末尾把「这是从哪个 commit 出的」写进 Info.plist。
+                              由 project.yml 的 build phase 调用，是构建的一部分，
+                              不是发版脚本
+docs/                 building.md + README 用到的图
 ```
 
-一起拆出去的还有 **PendingCrew**（Mac 端的 agent 编排 app），它现在是另一个仓库。
-代码注释里偶尔会引用 `docs/superpowers/plans/…` 之类的内部设计文档——那些没有一起公开，
-读到断链的引用不必当成缺失。
+`apps/` 底下只剩一个目录，但这层路径是**故意留着**的：它明说了这是一个 monorepo
+里的一个 app，旁边还有别的，只是没开源。
+
+**不在这里的**：Cloudflare Worker 后端、Supabase 迁移与 RLS、后台控制台、
+群语音媒体容器、鉴权中间件、出包与公证脚本，以及全部内部账本（进度 / 技术债 /
+决策记录）。这些不是「还没整理」，是**不开源**。
+
+另外，**PendingCrew**（Mac 端的 agent 编排 app）是另一个独立仓库。
+代码注释里偶尔会引用 `docs/superpowers/plans/…` 之类的内部设计文档 —— 那些没有
+一起公开，读到断链的引用不必当成缺失。
 
 ## 参与
 
@@ -259,13 +273,11 @@ issue 和 PR 都欢迎，但作者不保证响应速度，也不承诺路线。
 
 [MIT](LICENSE)。
 
-第三方：
-- Agent Skills 预设 vendored 自 [anthropics/skills](https://github.com/anthropics/skills)（Apache-2.0），
-  见 [`apps/edge/prompts/skills/anthropic/NOTICE.md`](apps/edge/prompts/skills/anthropic/NOTICE.md)
-  和同目录下的 `LICENSE.txt`。
-- 运行时 / 库：Cloudflare Workers · Hono · Supabase · Bun · Zod 等，各遵其原协议。
+第三方：客户端的 SPM 依赖（GRDB · GoogleSignIn · MarkdownUI · PostHog · RevenueCat ·
+Sentry · SwiftMath · supabase-swift · WebRTC）各遵其原协议，具体版本与来源见
+[`apps/pendingbot/project.yml`](apps/pendingbot/project.yml)。
 
 ---
 
-<sub>产品定位、功能与目标由作者撰写。技术章节（架构、状态盘点、自建与配置）由 Claude 补写，
+<sub>产品定位、功能与目标由作者撰写。技术章节（架构、状态盘点、构建与配置）由 Claude 补写，
 其中的数字与结论均来自实际运行的命令或线上只读查询，不是从旧文档转抄。</sub>

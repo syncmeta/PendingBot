@@ -3,6 +3,6 @@ contact_links:
   - name: 安全漏洞
     url: https://github.com/syncmeta/PendingBot/security/advisories/new
     about: 请走 GitHub 私有漏洞报告，不要开公开 issue。详见 SECURITY.md。
-  - name: 自建跑不起来
-    url: https://github.com/syncmeta/PendingBot/blob/main/docs/self-hosting.md
-    about: 开 issue 之前先看一眼自建指南，里面列了每个外部服务要开什么、以及哪些步骤本来就没跑通。
+  - name: 编不出来
+    url: https://github.com/syncmeta/PendingBot/blob/main/docs/building.md
+    about: 开 issue 之前先看一眼构建说明。顺带：这个仓库只有客户端，后端不开源，编出来的 app 没有可连的后端 —— 那是预期行为。

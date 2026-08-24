@@ -33,13 +33,13 @@ settings:
     # 默认 ad-hoc("Sign to Run Locally")→ 钥匙串身份每次重构都变 → 反复重弹授权 /
     # -34018。headless 无证书构建仍会回落 ad-hoc(仅编译校验用,不影响 GUI 构建)。
     "CODE_SIGN_IDENTITY[sdk=macosx*]": "Apple Development"
-    MARKETING_VERSION: "0.1.0"
+    MARKETING_VERSION: "0.1.1"
     # 占位符。发版时由 scripts/release/ios-build-number.sh --apply 覆盖成纪元日
     # 时间戳(<自1970-01-01起的天数>.<当天已过秒数>,如 20683.07431)。
     # **别手工填** —— 以前是手工填 + 拿 commit 数当值,仓库重建后提交数从 3571
     # 掉到 3178,build 号倒退、ASC 直接拒收。
     # 详见 docs/deploy.md 的「iOS build 号 — 纪元日时间戳 + 防倒退闸」一节。
-    CURRENT_PROJECT_VERSION: "1"
+    CURRENT_PROJECT_VERSION: "20687.52097"
 packages:
   GRDB:
     url: https://github.com/duckduckgo/GRDB.swift
@@ -114,6 +114,23 @@ targets:
         # 部分 Components 自然进入 Mac build,给 Sources/Mac/ 的真实视图
         # 提供数据底座。剩余 iOS-only 业务(Features/* 等)的 Mac 接入
         # 见 docs/tech-debt.md 中的 T0.1 P1+P2 条目。
+    # 版本戳:把「这个产物是从哪个 commit 出的」写进产物 Info.plist,iOS /
+    # macOS 两端都打。跑在 code signing 之前,所以不会让签名失效。
+    # basedOnDependencyAnalysis: false —— 没有输入/输出文件可声明,必须每次
+    # 构建都跑,否则增量构建会沿用上一次的戳,戳就成了谎报。
+    # 读的一侧在 Sources/AppBuildStamp.swift;发版侧的硬闸在
+    # scripts/release/build-macos-dmg.sh 第 ⑨ 道断言(unknown / dirty 一律拒绝出包)。
+    postBuildScripts:
+      - name: Stamp build info
+        script: |
+          "$SRCROOT/../../scripts/release/stamp-build-info.sh"
+        # inputFiles 声明的是**顺序依赖**,不是为了增量:新构建系统按任务图排
+        # 顺序,不按 build phase 的先后。不声明的话这个脚本会跑在 Xcode 处理
+        # Info.plist **之前**,写进去的戳当场被覆盖掉 —— 2026-08-22 实测踩过,
+        # 脚本日志明明打印了正确的 sha,产物里一个键都没有。
+        inputFiles:
+          - $(BUILT_PRODUCTS_DIR)/$(INFOPLIST_PATH)
+        basedOnDependencyAnalysis: false
     dependencies:
       - package: GRDB
         product: GRDB

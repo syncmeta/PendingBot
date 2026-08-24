@@ -5,7 +5,10 @@ body:
   - type: markdown
     attributes:
       value: |
-        动手之前请先看一眼 README 的「状态」一节。里面列了一批**代码在但从未接通**的功能
+        **这个仓库只有 Swift 客户端**，后端不开源、也不在这里。你 clone 下来编出的 app
+        没有可连的后端 —— 点登录会明确告诉你没配坐标，那是**预期行为，不是 bug**。
+
+        另外请先看一眼 README 的「状态」一节。里面列了一批**代码在但从未接通**的功能
         （群聊 bot 回复、语音、附件、主动复盘、邀请、加好友……）。
         那些不算 bug，是已知的半成品，报了也只会得到「是的，知道」。
 
@@ -15,12 +18,11 @@ body:
     attributes:
       label: 哪个部分
       options:
-        - Edge Worker (apps/edge)
-        - Swift 客户端 (apps/pendingbot)
-        - 后台控制台 (apps/admin)
-        - 数据库 / 迁移 (supabase)
-        - 构建 / 发版脚本 (scripts)
+        - 客户端 —— iPhone / iPad (apps/pendingbot)
+        - 客户端 —— macOS (apps/pendingbot)
+        - 构建 / Xcode 工程 (project.yml, scripts/release/stamp-build-info.sh)
         - 文档
+        - 从外部观察到的后端行为（后端不在这个仓库，但照样可以报）
         - 说不好
     validations:
       required: true
@@ -52,10 +54,12 @@ body:
     id: env
     attributes:
       label: 环境
-      description: 相关的才填 —— bun 版本、macOS / iOS 版本、Xcode 版本、Supabase CLI 版本、是本地栈还是自己部署的。
+      description: 相关的才填 —— macOS / iOS 版本、设备型号、Xcode 版本、是模拟器还是真机。
   - type: checkboxes
     id: config
     attributes:
-      label: 配置状态
+      label: 你跑的是哪个包
       options:
-        - label: 我已经按 docs/self-hosting.md 接上了自己的后端（不是拿占位值在跑）
+        - label: 我用的是 Releases / TestFlight 的官方包（连作者的后端）
+        - label: 我是自己从源码编的，并且已经把后端坐标换成了我自己的（不是占位值）
+        - label: 我是自己从源码编的，坐标还是仓库里的占位值

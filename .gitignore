@@ -49,7 +49,15 @@ dist-release/
 *.ipa
 *.xcarchive
 
+# 老 iOS 工程残留(T0.1 把 apps/ios/ 迁移到 apps/pendingbot/ 后,build/ 里仍有
+# 老 TestFlight archive(.xcarchive + .ipa)— 保留供历史回溯,但不入 git。
+apps/ios/
+
 # 编码 agent 的本地配置（各人自便，不入 git）
+# 注意：CLAUDE.md / AGENTS.md 在**私有仓里是被跟踪的**，gitignore 对已跟踪文件
+# 无效，所以这两行在这儿是空转的。它们真正生效的地方是**公开快照** ——
+# 快照是拷贝不是 clone，这两行是「别让内部约定跟着出去」的最后一道兜底。
+# 删掉它们在私有仓里看不出任何区别，在公开仓里少一层保护。
 .claude/
 .codex/
 .superpowers/
@@ -58,3 +66,6 @@ dist-release/
 AGENTS.md
 CLAUDE.md
 GEMINI.md
+
+# Deploy script (contains prod infra defaults)
+deploy.sh

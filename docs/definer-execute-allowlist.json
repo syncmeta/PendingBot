@@ -1,6 +1,0 @@
-{
-  "version": 1,
-  "reviewed_at": "2026-08-20",
-  "_comment": "SECURITY DEFINER functions in PostgREST-exposed schemas that anon/PUBLIC may execute on purpose. Empty is the correct steady state — an entry here means an unauthenticated caller can run privileged, RLS-bypassing code, so it needs a written reason and an expiry. Signatures must match scripts/sql/definer-execute-audit.sql output exactly: schema.function(identity args).",
-  "allowed_definer_functions": []
-}

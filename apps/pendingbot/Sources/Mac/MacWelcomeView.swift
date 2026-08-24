@@ -189,8 +189,12 @@ struct MacWelcomeView: View {
                 // 扫码胶囊固定 56(只放一个 qrcode 图标),Google 吃掉剩余宽(≈124,
                 // 比之前略窄)。三者总宽 = 下方邮箱行宽,所以输入框天然与这排对齐。
                 HStack(spacing: 10) {
-                    appleButton
-                        .frame(width: 110)
+                    // Apple 这颗在「直接分发」的包里不出现 —— 见
+                    // `appleSignInAvailable` 的说明。Google 会自动吃掉腾出来的宽度。
+                    if Self.appleSignInAvailable {
+                        appleButton
+                            .frame(width: 110)
+                    }
                     googleButton
                     qrLoginButton
                         .frame(width: 56)
@@ -395,6 +399,49 @@ struct MacWelcomeView: View {
 
     // MARK: - Apple / Google buttons
 
+    /// 这个包能不能用「用 Apple 登录」。
+    ///
+    /// **Apple 不给「直接分发」(Developer ID，非 Mac App Store) 的 macOS 应用签发
+    /// `com.apple.developer.applesignin`。** 这不是我们配置错了，是 Apple 的规则：
+    /// DTS 在 <https://developer.apple.com/forums/thread/129263> 明确答复该能力不
+    /// 支持 Developer ID，有人为此提 bug 后 Apple 回的是「此行为符合预期」。
+    ///
+    /// 2026-08-21 在本项目账号上实测坐实：把发布用的描述文件 `PendingBotDistribute`
+    /// **重新生成**了一张（新 UUID、当天的生成时刻），该项授权**仍然不在文件里**；
+    /// 而同一个 App ID 的**开发**描述文件里有。所以不是文件太旧。
+    ///
+    /// 后果曾经真的发生过：2026-08-07 那版 Developer ID 包里这项授权被签名步骤
+    /// **静默剥掉**，登录页上的 Apple 按钮点了没用，而签名有效、公证通过、
+    /// Gatekeeper 放行 —— 全链路零报错，两周没人发现。
+    ///
+    /// 所以这里按**包实际拿到的授权**来决定显不显示，而不是按平台写死：
+    ///   - 开发构建 / 将来若走 Mac App Store → 授权在，按钮照常出现
+    ///   - 我们自己发的 .dmg → 授权拿不到，按钮不出现（Google / 邮箱 / 扫码仍可用）
+    ///
+    /// 判不出来时**默认不显示**：显示一个点了没反应的按钮，比少一个按钮糟得多。
+    ///
+    /// iOS 与 Mac App Store 分发不受本条影响；`Networking/AppleSignIn.swift` 是
+    /// 跨平台的，一行没动。
+    private static let appleSignInAvailable: Bool = {
+        // 读法与 `Networking/PushService.swift` 里读 `aps-environment` 的那段同源。
+        // macOS 的描述文件在 Contents/ 下，不在 Resources 里，所以不能用
+        // Bundle.main.url(forResource:withExtension:)。
+        let url = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/embedded.provisionprofile")
+        guard let data = try? Data(contentsOf: url) else { return false }
+        // 描述文件是 CMS 签名过的 blob，里面那份 entitlements plist 是明文 XML。
+        let raw = String(decoding: data, as: UTF8.self)
+        guard let start = raw.range(of: "<?xml"),
+              let end = raw.range(of: "</plist>") else { return false }
+        let plistData = Data(raw[start.lowerBound..<end.upperBound].utf8)
+        guard let plist = try? PropertyListSerialization.propertyList(
+                from: plistData, options: [], format: nil) as? [String: Any],
+              let entitlements = plist["Entitlements"] as? [String: Any] else {
+            return false
+        }
+        return entitlements["com.apple.developer.applesignin"] != nil
+    }()
+
     private var appleButton: some View {
         Button { Task { await vm.beginApple() } } label: {
             brandPillContent(logo: appleLogoImage, text: "Apple", textColor: Theme.Palette.onApplePill)
@@ -407,6 +454,10 @@ struct MacWelcomeView: View {
         .accessibilityLabel("Sign in with Apple")
     }
 
+    /// 和 iOS 端同一套规矩:底仍是本 app 的玻璃胶囊。Google 品牌指南只核准
+    /// 全彩 G 落在他们公布的三套底色上,这里是作者拍板的取舍——按钮与登录页
+    /// 其余部分保持同一材质,偏离已记进 `docs/tech-debt.md`。G 本身用的是
+    /// Google 官方透明底资源,文字取他们规定的 `Theme.Palette.googleInk`。
     private var googleButton: some View {
         Button { Task { await vm.beginGoogle() } } label: {
             brandPillContent(

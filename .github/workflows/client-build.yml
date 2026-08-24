@@ -1,0 +1,95 @@
+name: Client build
+
+# 编一遍客户端，证明它还编得出来。就这一件事。
+#
+# 这是公开仓瘦身之后**唯一**一道 CI —— Edge / 数据库那几道随后端一起留在私有仓。
+# 加它的理由是 CONTRIBUTING 里写着「CI 会跑这些」：要么把那句话删掉，要么给一道
+# 真的。删掉的话贡献者拿到的是零，所以给一道。
+#
+# 它的边界写在这儿，也写在 CONTRIBUTING 和 PR 模板里，免得一道弱 CI 冒充强保证：
+#   * **测试覆盖很薄。** apps/pendingbot/Tests/ 下有三组独立测试（共 58 条断言，
+#     跑几秒），覆盖三个只依赖 Foundation 的模块。没有 UI 测试，没有真正的
+#     网络层测试。绿基本上只代表「没把编译弄坏」。
+#   * **只编 iOS Simulator 一个目标。** macOS 目标不编 —— 它跟 iOS 共用绝大部分
+#     源码，多编一遍的边际收益低于它占的 runner 时间；改了 Sources/Mac/** 或任何
+#     #if os(macOS) 的地方请自己在本机编一遍，CONTRIBUTING 里也这么写。
+#   * **不签名。** runner 上没有证书，也不该有（Developer ID 证书不上云，
+#     2026-08-20 定）。project.yml 把模拟器的 CODE_SIGN_IDENTITY 钉成了
+#     "Apple Development"，那在没有证书的机器上会直接失败 —— 所以这里用命令行
+#     覆盖关掉签名。这只影响「能不能装到设备上」，不影响「编不编得过」，而编得过
+#     正是这道 CI 要答的问题。
+
+on:
+  pull_request:
+    paths:
+      - 'apps/pendingbot/**'
+      - 'scripts/release/stamp-build-info.sh'
+      - '.github/workflows/client-build.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'apps/pendingbot/**'
+      - 'scripts/release/stamp-build-info.sh'
+      - '.github/workflows/client-build.yml'
+
+jobs:
+  ios-simulator:
+    name: xcodebuild · iOS Simulator
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: xcodegen 的输出必须跟提交的 .xcodeproj 一致
+        # 改了 project.yml 却忘了重新生成、或者生成了忘了提交，是外部 PR 最容易
+        # 犯的一种错，而且它在本机不一定暴露（本机那份 .xcodeproj 已经是新的）。
+        # 这一步不是"顺手再生成一遍"，是**拿生成结果去考仓库里那份**。
+        #
+        # ⚠️ 这道检查有一种已知的假红：runner 上的 xcodegen 是 brew 的最新版，
+        # 生成 .xcodeproj 的那台机器可能是别的版本。所以失败信息里会把版本号打出来，
+        # 而且明说该怎么办 —— 升级本机 xcodegen 重新生成并提交，让仓库跟上工具，
+        # 而不是把这道检查关掉。仓库里那份是 XcodeGen 2.45.4 生成的（2026-08-23 实测
+        # 逐字节相同）。
+        run: |
+          brew install xcodegen
+          echo "runner xcodegen: $(xcodegen --version)"
+          cd apps/pendingbot
+          xcodegen generate
+          if ! git diff --quiet -- PendingBot.xcodeproj; then
+            echo "::error::PendingBot.xcodeproj 与 project.yml 不同步"
+            git --no-pager diff --stat -- PendingBot.xcodeproj
+            echo
+            echo "两种可能："
+            echo "  1. 你改了 project.yml 但没重新跑 xcodegen（或者跑了没提交）。"
+            echo "     在本机跑 'cd apps/pendingbot && xcodegen' 并把 .xcodeproj 一起提交。"
+            echo "  2. 你本机是同步的，只是 xcodegen 版本跟 runner 上这个不一样。"
+            echo "     那就升级本机 xcodegen 到同一版、重新生成、提交 —— 让仓库跟上工具。"
+            exit 1
+          fi
+
+      - name: build
+        run: |
+          cd apps/pendingbot
+          xcodebuild \
+            -project PendingBot.xcodeproj \
+            -scheme PendingBot \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: 独立单元测试
+        # apps/pendingbot/Tests/ 下这三组是 swiftc 直接编了跑的，不需要模拟器、
+        # 不需要签名，加起来几秒。工程里还没有 xcodebuild test 目标（那条线在
+        # feat/ios-unit-tests 上），等它落地之后这一步该换成 `xcodebuild test`，
+        # 并把这三个脚本并进去。
+        #
+        # 匿名写闸那组值得单独说一句：它守的是 supabase-swift 拿不到 session 时
+        # 把写请求以 anon 发出去这件事 —— 那个形状我们误诊过两次，都当成后端 bug。
+        # 那道闸是把「不许降级 anon」从约定变成机制；这组测试是看着那道闸的。
+        run: |
+          cd apps/pendingbot
+          bash Tests/run-model-reveal-policy-tests.sh
+          bash Tests/run-preset-epoch-tests.sh
+          bash Tests/run-supabase-anon-write-guard-tests.sh

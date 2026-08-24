@@ -12,12 +12,14 @@
 如实填。跑不了的写「跑不了，因为 …」，比假装全绿有用得多。
 -->
 
-- [ ] `bun --filter='@pendingbot/edge' run typecheck`
-- [ ] `cd apps/edge && ./node_modules/.bin/vitest run`（695 例）
-- [ ] `bun run db:definer:test` / `bun run supabase:advisor:test`（改了数据库权限时）
-- [ ] `supabase db reset --local` 通过，并重新生成了 `apps/edge/src/db/schema.ts`（改了迁移时）
-- [ ] Xcode 编译通过（改了 Swift 时，iOS 和 macOS 两个目标）
+- [ ] iOS Simulator 目标编译通过（CI 也跑这条）
+- [ ] `Tests/` 下那三个 `run-*.sh` 都跑过（CI 也跑）
+- [ ] macOS 目标编译通过（改了 `Sources/Mac/**` 或任何 `#if os(macOS)` 时；**CI 不跑这条**）
+- [ ] 改了 `project.yml` 的话，重新跑了 `xcodegen` 并把生成的 `.xcodeproj` 一起提交了
 - [ ] 跑不了的项目，以及为什么：
+
+<sub>那三组测试一共 58 条断言，覆盖三个只依赖 Foundation 的模块 —— CI 绿基本上只代表
+「没把编译弄坏」。下面那一栏因此更重要。</sub>
 
 ## 需要人工验的
 

@@ -8,10 +8,9 @@ import Foundation
 ///                  → both run locally → iOS Debug build flips
 ///                  `HostedConfig.environment = .dev` to verify end-to-end
 ///                  without touching the deployed stack.
-///   - `.remote`  — your own deployed env: a Cloudflare Worker plus a
-///                  Supabase project. **This public repo ships placeholder
-///                  coordinates only** — see `Placeholder` below and
-///                  `docs/self-hosting.md`.
+///   - `.remote`  — the one deployed env: Cloudflare Worker at
+///                  api.example.com + Supabase project YOUR-PROJECT
+///                  (EU / Frankfurt eu-central-1).
 ///                  Called `.remote` (not `.production`) on purpose: there are
 ///                  no real users yet, so labelling it "production" overstates
 ///                  what it is. After v1 ships we'll split this into
@@ -43,7 +42,7 @@ enum HostedConfig {
         var workerURL: URL {
             switch self {
             case .dev:    return URL(string: "http://localhost:8787")!
-            case .remote: return URL(string: Placeholder.workerURL)!
+            case .remote: return URL(string: "https://api.example.com")!
             }
         }
 
@@ -51,7 +50,7 @@ enum HostedConfig {
         var supabaseURL: URL {
             switch self {
             case .dev:    return URL(string: "http://localhost:54321")!
-            case .remote: return URL(string: Placeholder.supabaseURL)!
+            case .remote: return URL(string: "https://YOUR-PROJECT.supabase.co")!
             }
         }
 
@@ -66,7 +65,7 @@ enum HostedConfig {
             case .dev:
                 return "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
             case .remote:
-                return Placeholder.supabasePublishableKey
+                return "sb_publishable_REPLACE_ME"
             }
         }
 
@@ -81,26 +80,29 @@ enum HostedConfig {
         var turnstileSiteKey: String {
             switch self {
             case .dev:    return "1x00000000000000000000AA"
-            // Your own live site key from the Cloudflare Turnstile
-            // dashboard, registered for the host below. The matching
-            // secret is only useful once it's pasted into your Supabase
+            // Live site key registered for `example.com` in
+            // the Cloudflare Turnstile dashboard. The matching secret
+            // is only useful once it's pasted into the remote Supabase
             // project (Dashboard → Authentication → Captcha protection)
-            // — until that's done, the client will still mint tokens
-            // but Supabase won't validate them, so captcha no-ops.
-            case .remote: return Placeholder.turnstileSiteKey
+            // — until that's done, the iOS client will still mint
+            // tokens but the Supabase backend won't validate them, so
+            // captcha effectively no-ops.
+            case .remote: return "0x0000000000000000000000"
             }
         }
 
         /// Origin that hosts the inline Turnstile challenge page inside
         /// the in-app WKWebView. Must match a hostname registered for
         /// the Turnstile site key — Cloudflare validates the embedding
-        /// origin server-side. Use whichever host serves your AASA /
-        /// Universal Links (the convention here is a `bot.` subdomain,
-        /// keeping app origins namespaced away from the brand root).
+        /// origin server-side. We use `example.com` to match the
+        /// project's existing convention (AASA, Universal Links, and
+        /// QR-code landing all live under `bot.`), keeping iOS-app
+        /// origins namespaced away from the brand root `pendingname.com`
+        /// in case that ever gets a separate web property.
         var turnstileHost: URL {
             switch self {
             case .dev:    return URL(string: "https://localhost")!
-            case .remote: return URL(string: Placeholder.turnstileHost)!
+            case .remote: return URL(string: "https://example.com")!
             }
         }
 

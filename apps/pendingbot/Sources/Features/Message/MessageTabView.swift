@@ -1276,15 +1276,16 @@ private struct ConversationListRow: View {
                     #endif
                     Spacer(minLength: 8)
                     if conv.last_activity_at > 0 {
-                        // Preset preseeded conversations are stamped with a
-                        // slug-keyed offset on 1970-01-01 (see migration
-                        // 0024). Render those as a literal "1970年" instead
-                        // of the "55 年前" relative form so the badge reads
-                        // as a deliberate marker, not a stale timestamp.
+                        // 预设会话被刻意钉在纪元窗口里 —— 基准戳 1970-01-02
+                        // 12:34(北京时间),各 slug 在同一分钟内错开几秒。判据和
+                        // 基准戳都在 PresetEpoch 里,服务端那一份见迁移
+                        // 20260822132304_preset_epoch_1970_01_02.sql。
+                        // 这类会话显示字面的「1970年」而不是「55 年前」,让它读作
+                        // 一个刻意的标记,而不是一个过期的时间戳。
                         let date = Date(timeIntervalSince1970: TimeInterval(conv.last_activity_at))
-                        let isEpochYear = Calendar.current.component(.year, from: date) == 1970
+                        let isPreseeded = PresetEpoch.isPreseeded(date)
                         Group {
-                            if isEpochYear {
+                            if isPreseeded {
                                 Text("1970年")
                             } else {
                                 Text(date, format: .relative(presentation: .numeric))

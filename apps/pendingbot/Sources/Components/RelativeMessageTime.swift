@@ -1,5 +1,4 @@
 import Foundation
-import SwiftUI
 
 /// Renders a message's timestamp the way WeChat / iMessage do — a fuzzy
 /// "几秒前 / 几分钟前 / 昨天 HH:mm / 11/12 HH:mm" string, locale-fixed to
@@ -109,20 +108,4 @@ extension RelativeMessageTime {
     /// message is more than this many seconds after the previous one,
     /// matching the WeChat 5-min cadence.
     static let separatorGapSeconds: TimeInterval = 5 * 60
-}
-
-/// Centered timestamp pill inserted between messages whose time-gap to
-/// the previous bubble crossed RelativeMessageTime.separatorGapSeconds.
-/// Visually quiet — secondary color, small caption font — so it doesn't
-/// compete with the bubbles.
-struct TimeSeparatorPill: View {
-    let date: Date
-
-    var body: some View {
-        Text(RelativeMessageTime.format(date, style: .pill))
-            .font(Theme.Fonts.caption2)
-            .foregroundStyle(.secondary)
-            .padding(.vertical, 2)
-            .accessibilityLabel("时间:\(RelativeMessageTime.format(date, style: .pill))")
-    }
 }
