@@ -14,7 +14,11 @@ import UIKit
 /// gear icon in the chat header now lands there directly for bot chats;
 /// human chats go to ContactSettingsView, group chats to GroupSettingsView).
 /// The remaining tiles are the per-message attach actions: 图片 (library)
-/// and 拍照 (camera).
+/// and 拍照 (camera), plus the conv-dependent 检查 / 猜模型 / 换模型 entries.
+///
+/// 格子用自适应网格排,**会随可用宽度换行**(Todo #22)。tile 数量是变的
+/// (3~6 个,看这个 conv 给不给 lookback / 盲盒入口),所以行数也是变的 ——
+/// 面板高度因此只能给下限,不能钉死,见 `ComposerView` 那个 `minHeight`。
 struct ChatActionSheet: View {
     /// Tapping the "图片" tile calls this; the host presents `.photosPicker`.
     var onPickPhoto: () -> Void = {}
@@ -39,9 +43,27 @@ struct ChatActionSheet: View {
     // composer's inputAccessoryView, and presenting a sheet / fullScreenCover
     // from a hosting controller embedded in the accessory is unreliable.
 
+    /// 一个格子的宽度 / 格子之间的间距。网格按这两个数算一行能放几个。
+    private static let tileWidth: CGFloat = 64
+    private static let tileSpacing: CGFloat = 18
+
     var body: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: 18) {
+            // 自适应网格,不是横排 —— 满配 6 个格子要 6×64 + 5×18 = 474 点,
+            // 而 iPhone 可用宽度只有 393 − 2×16 = 361 点。原来那个 HStack
+            // **没有换行这个能力**,超出去的部分直接溢出屏幕两侧(作者 Todo #22
+            // 的截图里左右各露半个格子,就是这个)。
+            //
+            // `.adaptive(minimum:maximum:)` 两头都钉死在 64:一行放得下几个由
+            // 可用宽度决定,放不下就自己换行,而格子本身不会被拉宽变形。
+            // 用原生网格而不是手写流式布局 —— 本仓库的规矩是能不自绘就不自绘。
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: Self.tileWidth, maximum: Self.tileWidth),
+                                   spacing: Self.tileSpacing,
+                                   alignment: .top)],
+                alignment: .leading,
+                spacing: Self.tileSpacing
+            ) {
                 Button {
                     Haptics.tap()
                     onPickPhoto()
@@ -105,8 +127,6 @@ struct ChatActionSheet: View {
                     }
                     .buttonStyle(.plain)
                 }
-
-                Spacer(minLength: 0)
             }
             .padding(.horizontal, Theme.Metrics.gutter)
             .padding(.top, 18)

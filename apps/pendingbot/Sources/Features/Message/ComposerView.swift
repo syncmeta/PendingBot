@@ -196,7 +196,25 @@ struct ComposerView: View {
                     onGuessModel: onGuessModel,
                     onSwitchModel: onSwitchModel
                 )
-                .frame(height: 240)
+                // ⚠️ 下限,**不是**定值,也**不要**改成完全自适应。三句话说清:
+                //
+                // 1. 不能是定值:格子会换行(Todo #22),行数随 tile 数量(3~6,
+                //    看这个 conv 给不给 lookback / 盲盒入口)和屏幕宽度变。
+                //    钉死 240 的话第三行会被切掉。
+                //
+                // 2. 不能完全自适应:`ComposerBarContainerView` 靠
+                //    「内容高度 > 200 就认为面板开着」来决定背板画玻璃还是
+                //    画实心画布(见那边的 panelHeightThreshold)。宽屏上六个
+                //    格子会排成一行,内容只剩一百多点 —— 真自适应就会掉到
+                //    200 以下,**背板于是以为面板是关的,画错**。
+                //
+                // 3. 所以是下限:240 > 200,面板永远在阈值之上,同时又留了
+                //    往上长的余地。两头都堵住,而且不用去动那个阈值。
+                //
+                // 实测(离屏渲染,320/393/430/768 四种宽度):窄屏一行 3 个、
+                // 393 一行 4 个、768 五个一行排完,都在 240 以内;宽屏那张
+                // 正是第 2 条描述的情形,靠下限顶住的。
+                .frame(minHeight: 240)
                 .background(Theme.Palette.canvas)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
