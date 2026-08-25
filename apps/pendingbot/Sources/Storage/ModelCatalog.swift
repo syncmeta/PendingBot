@@ -5,8 +5,10 @@ import Combine
 ///
 /// Bots store a bare slug (`z-ai/glm-5.1`) in `model_id`; the UI wants the
 /// friendly `display_name` ("GLM 5.1") and the blended price multiplier.
-/// This store fetches the catalog once per launch and resolves both — views
-/// observe it so labels upgrade from the slug fallback once the fetch lands.
+/// This store seeds itself from the disk cache at `init` (so the *first*
+/// frame is already correct on any launch after the first successful fetch),
+/// then refreshes from the network once per launch. Views observe it, so a
+/// label that couldn't be resolved yet fills in when the fetch lands.
 @MainActor
 final class ModelCatalog: ObservableObject {
     static let shared = ModelCatalog()
@@ -29,7 +31,16 @@ final class ModelCatalog: ObservableObject {
         return dir?.appendingPathComponent("model_catalog.json")
     }()
 
-    private init() {}
+    /// Seed the slug map from disk **before the first frame**, not from a
+    /// view's `.task`. `loadIfNeeded()` runs after the first render, so a
+    /// launch with a perfectly good cache still painted one frame with an
+    /// empty catalog — which is where the "先闪一下别的字样" came from.
+    /// Doing it in `init` costs one small synchronous JSON read on the
+    /// main actor at first access and makes the first frame correct on
+    /// every launch after the first successful fetch.
+    private init() {
+        if let cached = Self.readDiskCache() { apply(cached) }
+    }
 
     /// Fetch the catalog once. Safe to call from every view's `.task` —
     /// later calls join the in-flight task or no-op once loaded. A failed
@@ -81,11 +92,27 @@ final class ModelCatalog: ObservableObject {
         try? data.write(to: url, options: .atomic)
     }
 
-    /// Friendly model name for a stored slug. Falls back to the slug's tail
-    /// segment when the catalog hasn't loaded or doesn't know the model.
+    /// Neutral stand-in for a slug the catalog can't resolve. Used only by
+    /// surfaces that must render *something* in a fixed slot (a settings
+    /// row's value, a picker's label); anything that can hide the whole
+    /// line should use `resolvedDisplayName(for:)` and hide on nil.
+    static let unresolvedName = "…"
+
+    /// Friendly model name for a stored slug — nil when the catalog hasn't
+    /// loaded yet or doesn't know the model.
+    ///
+    /// **Never falls back to the slug.** The tail segment of a slug *is* the
+    /// upstream vendor's model name (`anthropic/claude-opus-5` → `claude-opus-5`),
+    /// and this product deliberately doesn't tell users whose model is behind
+    /// a bot (see `ModelRevealPolicy`). The old tail fallback leaked exactly
+    /// that, on every cold open, for as long as the catalog was in flight.
+    func resolvedDisplayName(for slug: String) -> String? {
+        bySlug[slug]?.display_name
+    }
+
+    /// Friendly model name, or a neutral placeholder when unresolved.
     func displayName(for slug: String) -> String {
-        if let m = bySlug[slug] { return m.display_name }
-        return slug.split(separator: "/").last.map(String.init) ?? slug
+        resolvedDisplayName(for: slug) ?? Self.unresolvedName
     }
 
     /// Blended price multiplier (USD per 1M tokens, 7:2:1) for a slug.
