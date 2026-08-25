@@ -12,6 +12,26 @@
 
 ---
 
+### 🟡 「后端在线上、客户端够不到」清单 —— 6 处（含 1 处会让机器人干等 120 秒的活雷）
+- **发现**: 2026-08-25 · Todo #19「之前有过较完整的群账号设计 / 我在设置页见过分摊设置，为什么没了」的顺带产出。**只读扫描，未改代码、未动生产数据。** 读的对象/ref/时刻：代码 = 本地 `main`（`14abc094` 起，2026-08-25）；PendingCrew 仓 = `syncmeta/PendingCrew@a9321fe`（`git grep HEAD`，同日）；线上库 = linked prod `zafhoiwwpanpuashtnxy`（同日只读）；线上 worker = `api.pendingname.com`（同日）。
+- **扫描方法**（可复现，不是印象）: ① 对 `apps/pendingbot/Sources` 做**文件级可达性**分析（从 `PendingBotApp.swift` 出发，按类型名引用建图，剔注释）；② 对 `index.ts` 里每个挂载前缀在两个客户端仓库分别 grep；③ 命中的再逐个手工复核调用点。**扩展文件（`X+Y.swift`）和纯 extension 文件在方法①里必然假阳性，已手工剔除。**
+
+| # | 后端（线上状态） | 客户端 | 后果 |
+|---|---|---|---|
+| 1 | `POST /v1/code-exec-requests/:id/respond`（`request_execute_code` 的审批端点） | **两端都没有审批卡**。路由注释白纸黑字写"the iOS app shows an approval card with two buttons"，iOS 对 `code_exec_request` SSE 事件**零处理**（只在工具轨迹里显示一行"请求跑代码"标签，没有按钮） | **活雷**：该工具在 `bot-reply/index.ts:773-774` 是**每个回合always-on**的。模型一旦调用它，`pollCodeExecDecision` 会空转到 120s 超时，用户看着机器人卡两分钟然后拿到 `timeout`。**至今没被触发过**（`bot_code_exec_requests` 线上 0 行），所以是埋着的雷不是正在咬 |
+| 2 | `/v1/group-subjects/*` 13 个端点（群账号成员/权限/钱包） | `GroupSubjectService.swift` + `GroupWalletService.swift` + `GroupWalletView.swift`(315 行) **全仓零引用**，但都编进了 App 二进制 | 群账号整摊用户到不了。详见本册 🔴「群聊分摊：设计与线上现状三档错位」+ 🔴「chat-group 与 subject 双轨未桥接」 |
+| 3 | `/v1/share-changes/:id/decision` + `/pending`（跨主体责任比例投票 —— 对应 product-design-v2 §4.3 矩阵里「批准外部 crew 认本群下 crew 为父」「接受跨主体协作邀请」两行） | **PendingBot 与 PendingCrew 两个仓库都零引用** | 权限矩阵里那两行至今无处可点；`crew_pending_share_changes` 线上 0 行 |
+| 4 | `GET /v1/human-help-requests` + `POST /:id/decision`（机器人向人求助的收件箱） | 两仓零引用 | `human_help_requests` 线上 0 行 |
+| 5 | device-login 的「代表哪个 subject 登录」（`requested_subject_id` + approve 端的 anti-spoof 校验都已就位） | iOS 无 subject 选择界面（全仓搜"代表"零命中，`EmailSignIn` 只在建 challenge 时带一个可选 `subjectId`，且没有 UI 产出它） | product-design-v2 §4.4 那条"扫码 → 选择代表哪个 subject"不可达；本册旧条目里的 T1.3 就是它 |
+| 6 | —（纯客户端残留） | `AccountsView.swift` 文件注释写"Surfaced from MeTabView's 账户 entry"，`MeTabView` 里**没有这个入口**；`EnvelopeDataSource.swift`（macOS 版来信最小读源）被跨平台化后取代、零引用 | 死文件，无功能影响，但会误导下一个读代码的人 |
+
+- **不算在内、但同样"够不到"（刻意为之，不是债）**: 机组 tab 那一摊（`CrewListView`/`CrewSessionDetailView`/`NewCrewTaskSheet` + `/v1/crew`、`/v1/runner-hosts`）—— 2026-08-25 Todo #18 主动摘掉入口换成「待建设」，代码原样保留待后端到位。
+- **不算在内（属另一个仓库的消费面）**: `/v1/machines`（PendingCrew 在用，5 处）、`/v1/crews`（Phase 2 crew 端点，PendingCrew 面）。
+- **共性根因（这才是要治的东西）**: 这 6 处没有一处是"忘了写"，全是**后端 lane 先落、客户端入口留作"下一拍"，然后那一拍没有被任何账本追踪**。最典型的是第 2 项 —— 落地提交 `f93e90c9`(2026-06-03) 自己写着「入口接入见下一拍」，`955ab0f2`(同日) 又写「新群钱包页入口待定」，**至今 82 天没有下一拍**。`docs/progress.md` / task 系统都不会因为"某个端点没有客户端"而变红。
+- **建议**: ① 第 1 项是唯一有用户可见后果的，建议**要么补审批卡、要么把 `request_execute_code` 从 always-on 里摘掉**（现状是承诺了一个不存在的交互）；② 其余按产品优先级排，别一次性全挂；③ 长期治理：给"端点上线但无客户端"这件事一个**会被定期扫到**的位置（本条这套扫描脚本可复用），否则下一批还会这样堆。
+- **关联**: 本册 🔴「群聊分摊：设计与线上现状三档错位」（Todo #17）、🔴「群账号(group_account subject)矩阵无 PendingBot IM 客户端消费入口」（2026-06-09）；设计源 `docs/superpowers/specs/2026-05-28-pendingbot-pendingcrew-product-design-v2.md` §4.3/§4.4。
+- **状态**: 待排期（第 1 项建议优先，其余等产品定优先级）。
+
 ### 🔴 群聊分摊：设计与线上现状三档错位 —— 后端全在、界面不可达、线上一次都没跑过（Todo #17 只读复核）
 - **发现**: 2026-08-25 · Todo #17「理一下群聊分摊机制 + 为什么群聊设置里看不到分摊设置」。**只读复核，未改代码、未动生产数据。** 复核对象/ref/时刻：代码读的是本地 `main`（`14abc094`，2026-08-25）；线上库读的是 linked prod（`zafhoiwwpanpuashtnxy`，2026-08-25 07:0x UTC，`supabase db query --linked` 只读）；线上 worker 探的是 `api.pendingname.com`（同日）。
 - **背景**: 本条不是新增一个未知问题，而是给已挂在册的 🔴「群账号(group_account subject)矩阵无 PendingBot IM 客户端消费入口 + chat-group 与 subject 双轨未桥接」（2026-06-09）补一份**线上实测的现状读数**，并点出**概念文档与代码的口径差**。原条目仍是同一根因，别当两条修。
