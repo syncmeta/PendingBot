@@ -31,6 +31,11 @@
  * 豁免走 scripts/orphan-view-allowlist.tsv,每条必须带理由和回看日期 ——
  * 不带理由的豁免两个月后就没人知道它为什么在那儿。基线走
  * scripts/orphan-view-baseline.json,只能由人显式更新。
+ *
+ * ⚠️ 觉得这道检查烦、想摘掉它之前,先读 docs/decisions.md 的 **D6** ——
+ * 那里有它为什么存在(五个孤儿的回溯数字)、以及改它/摘它的合法路径。
+ * 那一条最后留了个问题:**下一次有人删掉某个界面的最后一个入口时,谁会知道?**
+ * 答得上来再摘。
  */
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';

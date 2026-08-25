@@ -31,6 +31,7 @@
 - **已做**: `scripts/check-orphan-views.mjs` + 自测 + `.github/workflows/orphan-views.yml`（**只报告不拦人**，报告落 job summary，打「本次 N 个 / 基线 M 个」的对比）。基线 `scripts/orphan-view-baseline.json` = 11，只能由人显式更新。**回溯验过：上面五个孤儿，检测器在它们被造出来那一天就会点名。**
 - **未做（要产品拍板的）**: 存量 11 个的处置。机组那 6 个归档不处理（#18 刻意摘的）；`AccountsView`/`TabTitle` 维持现状；`GroupWalletView`+`AmountFormSheet` 在 #21 那条线上；**`BrandAvatar` 待定** —— 它的 iOS 孪生 `BotAvatar` 还活着，所以大概率是删，但删不删是作者的事，本轮没动。
 - **豁免清单 `scripts/orphan-view-allowlist.tsv` 是空的，这是有意的**: 存量一个都还没定，此刻往里塞 11 行就是拿豁免换绿色 —— 那正是这道检查要防的事。
+- **拍过的板**: 这道检查为什么存在、想改它/摘掉它的合法路径、以及三条刻意如此的设计，写在 [`decisions.md`](decisions.md) **D6**。**摘掉这道闸之前先读那一条** —— 一道没有"为什么存在"记录的闸，两个月后就会被当噪音摘掉。
 - **状态**: 检查已就位（非阻塞）；存量待作者表态；表态后再把 `--gate` 换进 CI。
 
 ### 🟡 「后端在线上、客户端够不到」清单 —— 6 处（含 1 处会让机器人干等 120 秒的活雷）
