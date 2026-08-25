@@ -1791,8 +1791,11 @@ private struct CreateGroupView: View {
                 }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(m.name).foregroundStyle(Theme.Palette.ink)
-                    if let mid = m.modelId {
-                        Text(modelCatalog.displayName(for: mid))
+                    // 目录解不出来就整行不画 —— 以前这里回落 slug 尾巴,
+                    // 也就是上游厂商的模型名。
+                    if let mid = m.modelId,
+                       let name = modelCatalog.resolvedDisplayName(for: mid) {
+                        Text(name)
                             .font(Theme.Fonts.monoSmall)
                             .foregroundStyle(Theme.Palette.inkMuted)
                     }

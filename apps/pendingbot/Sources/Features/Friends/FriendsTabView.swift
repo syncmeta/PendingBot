@@ -1483,12 +1483,15 @@ private struct FriendRow: View {
                     .foregroundStyle(Theme.Palette.ink)
                     .lineLimit(1)
                     .layoutPriority(1)   // 名字优先,窄列时先压缩 model 标签而非名字
-                if kind == .bot, let slug = modelSlug, !slug.isEmpty {
+                // 目录解不出这个 slug 就整个胶囊不画 —— 回落到 slug 尾巴
+                // 等于把上游厂商的模型名印在好友列表里。
+                if kind == .bot, let slug = modelSlug, !slug.isEmpty,
+                   let modelName = catalog.resolvedDisplayName(for: slug) {
                     // Friendly model name + blended price multiplier.
                     // Muted ink fg + surface-muted bg, matching the
                     // message-list model tag.
                     HStack(spacing: 4) {
-                        Text(catalog.displayName(for: slug))
+                        Text(modelName)
                             .foregroundStyle(Theme.Palette.inkMuted)
                             .lineLimit(1)
                             .truncationMode(.middle)
@@ -2062,6 +2065,11 @@ private struct AddBotPreviewPage: View {
 
     @Environment(\.dismiss) private var dismissPage
     @Environment(\.api) private var api
+    /// 目录用来把 `model_id` 的 slug 翻成友好名。这里刻意用 shared 而不是
+    /// `@EnvironmentObject` —— 这一页活在 sheet 里,本文件已经踩过「self 拷贝
+    /// 的 @EnvironmentObject 永不灌注 → 首次读取断言崩溃」那颗雷(见 body 注释),
+    /// 一个只读的目录不值得再赌一次。@ObservedObject 一样能观察到加载完成。
+    @ObservedObject private var catalog = ModelCatalog.shared
 
     enum Preview: Equatable {
         case loading
@@ -2122,10 +2130,15 @@ private struct AddBotPreviewPage: View {
                 // in the friends list).
                 UserAvatar(seed: bot.id, attachmentId: nil, size: 44)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(bot.display_name.isEmpty ? bot.id.prefix(8).description : bot.display_name)
+                    // 没名字就说「未命名机器人」—— 以前顶的是 bot id 的前 8 位。
+                    Text(bot.display_name.isEmpty ? "未命名机器人" : bot.display_name)
                         .font(Theme.Fonts.body)
-                    if let m = bot.model_id, !m.isEmpty {
-                        Text(m).font(Theme.Fonts.caption2).foregroundStyle(.secondary)
+                    // 这里以前直接把 `bots.model_id` 原样印出来,也就是
+                    // `anthropic/claude-opus-5` 这样的**完整上游 slug** —— 不是
+                    // 闪一下,是常驻。走目录取友好名,解不出就不画这一行。
+                    if let m = bot.model_id, !m.isEmpty,
+                       let name = catalog.resolvedDisplayName(for: m) {
+                        Text(name).font(Theme.Fonts.caption2).foregroundStyle(.secondary)
                     }
                 }
             }
