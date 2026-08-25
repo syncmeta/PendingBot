@@ -27,6 +27,88 @@ import type { Env } from '../types';
 
 const MAX_DESC_TOKENS = 200;
 
+/// 固定标记:生成这份介绍失败时,日志里必须留下这一行。
+///
+/// 为什么要有它:这份介绍是群调度器**唯一**的判据(见 `llm/group-router.ts`)。
+/// 没有它,调度器每一轮都会合规地返回空名单 —— 群于是永远安静,而且不报错、
+/// 不留日志、界面上什么都没有。2026-08-25 线上就是这个状态:`group_bot_descriptions`
+/// 全表 0 行,而调度器跑得好好的。**一个会让功能静默死掉的失败,必须有声音。**
+export const GROUP_BOT_INTRO_FAILURE_MARKER = '[group-bot-intro][generate-failed]';
+
+/// 一次性补齐某个群里**所有还没有介绍**的机器人。
+///
+/// 两个调用点,覆盖两种缺口:
+///   - `POST /v1/groups`(建群时一次性带进机器人)—— 这条路以前完全不生成介绍,
+///     是 2026-08-25「群里机器人永远不说话」的病根。
+///   - `GroupRouterDO.alarm()`(每一轮路由之前)—— **存量自愈**。线上已经存在的
+///     群一份介绍都没有,与其手改数据库,不如让它们在下一次有人说话时自己补上。
+///     `generateInitialBotDescription` 本身幂等(有行就直接返回),所以补齐过的群
+///     后续只多一次廉价的查询。
+///
+/// 失败**不抛**:调用方(建群 / 路由)都不该因为介绍没写成而失败。但每一个失败
+/// 都会带着 `GROUP_BOT_INTRO_FAILURE_MARKER` 落进日志,不再是无声的。
+/// 纯函数:这个群里哪些机器人还没有介绍。
+///
+/// 抽出来是为了能单独考 —— 整个 Todo #20 的病根就是"有机器人没有介绍,而且
+/// 没有任何一处发现得了"。去重、顺序稳定(按参与者顺序),空输入返回空。
+export function botsMissingDescriptions(
+  participantBotIds: readonly string[],
+  describedBotIds: readonly string[],
+): string[] {
+  const have = new Set(describedBotIds);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const id of participantBotIds) {
+    if (!id || have.has(id) || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
+export async function ensureGroupBotDescriptions(
+  env: Env,
+  conversationId: string,
+): Promise<{ missing: number; failed: number }> {
+  const supa = serviceClient(env);
+
+  const [{ data: parts }, { data: descs }] = await Promise.all([
+    supa
+      .from('conversation_participants')
+      .select('participant_id')
+      .eq('conversation_id', conversationId)
+      .eq('participant_type', 'bot'),
+    supa
+      .from('group_bot_descriptions')
+      .select('bot_id')
+      .eq('conversation_id', conversationId),
+  ]);
+
+  const missing = botsMissingDescriptions(
+    (parts ?? []).map((p) => p.participant_id as string),
+    (descs ?? []).map((d) => d.bot_id as string),
+  );
+  if (missing.length === 0) return { missing: 0, failed: 0 };
+
+  const results = await Promise.allSettled(
+    missing.map((botId) =>
+      generateInitialBotDescription({ env, conversationId, botId }),
+    ),
+  );
+  let failed = 0;
+  results.forEach((r, i) => {
+    if (r.status === 'rejected') {
+      failed += 1;
+      console.error(GROUP_BOT_INTRO_FAILURE_MARKER, JSON.stringify({
+        conversationId,
+        botId: missing[i],
+        error: r.reason instanceof Error ? r.reason.message : String(r.reason),
+      }));
+    }
+  });
+  return { missing: missing.length, failed };
+}
+
 export async function generateInitialBotDescription(input: {
   env: Env;
   conversationId: string;

@@ -1,5 +1,6 @@
 import { runGroupRouter } from '../llm/group-router';
 import { dispatchGroupTurn } from '../lib/group-dispatch';
+import { ensureGroupBotDescriptions } from '../lib/group-bot-intro';
 import { serviceClient } from '../lib/supabase';
 import type { Env } from '../types';
 
@@ -151,6 +152,18 @@ export class GroupRouterDO {
       sender_label: senderLabels.get(`${m.role}:${m.user_id ?? m.sender_bot_id ?? ''}`) ?? '某人',
       content: m.content ?? '',
     }));
+
+    // 存量自愈。调度器唯一的判据是每只机器人的「什么话题该叫我」,缺了它
+    // 调度器会合规地返回空名单 —— 群于是永远安静(Todo #20)。线上已经存在
+    // 的群一份介绍都没有,所以在路由之前先把缺的补上,而不是手改数据库。
+    //
+    // 为什么 await 而不是后台跑:后台跑意味着**这一轮**仍然拿不到判据,老群
+    // 的第一句话还是会石沉大海。这里本来就在 alarm 里、不在请求路径上,多等
+    // 一次小模型调用换"第一句话就有人答"是划算的。补齐过的群只多一次查询。
+    await ensureGroupBotDescriptions(this.env, conversationId).catch(() => {
+      // ensureGroupBotDescriptions 内部已按机器人逐个记过失败标记;这里兜住
+      // 整体异常,不让"介绍没写成"把整轮路由带掉。
+    });
 
     const decision = await runGroupRouter({
       env: this.env,

@@ -2,7 +2,11 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
 import { userClient, serviceClient } from '../lib/supabase';
-import { generateInitialBotDescription } from '../lib/group-bot-intro';
+import {
+  generateInitialBotDescription,
+  ensureGroupBotDescriptions,
+  GROUP_BOT_INTRO_FAILURE_MARKER,
+} from '../lib/group-bot-intro';
 import { rateLimitOrBlock } from '../lib/rate-limit';
 import { jsonError } from '../lib/http-error';
 import { isGroupHumanParticipant, requireGroupRole } from '../lib/route-authz';
@@ -95,6 +99,21 @@ groupRoutes.post('/', async (c) => {
   if (error) {
     const e = rpcError(error);
     return c.json(e.body, e.status);
+  }
+  // 建群时一次性带进来的机器人,也要有「什么话题该叫我」这份介绍 —— 它是群
+  // 调度器**唯一**的判据。以前这一步只挂在 invite-bot 那条路上,于是走建群
+  // 主路径拉进来的机器人在群里永远不会主动说话,而且全程不报错(Todo #20)。
+  // 后台跑,不阻塞建群返回;失败带标记落日志。
+  if (data && parsed.memberBotIds.length > 0) {
+    c.executionCtx.waitUntil(
+      ensureGroupBotDescriptions(c.env, data as string).catch((err) =>
+        console.error(GROUP_BOT_INTRO_FAILURE_MARKER, JSON.stringify({
+          conversationId: data,
+          scope: 'create-group',
+          error: err instanceof Error ? err.message : String(err),
+        })),
+      ),
+    );
   }
   if (data) {
     const supaSvc = serviceClient(c.env);
@@ -422,7 +441,14 @@ groupRoutes.post('/:id/invite-bot', async (c) => {
         console.log('[invite-bot] description generated',
           { convId, botId: parsed.botId, len: res.description.length });
       })
-      .catch((err) => console.error('[invite-bot] description gen failed', err)),
+      .catch((err) =>
+        console.error(GROUP_BOT_INTRO_FAILURE_MARKER, JSON.stringify({
+          conversationId: convId,
+          botId: parsed.botId,
+          scope: 'invite-bot',
+          error: err instanceof Error ? err.message : String(err),
+        })),
+      ),
   );
   return c.json({ ok: true, descriptionPending: true });
 });
