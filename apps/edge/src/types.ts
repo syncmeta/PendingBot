@@ -166,6 +166,23 @@ export interface Env {
   APNS_KEY_DEV: string;        // .p8 PEM content (secret)
   APNS_KEY_PROD: string;       // .p8 PEM content (secret)
 
+  // ── Model catalog (OpenRouter, READ-ONLY) ──────────────────────
+  // An OpenRouter API key used for ONE thing: fetching the model
+  // catalogue from `GET /api/v1/models/user`, which returns only the
+  // models this account can actually reach under its provider
+  // preferences, privacy settings and guardrails.
+  //
+  // Deliberate, bounded exception to "the worker holds no provider
+  // keys" (inference auth still lives in the AI Gateway — see
+  // llm/router.ts). It exists because the unauthenticated catalogue is
+  // the whole OpenRouter menu, so a model-pool bot could draw a model
+  // the account can never call and hand the user a raw 404 (Todo #15).
+  // NEVER send inference with this key. See docs/decisions.md.
+  //
+  // Absent = fall back to the public catalogue, loudly (the pool may
+  // then contain unreachable models again).
+  OPENROUTER_CATALOG_KEY?: string;
+
   // ── Voice call (M5+) ───────────────────────────────────────────
   // OpenAI Realtime — the worker mints a 60s ephemeral client_secret
   // for the iOS WebRTC handshake; the API key never leaves the worker.

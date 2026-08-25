@@ -458,8 +458,101 @@ export async function fetchLMArenaRows(env: Env): Promise<LMArenaRowsBySubset> {
 // Fetch + assemble the full model catalog (native twins first, then the
 // OpenRouter long tail) — the array the /v1/models route returns. Factored
 // out so the random-model resolver can reuse it off the route.
+/// Fixed marker: the catalogue we just built is the WHOLE OpenRouter menu,
+/// not the subset this account can reach. Pools built from it can hand a
+/// model-pool bot a model that 404s (Todo #15). Grep this to find out
+/// whether the reachability filter is actually on in production.
+export const UNFILTERED_CATALOG_MARKER = '[model-catalog-unfiltered]';
+
+/// Below this share of the public catalogue, we refuse to believe the
+/// authenticated list and fall back to the public one.
+///
+/// This is a TRUNCATION detector, not a policy judgement. `/models/user`
+/// is documented as paginated and we have never seen its real response
+/// (no key at the time of writing), so "we only read page one" is a live
+/// possibility — and it looks exactly like a legitimately small list.
+/// Silently shrinking the pool is the failure mode this whole change
+/// exists to prevent, so an implausibly small list falls back loudly
+/// instead. Retune once the real response has been inspected; the counts
+/// are logged on every build so there is data to tune against.
+const MIN_REACHABLE_SHARE = 0.5;
+
+/// The reachable-model filter.
+///
+/// `catalogKey` present → ask OpenRouter which models THIS account can
+/// actually reach (`GET /api/v1/models/user`: filtered by provider
+/// preferences, privacy settings and guardrails) and keep only those.
+///
+/// We use the authenticated response for one thing only — the set of
+/// slugs — and keep every other field from the public catalogue. That
+/// deliberately limits what we depend on to `data[].id`: the rest of the
+/// authenticated payload's shape is unverified, and the result is a
+/// subset of the public list by construction.
+///
+/// Every failure path returns the public list and says so with
+/// UNFILTERED_CATALOG_MARKER. Degrading is fine; degrading quietly is not.
+async function filterToReachable(
+  catalog: OpenRouterCatalogModel[],
+  catalogKey: string | null | undefined,
+): Promise<OpenRouterCatalogModel[]> {
+  const unfiltered = (reason: string, detail?: unknown) => {
+    console.warn(
+      UNFILTERED_CATALOG_MARKER,
+      JSON.stringify({ reason, public_count: catalog.length, detail: detail ?? null }),
+    );
+    return catalog;
+  };
+
+  if (!catalogKey) return unfiltered('no_catalog_key');
+
+  let reachableIds: string[];
+  try {
+    const res = await fetch('https://openrouter.ai/api/v1/models/user', {
+      headers: { Authorization: `Bearer ${catalogKey}` },
+      // Same 1h edge cache as the public list. Keyed by URL, and the URL
+      // carries no secret, so this cannot leak the key — but it also
+      // means the Authorization header is not part of the cache key;
+      // there is exactly one account here, so that is fine.
+      cf: { cacheTtlByStatus: { '200-299': 3600, '400-599': 0 }, cacheEverything: true },
+    });
+    if (!res.ok) {
+      return unfiltered('upstream_not_ok', { status: res.status });
+    }
+    const body = (await res.json()) as { data?: Array<{ id?: unknown }> };
+    if (!Array.isArray(body.data)) return unfiltered('unexpected_shape');
+    reachableIds = body.data.flatMap((m) => (typeof m.id === 'string' ? [m.id] : []));
+  } catch (err) {
+    return unfiltered('fetch_threw', String(err).slice(0, 200));
+  }
+
+  if (reachableIds.length === 0) return unfiltered('empty_list');
+
+  const reachable = new Set(reachableIds);
+  const kept = catalog.filter((m) => reachable.has(m.id));
+  if (kept.length < catalog.length * MIN_REACHABLE_SHARE) {
+    return unfiltered('implausibly_small', {
+      reachable_count: reachableIds.length,
+      kept_count: kept.length,
+    });
+  }
+
+  // The number the humans keep asking for: how much of the menu this
+  // account actually can't touch.
+  console.log(
+    '[model-catalog] reachable',
+    JSON.stringify({
+      public_count: catalog.length,
+      reachable_count: reachableIds.length,
+      kept_count: kept.length,
+      dropped_count: catalog.length - kept.length,
+    }),
+  );
+  return kept;
+}
+
 export async function buildModelCatalog(
   lmarenaRowsBySubset: LMArenaRowsBySubset = {},
+  catalogKey?: string | null,
 ): Promise<OpenRouterModelOut[]> {
   // CF 边缘缓存 OpenRouter 目录:成功响应缓 1h(catalog 变动稀疏,避免每次 /models
   // 都回 OpenRouter),错误不缓(下次重试)。跨 isolate 复用,比 isolate 级缓存可靠。(T2 #263)
@@ -472,7 +565,7 @@ export async function buildModelCatalog(
     throw new CatalogUpstreamError(res.status);
   }
   const json = (await res.json()) as { data?: OpenRouterCatalogModel[] };
-  const catalog = json.data ?? [];
+  const catalog = await filterToReachable(json.data ?? [], catalogKey);
 
   const openrouterRows: OpenRouterModelOut[] = catalog
     .filter((m) => !isNativeBackedOpenRouterSlug(m.id))
@@ -508,7 +601,7 @@ export async function buildModelCatalog(
 modelCatalogRoutes.get('/', async (c) => {
   try {
     const lmarenaRows = await fetchLMArenaRows(c.env);
-    return c.json(await buildModelCatalog(lmarenaRows));
+    return c.json(await buildModelCatalog(lmarenaRows, c.env.OPENROUTER_CATALOG_KEY));
   } catch (err) {
     if (err instanceof CatalogUpstreamError) {
       return jsonError(c, 502, 'upstream_error', { detail: { status: err.status } });
