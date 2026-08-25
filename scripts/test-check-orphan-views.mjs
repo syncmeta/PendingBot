@@ -10,15 +10,35 @@
  *
  * 跑:node scripts/test-check-orphan-views.mjs
  */
-import { analyse } from './check-orphan-views.mjs';
+import { analyse, diffAgainstBaseline } from './check-orphan-views.mjs';
 
 let failures = 0;
+let softFailures = 0;
+
+/** 硬断言 —— 不成立就是判据坏了,该拦人。 */
 function check(label, ok, detail = '') {
   if (ok) {
     console.log(`  ✓ ${label}`);
   } else {
     failures++;
     console.log(`  ✗ ${label}${detail ? `  —— ${detail}` : ''}`);
+  }
+}
+
+/**
+ * 软断言 —— 只打印,不决定退出码。
+ *
+ * 给"取决于仓库此刻长什么样"的那些断言用。典型的是 `GroupWalletView`:
+ * 它现在是孤儿,所以能当考题;但**它有一天应该不再是孤儿**(挂回入口或删掉),
+ * 那是件好事,不该因此把 CI 弄红。把这类断言写成硬的,等于逼着后人为了让
+ * CI 变绿而维持一个 bug —— 那种闸迟早会被人绕过或删掉。
+ */
+function soft(label, ok, detail = '') {
+  if (ok) {
+    console.log(`  ✓ ${label}`);
+  } else {
+    softFailures++;
+    console.log(`  ~ ${label}(软断言,不拦人)${detail ? `  —— ${detail}` : ''}`);
   }
 }
 
@@ -118,13 +138,13 @@ const realOrphans = new Set(real.reachOrphans);
 const realRefOrphans = new Set(real.refOrphans);
 
 // 作者出的考题:抓不到它,这道闸就没有意义。
-check('抓到考题 GroupWalletView', realOrphans.has('GroupWalletView'));
+soft('抓到考题 GroupWalletView', realOrphans.has('GroupWalletView'));
 
 // 这三个是朴素判据(只看"声明文件之外有没有人写它的名字")冤枉过的真实类型。
 // 它们必须同时满足:被朴素判据点名 + 不被可达性判据点名 —— 否则这三条回归
 // 就退化成了"反正它俩都没报"的空断言。
 for (const name of ['BubbleTextSelection', 'SelectableText', 'MathBlockImage', 'MacWelcomeView']) {
-  check(
+  soft(
     `不冤枉 ${name}(朴素判据会误报,可达性不该误报)`,
     realRefOrphans.has(name) && !realOrphans.has(name),
     `ref=${realRefOrphans.has(name)} reach=${realOrphans.has(name)}`,
@@ -147,9 +167,37 @@ check(
   '超过就说明判据又变粗了,先调判据再谈接 CI',
 );
 
+// ── ③ 基线对比 ────────────────────────────────────────────────────────────
+//
+// 「新增了一个孤儿」是这道检查真正要喊的那一声(总数从 11 变 12 没人会注意)。
+// 所以这一段单独考:没有基线时不许把当前全部误报成新增,有基线时增/减都要认出来。
+
 console.log('');
+console.log('基线对比:');
+
+const noBase = diffAgainstBaseline(['A', 'B'], null);
+check('没有基线时不把当前全部当成新增', noBase.added.length === 0 && noBase.baselineCount === null,
+  `added=${noBase.added}`);
+
+const grew = diffAgainstBaseline(['A', 'B', 'C'], { measuredAt: 'deadbeef', reachOrphans: ['A', 'B'] });
+check('多出一个孤儿要被点名', grew.added.join() === 'C' && grew.gone.length === 0, `added=${grew.added}`);
+
+const shrank = diffAgainstBaseline(['A'], { measuredAt: 'deadbeef', reachOrphans: ['A', 'B'] });
+check('少了一个孤儿也要认出来', shrank.gone.join() === 'B' && shrank.added.length === 0, `gone=${shrank.gone}`);
+
+const swapped = diffAgainstBaseline(['A', 'C'], { measuredAt: 'deadbeef', reachOrphans: ['A', 'B'] });
+check('总数不变但名单换了,两头都要点名(只看总数会漏掉这种)',
+  swapped.added.join() === 'C' && swapped.gone.join() === 'B',
+  `added=${swapped.added} gone=${swapped.gone}`);
+
+console.log('');
+if (softFailures > 0) {
+  console.log(`${softFailures} 条软断言没过 —— 不拦人,但值得看一眼:`);
+  console.log('  软断言描述的是"仓库此刻的样子"。它变了可能是好事(孤儿被处置了),');
+  console.log('  也可能是判据漂了。确认是前者的话,把这几条断言改成新的现状。');
+}
 if (failures > 0) {
-  console.log(`${failures} 条不过`);
+  console.log(`${failures} 条硬断言不过 —— 判据坏了`);
   process.exit(1);
 }
-console.log('全过');
+console.log(softFailures > 0 ? '硬断言全过' : '全过');
