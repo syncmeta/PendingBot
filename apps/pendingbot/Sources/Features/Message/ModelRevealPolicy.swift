@@ -51,16 +51,38 @@ struct ModelRevealFacts: Equatable {
     let hasPool: Bool
 }
 
-/// 判定结果。`showsRealName == false` 意味着 pill 显示 "PendingModel"。
+/// 模型名这一格该怎么画。三档,不是两档 —— 加的是 `.pending`。
+///
+/// 以前只有「真名 / PendingModel」两档,于是「还不知道该画哪个」只能挑一档
+/// 先画上,再在事实到货后改口。挑真名就是漏(每次开会话都把上游模型名闪给
+/// 用户看),挑 PendingModel 就是对披露型 bot 撒谎再改口。两个都不对:正确
+/// 答案是**这一格先不画**,等事实到了再出。
+enum ModelNameDisplay: Equatable {
+    /// 显示真实模型名。
+    case real
+    /// 显示 "PendingModel"(盲盒)。
+    case blind
+    /// 还不知道 —— 整格不渲染,不占位、不闪、不漏。
+    case pending
+}
+
+/// 判定结果。`display == .blind` 意味着 pill 显示 "PendingModel";
+/// `.pending` 意味着 pill 上根本没有模型这一格。
 struct ModelRevealDecision: Equatable {
-    let showsRealName: Bool
+    let display: ModelNameDisplay
     let offersGuess: Bool
+
+    /// 只有 `.real` 算「显示真名」—— `.pending` 不是真名也不是盲盒。
+    var showsRealName: Bool { display == .real }
 }
 
 enum ModelRevealPolicy {
-    /// `facts == nil`:会话模型态还没取到(或取失败)。此时 pill 会回落到 bot
-    /// 固定的模型名 —— 对 `alwaysBlind` 来说那就是漏名,所以这一档在未知态下
-    /// 也按盲盒处理。
+    /// `facts == nil`:会话模型态还没取到(或取失败)。这一档以前是 fail-open
+    /// —— follow_bot 直接显示 bot 固定的模型名,于是每次打开一个盲盒会话都会
+    /// 先把真名闪一下再改口成 PendingModel。现在改成 `.pending`:不知道就先
+    /// 不画。`alwaysBlind` 在未知态下仍按盲盒(它本来就不看真名);
+    /// `alwaysReal` 是用户明确要看真名的档,未知态下照旧回落 bot 固定模型名
+    /// —— 那不是漏,是他要的。
     static func decide(
         preference: ModelRevealPreference,
         facts: ModelRevealFacts?
@@ -68,26 +90,27 @@ enum ModelRevealPolicy {
         // 已经揭晓过的会话是不可逆的事实,任何档位都按已揭晓走。
         let revealed = facts?.modelRevealed ?? false
         if revealed {
-            return ModelRevealDecision(showsRealName: true, offersGuess: false)
+            return ModelRevealDecision(display: .real, offersGuess: false)
         }
 
         switch preference {
         case .alwaysReal:
-            return ModelRevealDecision(showsRealName: true, offersGuess: false)
+            return ModelRevealDecision(display: .real, offersGuess: false)
 
         case .alwaysBlind:
             // 没有模型池就没有候选可猜,只藏名不给入口。
-            return ModelRevealDecision(showsRealName: false, offersGuess: facts?.hasPool ?? false)
+            return ModelRevealDecision(display: .blind, offersGuess: facts?.hasPool ?? false)
 
         case .followBot:
             guard let facts else {
-                // 老行为:状态未取到 → 显示 bot 固定模型名。
-                return ModelRevealDecision(showsRealName: true, offersGuess: false)
+                // 事实还没到货 —— 既不能说真名(可能是盲盒会话,说了就是漏),
+                // 也不能说 PendingModel(可能是披露型 bot,说了要改口)。先不画。
+                return ModelRevealDecision(display: .pending, offersGuess: false)
             }
             if facts.revealMode == "disclose" {
-                return ModelRevealDecision(showsRealName: true, offersGuess: false)
+                return ModelRevealDecision(display: .real, offersGuess: false)
             }
-            return ModelRevealDecision(showsRealName: false, offersGuess: facts.hasPool)
+            return ModelRevealDecision(display: .blind, offersGuess: facts.hasPool)
         }
     }
 }

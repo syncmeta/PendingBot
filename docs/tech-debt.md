@@ -1749,3 +1749,20 @@ supabase-swift 匿名写的硬失败闸。下面是**看到但按边界不动**�
   2. **改 UI**：私有机器人照常列出但置灰，副标题写「私有机器人不能进群，去机器人设置改成"可邀请"」，并给一个直达入口。不动任何权限，纯粹把死路变成有出路。
   3. **改默认**：新建机器人默认 `public_invite`。**风险最大**，等于把可见性默认从保守翻成开放，不推荐单独做。
 - **状态**: 待办。已在 Todo #11 的群聊汇报里向作者说明，等他决定走哪条。
+
+### 🟡 盲盒只挡了会话头部一处 —— 好友列表 / 成员选择器 / bot 设置页照样把真名摆出来
+- **发现**: 2026-08-25 · 「模型名闪现与 UUID」session（修 Todo #10 时把所有渲染模型名的地方扫了一遍）
+- **位置**: `apps/pendingbot/Sources/Features/Friends/FriendsTabView.swift`（好友列表 bot 行的模型胶囊）、`.../Message/MessageTabView.swift`（群成员选择器的 bot 行副标题）、`.../Friends/BotManagement.swift:BotConfigView`（「主模型」「识图模型」两行）
+- **问题**: `ModelRevealPolicy` 只在 `ConversationView` 的头部 pill 上生效。上面这三处**根本不看 `revealMode` / 全局档位**，一律 `catalog.displayName(for:)` 直接把友好名画出来。也就是说一个 surprise 型 bot，你在会话里看到的是 PendingModel，退回好友列表就看到它真名了。`BotConfigView` 更进一步：`canEdit` 只挡编辑不挡显示，非创建者打开公有 bot 的设置页照样读得到「主模型」。
+- **不是本次引入的**，本次只是把它扫出来写下来。本次改的是**另一层**（占位符漏名：目录没加载时回落 slug 尾巴），跟这条正交 —— 那条是"该藏的时候藏了、但占位符把它露了"，这条是"压根没打算在这些页面藏"。
+- **影响**: 取决于盲盒到底想防到什么程度。若定位同上面那条「协议层不设防」—— 纯自己好玩、无奖励 —— 那这条同样不构成损失，属于知情的不一致。若哪天盲盒要认真（比如成为产品卖点「你不知道背后是谁家模型」），**这三处必须一起走判定**，否则藏一处漏三处等于没藏。
+- **修法**: 把 `ModelRevealPolicy.decide` 的输入从「会话事实」放宽到「bot 事实」（bot 自己的 `revealMode` + 全局档位），让列表类页面也能判；渲染点统一改成「拿不到判定就不画这一格」—— 本次已经把渲染点都改成这个形状了，接判定只差把 decision 喂进去。
+- **状态**: 待办 —— **需要产品先定性**（盲盒到底是玩具还是卖点），定性之前不动手，免得白改一遍。
+
+### 🟢 「名字没解析出来就顶 id 前 8 位」这个约定散在全仓十几处
+- **发现**: 2026-08-25 · 「模型名闪现与 UUID」session
+- **位置**: `String(<某个 id>.prefix(8))` 共约 12 处 —— `Features/Group/GroupSettingsView.swift:517,603`、`Features/Group/GroupWalletView.swift:144`、`Features/Group/JoinRequestsInboxView.swift:106`、`Features/Message/ConversationView+Loading.swift:79,159,224`、`Features/Message/ConversationSettingsView.swift:83,123`、`Features/Friends/FriendsTabView.swift:727,1004`、`Features/Friends/BotManagement.swift:1017,1176`、`Networking/ChatDataSource.swift:368`、`Networking/FriendsDataSource.swift:165`；另有 `Features/Call/GroupCallSession.swift` 的 `prefix(6)` 四处
+- **问题**: 和 Todo #10 那串 UUID 是同一个病的另一半 —— 用户没填名字时，把他的 user id 前 8 位当名字画出来。本次**没有跟着一起改**，因为这两类不是一回事：Todo #10 那几处是「值还在路上」的**加载占位符**（正确答案是不画，等值到），而这十几处是「服务端已经回来了、这个人就是没名字」的**终态回落**（改成统一的「未命名用户」会让群里几个没名字的成员**长得一模一样、分不出谁是谁**）。
+- **影响**: 不是泄密（user id 不是秘密，同群成员本来就能看到彼此），是观感与一致性 —— bot 那边已经用「未知机器人」了，人这边却露 id 片段，两套规矩。
+- **修法**: 需要产品给一个「没名字的人怎么称呼」的统一答案。候选：① 统一「未命名用户」+ 靠头像色块区分；② 用 id 派生一个稳定的可读代号（形容词+名词，同一个人每次都一样），既不露 id 又能区分。② 更像这个产品的做法（头像 emoji/配色本来就是从 id 派生的）。
+- **状态**: 待办 —— 需要产品拍板称呼方案，不是纯技术活。

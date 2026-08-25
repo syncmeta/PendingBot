@@ -333,24 +333,32 @@ struct ConversationView: View {
     /// 是否给该 conv 提供「猜模型」入口。
     private var shouldOfferGuess: Bool { modelRevealDecision.offersGuess }
 
-    /// "<bot_name> · <model-tag>". 模型标签显示真名还是 "PendingModel",由
-    /// `modelRevealDecision` 决定(全局档位压过 bot 的 revealMode)。会话状态
-    /// 没取到时真名回落成 bot 固定的模型(bots.model_id)。
+    /// bot 的显示名。名字还没解析出来就是空串 —— **绝不拿 `bot_id` 顶上**:
+    /// 那是一串裸 UUID,作者在 Todo #10 里看到的「一串像 uuid 的东西」就是它。
+    /// 空串的意思是「这一格还没有内容」,由调用方决定是隐掉还是换别的。
+    private var botDisplayName: String {
+        effectiveBot?.display_name ?? conversation.bot_name ?? ""
+    }
+
+    /// 该显示哪个 slug:会话态在手就用它抽中的模型,没取到才回落 bot 固定的
+    /// 模型(bots.model_id,老行为)。
+    private var headerModelSlug: String? {
+        if let s = convModelState { return s.current_model_slug }
+        return effectiveBot?.model.flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    /// "<bot_name> · <model-tag>"。拼法在 `ConversationHeaderLabel`(纯函数,
+    /// 有独立测试),这里只负责喂数据 —— 而且喂进去的每一项都必须是**真解析
+    /// 出来的值或 nil**,不许在这一步先顶个 id / slug 上去。
+    ///
+    /// 空串 = 这一行还没有内容,调用方整行别画。
     private var botName: String {
-        let base = effectiveBot?.display_name ?? conversation.bot_name ?? conversation.bot_id
-        guard conversation.conversation_type != "user_user" else { return base }
-        guard modelRevealDecision.showsRealName else {
-            return "\(base) · PendingModel"
-        }
-        // 会话态在手就用它抽中的模型;没取到才回落 bot 固定的模型(老行为)。
-        let slug: String?
-        if let s = convModelState {
-            slug = s.current_model_slug
-        } else {
-            slug = effectiveBot?.model.flatMap { $0.isEmpty ? nil : $0 }
-        }
-        guard let slug else { return base }
-        return "\(base) · \(modelCatalog.displayName(for: slug))"
+        ConversationHeaderLabel.subtitle(
+            conversationType: conversation.conversation_type,
+            botDisplayName: botDisplayName,
+            display: modelRevealDecision.display,
+            modelName: headerModelSlug.flatMap { modelCatalog.resolvedDisplayName(for: $0) }
+        )
     }
 
     /// Seed for the avatar's emoji glyph. Always tied to bot identity so
@@ -555,8 +563,10 @@ struct ConversationView: View {
                                 // 立一套规则。
                                 GuessPromptCard(
                                     revealed: modelRevealDecision.showsRealName,
+                                    // 目录解不出来就传 nil(卡片自己隐掉那一格)
+                                    // —— 绝不回落到 slug 尾巴,那是上游模型名。
                                     revealedName: convModelState?.current_model_slug
-                                        .map { modelCatalog.displayName(for: $0) },
+                                        .flatMap { modelCatalog.resolvedDisplayName(for: $0) },
                                     onTapGuess: { showGuessSheet = true }
                                 )
                                 .id("guess:\(msg.id)")
@@ -1212,10 +1222,22 @@ struct ConversationView: View {
         .transition(.scale(scale: 0.6, anchor: .bottomTrailing).combined(with: .opacity))
     }
 
+    /// 空会话大标题。user_user 用对方名字;其余用 "<bot> · <model>",
+    /// 那一串还没有内容时回落到会话标题(绝不回落到 id)。
+    private var emptyStateTitle: String {
+        ConversationHeaderLabel.emptyStateTitle(
+            conversationType: conversation.conversation_type,
+            subtitle: botName,
+            conversationTitle: headerTitle
+        )
+    }
+
     private var emptyConversation: some View {
         VStack(spacing: 14) {
             headerAvatar(size: 64)
-            Text(conversation.conversation_type == "user_user" ? headerTitle : botName)
+            // botName 为空 = bot 名字还没解析出来(以前这里会顶一串 UUID 上去)。
+            // 回落到会话标题,而不是画一格空白。
+            Text(emptyStateTitle)
                 // Sans, not serif — serif design (New York) lacks CJK glyphs, so a
                 // Chinese title falls back to PingFang (sans) on iOS but Songti
                 // (serif) on macOS. System design keeps it sans on both.
@@ -1362,12 +1384,17 @@ struct ConversationView: View {
                     .lineLimit(1)
                 // user_user 单聊没有 bot · model 这一行可显示;隐掉副标题
                 // 让头像 + 备注/昵称就是全部识别信息,贴近普通 IM 的呈现。
-                if conversation.conversation_type != "user_user" {
+                // botName 为空(名字/模型都还没到货)时同样整行不画 —— 宁可
+                // 副标题晚一拍出现,也不先顶一个内部标识符上去再改口。
+                if conversation.conversation_type != "user_user",
+                   !botName.isEmpty || pending {
                     HStack(spacing: 6) {
-                        Text(botName)
-                            .font(Theme.Fonts.rounded(size: 11, weight: .medium))
-                            .foregroundStyle(Theme.Palette.inkMuted)
-                            .lineLimit(1)
+                        if !botName.isEmpty {
+                            Text(botName)
+                                .font(Theme.Fonts.rounded(size: 11, weight: .medium))
+                                .foregroundStyle(Theme.Palette.inkMuted)
+                                .lineLimit(1)
+                        }
                         if pending {
                             Text("·")
                                 .font(Theme.Fonts.rounded(size: 11, weight: .medium))
@@ -1487,7 +1514,9 @@ struct ConversationView: View {
             await RealtimeManager.shared.stopConvChannel(token)
             realtimeToken = nil
         }
-        let displayName = bot?.display_name ?? conversation.bot_name ?? botId
+        // 名字没有就留空(会话标题自己回落成「未命名」)—— 顶一串 bot UUID
+        // 上去的话它会当场变成新会话的标题。
+        let displayName = bot?.display_name ?? conversation.bot_name ?? ""
         conversation = Conversation(
             id: "", bot_id: botId, user_id: userId,
             title: displayName, feature_type: "message",

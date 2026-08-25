@@ -26,8 +26,8 @@ func expect(
     if actual != expected {
         failures += 1
         print("✘ \(what) (line \(line))")
-        print("    expected showsRealName=\(expected.showsRealName) offersGuess=\(expected.offersGuess)")
-        print("    actual   showsRealName=\(actual.showsRealName) offersGuess=\(actual.offersGuess)")
+        print("    expected display=\(expected.display) offersGuess=\(expected.offersGuess)")
+        print("    actual   display=\(actual.display) offersGuess=\(actual.offersGuess)")
     }
 }
 
@@ -47,9 +47,11 @@ func facts(_ mode: String, revealed: Bool, pool: Bool = true) -> ModelRevealFact
     ModelRevealFacts(revealMode: mode, modelRevealed: revealed, hasPool: pool)
 }
 
-let real = ModelRevealDecision(showsRealName: true, offersGuess: false)
-let blindGuessable = ModelRevealDecision(showsRealName: false, offersGuess: true)
-let blindOnly = ModelRevealDecision(showsRealName: false, offersGuess: false)
+let real = ModelRevealDecision(display: .real, offersGuess: false)
+let blindGuessable = ModelRevealDecision(display: .blind, offersGuess: true)
+let blindOnly = ModelRevealDecision(display: .blind, offersGuess: false)
+/// 事实还没到货 —— 模型这一格根本不渲染。
+let pending = ModelRevealDecision(display: .pending, offersGuess: false)
 
 @main
 struct ModelRevealPolicyTests {
@@ -66,8 +68,10 @@ struct ModelRevealPolicyTests {
            "follow_bot: 披露 + 已揭晓 → 真名")
     expect(decide(.followBot, facts("surprise", revealed: false, pool: false)), blindOnly,
            "follow_bot: 没有模型池 → 不给猜(但仍按盲盒隐藏)")
-    expect(decide(.followBot, nil), real,
-           "follow_bot: 会话状态未取到 → 回落 bot 固定模型名(老行为)")
+    expect(decide(.followBot, nil), pending,
+           "follow_bot: 会话状态未取到 → 什么都不显示(既不漏真名也不先说 PendingModel)")
+    expectTrue(!decide(.followBot, nil).showsRealName,
+               "follow_bot: 未知态不算「显示真名」—— 这是 Todo #10 那一闪的病根")
 
     // ── always_real — overrides the bot in the "show me the truth" direction ─
 
@@ -97,6 +101,12 @@ struct ModelRevealPolicyTests {
     expect(decide(.alwaysBlind, nil), blindOnly,
            "always_blind: 状态未取到 → 也不能漏出回落的真名")
 
+    // ── pending 档不能被误当成另外两档 ───────────────────────────────────────
+
+    expectTrue(pending != blindOnly, "pending 不等于 blind —— 一个不画,一个画 PendingModel")
+    expectTrue(pending != real, "pending 不等于 real")
+    expectTrue(!pending.showsRealName, "pending 不是真名")
+
     // ── wire format ─────────────────────────────────────────────────────────
 
     expectTrue(ModelRevealPreference.default == .followBot, "默认档位是 follow_bot")
@@ -108,13 +118,19 @@ struct ModelRevealPolicyTests {
     expectTrue(ModelRevealPreference.normalized("nonsense") == .followBot, "未知值归一化到 follow_bot")
     expectTrue(ModelRevealPreference.normalized("always_blind") == .alwaysBlind, "已知值原样归一化")
 
+    // ── ConversationHeaderLabel(同一个 @main,分文件写断言)───────────────
+
+    runConversationHeaderLabelTests()
+    failures += hfailures
+    checks += hchecks
+
     // ── report ──────────────────────────────────────────────────────────────
 
     if failures == 0 {
-        print("✔ ModelRevealPolicy — \(checks) checks passed")
+        print("✔ 模型名显示 — \(checks) checks passed")
         exit(0)
     } else {
-        print("✘ ModelRevealPolicy — \(failures)/\(checks) checks FAILED")
+        print("✘ 模型名显示 — \(failures)/\(checks) checks FAILED")
         exit(1)
     }
     }
