@@ -340,35 +340,25 @@ struct ConversationView: View {
         effectiveBot?.display_name ?? conversation.bot_name ?? ""
     }
 
-    /// "<bot_name> · <model-tag>". 模型标签显示真名还是 "PendingModel",由
-    /// `modelRevealDecision` 决定(全局档位压过 bot 的 revealMode)。
+    /// 该显示哪个 slug:会话态在手就用它抽中的模型,没取到才回落 bot 固定的
+    /// 模型(bots.model_id,老行为)。
+    private var headerModelSlug: String? {
+        if let s = convModelState { return s.current_model_slug }
+        return effectiveBot?.model.flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    /// "<bot_name> · <model-tag>"。拼法在 `ConversationHeaderLabel`(纯函数,
+    /// 有独立测试),这里只负责喂数据 —— 而且喂进去的每一项都必须是**真解析
+    /// 出来的值或 nil**,不许在这一步先顶个 id / slug 上去。
     ///
-    /// 关键的一档是 `.pending`:会话的盲盒事实(`GET /v1/conversations/:id/model`)
-    /// 还没到货时,模型这一格**整格不画**。以前这里是回落到 bot 固定的模型名,
-    /// 于是每次打开一个盲盒会话都会先把真名闪一下,再改口成 PendingModel ——
-    /// 等于每次开会话都把刻意藏起来的信息漏一次(Todo #10)。
+    /// 空串 = 这一行还没有内容,调用方整行别画。
     private var botName: String {
-        let base = botDisplayName
-        guard conversation.conversation_type != "user_user" else { return base }
-        switch modelRevealDecision.display {
-        case .pending:
-            return base
-        case .blind:
-            return base.isEmpty ? "PendingModel" : "\(base) · PendingModel"
-        case .real:
-            // 会话态在手就用它抽中的模型;没取到才回落 bot 固定的模型(老行为)。
-            let slug: String?
-            if let s = convModelState {
-                slug = s.current_model_slug
-            } else {
-                slug = effectiveBot?.model.flatMap { $0.isEmpty ? nil : $0 }
-            }
-            // 目录解不出来就不画这一格 —— 回落到 slug 尾巴就是漏上游模型名。
-            guard let slug, let name = modelCatalog.resolvedDisplayName(for: slug) else {
-                return base
-            }
-            return base.isEmpty ? name : "\(base) · \(name)"
-        }
+        ConversationHeaderLabel.subtitle(
+            conversationType: conversation.conversation_type,
+            botDisplayName: botDisplayName,
+            display: modelRevealDecision.display,
+            modelName: headerModelSlug.flatMap { modelCatalog.resolvedDisplayName(for: $0) }
+        )
     }
 
     /// Seed for the avatar's emoji glyph. Always tied to bot identity so
@@ -1235,8 +1225,11 @@ struct ConversationView: View {
     /// 空会话大标题。user_user 用对方名字;其余用 "<bot> · <model>",
     /// 那一串还没有内容时回落到会话标题(绝不回落到 id)。
     private var emptyStateTitle: String {
-        if conversation.conversation_type == "user_user" { return headerTitle }
-        return botName.isEmpty ? headerTitle : botName
+        ConversationHeaderLabel.emptyStateTitle(
+            conversationType: conversation.conversation_type,
+            subtitle: botName,
+            conversationTitle: headerTitle
+        )
     }
 
     private var emptyConversation: some View {

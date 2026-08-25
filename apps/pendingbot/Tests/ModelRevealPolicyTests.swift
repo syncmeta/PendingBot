@@ -118,13 +118,19 @@ struct ModelRevealPolicyTests {
     expectTrue(ModelRevealPreference.normalized("nonsense") == .followBot, "未知值归一化到 follow_bot")
     expectTrue(ModelRevealPreference.normalized("always_blind") == .alwaysBlind, "已知值原样归一化")
 
+    // ── ConversationHeaderLabel(同一个 @main,分文件写断言)───────────────
+
+    runConversationHeaderLabelTests()
+    failures += hfailures
+    checks += hchecks
+
     // ── report ──────────────────────────────────────────────────────────────
 
     if failures == 0 {
-        print("✔ ModelRevealPolicy — \(checks) checks passed")
+        print("✔ 模型名显示 — \(checks) checks passed")
         exit(0)
     } else {
-        print("✘ ModelRevealPolicy — \(failures)/\(checks) checks FAILED")
+        print("✘ 模型名显示 — \(failures)/\(checks) checks FAILED")
         exit(1)
     }
     }
