@@ -467,15 +467,18 @@ export const UNFILTERED_CATALOG_MARKER = '[model-catalog-unfiltered]';
 /// Below this share of the public catalogue, we refuse to believe the
 /// authenticated list and fall back to the public one.
 ///
-/// This is a TRUNCATION detector, not a policy judgement. `/models/user`
-/// is documented as paginated and we have never seen its real response
-/// (no key at the time of writing), so "we only read page one" is a live
-/// possibility — and it looks exactly like a legitimately small list.
-/// Silently shrinking the pool is the failure mode this whole change
-/// exists to prevent, so an implausibly small list falls back loudly
-/// instead. Retune once the real response has been inspected; the counts
-/// are logged on every build so there is data to tune against.
+/// A TRUNCATION detector, not a policy judgement: a half-read paginated
+/// response looks exactly like a legitimately small list, and silently
+/// shrinking the pool is the failure mode this whole change exists to
+/// prevent. Measured 2026-08-25: 416 of 419 reachable (99.3%), so 0.5
+/// leaves a very wide margin — it only fires on something structurally
+/// wrong, not on ordinary policy drift. The counts are logged on every
+/// build, so there is data to retune against.
 const MIN_REACHABLE_SHARE = 0.5;
+
+/// Page cap for the authenticated catalogue. 416 rows arrived in ONE page
+/// on 2026-08-25; this only exists so an upstream paging bug can't spin.
+const MAX_CATALOG_PAGES = 20;
 
 /// The reachable-model filter.
 ///
@@ -485,9 +488,15 @@ const MIN_REACHABLE_SHARE = 0.5;
 ///
 /// We use the authenticated response for one thing only — the set of
 /// slugs — and keep every other field from the public catalogue. That
-/// deliberately limits what we depend on to `data[].id`: the rest of the
-/// authenticated payload's shape is unverified, and the result is a
-/// subset of the public list by construction.
+/// deliberately limits what we depend on to `data[].id` (+ `links.next`
+/// for paging), and makes the result a subset of the public list by
+/// construction.
+///
+/// Response shape, read off the live endpoint on 2026-08-25:
+///   { data: [{ id, name, pricing, … }], total_count: 416,
+///     links: { next: null } }
+/// One page held all 416 rows, but `links.next` is the documented paging
+/// handle, so we follow it rather than assume a single page forever.
 ///
 /// Every failure path returns the public list and says so with
 /// UNFILTERED_CATALOG_MARKER. Degrading is fine; degrading quietly is not.
@@ -505,22 +514,30 @@ async function filterToReachable(
 
   if (!catalogKey) return unfiltered('no_catalog_key');
 
-  let reachableIds: string[];
+  const reachableIds: string[] = [];
   try {
-    const res = await fetch('https://openrouter.ai/api/v1/models/user', {
-      headers: { Authorization: `Bearer ${catalogKey}` },
-      // Same 1h edge cache as the public list. Keyed by URL, and the URL
-      // carries no secret, so this cannot leak the key — but it also
-      // means the Authorization header is not part of the cache key;
-      // there is exactly one account here, so that is fine.
-      cf: { cacheTtlByStatus: { '200-299': 3600, '400-599': 0 }, cacheEverything: true },
-    });
-    if (!res.ok) {
-      return unfiltered('upstream_not_ok', { status: res.status });
+    let url: string | null = 'https://openrouter.ai/api/v1/models/user';
+    // Bounded: a paging bug upstream must not turn one catalogue build
+    // into an unbounded fetch loop inside a request.
+    for (let page = 0; url && page < MAX_CATALOG_PAGES; page++) {
+      const res: Response = await fetch(url, {
+        headers: { Authorization: `Bearer ${catalogKey}` },
+        // Same 1h edge cache as the public list. Keyed by URL, and the URL
+        // carries no secret, so this cannot leak the key — but it also
+        // means the Authorization header is not part of the cache key;
+        // there is exactly one account here, so that is fine.
+        cf: { cacheTtlByStatus: { '200-299': 3600, '400-599': 0 }, cacheEverything: true },
+      });
+      if (!res.ok) return unfiltered('upstream_not_ok', { status: res.status });
+      const body = (await res.json()) as {
+        data?: Array<{ id?: unknown }>;
+        links?: { next?: unknown };
+      };
+      if (!Array.isArray(body.data)) return unfiltered('unexpected_shape');
+      for (const m of body.data) if (typeof m.id === 'string') reachableIds.push(m.id);
+      const next = body.links?.next;
+      url = typeof next === 'string' && next.length > 0 ? next : null;
     }
-    const body = (await res.json()) as { data?: Array<{ id?: unknown }> };
-    if (!Array.isArray(body.data)) return unfiltered('unexpected_shape');
-    reachableIds = body.data.flatMap((m) => (typeof m.id === 'string' ? [m.id] : []));
   } catch (err) {
     return unfiltered('fetch_threw', String(err).slice(0, 200));
   }

@@ -82,7 +82,9 @@ describe('buildModelCatalog — reachable-model filter', () => {
 
   it('keeps only what the account can reach', async () => {
     const reachable = PUBLIC_SLUGS.slice(0, 15);
-    stubFetch(() => jsonResponse({ data: reachable.map((id) => ({ id })) }));
+    stubFetch(() =>
+      jsonResponse({ data: reachable.map((id) => ({ id })), total_count: 15, links: { next: null } }),
+    );
 
     const rows = await buildModelCatalog({}, 'sk-or-test');
 
@@ -111,10 +113,42 @@ describe('buildModelCatalog — reachable-model filter', () => {
     expect(String(markerCalls()[0]![1])).toContain('upstream_not_ok');
   });
 
+  it('follows links.next across pages', async () => {
+    // Live shape (2026-08-25): { data: [...], total_count, links: { next } }.
+    // All 416 rows came back on one page, but next is the documented
+    // paging handle — reading only page one is exactly the silent
+    // pool-shrink this whole change exists to prevent.
+    const PAGE_2 = 'https://openrouter.ai/api/v1/models/user?offset=10';
+    let served = 0;
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (!url.startsWith(USER_URL)) {
+        return jsonResponse({ data: PUBLIC_SLUGS.map(catalogRow) });
+      }
+      served += 1;
+      return url === PAGE_2
+        ? jsonResponse({
+            data: PUBLIC_SLUGS.slice(10).map((id) => ({ id })),
+            links: { next: null },
+          })
+        : jsonResponse({
+            data: PUBLIC_SLUGS.slice(0, 10).map((id) => ({ id })),
+            links: { next: PAGE_2 },
+          });
+    });
+
+    const rows = await buildModelCatalog({}, 'sk-or-test');
+
+    expect(served).toBe(2);
+    // Both pages kept — page one alone (10 of 20) would have tripped the
+    // truncation floor and fallen back instead.
+    expect(slugsOf(rows).sort()).toEqual([...PUBLIC_SLUGS].sort());
+    expect(markerCalls()).toHaveLength(0);
+  });
+
   it('an unexpected response shape falls back loudly — we do not guess', async () => {
-    // The endpoint is documented as paginated and its real payload has
-    // never been inspected here; anything that is not a plain `data`
-    // array must degrade, not be interpreted.
+    // Anything that is not a plain `data` array must degrade, not be
+    // interpreted.
     stubFetch(() => jsonResponse({ models: PUBLIC_SLUGS.map((id) => ({ id })) }));
 
     const rows = await buildModelCatalog({}, 'sk-or-test');
