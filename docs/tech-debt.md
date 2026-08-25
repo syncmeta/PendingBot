@@ -1874,3 +1874,13 @@ supabase-swift 匿名写的硬失败闸。下面是**看到但按边界不动**�
   - **B（可观测性，更根本）**: **「它选择不说话」和「它坏了」在界面上、在数据库里都是同一个样子。** 一个会常态化返回"沉默"的判断分支，没有在任何地方留下痕迹。这次能定位靠的是审计流水里那两行 —— 而那两行是 LLM 调用的副产品，不是有人特意为这个决定留的。判断结果（wake_bots / rationale）应该落到某处可查，否则下一次同样的问题还是只能靠猜。
 - **顺带一条不属于本条、但查的时候撞见的**: `dispatchGroupTurn` 调 `gateConversation(env, supa, { conversationId })` **不传 userId**，而群会话的 `responsible_subject_id` 现在是 NULL → `resolveBillingSubjectId` 走完 group 分支后**落到 `if (ctx.userId)` 而 ctx.userId 是 undefined → 返回 null → 门直接放行**。那句「fall through to the initiating user rather than leaving the turn ungated」的注释描述的行为**在这个调用点上并没有发生**：群回合当前是**完全不过余额门**的。这条归群钱包那条线（Todo #17/#19）。
 - **状态**: 待办。已在 Todo #20 的群聊汇报里说明，等作者用 `@机器人名` 做一次绕开调度器的验证 + 拍板修法。只查未改。
+
+### 🟡 全 app 不响应系统字号（Dynamic Type）—— 排版是一套固定点数
+- **发现**: 2026-08-25 ·「模型名闪现与 UUID」session（修 Todo #22「+」面板换行时，机长要求"大字体不许截字"，去考它才发现根本没这回事）
+- **位置**: `apps/pendingbot/Sources/Components/Theme.swift:112-206`（`Theme.Fonts`）—— 全 app 的字体入口
+- **问题**: `Theme.Fonts.system(size:)` 走的是 `.system(size: sized(size))`，而 `sized()` 只乘一个**平台**倍率（Mac ~0.88 / iOS 1.0）。**没有任何一处接 Dynamic Type**（无 `.relativeTo`、无 `Font.TextStyle`、无 `@ScaledMetric`）。用户在系统设置里把字号调大调小，**这个 app 的字一个点都不会变**。
+- **实测证据（不是读代码推的）**: 把「+」面板离屏渲染两张 —— 一张 `.dynamicTypeSize(.xSmall)`、一张 `.dynamicTypeSize(.accessibility5)`，**两张 PNG 逐字节相同**（哈希 `1e806de4`），和不设的那张也相同。从最小到辅助功能最大，排版零变化。
+- **不是本次引入的**，也**不是疏忽**：`Theme` 的注释写得很清楚，固定点数是为了跨 iOS/Mac 保持同一套视觉比例。所以这是一个**知情的取舍**，只是没人把它的代价写下来。
+- **影响**: 需要放大字体的用户在这个 app 里得不到任何帮助 —— 这是可访问性问题，不是排版问题。**目前用户少所以没人提**，但它属于"上架后会被人正面提出来"的那一类。另一面：正因为字号固定，**很多"大字体会不会崩"的担心在这个 app 里是伪问题**（Todo #22 就是一例，机长要求修的"大字体截字"经实测不存在）。这一点值得写下来，免得每次都重新担心一遍。
+- **修法（不小）**: 要么把 `Theme.Fonts` 整体改成基于 `Font.TextStyle` 的相对字号（`.system(size:relativeTo:)`），同时所有固定 `frame(width:/height:)` 的容器（tile、胶囊、头像尺寸）改成 `@ScaledMetric`；要么显式声明"本 app 不支持 Dynamic Type"并在别处补偿（例如自带一个应用内字号档位）。前者是全仓改动，后者是产品决定。
+- **状态**: 待办 —— **需要产品先定性**（要不要支持系统字号），定性前不动。本次 Todo #22 按"实测不存在该问题"处理，没有为一个不存在的 bug 打补丁。
