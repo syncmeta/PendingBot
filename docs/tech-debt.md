@@ -1476,7 +1476,25 @@
   2. **消费端"救不活也要留骨架"** —— `enqueueAudit` 的内联兜底只覆盖 *send* 失败，不覆盖 *consume* 失败。建议在重试耗尽时至少写一行只带 `id / status / error_class / route_trace`、成本字段全 null 的最小行，把"补不齐附加信息"降级成"仍然记一笔"，而不是整条丢掉。
   3. **别把这条和成本回读那条混为一谈**（理由见上），也**别以为 8-19 15:48Z 那次部署解决了它** —— 断点在消费端写库，新部署的是生产端的失败入账代码，两者不是一回事。
   4. 想拿到真因，二选一：给一个带 **Workers Observability 读权限**的 CF API token，或在复现时挂着 `wrangler tail`（`workers_tail:read` 现有 token 就够）。
-- **状态**: 待办 —— 嫌疑 ① 已排除，嫌疑 ② 已坐实（消息确实进了 DLQ、库里确实少了对应的行），但**消费失败的真正原因仍未知**，卡在读不到 DLQ 消息体 + 没有日志回查权限。下一步是上面第 1 条。
+- **消费为什么失败 —— 找到了（2026-08-25 · Todo #15「Rosales 发消息报错」session）**: 上面那句「结构上没有任何东西会拒绝一条 `status='error'` 的行」**漏了一条**：核约束时只核了 `status` 上没有 CHECK，没核 **`audit_log_conversation_id_fkey`**（`FOREIGN KEY (conversation_id) REFERENCES pendingbot.conversations(id)`，**没有 ON DELETE 子句 → NO ACTION**）。
+
+  链条闭合如下（每一环都在代码/线上核过）：
+  1. 对一个机器人发的**第一条**消息走 `POST /v1/messages/start`。该路由先由 `start_user_bot_turn` RPC 建会话 + 用户消息，再跑这一轮。
+  2. `apps/edge/src/routes/messages.ts:865` —— `finally` 里判断「这一轮没吐出任何用户可见内容」(`!producedOutput`)，就 `conversations.delete().eq('id', convId)`，**CASCADE 把参与者和用户那条消息一起删掉**。注释原文：失败的回合连 conv id 都不告诉客户端，"leave the optimistic bubble in pending/failed state with **no cloud trace**"。
+  3. 失败回合的 audit 行是 `enqueueAudit` **异步入队**的（在 `runChatTurn` 的 catch 里，早于第 2 步的删除），消费端稍后才真正 INSERT。
+  4. 等消费端跑到时，`insertRow.conversation_id` 指向的会话**已经不存在** → 外键冲突 → `audit_log upsert failed: …` 抛出 → 队列重试。会话不会自己回来，所以**5 次必然全败** → 进 DLQ。
+
+  这正好落在上面已经点名的「唯一还剩的抛点」上（`audit_log` upsert 自己失败），也解释了 08-19T07 那条 `avg(retryCount)=4`（打满 `max_retries:5`）。**回滚把证据连同会话一起抹掉了 —— 这不是偶发，是这个设计对「第一条消息就失败」的必然结果。**
+
+  **仍未坐实的一点，明说**: 没读到那条 DLQ 消息体里的报错原文（读 DLQ 的路仍然被挡，见上）。上面是机制闭合 + 线上约束定义实测，不是把 Postgres 的报错原文拿到手。要一锤定音，只需在复现时挂 `wrangler tail` 抓消费端那行 upsert 报错。
+
+  **旁证（2026-08-25 实测）**: 人类报 Rosales 发消息 `withFallback exhausted (1 attempt)` 后，线上 `pendingbot.conversations` 里 **Rosales 一个会话行都没有**；他再发一次成功后才出现一行、`created_at` 正是成功那一刻。失败那次的会话、用户消息、audit 行**三样全没了**。
+
+- **修法建议补充（针对已找到的真因）**:
+  5. **回滚不要连账本一起回滚** —— 二选一：① 给 `audit_log_conversation_id_fkey` 加 `ON DELETE SET NULL`（`0052` 删号触发器已经是先把 `conversation_id` 置空再删，语义一致，只是当时没把这条 FK 本身改掉）；或 ② 消费端遇到外键冲突时把 `conversation_id` 置 null 重试一次。**建议 ①**，它同时消灭"删会话/删号"两条路上的同一个坑。
+  6. 上面第 2 条「重试耗尽写最小骨架行」如果实施，**也必须把 `conversation_id` 置空**，否则最小行照样撞同一条外键。
+
+- **状态**: 待办 —— 真因已定位到外键（见上），修法收敛成一条 migration（第 5 条）。DLQ 可读性（第 1 条）仍然值得补，但已不再是查清本案的前提。
 
 ### 🟡 「猜模型」盲盒在协议层不设防 —— 未揭晓时服务端照样把真名下发给客户端
 - **发现**: 2026-08-20 · 「模型显示全局开关」session（做 Todo #5 时按机长的怀疑逐行核实）
@@ -1797,3 +1815,23 @@ supabase-swift 匿名写的硬失败闸。下面是**看到但按边界不动**�
 - **影响**: 不是泄密（user id 不是秘密，同群成员本来就能看到彼此），是观感与一致性 —— bot 那边已经用「未知机器人」了，人这边却露 id 片段，两套规矩。
 - **修法**: 需要产品给一个「没名字的人怎么称呼」的统一答案。候选：① 统一「未命名用户」+ 靠头像色块区分；② 用 id 派生一个稳定的可读代号（形容词+名词，同一个人每次都一样），既不露 id 又能区分。② 更像这个产品的做法（头像 emoji/配色本来就是从 id 派生的）。
 - **状态**: 待办 —— 需要产品拍板称呼方案，不是纯技术活。
+
+### 🔴 池子机器人开局抽到"不可用模型"直接把失败甩给用户 —— 明明重来就能好，却让用户自己重来
+- **发现**: 2026-08-25 · Todo #15「Rosales 发消息报错」session
+- **位置**: `apps/edge/src/lib/conversation-model.ts:chooseConversationMainModel` × `apps/edge/src/llm/random-model.ts:pickRandomModel` × `apps/edge/src/routes/messages.ts:/start` × `apps/edge/src/llm/router.ts:withFallback`
+- **线上实测的现象**: 人类给 Rosales（`config.modelPool.presets = [latest-per-vendor, top-flagship, cn-flagship]`）发消息，收到 `withFallback exhausted (1 attempt) — last attempt [openrouter] not_found: 404 No endpoints available matching your guardrail restrictions and data policy`。**同一个界面上再发一次就成功了**（新会话抽到 `moonshotai/kimi-k3`，`audit_log` 有行、`cost_usd=0.038918`）。
+- **机制**: 新会话建立时从池子抽一个模型定死（`pickRandomModel`，`excludeSlugs: []`，**只抽一次**）。若抽中的模型在 OpenRouter 账号的隐私/数据政策下没有任何可用线路，OpenRouter 返回 404；`classifyError` 把 404 归为 fatal → `withFallback` 第一跳就 break。**而这个路由是纯直通（一个模型只对应一个 provider 路径），`withFallback` 的"排除这家换一家"在结构上永远解析不出第二家** —— 所以 `(1 attempt)` 不是异常，是常态。
+- **影响**:
+  - **5 只线上机器人在同一个抽奖池里**（Bishkek / Cricklewood / Honcho / Ningyang / Rosales，`config ? 'modelPool'` 计数 = 5 / 31）。每开一个新会话摇一次。
+  - 用户看到的是一句技术报错，**并且他刚打的那句话被连同会话一起删掉了**（`/start` 的 `!producedOutput` 回滚），得重打。
+  - 失败在库里不留痕（见上一条 audit/DLQ 外键那条）。
+  - **讽刺的是失败路径本来就已经在"重来"了** —— 只是把重来的成本甩给了用户，而不是自己重抽一次。
+- **建议**:
+  1. `not_found` / `no_route` 这类"这个模型在这条路上根本不可用"的失败，**在池子机器人上应把该 slug 塞进 `excludeSlugs` 重抽一次再放弃**（参数早就有了，只是没人接上）。重抽仍失败才向用户报错。
+  2. `withFallback` 这个名字**当前是误导性的** —— 它承诺了一个这套结构里不存在的东西，`exhausted (N attempts)` 读起来像"兜底都用光了"，实际是"压根没有兜底"。要么改名（`withRouteRetry`），要么补出真正的第二跳。本次排障有相当一部分时间是被这个名字带偏的。
+  3. `persistConversationMainModel` 写库失败只 `console.warn` 就继续（`messages.ts:1461`），会让会话带着一个没写进库的模型往下跑。属同一块的吞错。
+- **不属于本条、但同一次查出来的两条**:
+  - `apps/edge/src/lib/group-dispatch.ts:223` —— **群聊里池子机器人完全不抽签**，直接用 `bot.model_id` / `bot.model_provider` 固定字段。一个"聚合"的机器人在群里永远是同一个模型。
+  - 线上 26 只 `model_provider IS NULL` 的种子 bot 里，固定模型存的是**裸名**（`claude-opus-4.7` / `claude-sonnet-4.6` / `kimi-k2.6` / `qwen3.6-plus` / `gemma-4-31b-it`）。provider 为空 → 落 OpenRouter 通道 → 裸名在 OpenRouter 不是合法 model id → 必 404。都是种子数据，暂不影响真人，但**同一个"provider 为空就默认 OpenRouter"的回落规则**哪天用在真实 bot 上就会咬人。
+- **需要人定的一件事（非代码）**: 404 的具体触发项在 OpenRouter 账号侧（该 key 是自有 BYOK，存在 AI Gateway `default` 别名下，见 `docs/deploy.md:442`）。`https://openrouter.ai/settings/privacy` 里「可能用请求数据训练的付费线路」/ ZDR 强制 / ignored providers 三项任一都能造成它。**放开训练权限＝对话内容可能被上游用于训练，是隐私取舍，必须作者本人定**。放开只降低中彩率，不根治 —— 池子里随时会进新模型。
+- **状态**: 待办 —— 已定位，未动手（本次派活边界是"先报告"）。
