@@ -1626,4 +1626,7 @@
   2. **卡住时界面仍然永远停在"验证中"**，没有超时、没有出口、没有"改用邮箱验证码"的引导。这是用户唯一能感知到的那一面，**必须补**，且与根因是谁无关。
   3. **没有任何探针**能告诉我们线上有多少用户正卡在这里。
 - **人工自救手段（写下来免得以后重新摸索）**: `killall SafariLaunchAgent` —— 它会把整条队列连同僵尸请求一起吐掉并被 launchd 重新拉起，**不影响 Safari 的窗口和标签，用户什么都不会丢**。比"完全退出 Safari"轻得多。
-- **状态**: 待办（尾巴 1/2/3）。修好的那三条已提交并 macOS 编译通过；**队列通了之后 Mac 的 Google 登录能不能真正走完，截至记录时尚未被观测到过一次成功** —— 别把"堵塞解除"当成"登录可用"。
+- **根因已定死（2026-08-25 补）**: 卡住的是 **Safari 侧一个陈旧的"已连接"状态** —— 故障期间 Safari 每次都只记 `Server is already connected.` 就停住，**从不去建连接**，派发端没有可用客户端，请求于是只能排队。恢复后的健康流程长这样（对照着看就一目了然）：`Creating new launch agent proxy → Initiating new connection to request server → Established connection to server → Dispatching → Starting authentication session → Fulfilled`。
+  **决定性对照**：2026-08-25 12:08 那次成功，发请求的是**已连续运行 1 天的同一个进程**（pid 30351，`/Applications/PendingBot.app`）—— 没重启、没换包、没装本分支的修复。**同一个二进制，前一天四次全死，第二天 11.6 秒走完**；中间唯一的变化是 `killall SafariLaunchAgent`。**所以我们的代码不是原因**，URL / anchor / Apple 后台配置 / Google 配置 / 网络代理 / 沙盒 / 从 dmg 跑，全部被这一条排掉。
+  **仍属推测、不要当结论**：我们那条挂了 30 小时没撤的会话是不是让 Safari 攥住半死连接的诱因 —— 时间线吻合，但证不了。
+- **状态**: 待办（尾巴 1/2/3）。修好的那三条已提交并 macOS 编译通过。**Apple 网页登录已实测端到端走通**（2026-08-25 12:08，`Fulfilled`）；**Mac 的 Google 登录截至此刻仍未被观测到过一次成功** —— 昨天那两次是被堵死的，不算数据，别把"堵塞解除"当成"Google 那条路可用"。
