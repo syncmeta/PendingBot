@@ -118,7 +118,9 @@ async function getPool(env: Env): Promise<PoolEntry[] | null> {
   const cached = await env.MEMORY.get<PoolEntry[]>(POOL_CACHE_KEY, 'json');
   if (cached && cached.length > 0) return cached;
   try {
-    const pool = poolFromCatalog(await buildModelCatalog(await fetchLMArenaRows(env)));
+    const pool = poolFromCatalog(
+      await buildModelCatalog(await fetchLMArenaRows(env), env.OPENROUTER_CATALOG_KEY),
+    );
     if (pool.length > 0) {
       await env.MEMORY.put(POOL_CACHE_KEY, JSON.stringify(pool), {
         expirationTtl: POOL_TTL_SEC,

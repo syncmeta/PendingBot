@@ -232,7 +232,9 @@ export type CatalogProvider = () => Promise<OpenRouterModelOut[]>;
 
 export function makeCatalogProvider(env: Env): CatalogProvider {
   let p: Promise<OpenRouterModelOut[]> | null = null;
-  return () => (p ??= (async () => buildModelCatalog(await fetchLMArenaRows(env)))());
+  return () =>
+    (p ??= (async () =>
+      buildModelCatalog(await fetchLMArenaRows(env), env.OPENROUTER_CATALOG_KEY))());
 }
 
 // 读 DB 定义 + 算 + KV 缓存。fastest 走 per-model endpoints 吞吐分支。
