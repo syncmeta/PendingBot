@@ -18,15 +18,22 @@
  * `#Preview` / `PreviewProvider` 的块也会抹掉:只有预览在用 = 用户到不了。
  *
  * 用法:
- *   node scripts/check-orphan-views.mjs            # 人看的报告
- *   node scripts/check-orphan-views.mjs --json     # 机器读的
- *   node scripts/check-orphan-views.mjs --gate     # 有未豁免孤儿则 exit 1
+ *   node scripts/check-orphan-views.mjs                    # 人看的报告(含与基线的对比)
+ *   node scripts/check-orphan-views.mjs --json             # 机器读的
+ *   node scripts/check-orphan-views.mjs --ref <提交>       # 按历史提交扫,查"哪一笔造出了这个孤儿"
+ *   node scripts/check-orphan-views.mjs --update-baseline  # 人认过账之后重新落基线
+ *   node scripts/check-orphan-views.mjs --gate             # 有未豁免孤儿则 exit 1(暂未接 CI)
+ *
+ * 在 CI 里跑到 `GITHUB_STEP_SUMMARY` 时会额外写一份 markdown 摘要 —— 非阻塞
+ * 不等于没人看,而且打的是「本次 N / 基线 M」的对比:只打当前数字,没人会
+ * 注意到它哪天从 11 变成 12,**而多出一个孤儿才是信号,比总数重要**。
  *
  * 豁免走 scripts/orphan-view-allowlist.tsv,每条必须带理由和回看日期 ——
- * 不带理由的豁免两个月后就没人知道它为什么在那儿。
+ * 不带理由的豁免两个月后就没人知道它为什么在那儿。基线走
+ * scripts/orphan-view-baseline.json,只能由人显式更新。
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -34,6 +41,7 @@ const root = process.cwd();
 const SOURCE_ROOTS = ['apps/pendingbot/Sources'];
 const TEST_ROOTS = ['apps/pendingbot/Tests'];
 const ALLOWLIST = 'scripts/orphan-view-allowlist.tsv';
+const BASELINE = 'scripts/orphan-view-baseline.json';
 
 /** 算作「界面」的一致性协议。ViewModifier / Representable 也是用户看得见的东西。 */
 const VIEW_PROTOCOLS = new Set([
@@ -49,16 +57,30 @@ const VIEW_PROTOCOLS = new Set([
 
 // ── 取文件 ────────────────────────────────────────────────────────────────
 
-function gitFiles() {
-  return execFileSync('git', ['ls-files'], { cwd: root, encoding: 'utf8' })
+function gitFiles(ref) {
+  const argv = ref ? ['ls-tree', '-r', '--name-only', ref] : ['ls-files'];
+  return execFileSync('git', argv, { cwd: root, encoding: 'utf8', maxBuffer: 64 << 20 })
     .split('\n')
     .filter(Boolean);
 }
 
-function swiftFilesUnder(prefixes) {
-  return gitFiles().filter(
+function swiftFilesUnder(prefixes, ref) {
+  return gitFiles(ref).filter(
     (f) => f.endsWith('.swift') && prefixes.some((p) => f.startsWith(p + '/')),
   );
+}
+
+/**
+ * 按历史提交读文件 —— 用来回答「这个孤儿是哪一笔提交造出来的」。
+ * 走 `git show <ref>:<path>`,不碰工作区、不 checkout(别的 worktree 里可能
+ * 躺着没提交的手改)。
+ */
+function readAtRef(ref, file) {
+  return execFileSync('git', ['show', `${ref}:${file}`], {
+    cwd: root,
+    encoding: 'utf8',
+    maxBuffer: 64 << 20,
+  });
 }
 
 // ── 抹掉注释 / 字符串 / 预览块 ─────────────────────────────────────────────
@@ -261,6 +283,42 @@ function readAllowlist() {
   return { entries, problems };
 }
 
+// ── 基线对比 ──────────────────────────────────────────────────────────────
+
+/**
+ * 基线 = 上一次有人认过账的那份孤儿名单。
+ *
+ * 为什么必须有它:只打一个"本次 11 个",没人会注意到它哪天变成了 12。
+ * **多出来一个孤儿这件事本身就是信号,比总数重要** —— 那正是 2026-06-09
+ * 那天发生却没人发现的事。
+ *
+ * 基线只能由人显式更新(`--update-baseline` + 一笔提交),不会自动跟着涨 ——
+ * 自动跟涨的基线等于没有基线。
+ */
+function readBaseline() {
+  const abs = path.join(root, BASELINE);
+  if (!existsSync(abs)) return null;
+  try {
+    return JSON.parse(readFileSync(abs, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+export function diffAgainstBaseline(current, baseline) {
+  // 没有基线时不能把「当前全部」当成「本次新增」—— 那会让第一次运行看起来
+  // 像是一天之内冒出 11 个孤儿,而真相是还没有人认过账。
+  if (!baseline) return { added: [], gone: [], baselineCount: null, baselineRef: null };
+  const before = new Set(baseline.reachOrphans ?? []);
+  const now = new Set(current);
+  return {
+    added: [...now].filter((n) => !before.has(n)),
+    gone: [...before].filter((n) => !now.has(n)),
+    baselineCount: before.size,
+    baselineRef: baseline.measuredAt ?? null,
+  };
+}
+
 // ── 主流程 ────────────────────────────────────────────────────────────────
 
 /**
@@ -268,9 +326,12 @@ function readAllowlist() {
  *              不然只能靠"在真仓库上看着对"来自证,那不是证据。
  */
 export function analyse(input) {
-  const sourceFiles = input?.sourceFiles ?? swiftFilesUnder(SOURCE_ROOTS);
-  const testFiles = input?.testFiles ?? swiftFilesUnder(TEST_ROOTS);
-  const readOne = input?.readFile ?? ((f) => readFileSync(path.join(root, f), 'utf8'));
+  const ref = input?.ref;
+  const sourceFiles = input?.sourceFiles ?? swiftFilesUnder(SOURCE_ROOTS, ref);
+  const testFiles = input?.testFiles ?? swiftFilesUnder(TEST_ROOTS, ref);
+  const readOne =
+    input?.readFile ??
+    (ref ? (f) => readAtRef(ref, f) : (f) => readFileSync(path.join(root, f), 'utf8'));
 
   /** file -> 抹干净的文本 */
   const clean = new Map();
@@ -385,58 +446,141 @@ const invokedDirectly =
 if (invokedDirectly) main();
 
 function main() {
-const args = new Set(process.argv.slice(2));
-const result = analyse();
-const { entries: allow, problems: allowProblems } = readAllowlist();
+  const argv = process.argv.slice(2);
+  const args = new Set(argv);
+  const refArg = argv.includes('--ref') ? argv[argv.indexOf('--ref') + 1] : null;
 
-const refOrphansUnexcused = result.refOrphans.filter((n) => !allow.has(n));
+  const result = analyse(refArg ? { ref: refArg } : undefined);
+  const { entries: allow, problems: allowProblems } = readAllowlist();
+  const reachOrphans = result.reachOrphans;
+  const unexcused = reachOrphans.filter((n) => !allow.has(n));
+  const diff = diffAgainstBaseline(reachOrphans, readBaseline());
 
-if (args.has('--json')) {
-  console.log(
-    JSON.stringify(
-      {
-        declared: result.decls.size,
-        roots: [...result.roots],
-        refOrphans: result.refOrphans.map((n) => ({
-          name: n,
-          file: result.decls.get(n).file,
-          testOnlyRefs: [...result.testRefs.get(n)],
-          excused: allow.has(n),
-        })),
-        reachOrphans: result.reachOrphans.map((n) => ({ name: n, file: result.decls.get(n).file })),
-        allowlistProblems: allowProblems,
-      },
-      null,
-      2,
-    ),
-  );
-} else {
-  const n = (s) => String(s).padStart(3, ' ');
-  console.log(`扫描: ${result.sourceFiles.length} 个源文件 + ${result.testFiles.length} 个测试文件`);
-  console.log(`界面声明: ${result.decls.size} 个   入口(@main): ${[...result.roots].join(', ') || '(无)'}`);
-  console.log('');
-  console.log(`[REF]   声明文件之外零引用: ${n(result.refOrphans.length)} 个`);
-  for (const name of result.refOrphans) {
-    const t = result.testRefs.get(name).size;
-    const mark = allow.has(name) ? ' (已豁免)' : '';
-    const testNote = t > 0 ? `  ← 只有测试在用(${t} 处)` : '';
-    console.log(`        ${name}  ${result.decls.get(name).file}${testNote}${mark}`);
+  if (args.has('--update-baseline')) {
+    const head = execFileSync('git', ['rev-parse', '--short', 'HEAD'], {
+      cwd: root,
+      encoding: 'utf8',
+    }).trim();
+    writeFileSync(
+      path.join(root, BASELINE),
+      JSON.stringify(
+        {
+          _: '孤儿界面基线 —— 由 `node scripts/check-orphan-views.mjs --update-baseline` 生成。只在人认过账之后更新,别让它自动跟着涨。',
+          measuredAt: refArg ?? head,
+          count: reachOrphans.length,
+          reachOrphans,
+        },
+        null,
+        2,
+      ) + '\n',
+    );
+    console.log(`基线已写入 ${BASELINE}:${reachOrphans.length} 个(测于 ${refArg ?? head})`);
+    return;
   }
-  console.log('');
-  console.log(`[REACH] 从 @main 到不了: ${n(result.reachOrphans.length)} 个`);
-  for (const name of result.reachOrphans) {
-    const alsoRef = result.refOrphans.includes(name) ? '' : '  (有人引用,但整簇没有入口)';
-    console.log(`        ${name}  ${result.decls.get(name).file}${alsoRef}`);
-  }
-  if (allowProblems.length) {
+
+  if (args.has('--json')) {
+    console.log(
+      JSON.stringify(
+        {
+          measuredAt: refArg ?? 'worktree',
+          declared: result.decls.size,
+          roots: [...result.roots],
+          refOrphans: result.refOrphans.map((n) => ({
+            name: n,
+            file: result.decls.get(n).file,
+            testOnlyRefs: [...result.testRefs.get(n)],
+            excused: allow.has(n),
+          })),
+          reachOrphans: reachOrphans.map((n) => ({ name: n, file: result.decls.get(n).file })),
+          diff,
+          allowlistProblems: allowProblems,
+        },
+        null,
+        2,
+      ),
+    );
+  } else {
+    const pad = (s) => String(s).padStart(3, ' ');
+    console.log(`扫描对象: ${refArg ?? '工作区'}`);
+    console.log(`扫描: ${result.sourceFiles.length} 个源文件 + ${result.testFiles.length} 个测试文件`);
+    console.log(`界面声明: ${result.decls.size} 个   入口(@main): ${[...result.roots].join(', ') || '(无)'}`);
     console.log('');
-    console.log('豁免清单有问题:');
-    for (const p of allowProblems) console.log(`        ${p}`);
+    console.log(`[REF]   声明文件之外零引用: ${pad(result.refOrphans.length)} 个(本仓库这个判据太粗,只作参考)`);
+    console.log('');
+    console.log(`[REACH] 从 @main 到不了: ${pad(reachOrphans.length)} 个`);
+    for (const name of reachOrphans) {
+      const isNew = diff.added.includes(name) ? '  ⚠️ 新增' : '';
+      const mark = allow.has(name) ? ' (已豁免)' : '';
+      console.log(`        ${name}  ${result.decls.get(name).file}${mark}${isNew}`);
+    }
+    console.log('');
+    console.log(renderComparison(diff, reachOrphans.length));
+    if (allowProblems.length) {
+      console.log('');
+      console.log('豁免清单有问题:');
+      for (const p of allowProblems) console.log(`        ${p}`);
+    }
+  }
+
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    appendFileSync(
+      process.env.GITHUB_STEP_SUMMARY,
+      renderSummaryMarkdown(result, reachOrphans, diff, allow, allowProblems),
+    );
+  }
+
+  if (args.has('--gate')) {
+    if (allowProblems.length) process.exit(1);
+    if (unexcused.length) process.exit(1);
   }
 }
 
-if (args.has('--gate')) {
-  if (allowProblems.length) process.exit(1);
-  if (refOrphansUnexcused.length) process.exit(1);
+/** 「本次几个 / 基线几个」这一段 —— 只打当前数字没人会发现它从 11 变成了 12。 */
+function renderComparison(diff, count) {
+  if (diff.baselineCount === null) {
+    return `基线: 还没有(跑 \`node scripts/check-orphan-views.mjs --update-baseline\` 建一份)`;
+  }
+  const delta = count - diff.baselineCount;
+  const arrow = delta === 0 ? '持平' : delta > 0 ? `多了 ${delta} 个` : `少了 ${-delta} 个`;
+  const lines = [`对比基线: 本次 ${count} 个 / 基线 ${diff.baselineCount} 个(测于 ${diff.baselineRef}) —— ${arrow}`];
+  if (diff.added.length) lines.push(`  ⚠️ 新增孤儿: ${diff.added.join(', ')}  ← 这条比总数重要`);
+  if (diff.gone.length) lines.push(`  ✅ 不再是孤儿: ${diff.gone.join(', ')}`);
+  if (diff.added.length || diff.gone.length) {
+    lines.push('  名单变了就该更新基线(--update-baseline),并在提交信息里说清为什么变。');
+  }
+  return lines.join('\n');
 }
+
+/** CI 的 job summary —— 非阻塞不等于没人看,报告要落在人会看见的地方。 */
+function renderSummaryMarkdown(result, reachOrphans, diff, allow, allowProblems) {
+  const out = ['## 孤儿界面检测', ''];
+  if (diff.baselineCount === null) {
+    out.push(`本次 **${reachOrphans.length}** 个;仓库里还没有基线。`);
+  } else {
+    const delta = reachOrphans.length - diff.baselineCount;
+    const arrow = delta === 0 ? '持平' : delta > 0 ? `**多了 ${delta} 个**` : `少了 ${-delta} 个`;
+    out.push(`本次 **${reachOrphans.length}** 个 / 基线 **${diff.baselineCount}** 个(测于 \`${diff.baselineRef}\`) —— ${arrow}`);
+  }
+  out.push('');
+  if (diff.added.length) {
+    out.push('### ⚠️ 这次多出来的孤儿', '');
+    out.push('有界面失去了最后一个入口。**编译和测试都不会因此变红** —— 这一段就是唯一会说话的地方。', '');
+    for (const n of diff.added) out.push(`- \`${n}\` — \`${result.decls.get(n).file}\``);
+    out.push('');
+    out.push('正确处置三选一:**挂回入口** / **删掉** / **写进 `scripts/orphan-view-allowlist.tsv` 并注明理由和复查时间**。');
+    out.push('');
+  }
+  if (diff.gone.length) {
+    out.push(`### ✅ 不再是孤儿`, '', diff.gone.map((n) => `- \`${n}\``).join('\n'), '');
+  }
+  out.push('<details><summary>完整名单</summary>', '');
+  for (const n of reachOrphans) {
+    out.push(`- \`${n}\` — \`${result.decls.get(n).file}\`${allow.has(n) ? ' (已豁免)' : ''}`);
+  }
+  out.push('', '</details>', '');
+  if (allowProblems.length) {
+    out.push('### 豁免清单本身有问题', '', ...allowProblems.map((p) => `- ${p}`), '');
+  }
+  out.push('_这道检查目前**不拦人**。它存在的理由是:界面失去最后一个入口时,编译过、测试绿、CI 全绿 —— 没有别的地方会响。_');
+  return out.join('\n') + '\n';
 }

@@ -1,0 +1,18 @@
+{
+  "_": "孤儿界面基线 —— 由 `node scripts/check-orphan-views.mjs --update-baseline` 生成。只在人认过账之后更新,别让它自动跟着涨。",
+  "measuredAt": "137a39e1",
+  "count": 11,
+  "reachOrphans": [
+    "BrandAvatar",
+    "TabTitle",
+    "CrewListView",
+    "CrewSessionCard",
+    "CrewSessionDetailView",
+    "CrewTranscriptRow",
+    "CrewStatusBadge",
+    "NewCrewTaskSheet",
+    "GroupWalletView",
+    "AmountFormSheet",
+    "AccountsView"
+  ]
+}
