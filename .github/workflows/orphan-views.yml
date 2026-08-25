@@ -1,0 +1,65 @@
+name: Orphan views
+
+# 找出「存在但没有任何入口能到达」的界面。
+#
+# 为什么需要它:2026-06-09 一笔提交(73faafbe「Mac 平行实现收编成共享 surface」)
+# 一次性造出三个孤儿(BrandAvatar / MacGroupWalletView / MacAmountFormSheet),
+# 2026-06-15 另一笔(095dfc2b「删 crew 死代码」)又造出两个(GroupWalletView /
+# AmountFormSheet)。**五个,没有一个被任何机制发现** —— 界面失去最后一个入口时,
+# 编译过、测试绿、CI 全绿。群钱包那套是作者三个月后靠"我记得有过这个东西"
+# 才翻出来的。
+#
+# 两条刻意的设计,别顺手改掉:
+#
+# 1. **这道 job 不拦人**(`continue-on-error`),因为现在仓库里有 11 个存量孤儿,
+#    处置权在作者。此刻接成阻塞闸,唯一能让它变绿的办法是往豁免清单里塞 11 行 ——
+#    而"拿豁免换绿色"正是这道闸要防的事。等存量表过态之后,再把
+#    `node scripts/check-orphan-views.mjs --gate` 换上来。
+#
+# 2. **报告落在 job summary,不是只落在日志里。** 非阻塞不等于没人看。而且它打的是
+#    「本次 N 个 / 基线 M 个」的**对比** —— 只打一个当前数字,没人会注意到它哪天
+#    从 11 变成了 12,而「多出来一个孤儿」这件事本身才是信号,比总数重要。
+#
+# 基线在 scripts/orphan-view-baseline.json,只能由人显式更新
+# (`bun run orphans:baseline` + 一笔说明为什么变的提交)。自动跟着涨的基线
+# 等于没有基线。
+
+on:
+  pull_request:
+    paths:
+      - 'apps/pendingbot/Sources/**'
+      - 'scripts/check-orphan-views.mjs'
+      - 'scripts/test-check-orphan-views.mjs'
+      - 'scripts/orphan-view-allowlist.tsv'
+      - 'scripts/orphan-view-baseline.json'
+      - '.github/workflows/orphan-views.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'apps/pendingbot/Sources/**'
+      - 'scripts/check-orphan-views.mjs'
+      - 'scripts/test-check-orphan-views.mjs'
+      - 'scripts/orphan-view-allowlist.tsv'
+      - 'scripts/orphan-view-baseline.json'
+      - '.github/workflows/orphan-views.yml'
+
+jobs:
+  orphan-views:
+    name: 孤儿界面(只报告,不拦人)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 检测器要按 git 树读文件(`git ls-files`),浅 clone 够用;
+          # `--ref <历史提交>` 那个模式才需要全历史,CI 用不到。
+          fetch-depth: 1
+
+      # 自测先跑,而且**这一步是会拦人的** —— 检测器自己坏了却没人知道,
+      # 比检测器报错还糟:一个坏掉的检查会一直绿,看起来像"没有孤儿"。
+      - name: 检测器自测(这一步会拦人)
+        run: node scripts/test-check-orphan-views.mjs
+
+      - name: 扫一遍并写进 job summary
+        continue-on-error: true
+        run: node scripts/check-orphan-views.mjs
