@@ -13,6 +13,7 @@ import {
   auditErrorFields,
   enqueueAudit,
   FallbackError,
+  type FallbackOpts,
   type ResolvedRoute,
   type RouteTraceEntry,
   usageFromCompletion,
@@ -250,6 +251,13 @@ export interface RunChatTurnInput {
   /// chain still kicks in if the chosen provider 5xxs. NULL = follow the
   /// default routing.
   providerOverride?: string | null;
+  /// Model-pool bots only. Handed straight to the router: when the drawn
+  /// model turns out to be unreachable on its route (a 404 from a model
+  /// the provider account can't reach at all), the router calls this for a
+  /// replacement from the same pool instead of failing the turn. Nothing
+  /// has reached the client at that point, so the swap is invisible.
+  /// Absent (single-model bots) = old behaviour, the failure surfaces.
+  redrawModel?: FallbackOpts['redrawModel'];
   /// Lookback notes the client cached. Each is fed into the prompt as a
   /// private context block; the bot decides per turn whether to keep them.
   activeLookbacks?: Array<{ id: string; body_md: string }>;
@@ -755,6 +763,12 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
   // surface as 'interrupted'/'error' status instead.
   let route: ResolvedRoute | null = null;
   const routeTrace: RouteTraceEntry[] = [];
+  // The model this turn is actually talking to. Only moves when the router
+  // re-draws it (pool bots whose drawn model turned out unreachable) — and
+  // then it must STAY moved, or the next round of the agent loop would go
+  // straight back to the model we just proved dead.
+  let turnModelSlug = bot.model_id;
+  let turnPreferProvider = input.providerOverride ?? null;
   emit('typing', { state: 'thinking' });
 
   // Compose this turn's tool list. Always-on tools come from CHAT_TOOLS,
@@ -837,10 +851,11 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
         supa,
         env,
         {
-          modelSlug: bot.model_id,
+          modelSlug: turnModelSlug,
           taskType: 'message_reply',
-          preferProvider: input.providerOverride ?? undefined,
+          preferProvider: turnPreferProvider ?? undefined,
           metadata: { userId, conversationId, turnId },
+          redrawModel: input.redrawModel,
         },
         async (r): Promise<{ stream: AsyncIterable<LlmStreamChunk> }> => {
           // Native-protocol providers (Anthropic Messages / Gemini
@@ -942,6 +957,11 @@ export async function runChatTurn(input: RunChatTurnInput): Promise<RunChatTurnR
       const { stream } = roundOpen.result;
       route = roundOpen.route;
       routeTrace.push(...roundOpen.routeTrace);
+      // Carry a re-draw forward. resolveRoute is passthrough, so
+      // route.modelToCall IS the slug that finally opened — after a swap
+      // it's the replacement, and every later round must use it too.
+      turnModelSlug = roundOpen.route.modelToCall;
+      turnPreferProvider = roundOpen.route.provider.slug;
 
       // Per-call accumulators.
       let assistantContent = '';

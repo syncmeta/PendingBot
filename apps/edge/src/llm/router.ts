@@ -718,7 +718,40 @@ export interface FallbackOpts extends RouteResolveOpts {
   // Hard cap on total attempts (resolveRoute + runner) before we give
   // up and throw FallbackError. Default 3.
   maxAttempts?: number;
+  // Model-pool bots only. Called when an attempt fails with a class that
+  // means "this exact model can't be reached on this route AT ALL"
+  // (see REDRAWABLE_ERROR_CLASSES) — the failure is a property of the
+  // model, not of the request, so retrying the same slug anywhere is
+  // pointless but a DIFFERENT model from the same pool may work fine.
+  //
+  // This exists because a pool bot draws its model once, at conversation
+  // start, from a catalog that was never checked for reachability. Draw a
+  // model the OpenRouter account's data policy excludes and the user gets
+  // a raw 404 — even though simply drawing again would have worked. The
+  // failure path was already "start over", it just charged the user for
+  // it. See docs/tech-debt.md.
+  //
+  // Safe here and nowhere else: withFallback's runner only OPENS the
+  // stream, so a failure inside it means not one byte has reached the
+  // client yet. Once chunks flow, swapping models is off the table.
+  //
+  // Returns the replacement to try, or null when the pool is exhausted
+  // (then we give up exactly as before). Implementations must exclude
+  // every slug already tried — see pickRandomModel's strictExclude.
+  redrawModel?: (failed: {
+    modelSlug: string;
+    errorClass: string;
+  }) => Promise<{ modelSlug: string; preferProvider: string | null } | null>;
 }
+
+// Error classes that say "this model is not reachable on this route,
+// period" — as opposed to "this request was bad" or "try again later".
+// Only these trigger a pool re-draw; a context_length or bad_request
+// failure would repeat on any model, and a rate_limit is transient.
+export const REDRAWABLE_ERROR_CLASSES: ReadonlySet<string> = new Set([
+  'not_found',
+  'no_route',
+]);
 
 export interface FallbackResult<T> {
   result: T;
@@ -795,6 +828,13 @@ export function classifyError(err: unknown): {
 // single place that throws FallbackError, so no call site can forget it —
 // grep / alert on this exact string to catch every exhausted LLM turn.
 export const FALLBACK_EXHAUSTED_MARKER = '[llm-fallback-exhausted]';
+
+// Fixed log marker for "a pool bot's drawn model was unreachable and we
+// silently drew another". Silent to the user by design — but it must not
+// be silent to us, or a pool slowly filling with unreachable models looks
+// like nothing at all. Grep this to see how often the pool hands out a
+// model we can't call.
+export const MODEL_REDRAWN_MARKER = '[llm-model-redrawn]';
 
 /// The last real failure behind a FallbackError, flattened. `lastError`
 /// and `routeTrace` have always been on the error object; nobody read
@@ -881,12 +921,21 @@ export async function withFallback<T>(
   const routeTrace: RouteTraceEntry[] = [];
   let lastError: unknown = null;
   let lastRoute: ResolvedRoute | null = null;
+  // The model/provider actually in play. Starts at the caller's choice and
+  // moves only when redrawModel hands us a replacement.
+  let modelSlug = opts.modelSlug;
+  let preferProvider = opts.preferProvider;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const attemptStart = Date.now();
     let route: ResolvedRoute;
     try {
-      route = await resolveRoute(supa, env, { ...opts, excludeProviders: tried });
+      route = await resolveRoute(supa, env, {
+        ...opts,
+        modelSlug,
+        preferProvider,
+        excludeProviders: tried,
+      });
     } catch (err) {
       const cls = classifyError(err);
       routeTrace.push({
@@ -923,6 +972,37 @@ export async function withFallback<T>(
         latency_ms: Date.now() - attemptStart,
       });
       lastError = err;
+
+      // "This model is unreachable here" → ask the caller for another one
+      // from the same pool rather than handing the user a 404. Not a
+      // transient retry: we deliberately re-enter the loop with a
+      // DIFFERENT model, and the provider exclusion list resets because
+      // the new model may well live on a provider the old one was
+      // excluded from.
+      if (REDRAWABLE_ERROR_CLASSES.has(cls.errorClass) && opts.redrawModel) {
+        const replacement = await opts
+          .redrawModel({ modelSlug, errorClass: cls.errorClass })
+          .catch((redrawErr) => {
+            console.warn('[withFallback] model re-draw failed', redrawErr);
+            return null;
+          });
+        if (replacement) {
+          console.warn(
+            MODEL_REDRAWN_MARKER,
+            JSON.stringify({
+              from: modelSlug,
+              to: replacement.modelSlug,
+              error_class: cls.errorClass,
+              task_type: opts.taskType ?? null,
+            }),
+          );
+          modelSlug = replacement.modelSlug;
+          preferProvider = replacement.preferProvider ?? undefined;
+          tried.length = 0;
+          continue;
+        }
+      }
+
       if (!cls.transient) break;
       tried.push(route.provider.slug);
     }
