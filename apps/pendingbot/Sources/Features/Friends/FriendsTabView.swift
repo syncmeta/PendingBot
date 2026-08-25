@@ -90,7 +90,8 @@ struct FriendsTabView: View {
                     model_id: $0.model_id, visibility: $0.visibility,
                     creator_id: $0.creator_id,
                     voice_call_enabled: $0.voice_call_enabled,
-                    addedAt: $0.added_at ?? 0)
+                    addedAt: $0.added_at ?? 0,
+                    hasModelPool: $0.has_model_pool)
         })
         _humans = State(initialValue: CacheRepository.cachedContacts().map {
             HumanPick(id: $0.id, alias: $0.alias,
@@ -365,7 +366,7 @@ struct FriendsTabView: View {
                             let selected = sidebarLayout && isSelected(kind: "bot", id: bot.id)
                             macRow(selected: selected) {
                                 FriendRow(kind: .bot, avatarSeed: bot.id, name: bot.display_name,
-                                          modelSlug: bot.model_id, botVisibility: bot.visibility)
+                                          modelSlug: bot.listModelSlug, botVisibility: bot.visibility)
                             }
                             .onTapGesture { Task { await tapBot(bot) } }
                             .modifier(BotRowOwnerActions(
@@ -580,7 +581,7 @@ struct FriendsTabView: View {
                                     FriendRow(kind: .bot,
                                               avatarSeed: bot.id,
                                               name: bot.display_name,
-                                              modelSlug: bot.model_id,
+                                              modelSlug: bot.listModelSlug,
                                               botVisibility: bot.visibility)
                                         .listRowBackground(rowBackground(selected: selected))
                                         .listRowInsets(cardRowInsets)
@@ -849,7 +850,8 @@ struct FriendsTabView: View {
                             model_id: row.bot.model_id, visibility: row.bot.visibility,
                             creator_id: row.bot.creator_id,
                             voice_call_enabled: row.bot.voice_call_enabled,
-                            addedAt: row.added_at.map { ServerTimestamp.epochSeconds($0, default: 0) } ?? 0)
+                            addedAt: row.added_at.map { ServerTimestamp.epochSeconds($0, default: 0) } ?? 0,
+                            hasModelPool: row.bot.hasModelPool)
                 }
             // Persist bots wholesale on success — server is the source of
             // truth for which ones are still active / visible to us.
@@ -859,7 +861,8 @@ struct FriendsTabView: View {
                     model_id: $0.model_id, visibility: $0.visibility,
                     creator_id: $0.creator_id,
                     voice_call_enabled: $0.voice_call_enabled,
-                    added_at: $0.addedAt
+                    added_at: $0.addedAt,
+                    has_model_pool: $0.hasModelPool
                 )
             })
 
@@ -1457,8 +1460,12 @@ private struct FriendRow: View {
     /// consistently across the friend list / chat header / bubbles.
     var avatarAttachmentId: String? = nil
     let name: String
-    /// The bot's stored model slug (`bots.model_id`). Resolved to a
-    /// friendly name + price multiplier via `ModelCatalog`. nil for humans.
+    /// 要挂的模型 slug —— **nil = 这一行不挂模型标签**。
+    ///
+    /// 人类恒为 nil。bot 走 `BotPick.listModelSlug`:只有确定是单一模型的
+    /// bot 才给出 slug,聚合 bot(有模型池)和「还不知道」都给 nil。挂标签
+    /// 这一格从此只表达一件确定的事,不再拿 `model_id` 这个回落字段冒充
+    /// 「这个 bot 用的模型」。
     let modelSlug: String?
     /// Drives the right-side tag pill for bots. `nil` for humans
     /// (which render a `人类` pill instead).
@@ -2136,7 +2143,12 @@ private struct AddBotPreviewPage: View {
                     // 这里以前直接把 `bots.model_id` 原样印出来,也就是
                     // `anthropic/claude-opus-5` 这样的**完整上游 slug** —— 不是
                     // 闪一下,是常驻。走目录取友好名,解不出就不画这一行。
-                    if let m = bot.model_id, !m.isEmpty,
+                    //
+                    // 走 `listModelSlug` 而不是 `model_id`:邀请预览接口拿不到
+                    // bot 的 config,判不出是不是聚合 bot,于是这一格恒为 nil ——
+                    // 宁可不说,也不在「要不要加这个 bot」的当口给一个可能是假的
+                    // 模型名。要恢复这一行,得先让邀请预览接口带上池信息。
+                    if let m = bot.listModelSlug, !m.isEmpty,
                        let name = catalog.resolvedDisplayName(for: m) {
                         Text(name).font(Theme.Fonts.caption2).foregroundStyle(.secondary)
                     }

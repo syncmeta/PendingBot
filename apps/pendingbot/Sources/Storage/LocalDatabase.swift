@@ -329,6 +329,15 @@ final class LocalDatabase {
                 t.drop(column: "frozen")
             }
         }
+        // 「这个 bot 是不是聚合的」缓存下来,好让好友列表在**首帧**就知道
+        // 该不该挂模型标签。不缓存的话,每次冷开列表都得等网络回来才敢挂,
+        // 单一模型的 bot 会晚一拍才长出标签。加这个字段之前存的行读成 nil
+        // = 不确定 → 先不挂,下一次刷新自愈。
+        m.registerMigration("v11_bots_has_model_pool") { db in
+            try db.alter(table: "bots") { t in
+                t.add(column: "has_model_pool", .boolean)
+            }
+        }
         return m
     }
 
@@ -538,6 +547,10 @@ final class LocalDatabase {
         /// Friend-added time (epoch seconds). Optional only because the column
         /// was added in v7; older rows read as nil → treated as 0 by callers.
         var added_at: Int?
+        /// 这个 bot 配了模型池吗(聚合 bot,每轮抽一个)。nil = 不确定 ——
+        /// v11 之前存的行、或者还没被一次成功刷新覆盖过。调用方按「不确定」
+        /// 处理:不挂模型标签,别猜。
+        var has_model_pool: Bool?
 
         static let databaseTableName = "bots"
     }
