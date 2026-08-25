@@ -6,23 +6,18 @@ import SwiftUI
 /// 留在这个目录里**:`CrewListView` / `CrewSessionDetailView` /
 /// `CrewListStore` / `CrewSessionDetailStore` / `NewCrewTaskSheet`。它们此刻
 /// 没有任何调用方,只是没人再从这里进去而已 —— 要恢复,把下面三个入口指回
-/// `CrewListView(...)` 就行(git 历史里就是原样)。
+/// `CrewListView(...)` 就行(git 历史里就是原样),顺带把 `externalSelection`
+/// / `renderAsMacListColumn` 两个字段加回来(见下)。
 ///
 /// 之所以只摘入口而不删代码:这一整套是照 spec 写过的真东西,只是后端那一半
 /// 还没到位,现在摆出来是半成品。删了将来要重写,留着零成本。
 ///
-/// 三个入口对应三种壳:
-///   * compact(iPhone):自带 NavigationStack + 标题,
-///   * wide(iPad/Mac):`WideRootView` 三栏壳驱动 `listColumn` + `detailColumn`,
-///     壳自己管导航,所以中列不再套 NavigationStack。
+/// **待建设期间这个类型没有任何存储属性** —— 原来那两个(`externalSelection`
+/// 承接三栏壳的选中项、`renderAsMacListColumn` 标记"我是中列,别自带导航")
+/// 都随入口一起摘掉了:三个入口现在各自返回固定内容,没人写也没人读它们。
+/// `FeatureSurface` 只要求三个方法,不要求任何字段,所以留着纯属误导 ——
+/// 下一个人会以为中列还走那条分支。
 struct CrewTabView: View {
-    /// Wide-shell injection: 保留字段是为了让 `listColumn(selection:)` 的签名
-    /// 不变(`FeatureSurface` 要求),待建设期间没人读它。
-    var externalSelection: Binding<String?>? = nil
-    /// Render only the bare list body (no chrome / NavigationStack) — set by
-    /// `listColumn(...)` so it slots into the shell's middle column.
-    var renderAsMacListColumn = false
-
     var body: some View {
         compactRoot()
     }
@@ -40,7 +35,7 @@ extension CrewTabView: FeatureSurface {
     typealias Selection = String
 
     func listColumn(selection: Binding<String?>) -> some View {
-        // 壳自己有导航,中列直接铺占位;selection 待建设期间不写。
+        // 壳自己有导航,中列直接铺占位;待建设期间不写 selection。
         placeholder
     }
 
@@ -50,15 +45,11 @@ extension CrewTabView: FeatureSurface {
     }
 
     func compactRoot() -> some View {
-        Group {
-            if renderAsMacListColumn {
-                placeholder
-            } else {
-                NavigationStack {
-                    placeholder
-                        .navigationTitle("机组")
-                }
-            }
+        // compact(iPhone)才需要自带 NavigationStack + 标题;宽屏走的是上面
+        // 那两个入口,壳自己管导航,不会进这里。
+        NavigationStack {
+            placeholder
+                .navigationTitle("机组")
         }
     }
 }
