@@ -51,6 +51,14 @@ export interface GroupRouterDecision {
 
 const PROMPT_BUDGET_TOKENS = 2000;
 
+/// 机器人还没有「什么话题该叫我」时,目录里填的占位文本。
+///
+/// 提示词要求"只唤醒描述明显匹配的机器人,没有明显匹配就返回空数组" —— 全是
+/// 占位文本时它会合规地一个都不唤醒,群于是永远安静(Todo #20)。判据本身没错,
+/// 错的是输入;修法在喂养侧(`lib/group-bot-intro.ts` 的 ensureGroupBotDescriptions)。
+/// 这里把它提成常量,是为了让下面的审计能数出"这一轮有几只机器人是瞎的"。
+const NO_DESCRIPTION = '(尚未提交描述)';
+
 export async function runGroupRouter(
   input: GroupRouterInput,
 ): Promise<GroupRouterDecision> {
@@ -112,7 +120,7 @@ export async function runGroupRouter(
       const bot = botMap.get(id);
       if (!bot || !bot.is_active) continue;
       const label = nicknameMap.get(id) || (bot.display_name as string);
-      const description = descMap.get(id) ?? '(尚未提交描述)';
+      const description = descMap.get(id) ?? NO_DESCRIPTION;
       activeBots.push({ id, label, description });
     }
   }
@@ -173,6 +181,13 @@ export async function runGroupRouter(
   let inputTokens = 0;
   let outputTokens = 0;
   let auditLogId: string | null = null;
+  // 判定结果在**写审计之前**就算出来,好让它跟着审计行一起落库。
+  // 为什么非要落:「这一轮我决定谁都不说话」和「这一轮坏了」在界面上、在库里
+  // 长得一模一样。2026-08-25 查 Todo #20 时,唯一能证明调度器跑过的证据是审计
+  // 表里两行 —— 而那两行是模型调用的副产品,没有人特意为这个决定留过痕迹。
+  const validIds = new Set(activeBots.map((b) => b.id));
+  let wakeBots: string[] = [];
+  let rationale = '(no rationale)';
   try {
     const request = {
       model: route.modelToCall,
@@ -199,6 +214,13 @@ export async function runGroupRouter(
       });
     }
 
+    // 先定案,再写审计 —— 顺序反了这一行就带不上判定结果。
+    if (decision && Array.isArray(decision.wake_bots)) {
+      wakeBots = (decision.wake_bots as unknown[])
+        .filter((x): x is string => typeof x === 'string' && validIds.has(x));
+    }
+    if (typeof decision?.rationale === 'string') rationale = decision.rationale;
+
     auditLogId = await enqueueAudit(env, route, {
       auditId: turnId,
       conversationId,
@@ -207,6 +229,17 @@ export async function runGroupRouter(
       inputTokens,
       outputTokens,
       status: 'success',
+      metadata: {
+        wake_bots: wakeBots,
+        rationale,
+        bot_count: activeBots.length,
+        // 这一轮有几只机器人是"瞎"的(没有描述)。返回空名单时这个数就是解释:
+        // 数字等于 bot_count 说明调度器根本没有判据,不是它挑剔。
+        bots_without_description: activeBots.filter(
+          (b) => b.description === NO_DESCRIPTION,
+        ).length,
+        parsed: decision !== null,
+      },
       ...usage,
     });
   } catch (err) {
@@ -222,17 +255,7 @@ export async function runGroupRouter(
     return { wakeBots: [], rationale: 'classifier error', auditLogId: null };
   }
 
-  // 5. Validate the model's output. We accept arrays of strings;
-  //    everything else is treated as "no wake" so a bad response
-  //    doesn't accidentally wake every bot.
-  const validIds = new Set(activeBots.map((b) => b.id));
-  let wakeBots: string[] = [];
-  if (decision && Array.isArray(decision.wake_bots)) {
-    wakeBots = (decision.wake_bots as unknown[])
-      .filter((x): x is string => typeof x === 'string' && validIds.has(x));
-  }
-  const rationale =
-    typeof decision?.rationale === 'string' ? decision.rationale : '(no rationale)';
-
+  // 输出校验(只收字符串数组,其余一律当"谁都不唤醒",免得一个坏回包把全群
+  // 机器人都吵醒)已经在上面写审计之前做完了 —— 见那里的注释。
   return { wakeBots, rationale, auditLogId };
 }
