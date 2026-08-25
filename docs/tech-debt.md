@@ -12,6 +12,37 @@
 
 ---
 
+### 🔴 群聊分摊：设计与线上现状三档错位 —— 后端全在、界面不可达、线上一次都没跑过（Todo #17 只读复核）
+- **发现**: 2026-08-25 · Todo #17「理一下群聊分摊机制 + 为什么群聊设置里看不到分摊设置」。**只读复核，未改代码、未动生产数据。** 复核对象/ref/时刻：代码读的是本地 `main`（`14abc094`，2026-08-25）；线上库读的是 linked prod（`zafhoiwwpanpuashtnxy`，2026-08-25 07:0x UTC，`supabase db query --linked` 只读）；线上 worker 探的是 `api.pendingname.com`（同日）。
+- **背景**: 本条不是新增一个未知问题，而是给已挂在册的 🔴「群账号(group_account subject)矩阵无 PendingBot IM 客户端消费入口 + chat-group 与 subject 双轨未桥接」（2026-06-09）补一份**线上实测的现状读数**，并点出**概念文档与代码的口径差**。原条目仍是同一根因，别当两条修。
+
+- **三档必须分清（这次复核的主要产出）**:
+
+  | 档 | 具体内容 |
+  |---|---|
+  | **线上真的在跑** | 群里的 AI 花费**全额记在建群那个人的个人钱包**上（`conversations.user_id`，不是发言人、不是均摊）。群路由那次小模型调用（决定叫醒哪只 bot）**谁都不算**。计费总开关线上是**开着**的（KV `cfg:feature-flags` = `{"langfuse":true,"billing":true}`，压过 `wrangler.jsonc` 里 `BILLING_ENABLED:"false"` 的部署默认值）。 |
+  | **代码里有但线上够不到 / 从未触发** | 实缴池 + 认缴（share-index 质押池）整套：`billing/group-wallet.ts` 的 `settleGroupSpend`/`resolveGroupStakes`/`contributeToGroup`/`setPledge`/`withdrawFromGroup`、13 个 `/v1/group-subjects/*` 端点（线上已部署，探测 401 而非 404）、DB 表 `group_pools`/`group_contributions`/`group_pledges` + 原子 RPC。iOS/Mac 侧 `GroupWalletView.swift`(315 行) + `GroupWalletService.swift` + `GroupSubjectService.swift` **编进了 App 二进制但全仓零引用**（grep 复核于 `14abc094`）。 |
+  | **只有设计没有代码** | 「群聊 ⇄ 群账号」的桥。DB 里有 `ensure_group_subject_for_conversation(conv_id)→subject_id`，但**没有任何 edge 路由或客户端调用它**（全仓 grep 只命中 `schema.ts` 的类型声明）。 |
+
+- **线上读数（2026-08-25，prod）**:
+  - `pendingbot.subjects` 按 kind 分组：**只有 `user_account` 5 行，`group_account` 0 行** —— 线上不存在任何群账号。
+  - `group_pledges` / `group_contributions` / `group_pools`：**三张表全 0 行**。
+  - 6 个 `conversation_type='group'` 的会话，`responsible_subject_id` **全部为 NULL**。
+  - `pnc_ledger` 5 行全是 credit-in（signup / admin / polar_checkout），**没有一行 `group_topup`/`group_refund`/`group_withdraw`**。
+  - `audit_log` 里那个唯一有花费的群会话，2 行都是 `task_type='group_router'`、`user_id` 为 NULL、`metadata` 为 `{}` → 落在 `billing_status='free'`（无人付费）。
+- **机制上为什么会这样（链条）**: `open_group_conv`（建群 RPC，`20260611013529` 重写后的 live 版本）**不 mint group_account subject、也不写 `responsible_subject_id`**；`20260528083616` 那次回填是一次性的、且只把**创建者的 user_account subject** 填给了当时存量的会话 → 新建群一律 NULL → `usage-gate.ts:resolveBillingSubjectId` 走到「group 但没有责任主体」的 fall-through 分支 → 回退到 `ctx.userId` → 群 bot 回复路径 `lib/group-dispatch.ts` 传的 `placeholderUserId = conversations.user_id`（**建群人**）→ 全额扣建群人个人钱包，`settleGroupSpend`（唯一实现分摊的函数）**一次都没被进入过**。
+- **影响**:
+  - **产品面**：群里别人聊天、机器人主动冒话，钱全由建群的人一个人出，且**产品里没有任何地方告诉过他这件事**。群成员越多、bot 越活跃，建群人被动承担的越多。
+  - **工程面**：一整套分摊实现（edge + DB + 三个 iOS 文件）是**未被任何真实流量执行过的代码**，其正确性只有单测背书；哪天桥接上，等于一次性把没跑过的计费逻辑推给真实用户。
+- **文档 vs 代码的口径差（Todo #17 要求明确点出的部分）**:
+  - `docs/handbook/shared/concepts/group-pledge.md`「用在哪·长什么样」写着「**群钱包页(iOS / Mac)**：显示实缴池余额、总份额…以及充值 / 认缴 / 取出 / 退群 / 解散这几个操作」——**读起来像已有入口，实际不可达**（视图存在但无人 present）。
+  - 同文件「一笔群消费怎么摊」通篇现在时描述分摊规则 —— 线上**从未发生过一次**按份额的分摊。
+  - `billing-subject.md`「群会话：群里任何人触发的 AI 消费，都从**群钱包**出，不从触发者个人钱包出」—— 线上实际是**从建群人个人钱包出**。
+  - 两篇概念文档都**没有提到**「群聊(conversation) 与 群账号(subject) 是两套、且没有桥」这个前提。建议在这两篇加一句现状注记（本条不改文档，避免与技术架构那边的 handbook 维护撞车）。
+- **建议（需产品先拍板，不是纯工程活）**: 先定「PendingBot 的群聊是否等同一个群账号 / 什么时候 mint / 谁是配置界面」；定了之后工程侧才是三步——① 暴露 conversation→subject 桥的端点、② 建群/首次群消费时 mint group subject 并回填 `responsible_subject_id`、③ 把 `GroupWalletView` 挂进群设置。**在桥接上线之前，不建议先把界面挂出来**（会出现「设了认缴但计费不走它」的更坏状态）。
+- **关联**: 本册 🔴「群账号(group_account subject)矩阵无 PendingBot IM 客户端消费入口 + chat-group 与 subject 双轨未桥接」（同根，2026-06-09 记）；`docs/handbook/shared/concepts/group-pledge.md`、`billing-subject.md`；`docs/superpowers/plans/2026-06-02-group-wallet-polar-rehome.md`。
+- **状态**: 待产品拍板（工程侧后端已就绪、客户端 API 层已就绪，缺桥 + 缺入口）。
+
 ### 🟢 系统级 model slug 全是硬编码常量 — ✅ 工程收口 2026-06-17（7/7 角色收进 board + admin UI；剩部署尾巴）
 - **发现**: 2026-06-17 · `feat/preset-content-realign`（排查「预设机器人配置对不上」延伸出的全库引用审计）
 - **背景/用户定的纪律**: **model slug 绝不硬编码**，不适合硬编码的配置统一收进 board CMS 管理（同 `feedback_no_hardcoded_prompts` 把 prompt 赶进 loader 通道的思路）。现状是各功能的「系统模型角色」都写死成代码常量，散落多处、无统一配置入口；其中一批还是早期手编、没核验过的占位 slug。
