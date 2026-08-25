@@ -1835,3 +1835,22 @@ supabase-swift 匿名写的硬失败闸。下面是**看到但按边界不动**�
   - 线上 26 只 `model_provider IS NULL` 的种子 bot 里，固定模型存的是**裸名**（`claude-opus-4.7` / `claude-sonnet-4.6` / `kimi-k2.6` / `qwen3.6-plus` / `gemma-4-31b-it`）。provider 为空 → 落 OpenRouter 通道 → 裸名在 OpenRouter 不是合法 model id → 必 404。都是种子数据，暂不影响真人，但**同一个"provider 为空就默认 OpenRouter"的回落规则**哪天用在真实 bot 上就会咬人。
 - **需要人定的一件事（非代码）**: 404 的具体触发项在 OpenRouter 账号侧（该 key 是自有 BYOK，存在 AI Gateway `default` 别名下，见 `docs/deploy.md:442`）。`https://openrouter.ai/settings/privacy` 里「可能用请求数据训练的付费线路」/ ZDR 强制 / ignored providers 三项任一都能造成它。**放开训练权限＝对话内容可能被上游用于训练，是隐私取舍，必须作者本人定**。放开只降低中彩率，不根治 —— 池子里随时会进新模型。
 - **状态**: 待办 —— 已定位，未动手（本次派活边界是"先报告"）。
+
+### 🔴 群聊里机器人永远不说话 —— 建群带进来的机器人没人给它写「何时叫我」，而调度器只认这一份判据
+- **发现**: 2026-08-25 · `fix/group-create`（人类 Todo #20「往群聊里发信息，机器人没反应」）
+- **位置**: `apps/edge/src/routes/groups.ts:416`（`generateInitialBotDescription` 的**唯一**调用点，挂在 `POST /v1/groups/:id/invite-bot`）· `apps/edge/src/llm/group-router.ts`（`group_bot_descriptions` 读不到就填 `(尚未提交描述)`）· KV `prompt:group-router/zh`
+- **链条（四件事叠起来，缺一条都不会静默）**:
+  1. 群调度器判断"本轮该谁说话"的**唯一依据**，是每只机器人在这个群里的一份自我介绍（`group_bot_descriptions.description`）。
+  2. 生成这份介绍的 `generateInitialBotDescription` **只在 `invite-bot` 路由里被调用一次**。`POST /v1/groups`（建群时用 `memberBotIds` 一次性带进来）**完全不生成** —— 而这正是产品里建群的主路径。
+  3. 于是调度器的机器人名单每一行都是 `(尚未提交描述)`。而线上提示词原文：「只唤醒**描述明显匹配**最新消息话题的机器人」「**没有明显匹配时返回空数组，这是常见且正确的（让群更安静）**」。→ 稳定返回空。
+  4. `wakeBotIds` 为空时 `dispatchGroupTurn` 直接 `return { status: 'no_bots' }` —— **不写消息行、不写日志气泡、不改 `last_turn_status`、不报错**。
+- **实测（线上只读，读数时刻 2026-08-25 09:2x 北京时间+8，对象 = 线上 Supabase）**:
+  - `group_bot_descriptions` **全表 0 行**（不是这一个群没有，是从来没有过一行）。
+  - 群「抛沙」（`01a03749-…`，2026-08-25 04:58:51Z 建）3 条消息**全是作者本人**发的，`last_turn_status` 为 NULL。
+  - **但调度器确实跑了**：`audit_log` 两条 `task_type='group_router'`、模型 `google/gemma-4-31b-it`、`status='success'`，落在两条用户消息之后 13 秒 / 7 秒。**"没反应"不等于"没跑"。**
+- **影响**: 群聊是核心功能。**通过建群主路径拉进来的机器人，在群里永远不会主动说话**，用户唯一的出路是 `@机器人名`（那条路绕开调度器）——而产品里没有任何地方告诉他这件事。
+- **两个独立的坑，别只修第一个**:
+  - **A（功能）**: 建群路径漏了生成介绍这一步。最小修法是在 `POST /v1/groups` 里对每个 `memberBotIds` 也 `waitUntil(generateInitialBotDescription(...))`；但要顺带想清楚**存量群**怎么补（现在线上 6 个群一份介绍都没有），以及生成失败时要不要重试 —— 现在失败只 `console.error`，没有任何补偿。
+  - **B（可观测性，更根本）**: **「它选择不说话」和「它坏了」在界面上、在数据库里都是同一个样子。** 一个会常态化返回"沉默"的判断分支，没有在任何地方留下痕迹。这次能定位靠的是审计流水里那两行 —— 而那两行是 LLM 调用的副产品，不是有人特意为这个决定留的。判断结果（wake_bots / rationale）应该落到某处可查，否则下一次同样的问题还是只能靠猜。
+- **顺带一条不属于本条、但查的时候撞见的**: `dispatchGroupTurn` 调 `gateConversation(env, supa, { conversationId })` **不传 userId**，而群会话的 `responsible_subject_id` 现在是 NULL → `resolveBillingSubjectId` 走完 group 分支后**落到 `if (ctx.userId)` 而 ctx.userId 是 undefined → 返回 null → 门直接放行**。那句「fall through to the initiating user rather than leaving the turn ungated」的注释描述的行为**在这个调用点上并没有发生**：群回合当前是**完全不过余额门**的。这条归群钱包那条线（Todo #17/#19）。
+- **状态**: 待办。已在 Todo #20 的群聊汇报里说明，等作者用 `@机器人名` 做一次绕开调度器的验证 + 拍板修法。只查未改。
