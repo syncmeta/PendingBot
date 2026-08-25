@@ -196,29 +196,32 @@ struct WideRootView: View {
         case .me:
             // 「我」detail = 共享 surface 的 detail 列,按中列选中的 `MeSection`
             // 渲染对应详情(钱包/加好友方式/能力扩展/设置);无选中 → 空态。
-            MeTabView().detailColumn(selection: meSelection)
+            MeTabView().detailColumn(selection: $meSelection)
         case .message:
-            // 消息 detail = 共享 surface 的 detail 列,纯从 selection(ChatDest)
-            // 解析。注意:这是与 list 列不同的 `MessageTabView()` 实例,二者
+            // 消息 detail = 共享 surface 的 detail 列,按 selection(ChatDest)
+            // 渲染。注意:这是与 list 列不同的 `MessageTabView()` 实例,二者
             // @State 互相不可见 —— detail 的 `bot(for:)` 读不到 list 列加载的
             // `bots`,会传 `bot: nil`;ConversationView 设计上能从
             // `pendingPeer?.peerId ?? conversation.bot_id` 自行解析 botId,所以
             // 仍可用(Phase 7 真机验证 bot 元信息渲染)。
-            MessageTabView().detailColumn(selection: messagesSelection)
+            // **selection 传的是 Binding**:右栏托管的「发起群聊」页建完群要跳进
+            // 新群,那个写操作得落在壳这份 `@State` 上,不能落在 detail 实例自己
+            // 那份没人观察的副本里(2026-08-25 Mac 建群不跳转就是这么来的)。
+            MessageTabView().detailColumn(selection: $messagesSelection)
         case .friends:
             // 好友 detail = 共享 surface 的 detail 列,纯从 selection(PendingPeer)
             // 解析(同上 separate-@State 注意点:`bot: nil`,ConversationView 自解析)。
-            FriendsTabView().detailColumn(selection: friendsSelection)
+            FriendsTabView().detailColumn(selection: $friendsSelection)
         case .envelope:
             // 来信 detail = 共享 surface 的 detail 列,纯从 selection
             // (envelope_runs.id)解析;`EnvelopeArticleView` 按 id 自取行 +
             // 订阅 Realtime,与中列是不同 `EnvelopeTabView()` 实例也无妨。
-            EnvelopeTabView().detailColumn(selection: envelopeSelection)
+            EnvelopeTabView().detailColumn(selection: $envelopeSelection)
         case .crew:
             // 机组 detail = 共享 surface 的 detail 列,按选中的 session id 渲染
             // 遥控台(live banner + transcript + 权限卡 + composer);
             // `CrewSessionDetailView` 按 id 自取数据 + 连 viewer WS。
-            CrewTabView().detailColumn(selection: crewSelection)
+            CrewTabView().detailColumn(selection: $crewSelection)
         }
     }
 }

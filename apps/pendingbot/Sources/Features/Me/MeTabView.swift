@@ -437,9 +437,9 @@ extension MeTabView: FeatureSurface {
         return view
     }
 
-    func detailColumn(selection: MeSection?) -> some View {
+    func detailColumn(selection: Binding<MeSection?>) -> some View {
         Group {
-            if let section = selection {
+            if let section = selection.wrappedValue {
                 // 包一层 NavigationStack:详情各自带 `.navigationTitle`,
                 // `BotCapabilitiesView` 还会继续 push 子页 —— 都要落在右栏自己的
                 // 导航栈里。`.id(section)` 保证切条目时是干净实例。

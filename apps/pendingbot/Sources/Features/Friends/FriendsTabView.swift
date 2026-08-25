@@ -1367,9 +1367,9 @@ extension FriendsTabView: FeatureSurface {
         return view
     }
 
-    func detailColumn(selection: PendingPeer?) -> some View {
+    func detailColumn(selection: Binding<PendingPeer?>) -> some View {
         Group {
-            if let peer = selection {
+            if let peer = selection.wrappedValue {
                 // 包一层 NavigationStack:`ConversationView` 用
                 // `.navigationDestination(isPresented:)` push 进机器人/会话设置,
                 // split-view 的 detail 列本身不是导航栈,缺了它 Mac/iPad 宽屏壳里

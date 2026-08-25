@@ -405,9 +405,9 @@ extension EnvelopeTabView: FeatureSurface {
         return view
     }
 
-    func detailColumn(selection: String?) -> some View {
+    func detailColumn(selection: Binding<String?>) -> some View {
         Group {
-            if let id = selection {
+            if let id = selection.wrappedValue {
                 EnvelopeArticleView(envelopeRunId: id)
                     .id(id)
             } else {

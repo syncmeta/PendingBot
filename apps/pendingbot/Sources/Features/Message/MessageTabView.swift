@@ -1060,9 +1060,16 @@ extension MessageTabView: FeatureSurface {
         return view
     }
 
-    func detailColumn(selection: ChatDest?) -> some View {
-        Group {
-            if let dest = selection {
+    func detailColumn(selection: Binding<ChatDest?>) -> some View {
+        // 和 `listColumn` 一样,把壳的 selection 灌进这个实例的 `externalSelection`。
+        // 右栏托管的不只是"看"的页面:「发起群聊」建完群之后要把选中项换成新群,
+        // 那个写操作只有拿到 Binding 才落得下去。没有它时(2026-08-25 之前),
+        // `groupCreated()` 会退回去写自己那份没人观察的 `@State selected` ——
+        // Mac 上按「创建」群真的建出来了,屏幕却纹丝不动。
+        var view = self
+        view.externalSelection = selection
+        return Group {
+            if let dest = selection.wrappedValue {
                 // 包一层 NavigationStack:`ConversationView` 用
                 // `.navigationDestination(isPresented:)` push 进机器人/会话设置,
                 // 而 split-view 的 detail 列本身**不是**导航栈 —— 缺了它,Mac/iPad
@@ -1070,9 +1077,9 @@ extension MessageTabView: FeatureSurface {
                 // 与 `MeTabView.detailColumn` 同款。`.id` 钉在外层:切会话时连同
                 // 导航栈一起换成干净实例。
                 NavigationStack {
-                    destinationView(for: dest)
+                    view.destinationView(for: dest)
                 }
-                .id(destinationKey(dest))
+                .id(view.destinationKey(dest))
             } else {
                 EmptyDetailHint(systemImage: "bubble.left.and.bubble.right")
             }

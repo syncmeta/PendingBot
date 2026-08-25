@@ -36,9 +36,9 @@ extension CrewTabView: FeatureSurface {
         return view
     }
 
-    func detailColumn(selection: String?) -> some View {
+    func detailColumn(selection: Binding<String?>) -> some View {
         Group {
-            if let sessionId = selection {
+            if let sessionId = selection.wrappedValue {
                 NavigationStack {
                     CrewSessionDetailView(sessionId: sessionId)
                 }
