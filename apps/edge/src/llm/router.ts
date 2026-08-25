@@ -358,6 +358,15 @@ export class GatewayCostPendingError extends Error {
 // Throws on a transient audit_log insert failure (or GatewayCostPendingError)
 // so the queue retries; child-row inserts and billing are best-effort
 // (logged, never thrown) exactly as the old inline recordAudit treated them.
+/// Postgres foreign-key violation (SQLSTATE 23503), as surfaced by
+/// PostgREST. The code is the reliable signal; the message text is matched
+/// only as a fallback for clients that drop `code`.
+export function isForeignKeyViolation(err: { code?: string; message?: string }): boolean {
+  if (err.code === '23503') return true;
+  const m = err.message?.toLowerCase() ?? '';
+  return m.includes('violates foreign key constraint');
+}
+
 export async function persistAuditMessage(
   env: Env,
   msg: AuditMessage,
@@ -501,10 +510,54 @@ export async function persistAuditMessage(
   // than a primary-key error. ignoreDuplicates means a conflicting row
   // is left untouched and NOT returned, so an empty result set is the
   // signal "already persisted on an earlier delivery".
-  const { data: insertedRows, error } = await supa
+  let { data: insertedRows, error } = await supa
     .from('audit_log')
     .upsert(insertRow, { onConflict: 'id', ignoreDuplicates: true })
     .select('id');
+
+  // The conversation this row points at can be GONE by the time the queue
+  // gets here. `POST /v1/messages/start` rolls a first turn back when it
+  // produced nothing the user could see — it deletes the whole conversation
+  // (routes/messages.ts, the `!producedOutput` branch). enqueueAudit already
+  // ran inside runChatTurn's catch, so the message is in flight while the
+  // row it references is being deleted; the consumer then INSERTs against a
+  // conversation that no longer exists and trips
+  // `audit_log_conversation_id_fkey` (23503).
+  //
+  // ON DELETE SET NULL on that FK does NOT cover this — the delete happens
+  // BEFORE the insert, so there is no existing row to null out. This is the
+  // insert side of the same hole, and it has to be handled here.
+  //
+  // Retrying the same row would fail forever (the conversation never comes
+  // back), so all five queue attempts burn and the row lands in the DLQ,
+  // never in the ledger. That is exactly why `status='error'` rows have been
+  // missing from audit_log since the table was created — every "first
+  // message failed" incident silently erased its own evidence.
+  // See docs/tech-debt.md.
+  //
+  // Losing the conversation link is the right trade: the turn itself still
+  // gets a row (task_type / status / error_class / route_trace / cost), and
+  // the conversation it belonged to no longer exists to link to anyway.
+  if (error && isForeignKeyViolation(error) && insertRow.conversation_id != null) {
+    console.warn(
+      '[audit_log upsert] conversation vanished before the row landed — ' +
+        'retrying with conversation_id=null',
+      auditId,
+      insertRow.conversation_id,
+    );
+    const orphanRow = {
+      ...insertRow,
+      conversation_id: null,
+      metadata: {
+        ...(insertRow.metadata as Record<string, Json> | undefined),
+        orphaned_conversation_id: insertRow.conversation_id,
+      } as Json,
+    };
+    ({ data: insertedRows, error } = await supa
+      .from('audit_log')
+      .upsert(orphanRow, { onConflict: 'id', ignoreDuplicates: true })
+      .select('id'));
+  }
   if (error) {
     // Transient — throw so the queue retries this message.
     console.warn('[audit_log upsert]', error.message);
@@ -665,7 +718,40 @@ export interface FallbackOpts extends RouteResolveOpts {
   // Hard cap on total attempts (resolveRoute + runner) before we give
   // up and throw FallbackError. Default 3.
   maxAttempts?: number;
+  // Model-pool bots only. Called when an attempt fails with a class that
+  // means "this exact model can't be reached on this route AT ALL"
+  // (see REDRAWABLE_ERROR_CLASSES) — the failure is a property of the
+  // model, not of the request, so retrying the same slug anywhere is
+  // pointless but a DIFFERENT model from the same pool may work fine.
+  //
+  // This exists because a pool bot draws its model once, at conversation
+  // start, from a catalog that was never checked for reachability. Draw a
+  // model the OpenRouter account's data policy excludes and the user gets
+  // a raw 404 — even though simply drawing again would have worked. The
+  // failure path was already "start over", it just charged the user for
+  // it. See docs/tech-debt.md.
+  //
+  // Safe here and nowhere else: withFallback's runner only OPENS the
+  // stream, so a failure inside it means not one byte has reached the
+  // client yet. Once chunks flow, swapping models is off the table.
+  //
+  // Returns the replacement to try, or null when the pool is exhausted
+  // (then we give up exactly as before). Implementations must exclude
+  // every slug already tried — see pickRandomModel's strictExclude.
+  redrawModel?: (failed: {
+    modelSlug: string;
+    errorClass: string;
+  }) => Promise<{ modelSlug: string; preferProvider: string | null } | null>;
 }
+
+// Error classes that say "this model is not reachable on this route,
+// period" — as opposed to "this request was bad" or "try again later".
+// Only these trigger a pool re-draw; a context_length or bad_request
+// failure would repeat on any model, and a rate_limit is transient.
+export const REDRAWABLE_ERROR_CLASSES: ReadonlySet<string> = new Set([
+  'not_found',
+  'no_route',
+]);
 
 export interface FallbackResult<T> {
   result: T;
@@ -742,6 +828,13 @@ export function classifyError(err: unknown): {
 // single place that throws FallbackError, so no call site can forget it —
 // grep / alert on this exact string to catch every exhausted LLM turn.
 export const FALLBACK_EXHAUSTED_MARKER = '[llm-fallback-exhausted]';
+
+// Fixed log marker for "a pool bot's drawn model was unreachable and we
+// silently drew another". Silent to the user by design — but it must not
+// be silent to us, or a pool slowly filling with unreachable models looks
+// like nothing at all. Grep this to see how often the pool hands out a
+// model we can't call.
+export const MODEL_REDRAWN_MARKER = '[llm-model-redrawn]';
 
 /// The last real failure behind a FallbackError, flattened. `lastError`
 /// and `routeTrace` have always been on the error object; nobody read
@@ -828,12 +921,21 @@ export async function withFallback<T>(
   const routeTrace: RouteTraceEntry[] = [];
   let lastError: unknown = null;
   let lastRoute: ResolvedRoute | null = null;
+  // The model/provider actually in play. Starts at the caller's choice and
+  // moves only when redrawModel hands us a replacement.
+  let modelSlug = opts.modelSlug;
+  let preferProvider = opts.preferProvider;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const attemptStart = Date.now();
     let route: ResolvedRoute;
     try {
-      route = await resolveRoute(supa, env, { ...opts, excludeProviders: tried });
+      route = await resolveRoute(supa, env, {
+        ...opts,
+        modelSlug,
+        preferProvider,
+        excludeProviders: tried,
+      });
     } catch (err) {
       const cls = classifyError(err);
       routeTrace.push({
@@ -870,6 +972,37 @@ export async function withFallback<T>(
         latency_ms: Date.now() - attemptStart,
       });
       lastError = err;
+
+      // "This model is unreachable here" → ask the caller for another one
+      // from the same pool rather than handing the user a 404. Not a
+      // transient retry: we deliberately re-enter the loop with a
+      // DIFFERENT model, and the provider exclusion list resets because
+      // the new model may well live on a provider the old one was
+      // excluded from.
+      if (REDRAWABLE_ERROR_CLASSES.has(cls.errorClass) && opts.redrawModel) {
+        const replacement = await opts
+          .redrawModel({ modelSlug, errorClass: cls.errorClass })
+          .catch((redrawErr) => {
+            console.warn('[withFallback] model re-draw failed', redrawErr);
+            return null;
+          });
+        if (replacement) {
+          console.warn(
+            MODEL_REDRAWN_MARKER,
+            JSON.stringify({
+              from: modelSlug,
+              to: replacement.modelSlug,
+              error_class: cls.errorClass,
+              task_type: opts.taskType ?? null,
+            }),
+          );
+          modelSlug = replacement.modelSlug;
+          preferProvider = replacement.preferProvider ?? undefined;
+          tried.length = 0;
+          continue;
+        }
+      }
+
       if (!cls.transient) break;
       tried.push(route.provider.slug);
     }

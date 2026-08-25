@@ -161,3 +161,54 @@ export async function rerollConversationModel(
   await writeConvModel(env, conversationId, { slug: picked.slug, provider, revealed: false });
   return { slug: picked.slug, provider };
 }
+
+/**
+ * Re-draw after a model turned out to be unreachable mid-turn.
+ *
+ * Different from `rerollConversationModel` in three ways that matter:
+ *   - it is driven by a FAILURE, not by the user asking for a different
+ *     answer, so it must never hand back a slug already known to be dead
+ *     (`strictExclude`);
+ *   - it keeps `model_revealed` untouched — swapping a broken model is
+ *     not a re-roll of the blind box, and flipping reveal here would leak
+ *     "something went wrong" into a purely cosmetic flag;
+ *   - it takes the full exclusion list, not just the current slug, so a
+ *     caller retrying more than once can't cycle.
+ *
+ * Returns null when the bot has no pool, or when every pool member has
+ * already been excluded — the caller then surfaces the original failure.
+ */
+export async function redrawUnusableConversationModel(
+  env: Env,
+  conversationId: string | null,
+  bot: BotModelSelectionInput,
+  excludeSlugs: string[],
+): Promise<{ slug: string; provider: string | null } | null> {
+  const cfg = modelPoolConfigFromBotConfig(bot.config);
+  if (!cfg) return null;
+  const picked = await pickRandomModel(env, cfg, { excludeSlugs, strictExclude: true });
+  if (!picked) return null;
+  const provider = picked.modelProvider ?? 'openrouter';
+  // A conversation-less caller (group dispatch) still gets the swap for
+  // this turn; there is just no row to pin it to.
+  if (conversationId) {
+    const { error } = await serviceClient(env)
+      .from('conversations')
+      .update({ current_model_slug: picked.slug, current_model_provider: provider })
+      .eq('id', conversationId);
+    if (error) {
+      // Persisting is best-effort — the turn in front of the user matters
+      // more than the pin. Loud, though: a conversation left pinned to the
+      // dead slug will re-draw on every single turn from here on.
+      console.warn(
+        '[redrawUnusableConversationModel] persist failed — conversation stays ' +
+          'pinned to the unusable model',
+        conversationId,
+        error.message,
+      );
+    } else {
+      await deleteCachedConv(env, conversationId).catch(() => undefined);
+    }
+  }
+  return { slug: picked.slug, provider };
+}

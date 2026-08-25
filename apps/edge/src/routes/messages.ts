@@ -19,10 +19,13 @@ import { deleteCachedAttachment, removeInventoryIds } from '../lib/attachment-ca
 import { resolveBot } from '../lib/bot-cache';
 import { deleteCachedConv, resolveConv } from '../lib/conv-cache';
 import { pickRandomModel } from '../llm/random-model';
+import type { FallbackOpts } from '../llm/router';
 import {
   chooseConversationMainModel,
+  modelPoolConfigFromBotConfig,
   parseBlindBoxConfig,
   readConvModelStateRow,
+  redrawUnusableConversationModel,
   rerollConversationModel,
   type ConversationModelState,
 } from '../lib/conversation-model';
@@ -394,6 +397,11 @@ messageRoutes.post('/', async (c) => {
     conversationId: parsed.conversationId,
     conversation: conv,
   });
+  const poolRedraw = makePoolRedraw(c.env, parsed.conversationId, {
+    model_id: bot.model_id as string,
+    model_provider: bot.model_provider,
+    config: bot.config,
+  });
 
   const isSelfChat = conv.conversation_type === 'self';
 
@@ -468,6 +476,7 @@ messageRoutes.post('/', async (c) => {
             webSearch: parseWebSearchConfig(bot.config),
             activeLookbacks: parsed.activeLookbacks ?? [],
             providerOverride: turnRoute.providerOverride,
+            redrawModel: poolRedraw,
             clientTz: parsed.clientTz,
             signal: detachedAbort.signal,
             emit,
@@ -731,6 +740,7 @@ messageRoutes.post('/start', async (c) => {
     ...bot,
     conversationId: convId,
   });
+  const poolRedraw = makePoolRedraw(c.env, convId, bot);
 
   const encoder = new TextEncoder();
   const detachedAbort = new AbortController();
@@ -801,6 +811,7 @@ messageRoutes.post('/start', async (c) => {
             webSearch: parseWebSearchConfig(bot.config),
             activeLookbacks: [],
             providerOverride: turnRoute.providerOverride,
+            redrawModel: poolRedraw,
             clientTz: parsed.clientTz,
             signal: detachedAbort.signal,
             emit,
@@ -1039,6 +1050,11 @@ messageRoutes.post('/:id/regenerate', async (c) => {
       conversationId: parsed.conversationId,
     });
   }
+  const poolRedraw = makePoolRedraw(c.env, parsed.conversationId, {
+    model_id: bot.model_id,
+    model_provider: bot.model_provider,
+    config: bot.config,
+  });
 
   const isSelfChat = conv.conversation_type === 'self';
   const encoder = new TextEncoder();
@@ -1076,6 +1092,7 @@ messageRoutes.post('/:id/regenerate', async (c) => {
             visionModelOverride: botConfigString(bot.config, 'visionModel'),
             webSearch: parseWebSearchConfig(bot.config),
             providerOverride: turnRoute.providerOverride,
+            redrawModel: poolRedraw,
             clientTz: parsed.clientTz,
             signal: detachedAbort.signal,
             emit,
@@ -1407,6 +1424,34 @@ async function lookupLatestUserMessageId(
     .limit(1)
     .maybeSingle();
   return (data?.id as string | undefined) ?? null;
+}
+
+/// Build the router's "this model is unreachable, give me another" hook
+/// for a pool bot. undefined for single-model bots — they have nothing to
+/// re-draw from, and the failure should surface as it always did.
+///
+/// The closure accumulates every slug it has been asked about, so a turn
+/// that trips over two dead models in a row can't be handed the first one
+/// back. `redrawUnusableConversationModel` returns null once the pool is
+/// exhausted, which ends the retry — the router then throws the original
+/// failure, and withFallback's own maxAttempts caps it regardless.
+function makePoolRedraw(
+  env: AppBindings['Bindings'],
+  conversationId: string | null,
+  bot: { model_id: string; model_provider: string | null; config: unknown },
+): FallbackOpts['redrawModel'] | undefined {
+  if (!modelPoolConfigFromBotConfig(bot.config)) return undefined;
+  const deadSlugs: string[] = [];
+  return async ({ modelSlug }) => {
+    if (!deadSlugs.includes(modelSlug)) deadSlugs.push(modelSlug);
+    const next = await redrawUnusableConversationModel(
+      env,
+      conversationId,
+      bot,
+      deadSlugs,
+    );
+    return next ? { modelSlug: next.slug, preferProvider: next.provider } : null;
+  };
 }
 
 async function resolveMessageBotTurnRoute(

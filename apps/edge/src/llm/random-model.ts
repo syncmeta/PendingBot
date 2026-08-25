@@ -211,7 +211,7 @@ async function resolvePresetsToSlugs(env: Env, presetSlugs: string[]): Promise<s
 export async function pickRandomModel(
   env: Env,
   cfg: RandomModelConfig,
-  opts?: { excludeSlugs?: string[] },
+  opts?: { excludeSlugs?: string[]; strictExclude?: boolean },
 ): Promise<PickedModel | null> {
   const pool = await getPool(env);
   if (!pool || pool.length === 0) return null;
@@ -221,9 +221,19 @@ export async function pickRandomModel(
   const exclude = opts?.excludeSlugs;
   if (exclude && exclude.length > 0) {
     const without = candidates.filter((m) => !exclude.includes(m.slug));
-    // Only honor the exclusion when it leaves something to pick — a
-    // 1-model pool shouldn't dead-end a regenerate.
-    if (without.length > 0) candidates = without;
+    // Two different callers, two different right answers when the
+    // exclusion empties the pool:
+    //
+    //   regenerate (strictExclude off, the default) — "draw me a different
+    //     one" is a preference. A 1-model pool shouldn't dead-end it, so we
+    //     fall back to the unfiltered candidates and may hand back the same
+    //     slug again.
+    //
+    //   retry-after-unusable (strictExclude on) — the excluded slugs are
+    //     ones we just PROVED can't be reached. Handing one back would
+    //     retry a known-dead model, and a retry loop built on it would
+    //     spin. Return null instead so the caller stops.
+    candidates = opts?.strictExclude ? without : (without.length > 0 ? without : candidates);
   }
   if (candidates.length === 0) return null;
 
