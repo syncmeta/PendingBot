@@ -358,6 +358,15 @@ export class GatewayCostPendingError extends Error {
 // Throws on a transient audit_log insert failure (or GatewayCostPendingError)
 // so the queue retries; child-row inserts and billing are best-effort
 // (logged, never thrown) exactly as the old inline recordAudit treated them.
+/// Postgres foreign-key violation (SQLSTATE 23503), as surfaced by
+/// PostgREST. The code is the reliable signal; the message text is matched
+/// only as a fallback for clients that drop `code`.
+export function isForeignKeyViolation(err: { code?: string; message?: string }): boolean {
+  if (err.code === '23503') return true;
+  const m = err.message?.toLowerCase() ?? '';
+  return m.includes('violates foreign key constraint');
+}
+
 export async function persistAuditMessage(
   env: Env,
   msg: AuditMessage,
@@ -501,10 +510,54 @@ export async function persistAuditMessage(
   // than a primary-key error. ignoreDuplicates means a conflicting row
   // is left untouched and NOT returned, so an empty result set is the
   // signal "already persisted on an earlier delivery".
-  const { data: insertedRows, error } = await supa
+  let { data: insertedRows, error } = await supa
     .from('audit_log')
     .upsert(insertRow, { onConflict: 'id', ignoreDuplicates: true })
     .select('id');
+
+  // The conversation this row points at can be GONE by the time the queue
+  // gets here. `POST /v1/messages/start` rolls a first turn back when it
+  // produced nothing the user could see — it deletes the whole conversation
+  // (routes/messages.ts, the `!producedOutput` branch). enqueueAudit already
+  // ran inside runChatTurn's catch, so the message is in flight while the
+  // row it references is being deleted; the consumer then INSERTs against a
+  // conversation that no longer exists and trips
+  // `audit_log_conversation_id_fkey` (23503).
+  //
+  // ON DELETE SET NULL on that FK does NOT cover this — the delete happens
+  // BEFORE the insert, so there is no existing row to null out. This is the
+  // insert side of the same hole, and it has to be handled here.
+  //
+  // Retrying the same row would fail forever (the conversation never comes
+  // back), so all five queue attempts burn and the row lands in the DLQ,
+  // never in the ledger. That is exactly why `status='error'` rows have been
+  // missing from audit_log since the table was created — every "first
+  // message failed" incident silently erased its own evidence.
+  // See docs/tech-debt.md.
+  //
+  // Losing the conversation link is the right trade: the turn itself still
+  // gets a row (task_type / status / error_class / route_trace / cost), and
+  // the conversation it belonged to no longer exists to link to anyway.
+  if (error && isForeignKeyViolation(error) && insertRow.conversation_id != null) {
+    console.warn(
+      '[audit_log upsert] conversation vanished before the row landed — ' +
+        'retrying with conversation_id=null',
+      auditId,
+      insertRow.conversation_id,
+    );
+    const orphanRow = {
+      ...insertRow,
+      conversation_id: null,
+      metadata: {
+        ...(insertRow.metadata as Record<string, Json> | undefined),
+        orphaned_conversation_id: insertRow.conversation_id,
+      } as Json,
+    };
+    ({ data: insertedRows, error } = await supa
+      .from('audit_log')
+      .upsert(orphanRow, { onConflict: 'id', ignoreDuplicates: true })
+      .select('id'));
+  }
   if (error) {
     // Transient — throw so the queue retries this message.
     console.warn('[audit_log upsert]', error.message);
