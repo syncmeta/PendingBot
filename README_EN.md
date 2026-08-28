@@ -10,8 +10,6 @@
 </p>
 <p align="center">
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue" /></a>
-  <img alt="Runtime" src="https://img.shields.io/badge/runtime-Cloudflare%20Workers-f38020?logo=cloudflare&logoColor=white" />
-  <img alt="TypeScript" src="https://img.shields.io/badge/lang-TypeScript-3178c6?logo=typescript&logoColor=white" />
   <img alt="Swift" src="https://img.shields.io/badge/lang-Swift-F05138?logo=swift&logoColor=white" />
   <img alt="Platform" src="https://img.shields.io/badge/platform-iOS%20%C2%B7%20iPadOS%20%C2%B7%20macOS-lightgrey" />
 </p>
@@ -214,8 +212,9 @@ tells you right there that nothing is configured, rather than failing silently.
 [MIT](LICENSE)
 
 Third party:
-- The Agent Skills presets are vendored from [anthropics/skills](https://github.com/anthropics/skills)
-  (Apache-2.0); see [`apps/edge/prompts/skills/anthropic/NOTICE.md`](apps/edge/prompts/skills/anthropic/NOTICE.md)
-  and the `LICENSE.txt` in the same directory.
-- Runtimes / libraries: Cloudflare Workers · Hono · Supabase · Bun · Zod and others, each under its
-  own license.
+- **Client dependencies** (all declared in `apps/pendingbot/project.yml`): GRDB.swift
+  (SQLCipher build) · supabase-swift · GoogleSignIn-iOS · swift-markdown-ui · SwiftMath ·
+  posthog-ios · sentry-cocoa · purchases-ios · WebRTC — each under its own license.
+- The backend vendors Agent Skills presets from [anthropics/skills](https://github.com/anthropics/skills)
+  (Apache-2.0). **That part is not in this repository**; refer to the upstream repo for its
+  NOTICE and license.

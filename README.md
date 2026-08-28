@@ -10,8 +10,6 @@
 </p>
 <p align="center">
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue" /></a>
-  <img alt="Runtime" src="https://img.shields.io/badge/runtime-Cloudflare%20Workers-f38020?logo=cloudflare&logoColor=white" />
-  <img alt="TypeScript" src="https://img.shields.io/badge/lang-TypeScript-3178c6?logo=typescript&logoColor=white" />
   <img alt="Swift" src="https://img.shields.io/badge/lang-Swift-F05138?logo=swift&logoColor=white" />
   <img alt="Platform" src="https://img.shields.io/badge/platform-iOS%20%C2%B7%20iPadOS%20%C2%B7%20macOS-lightgrey" />
 </p>
@@ -197,7 +195,8 @@ scripts/                  仓库自检脚本（链接检查等）
 [MIT](LICENSE)
 
 第三方：
-- Agent Skills 预设 vendored 自 [anthropics/skills](https://github.com/anthropics/skills)（Apache-2.0），
-  见 [`apps/edge/prompts/skills/anthropic/NOTICE.md`](apps/edge/prompts/skills/anthropic/NOTICE.md)
-  和同目录下的 `LICENSE.txt`。
-- 运行时 / 库：Cloudflare Workers · Hono · Supabase · Bun · Zod 等，各遵其原协议。
+- **客户端依赖**（都在 `apps/pendingbot/project.yml` 里）：GRDB.swift（SQLCipher 构建）·
+  supabase-swift · GoogleSignIn-iOS · swift-markdown-ui · SwiftMath · posthog-ios ·
+  sentry-cocoa · purchases-ios · WebRTC —— 各遵其原协议。
+- 后端里 vendored 了 [anthropics/skills](https://github.com/anthropics/skills)（Apache-2.0）
+  的 Agent Skills 预设，**那部分不在这个仓库里**；声明与许可以上游仓库为准。
