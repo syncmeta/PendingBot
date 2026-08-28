@@ -26,7 +26,7 @@ docs/handbook/
 │   ├── charter.md       产品信条 + 红线(工程约定引用根 CLAUDE.md)
 │   ├── product-taste.md 风格与品味(总纲「先做减法,再说人话」+ 减法测试 + 分层)
 │   ├── concepts/        subject · group-accounts · group-permissions · device-grant · data-visibility-rls · avatar-visibility · conversation-types
-│   │                    models · billing-subject · wallet-pnc · group-pledge
+│   │                    models · billing-subject · wallet-pnc · group-pledge · group-share-index
 │   │                    config-as-cms · read-path
 │   ├── stack/           系统全景(各服务角色):cloudflare(edge/admin/voice-container/DO/kv/r2/
 │   │                    ai-gateway/access) · supabase · apple · anthropic · openai
