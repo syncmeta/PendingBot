@@ -102,6 +102,12 @@ status: partial
 证据: progress §4b(群成本分摊 #208 / 认缴模型 #213 / 群分摊尾巴 #210)
 task: #208
 
+## concepts/group-share-index
+status: partial
+现状: `share_index` 记账公式(注资不变 / 消费等比缩 / 取出只缩自身 `contributed`)已从线上 SQL 函数(`apply_group_contribution` / `apply_group_pool_spend` / `apply_partial_withdraw`)与 `share-index.ts` 原样核实、算例手算校验过,是 group-pledge 实缴池那部分代码已落地的记账逻辑——文档跟着代码走,状态随 group-pledge 一起 partial(同一套 pre-launch 未真验、`BILLING_ENABLED` 默认 OFF)。
+证据: 与 concepts/group-pledge 共用(progress §4b)
+task: #208
+
 ## stack/anthropic/claude-code
 status: partial
 现状: 终端托管/字节注入/审批 hook 接线代码全落、本机闭环验过(SwiftTerm + permission-mode auto + world-model/whiteboard/approval hook);真机 QA(登录态起 app 验)是尾巴。
