@@ -64,148 +64,32 @@ Not standard AI companionship either — it isn't an obedient baby. It's a frien
 
 ## Architecture
 
-### The whole system
+This public repository contains only PendingBot's **SwiftUI client**. The Cloudflare Worker, Supabase
+migrations and RLS, admin console, and deployment scripts are not included and are not open source.
 
-The product is four boxes and one main path. **This repository is only the leftmost box.**
-
-```
-     this repository             ✗ nothing below is in this repository, and none of it is open source
- ┌────────────────────┐          ┌──────────────────────┐          ┌────────────────────────┐
- │  SwiftUI client    │  write → │  Cloudflare Worker   │    →     │  Supabase              │
- │  iOS/iPadOS/macOS  │          │  Hono · 186 endpoints│          │  Postgres              │
- │                    │  ← read  │  10 Durable Objects  │    ←     │  80 tables · RLS on all│
- │  GRDB local cache  │          │  2 containers        │          │  215 migrations        │
- └────────────────────┘          └──────────────────────┘          └────────────────────────┘
-           ▲                                 │
-           └────── realtime WebSocket ───────┤
-                                             ▼
-                                 ┌──────────────────────┐
-                                 │  AI Gateway          │
-                                 │  4 providers → 1 exit│
-                                 └──────────────────────┘
+```text
+SwiftUI client (iOS / iPadOS / macOS)
+        ↕ HTTP · SSE · WebSocket
+Cloudflare Worker → Supabase Postgres
+        └────────→ AI Gateway → model providers
 ```
 
-- **Client** (`apps/pendingbot`) — one SwiftUI source tree builds all three platforms. **This is the
-  entire contents of this repository.**
-- **Edge** — a single Cloudflare Worker, routed with Hono. The stateful parts go to Durable Objects:
-  realtime broadcast, read projections, group-chat routing, voice rooms, wallet, cross-device remote
-  control. The code sandbox and the group-voice media each run in their own container.
-- **Database** — Supabase Postgres, RLS on every table. Row changes go back out to the edge through a
-  webhook for realtime fan-out.
-- **Model exit** — one AI Gateway collapses four providers into a single exit. Deliberately **not
-  using the gateway's compatibility translation layer** — that layer strips Anthropic's extended
-  thinking and Gemini's search grounding.
+One XcodeGen target builds all three client platforms. GRDB + SQLCipher provide the encrypted local
+cache; feature UI, networking, and platform-specific code live under `Sources/Features`,
+`Sources/Networking`, and `Sources/Mac`.
 
-Those numbers are the measured size of my own deployment. They're here so you know **what shape of
-thing the client is talking to**, not so you go and build one like it.
-
-**One message's round trip**, which strings the four boxes together:
-
-```
-you hit send
-  → the client optimistically inserts a local bubble first (GRDB)
-  → POST /v1/messages to the Worker; the HTTP connection stays open and switches to SSE coming back
-  → the Worker assembles the prompt → AI Gateway → provider
-  → tokens stream back one by one, the client renders as they arrive
-  → the Worker writes the final message into Postgres
-  → database webhook → edge broadcast → your other devices get the same message over WebSocket
+```text
+apps/pendingbot/
+  project.yml       XcodeGen project definition
+  Sources/          client source
+  Tests/            unit tests
+  Resources/        icons, copy, and configuration
+docs/               screenshots and reader documentation
+scripts/            build-stamp script
 ```
 
-The same message **goes out over HTTP, grows over SSE, and syncs elsewhere over WebSocket**. Three
-channels, each with its own job — which is the prerequisite for understanding why the client's
-network layer looks the way it does below.
-
-### The client
-
-**One target builds three platforms**, 178 Swift files, roughly 47.6k lines.
-
-`project.yml` has exactly one application target, `supportedDestinations: [iOS, macOS]`. Platform
-differences are **not handled by splitting targets**, but by three things:
-
-- the whole `Sources/Mac/` subtree is excluded from the iOS build — right now it's down to **one
-  file** (the Mac sign-in screen), everything else is shared by both platforms;
-- iOS-only files wrap a `#if os(iOS)` around the top, so the pure Foundation / SwiftUI model,
-  storage and network layers **fall into the Mac build naturally**, with no second copy written for
-  the Mac;
-- dependencies only iOS needs (WebRTC) are marked `platforms: [iOS]` in `project.yml`.
-
-**Two shells, the same set of features.** Screen width decides how things are assembled, not whether
-two versions of the UI get written:
-
-```
-compact (iPhone)              bottom TabView, each tab self-contained with its own push stack
-wide (iPad landscape / Mac)   NavigationSplitView, three columns: tab sidebar │ list │ detail
-```
-
-What glues the two together is a protocol, `FeatureSurface`: every feature hands over three pieces of
-assembly — `listColumn` / `detailColumn` / `compactRoot` — and the shell puts them together itself.
-All five tabs (Messages / Friends / Crew / Letters / Me) go down the same path, and macOS's `@main`
-and the iPad wide layout **share the same shell**, with no parallel implementation.
-
-**Reads and writes don't take the same route — this is the first thing to know about the client.**
-
-- **Writes** — all go through `APIClient` to the Worker (sending messages, uploads, group
-  management…). The client has **no** matching GET side.
-- **Reads** — a three-step ladder; if one step doesn't work, fall to the next:
-
-  ```
-  L1  GRDB local cache        on screen immediately, something to look at even offline
-  L2  edge read projection    GET /v1/conversations, /v1/messages/tail
-  L3  Supabase direct read    if any level above errors out, or comes back suspiciously empty,
-                              fall back to here
-  ```
-
-  L2 carries scalar columns only; nested fields like avatars and names are filled in on the spot by
-  L1 — redundantly baking them into the projection would mean a full fan-out every time a bot renames
-  itself. If they can't be filled in, they stay empty and get filled on the next refresh.
-
-- **Realtime** — two layers of WebSocket, connected to the edge's broadcast Durable Object, **not** to
-  Supabase Realtime channels: one user-level connection stays open (unread counts, letters), and
-  conversation-level ones open and close on demand (messages, group votes, membership changes).
-
-**Local storage is encrypted.** GRDB links against a SQLCipher build; the database is `PRAGMA key`'d
-with a random 256-bit key, and that key lives in the keychain and is not synced to iCloud. Cached
-attachment images carry file-protection attributes. The whole database is wiped on sign-out.
-
-**The client carries a gate of its own.** `SupabaseAnonWriteGuard`: when supabase-swift can't get a
-session, it will **send the write out anyway, as an anonymous identity**; the server answers
-"permission denied", and the trail ends right there — this shape got misdiagnosed as a backend bug
-twice. This gate makes the request fail before the bytes ever leave the device, and reports the real
-reason. It's a mechanism, not a convention.
-
-**Where to find the shapes of the endpoints**: the types and comments in `Sources/Networking/` were
-written against the Worker's routes, and still carry references like `apps/edge/src/routes/…`. Those
-files aren't here, but the comments are still the most accurate record of "what this endpoint takes
-and what it gives back".
-
-**The backend coordinates live in exactly one place**: `HostedConfig.swift`. The `isConfigured` in it
-is the single source of truth for "which paths are wired up".
-
-### Repository layout
-
-```
-apps/pendingbot/          the client, the substance of this repository
-  project.yml             XcodeGen definition (the one and only target lives here)
-  Sources/
-    Features/       80    screens and view models grouped by feature, the biggest chunk
-    Networking/     36    network, realtime, auth, cache repositories, backend coordinates
-    Components/     35    reusable UI atoms: avatars, bubble layout, Markdown/formulas, QR, theming
-    Storage/         9    local database, keychain, account state, unread counts, model catalog
-    Models/          9    value types shared across layers
-    Mac/             1    Mac-only UI (the sign-in screen), excluded wholesale from the iOS build
-    Stores/          1    shared state across features
-  Tests/                  unit tests
-  Resources/              Info.plist, asset catalogs
-
-docs/                     screenshots, icons, reader-facing documentation
-scripts/                  repository self-check scripts (link checking and so on)
-.github/workflows/        CI: client build, documentation links
-```
-
-**What is not in this repository**: the Cloudflare Worker, the Supabase migrations and RLS, the admin
-console, the deployment scripts. Every backend coordinate in the client is a placeholder value —
-**an app built from this repository runs, but it connects to no backend at all**. Tapping sign-in
-tells you right there that nothing is configured, rather than failing silently.
+Backend coordinates are centralized in `HostedConfig.swift`. Hosted-environment values in the public
+version are placeholders: it builds and runs, but does not connect to PendingBot's hosted backend.
 
 ## License
 

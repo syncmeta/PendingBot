@@ -64,131 +64,31 @@
 
 ## 架构
 
-### 整套系统
+这个公开仓库只包含 PendingBot 的 **SwiftUI 客户端**。Cloudflare Worker、Supabase
+迁移与 RLS、管理后台和部署脚本都不在这里，也不开源。
 
-产品是四格、一条主链路。**这个仓库只有最左边那一格。**
-
-```
-        本仓库                      ✗ 以下都不在这个仓库里，也不开源
- ┌──────────────────┐      ┌─────────────────────┐      ┌──────────────────┐
- │  SwiftUI 客户端   │  写 →│  Cloudflare Worker   │  →   │  Supabase         │
- │  iOS/iPadOS/macOS │      │  Hono · 186 个接口    │      │  Postgres         │
- │                   │  ← 读│  10 个 Durable Object │  ←   │  80 张表 · 全表 RLS│
- │  GRDB 本地缓存     │      │  2 个容器             │      │  215 个迁移        │
- └──────────────────┘      └─────────────────────┘      └──────────────────┘
-          ▲                           │
-          └───── 实时 WebSocket ───────┤
-                                      ▼
-                            ┌─────────────────────┐
-                            │  AI Gateway          │
-                            │  4 家供应商 → 1 个出口 │
-                            └─────────────────────┘
+```text
+SwiftUI 客户端（iOS / iPadOS / macOS）
+        ↕ HTTP · SSE · WebSocket
+Cloudflare Worker → Supabase Postgres
+        └────────→ AI Gateway → 模型供应商
 ```
 
-- **客户端**（`apps/pendingbot`）—— 一套 SwiftUI 源码编三端。**这是本仓库的全部内容。**
-- **Edge** —— 一个 Cloudflare Worker，Hono 路由。有状态的部分交给 Durable Object：实时广播、
-  读投影、群聊路由、语音房、钱包、跨设备遥控。代码沙箱和群语音媒体各跑在一个容器里。
-- **数据库** —— Supabase Postgres，全表开 RLS。行变更经 webhook 推回边缘做实时扇出。
-- **模型出口** —— 一个 AI Gateway 把四家供应商收成一个出口。刻意**不走网关的兼容翻译层**，
-  那层会削掉 Anthropic 的扩展思考和 Gemini 的搜索接地。
+客户端用同一个 XcodeGen target 编译三端，以 GRDB + SQLCipher 做加密本地缓存；功能界面、
+网络层和平台差异分别放在 `Sources/Features`、`Sources/Networking` 与 `Sources/Mac`。
 
-上面那些数字是我自己部署上的实测规模，写在这儿是为了让你知道**客户端在跟一个什么形状的东西说话**，
-不是让你照着搭一个。
-
-**一条消息的往返**，把四格串起来：
-
-```
-你按发送
-  → 客户端先乐观插一条本地气泡（GRDB）
-  → POST /v1/messages 到 Worker；HTTP 连接不断开，改用 SSE 往回吐
-  → Worker 装配提示词 → AI Gateway → 供应商
-  → token 逐个回流，客户端边收边渲染
-  → Worker 把最终消息写进 Postgres
-  → 数据库 webhook → 边缘广播 → 你其他设备经 WebSocket 收到同一条
+```text
+apps/pendingbot/
+  project.yml       XcodeGen 工程定义
+  Sources/          客户端源码
+  Tests/            单元测试
+  Resources/        图标、文案与配置
+docs/               截图与读者文档
+scripts/            构建标记脚本
 ```
 
-同一条消息，**发出去走 HTTP、长出来走 SSE、同步到别处走 WebSocket**。三条通道各司其职 ——
-这是理解客户端网络层为什么长成下面那样的前提。
-
-### 客户端
-
-**一个 target 编三端**，178 个 Swift 文件、约 4.76 万行。
-
-`project.yml` 里只有一个 application target，`supportedDestinations: [iOS, macOS]`。
-平台差异**不靠拆 target**，靠三样东西：
-
-- `Sources/Mac/` 整个子树在 iOS 构建里被排除 —— 现在它只剩**一个文件**（Mac 的登录页），
-  其余界面两端共用；
-- iOS 专有的文件在顶部包一层 `#if os(iOS)`，于是纯 Foundation / SwiftUI 的模型、存储、
-  网络层**自然进入 Mac 构建**，不用为 Mac 再写一份；
-- 只有 iOS 要的依赖（WebRTC）在 `project.yml` 里标 `platforms: [iOS]`。
-
-**两套壳，同一批 feature。** 屏幕宽窄决定装配方式，而不是决定写两份界面：
-
-```
-compact（iPhone）        底部 TabView，每个 tab 自包含 push
-wide（iPad 横屏 / Mac）   NavigationSplitView 三列：tab 侧栏 │ 列表 │ 详情
-```
-
-粘合两者的是一个协议 `FeatureSurface`：每个 feature 交出三样装配 ——
-`listColumn` / `detailColumn` / `compactRoot`，壳自己去拼。五个 tab（消息 / 好友 / 机组 /
-来信 / 我）走同一条路径，macOS 的 `@main` 和 iPad 的宽屏布局**共用同一个壳**，没有平行实现。
-
-**读和写不走同一条路 —— 这是客户端最该先知道的一件事。**
-
-- **写** —— 全部经 `APIClient` 打到 Worker（发消息、上传、群管理……）。客户端**没有**对应的 GET 侧。
-- **读** —— 三级阶梯，一级不成再下一级：
-
-  ```
-  L1  GRDB 本地缓存    立刻上屏，离线也有东西看
-  L2  边缘读投影       GET /v1/conversations、/v1/messages/tail
-  L3  Supabase 直读     上面任何一级出错、或结果可疑地空，就回落到这里
-  ```
-
-  L2 只带标量列，头像和名字这类嵌套字段由 L1 就地补 —— 把它们冗余进投影的话，
-  机器人一改名就得全量扇出。补不到就留空，下次刷新再补。
-
-- **实时** —— 两层 WebSocket，连的是边缘的广播 Durable Object，**不是** Supabase Realtime 频道：
-  用户级一条常驻（未读、来信），会话级按需开关（消息、群投票、成员变更）。
-
-**本地存储是加密的。** GRDB 链的是 SQLCipher 构建，数据库用一把随机 256 位密钥 `PRAGMA key`，
-密钥存钥匙串、不同步 iCloud；附件图片缓存带文件保护属性。退出登录时整库擦掉。
-
-**客户端自带一道闸。** `SupabaseAnonWriteGuard`：supabase-swift 在拿不到会话时会
-**把写请求以匿名身份照发出去**，服务端回一句「permission denied」，线索就断在那儿 ——
-这个形状被误诊成后端 bug 两次。这道闸让请求在字节离开设备之前就失败，并报出真正的原因。
-它是机制，不是约定。
-
-**接口形状去哪儿找**：`Sources/Networking/` 里的类型和注释是对着 Worker 路由写的，
-里面还留着 `apps/edge/src/routes/…` 这类引用。那些文件不在这里，但注释仍是
-「这个接口收什么、回什么」最准确的一份记录。
-
-**后端坐标只有一处**：`HostedConfig.swift`。里面的 `isConfigured` 是「哪条线通」的唯一真值。
-
-### 仓库结构
-
-```
-apps/pendingbot/          客户端，本仓库的主体
-  project.yml             XcodeGen 定义（唯一的 target 在这儿）
-  Sources/
-    Features/       80    按功能分的界面与视图模型，最大的一块
-    Networking/     36    网络、实时、鉴权、缓存仓库、后端坐标
-    Components/     35    可复用 UI 原子：头像、气泡排版、Markdown/公式、二维码、主题
-    Storage/         9    本地库、钥匙串、账号状态、未读、模型目录
-    Models/          9    跨层共享的值类型
-    Mac/             1    Mac 专有界面（登录页），iOS 构建里整个排除
-    Stores/          1    跨 feature 的共享状态
-  Tests/                  单元测试
-  Resources/              Info.plist、资源目录
-
-docs/                     截图、图标、面向读者的文档
-scripts/                  仓库自检脚本（链接检查等）
-.github/workflows/        CI：客户端构建、文档链接
-```
-
-**不在这个仓库里的**：Cloudflare Worker、Supabase 迁移与 RLS、管理后台、部署脚本。
-客户端里的后端坐标全是占位值 —— **照这个仓库编出来的 app 能跑，但连不上任何后端**，
-点登录会当场告诉你没配，而不是静默失败。
+后端坐标集中在 `HostedConfig.swift`。公开版本的托管环境只保留占位配置：源码可以编译运行，
+但不会连接 PendingBot 的线上后端。
 
 ## 许可
 
