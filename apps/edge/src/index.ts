@@ -7,6 +7,7 @@ import { jsonError } from './lib/http-error';
 import { sentryEnabled } from './lib/feature-flags';
 import { healthRoutes } from './routes/health';
 import { messageRoutes } from './routes/messages';
+import { conversationMessageRoutes, messageSearchRoutes } from './routes/message-search';
 import { botRoutes } from './routes/bots';
 import { botInviteRoutes } from './routes/bot-invites';
 import { groupInviteLinkRoutes, groupInviteTokenRoutes } from './routes/group-invites';
@@ -141,9 +142,11 @@ app.get('/board/*', (c) => {
 // Routes — mounted under /v1/
 const v1 = new Hono<AppBindings>();
 v1.route('/health', healthRoutes);
+v1.route('/messages', messageSearchRoutes);         // GET /v1/messages/search (current/global full-history)
 v1.route('/messages', messageRoutes);
 v1.route('/messages', messageTailRoutes);          // GET /v1/messages/tail (T2 边缘读投影 — 消息尾)
 v1.route('/conversations', conversationListRoutes); // GET /v1/conversations (T2 边缘读投影 — 会话列表+未读)
+v1.route('/conversations', conversationMessageRoutes); // GET /:id/messages?around_seq= (old-message context)
 v1.route('/conversations', conversationModelRoutes); // GET /:id/model · POST /:id/reveal-model · POST /:id/model (盲盒)
 v1.route('/bots', botRoutes);
 v1.route('/bot-invites', botInviteRoutes);         // GET/:token resolve · POST/:token/redeem · DELETE/:token

@@ -45,6 +45,7 @@ struct ConversationView: View {
     /// Mutable so the "+ new conv" header button can flip a materialized
     /// chat back to pending without reconstructing the view.
     @State var pendingPeer: PendingPeer?
+    let initialSearchTarget: MessageSearchTarget?
     var onChange: () -> Void = {}
 
     // Note: these are intentionally module-internal (not `private`) so
@@ -172,6 +173,7 @@ struct ConversationView: View {
     // how many are active without leaving the conversation.
     @State var skills: [SkillSummary] = []
     @State private var showingSettings = false
+    @State private var showingMessageSearch = false
     /// Drives the push into BotConfigView from the pre-chat 设置 button.
     @State private var showingBotConfig = false
     /// In-flight / done state for the pre-chat 请它写信 action.
@@ -200,14 +202,15 @@ struct ConversationView: View {
     // messages don't auto-scroll — they bump `unreadCount` and surface
     // the bottom-right pill instead. The user's own sends always scroll
     // regardless (see the messages.count onChange).
-    @State private var isAtBottom = true
+    @State var isAtBottom = true
     @State private var unreadCount = 0
     @State private var scrollViewportHeight: CGFloat = 0
     @State private var messageStackContentHeight: CGFloat = 0
     /// Flips on the first history population so the conv opens already
     /// parked at the latest message: that initial settle jumps with no
     /// animation (no visible scroll), and only later arrivals animate.
-    @State private var didInitialScroll = false
+    @State var didInitialScroll = false
+    @State var searchScrollTargetId: String?
 
     private var composerScrollInset: CGFloat {
         keyboardVisible ? 0 : composerContentHeight
@@ -463,10 +466,12 @@ struct ConversationView: View {
 
     @MainActor
     init(conversation: Conversation, bot: Bot?, pendingPeer: PendingPeer? = nil,
+         initialSearchTarget: MessageSearchTarget? = nil,
          onChange: @escaping () -> Void = {}) {
         self._conversation = State(initialValue: conversation)
         self.bot = bot
         self._pendingPeer = State(initialValue: pendingPeer)
+        self.initialSearchTarget = initialSearchTarget
         self.onChange = onChange
         // When the caller didn't supply a bot — the Mac/iPad 3-column shell
         // builds the detail column from a *different* MessageTabView instance
@@ -740,6 +745,7 @@ struct ConversationView: View {
                 }
                 .platformScrollKeyboardDismiss()
                 .onChange(of: messages.count) { oldCount, newCount in
+                    guard searchScrollTargetId == nil else { return }
                     // The user's own send always scrolls into view; incoming
                     // messages only auto-scroll when already at the bottom.
                     // Otherwise they bump the unread pill instead of yanking
@@ -760,6 +766,19 @@ struct ConversationView: View {
                     } else if newCount > oldCount {
                         withAnimation(.easeOut(duration: 0.2)) {
                             unreadCount += newCount - oldCount
+                        }
+                    }
+                }
+                .onChange(of: searchScrollTargetId) { _, targetId in
+                    guard let targetId else { return }
+                    DispatchQueue.main.async {
+                        withAnimation(.easeOut(duration: 0.22)) {
+                            proxy.scrollTo(targetId, anchor: .center)
+                        }
+                        DispatchQueue.main.async {
+                            if searchScrollTargetId == targetId {
+                                searchScrollTargetId = nil
+                            }
                         }
                     }
                 }
@@ -886,7 +905,11 @@ struct ConversationView: View {
             // 盲盒会话模型状态 — drives the header pill; fetch concurrently with
             // history so the pill doesn't queue behind loadHistory's round-trip.
             let convModel = Task { @MainActor in await loadConvModelState() }
-            await loadHistory()
+            if let initialSearchTarget {
+                await loadAroundMessage(initialSearchTarget)
+            } else {
+                await loadHistory()
+            }
             await loadSkills()
             await loadActiveLookbacks()
             await subscribeRealtime()
@@ -962,6 +985,16 @@ struct ConversationView: View {
             // lookback / skills). Reached from the pre-chat action bar.
             if let bot = effectiveBot {
                 BotConfigView(bot: bot, currentUserId: AccountStore.shared.current?.id)
+            }
+        }
+        .sheet(isPresented: $showingMessageSearch) {
+            MessageSearchView(conversationId: conversation.id) { result in
+                Task {
+                    await loadAroundMessage(MessageSearchTarget(
+                        messageId: result.messageId,
+                        messageSeq: result.messageSeq
+                    ))
+                }
             }
         }
         .sheet(item: Binding(
@@ -1448,6 +1481,19 @@ struct ConversationView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("新建对话")
+            }
+            if !conversation.id.isEmpty {
+                Button {
+                    Haptics.tap()
+                    showingMessageSearch = true
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                        .font(Theme.Fonts.glyph(size: 17, weight: .regular))
+                        .foregroundStyle(Theme.Palette.ink)
+                        .frame(width: 32, height: 32)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("搜索当前对话")
             }
             Button {
                 Haptics.tap()

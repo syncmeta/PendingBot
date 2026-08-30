@@ -5015,6 +5015,7 @@ export type Database = {
       open_self_conv: { Args: never; Returns: string }
       open_user_bot_conv: { Args: { p_bot_id: string }; Returns: string }
       open_user_user_conv: { Args: { p_other_user_id: string }; Returns: Json }
+      message_search_normalize: { Args: { p_value: string }; Returns: string }
       preset_epoch_base_ts: { Args: never; Returns: string }
       preset_epoch_offsets: {
         Args: never
@@ -5067,6 +5068,31 @@ export type Database = {
           p_runner_host_id: string
         }
         Returns: boolean
+      }
+      search_messages_for_user: {
+        Args: {
+          p_after?: string | null
+          p_before?: string | null
+          p_conversation_id?: string | null
+          p_cursor_created_at?: string | null
+          p_cursor_message_id?: string | null
+          p_limit?: number
+          p_tokens: string[]
+          p_user_id: string
+        }
+        Returns: {
+          attachment_metadata: Json
+          conversation_id: string
+          conversation_title: string
+          conversation_type: string
+          created_at: string
+          matched_fields: string[]
+          message_id: string
+          message_seq: number
+          sender_id: string | null
+          sender_name: string
+          text: string
+        }[]
       }
       seed_example_letter: { Args: { p_user_id: string }; Returns: undefined }
       seed_sample_dialogue: {
