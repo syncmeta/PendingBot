@@ -16,6 +16,7 @@ private let log = Logger.category("conv-list")
 /// type lets a single NavigationStack path carry either.
 enum ChatDest: Hashable {
     case existing(Conversation)
+    case searchResult(Conversation, MessageSearchTarget)
     case pending(PendingPeer)
     case composeGroup
 }
@@ -68,6 +69,7 @@ struct MessageTabView: View {
     @State private var groupJoinPrefill = ""
     @State private var deepLink = DeepLinkStore.shared
     @State private var addingFriend = false
+    @State private var showingGlobalSearch = false
     @State private var scanning = false
     /// Two-way 加好友 chooser (扫码 / 输号码). Shown when the user taps
     /// 加好友 from the "+" menu; picking either option dismisses the
@@ -247,6 +249,11 @@ struct MessageTabView: View {
             .platformDetents([.medium])
             .platformDragIndicator()
         }
+        .sheet(isPresented: $showingGlobalSearch) {
+            MessageSearchView(conversationId: nil) { result in
+                openSearchResult(result)
+            }
+        }
         // 扫码 (camera QR) is iOS-only — depends on AVFoundation camera +
         // PhotosUI; macOS keeps the manual 加好友 / 加群 paths instead.
         #if os(iOS)
@@ -402,6 +409,16 @@ struct MessageTabView: View {
                 reload()
             }
             .onAppear { UnreadStore.shared.markRead(conv.id, throughLastMessageId: conv.last_message_id) }
+        case .searchResult(let conv, let target):
+            ConversationView(
+                conversation: conv,
+                bot: bot(for: conv),
+                pendingPeer: pendingPeer(for: conv),
+                initialSearchTarget: target
+            ) {
+                reload()
+            }
+            .onAppear { UnreadStore.shared.markRead(conv.id, throughLastMessageId: conv.last_message_id) }
         case .pending(let peer):
             ConversationView(
                 conversation: pendingConversation(for: peer),
@@ -421,6 +438,8 @@ struct MessageTabView: View {
     private func destinationKey(_ dest: ChatDest) -> String {
         switch dest {
         case .existing(let c): return "conv:\(c.id)"
+        case .searchResult(let c, let target):
+            return "search:\(c.id):\(target.messageId):\(target.messageSeq)"
         case .pending(let p):  return "pending:\(p.kind):\(p.peerId)"
         case .composeGroup:    return "composeGroup"
         }
@@ -472,27 +491,41 @@ struct MessageTabView: View {
     /// 表头操作 = 新建会话菜单 + "+" 弹层。抽出来既给 iOS 的 `TabHeaderBar`
     /// trailing 用,又给 Mac 壳的 toolbar 用(贴侧栏折叠按钮)。
     @ViewBuilder private var messageHeaderActions: some View {
-        GroupedHeaderControls {
-            Menu {
-                if !recentBots.isEmpty {
-                    Section("最近聊过") {
-                        ForEach(recentBots) { bot in
-                            Button {
-                                Haptics.tap()
-                                Task { await createAndNavigate(with: bot) }
-                            } label: {
-                                Label(bot.display_name, systemImage: "bubble.left")
+        HStack(spacing: 8) {
+            Button {
+                Haptics.tap()
+                showingGlobalSearch = true
+            } label: {
+                Image(systemName: "magnifyingglass")
+                    .font(Theme.Fonts.glyph(size: 16, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.ink)
+                    .frame(width: 32, height: 32)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("搜索全部消息")
+
+            GroupedHeaderControls {
+                Menu {
+                    if !recentBots.isEmpty {
+                        Section("最近聊过") {
+                            ForEach(recentBots) { bot in
+                                Button {
+                                    Haptics.tap()
+                                    Task { await createAndNavigate(with: bot) }
+                                } label: {
+                                    Label(bot.display_name, systemImage: "bubble.left")
+                                }
                             }
                         }
                     }
+                    Section("右滑新建会话\n左滑标未读/删除") {
+                    }
+                } label: {
+                    CircleComposeButton()
                 }
-                Section("右滑新建会话\n左滑标未读/删除") {
-                }
-            } label: {
-                CircleComposeButton()
+            } trailing: {
+                PlusActionPopover(items: plusActionItems)
             }
-        } trailing: {
-            PlusActionPopover(items: plusActionItems)
         }
     }
 
@@ -501,6 +534,14 @@ struct MessageTabView: View {
     /// `PlusActionPopover`(自定义 `.popover`)塞进 macOS toolbar 收不到点击,
     /// 「+」点不动。这里换成原生 menu,行为同 iOS 但在 toolbar 里可用。
     @ViewBuilder private var macToolbarActions: some View {
+        Button {
+            Haptics.tap()
+            showingGlobalSearch = true
+        } label: {
+            Image(systemName: "magnifyingglass")
+        }
+        .help("搜索全部消息")
+
         Menu {
             if recentBots.isEmpty {
                 Text("还没有最近会话")
@@ -667,6 +708,39 @@ struct MessageTabView: View {
     private func openConversation(_ conv: Conversation) {
         Haptics.tap()
         route(.existing(conv))
+    }
+
+    private func openSearchResult(_ result: MessageSearchResult) {
+        let conversation = conversations.first { $0.id == result.conversationId }
+            ?? Conversation(
+                id: result.conversationId,
+                bot_id: "",
+                user_id: AccountStore.shared.current?.id ?? "",
+                title: result.conversationTitle,
+                feature_type: "message",
+                conversation_type: result.conversationType,
+                last_activity_at: ServerTimestamp.epochSeconds(result.createdAt, default: 0),
+                round_count: 0,
+                bot_name: nil,
+                last_message_content: nil,
+                last_message_sender_type: nil
+            )
+        route(.searchResult(
+            conversation,
+            MessageSearchTarget(messageId: result.messageId, messageSeq: result.messageSeq)
+        ))
+    }
+
+    private func pendingPeer(for conv: Conversation) -> PendingPeer? {
+        guard conv.conversation_type == "user_user",
+              let peer = userPeers[conv.id] else { return nil }
+        return PendingPeer(
+            kind: "user",
+            peerId: peer.userId,
+            displayName: peer.rowName,
+            avatarPath: peer.avatarPath,
+            avatarSeed: peer.avatarSeed
+        )
     }
 
     private func openCreateGroup() {

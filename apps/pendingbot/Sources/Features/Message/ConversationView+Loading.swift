@@ -577,6 +577,88 @@ extension ConversationView {
             }
         }
     }
+
+    /// Replace the visible timeline with a server-backed window centered on
+    /// an old search hit, then hand the exact message id to ScrollViewReader.
+    /// This deliberately bypasses the local latest-200 cache: messageSeq is
+    /// the stable server cursor, and the around-message endpoint is the source
+    /// of truth for both sides of the target.
+    func loadAroundMessage(_ target: MessageSearchTarget) async {
+        do {
+            let rows = try await APIClient().messagesAround(
+                conversationId: conversation.id,
+                messageSeq: target.messageSeq
+            )
+            guard rows.contains(where: { $0.id == target.messageId }) else {
+                self.error = "找不到这条消息"
+                return
+            }
+
+            var viewMessages: [ChatMessage] = []
+            var citationsLoaded: [String: [MessageCitation]] = [:]
+            var attachmentIdsLoaded: [String: [String]] = [:]
+            viewMessages.reserveCapacity(rows.count)
+
+            for row in rows {
+                if row.status == "deleted" || row.status == "replaced" { continue }
+                if row.metadata?.objectValue?["source"]?.stringValue == "voice_call_summary" {
+                    continue
+                }
+                let seconds = ServerTimestamp.epochSeconds(row.created_at, default: 0)
+                let senderType: String
+                let senderId: String
+                if row.role == "bot" {
+                    senderType = "bot"
+                    senderId = row.sender_bot_id ?? ""
+                } else if row.role == "log" {
+                    // Crew/session prose is mirrored as role=log. In an
+                    // around window it still needs a concrete row anchor, so
+                    // render its persisted content as a left-side system row.
+                    senderType = "system"
+                    senderId = row.log_payload?.objectValue?["session_id"]?.stringValue ?? ""
+                } else {
+                    senderType = "user"
+                    senderId = row.user_id ?? ""
+                }
+                viewMessages.append(ChatMessage(
+                    id: row.id,
+                    conversation_id: row.conversation_id,
+                    sender_type: senderType,
+                    sender_id: senderId,
+                    content: row.content ?? "",
+                    created_at: seconds,
+                    message_seq: row.message_seq,
+                    attachments: nil,
+                    parent_message_id: row.parent_message_id,
+                    bubble_group_id: row.bubble_group_id,
+                    model_slug: row.model_slug
+                ))
+                if let citations = row.citations, !citations.isEmpty {
+                    citationsLoaded[row.id] = citations
+                }
+                if let ids = row.attachments?.ids, !ids.isEmpty {
+                    attachmentIdsLoaded[row.id] = ids
+                }
+            }
+
+            // Set the target before replacing messages so the count-change
+            // auto-bottom behavior yields to the explicit centered scroll.
+            didInitialScroll = true
+            isAtBottom = false
+            searchScrollTargetId = target.messageId
+            messages = viewMessages
+            citationsByMsgId.merge(citationsLoaded) { _, new in new }
+            attachmentIdsByMsgId.merge(attachmentIdsLoaded) { _, new in new }
+
+            let attachmentIds = Array(Set(attachmentIdsLoaded.values.flatMap { $0 }))
+            if let metadata = try? await MessagesFetch.attachmentMeta(ids: attachmentIds),
+               !metadata.isEmpty {
+                attachmentMetaById.merge(metadata) { _, new in new }
+            }
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
 }
 
 /// Decode a typed shape out of a Supabase AnyJSON jsonb cell. We
