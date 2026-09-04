@@ -138,7 +138,7 @@ fi
 # 旧文档教过 BUILD_NUMBER_FORMAT=dotted。开关已删，但静默忽略等于骗人 ——
 # 有人以为切了格式，实际拿到的还是默认。报错，别静默。
 if [ -n "${BUILD_NUMBER_FORMAT:-}" ]; then
-  echo "BUILD_NUMBER_FORMAT 已废弃（收到: $BUILD_NUMBER_FORMAT）。" >&2
+  echo "BUILD_NUMBER_FORMAT 已废弃（收到: ${BUILD_NUMBER_FORMAT}）。" >&2
   echo "备用格式那条路走不通，原因见本文件注释；真要换编码得升 MARKETING_VERSION。" >&2
   exit 2
 fi
@@ -149,7 +149,7 @@ if [ "$print_only" = "1" ]; then
   [ "$apply" = "0" ] && [ "$check" = "0" ] \
     || { echo "--print-only 不能和 --apply / --check 一起用" >&2; exit 2; }
   echo "$candidate"
-  echo "build $candidate = $now_human（--print-only：跳过 ASC 闸，理由见文件头）" >&2
+  echo "build $candidate = ${now_human}（--print-only：跳过 ASC 闸，理由见文件头）" >&2
   exit 0
 fi
 
@@ -182,7 +182,7 @@ echo "$candidate"
 # 发版时抄进 TestFlight 的 What to Test，别让这笔账无声地记在以后每次
 # 「这个 build 到底是什么时候的」上。
 # 事后反查任意一个 build 号 <天>.<秒>：date -u -r $(( 天 * 86400 + 秒 ))
-echo "build $candidate = $now_human（ASC 当前最高: $highest）" >&2
+echo "build $candidate = ${now_human}（ASC 当前最高: ${highest}）" >&2
 
 # --- 3. 可选：写进 project.yml 并重生 xcodeproj ------------------------------
 if [ "$apply" = "1" ]; then
