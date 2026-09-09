@@ -357,12 +357,10 @@ extension ConversationView {
     /// synthetic ChatMessages with sender_type="recall_log" (see the
     /// in-line comment on the row mapper). Errors stay silent when the
     /// local cache has at least something to show.
-    func loadHistory() async {
-        // Hydrate from local cache instantly so the conv opens with last-known
-        // content even if the user is offline / on a flaky network.
+    func hydrateHistoryFromCache() {
         let cached = LocalDatabase.shared.loadMessages(conversationId: conversation.id)
         if !cached.isEmpty {
-            self.messages = cached.map { r in
+            let cachedMessages = cached.map { r in
                 ChatMessage(
                     id: r.id,
                     conversation_id: r.conversation_id,
@@ -377,7 +375,14 @@ extension ConversationView {
                     model_slug: r.model_slug
                 )
             }
+            if self.messages != cachedMessages { self.messages = cachedMessages }
         }
+    }
+
+    func loadHistory() async {
+        // Also keep this call for reload paths outside the initial `.task`.
+        // On first appearance `.task` has already run it before any await.
+        hydrateHistoryFromCache()
 
         do {
             // Direct Supabase read — RLS gates participation. Excludes role='log'

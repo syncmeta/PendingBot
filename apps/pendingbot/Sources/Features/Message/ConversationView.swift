@@ -492,6 +492,14 @@ struct ConversationView: View {
                 }
             : nil
         self._resolvedBot = State(initialValue: seededBot)
+        // The model endpoint is a network round-trip. Reuse the last
+        // server-confirmed state for the first frame, then refresh it from the
+        // server in `.task`. Without this cache every conversation switch has
+        // a deliberate blank model slot for 1–2 seconds.
+        let seededModelState = conversation.id.isEmpty
+            ? nil
+            : LocalDatabase.shared.loadConversationModelState(conversationId: conversation.id)
+        self._convModelState = State(initialValue: seededModelState)
     }
 
     var body: some View {
@@ -880,21 +888,27 @@ struct ConversationView: View {
             }
         }
         .task {
-            // Resolve the bot record when the shell handed us `bot: nil`
-            // (Mac 3-column detail is a separate instance from the list).
-            // Before the pending-conv guard so pending bot chats — whose
-            // bot id rides on `pendingPeer` — also get the header model
-            // suffix + BotConfigView entry. No-op on iOS (bot is non-nil).
-            await resolveBotIfNeeded()
             // Pending convs (lazy-created on first send) have no row yet —
-            // skip history / skills / realtime until they materialise.
-            guard !conversation.id.isEmpty else { return }
+            // skip history / skills / realtime until they materialise. They
+            // still need the bot lookup for the pre-chat action surface.
+            guard !conversation.id.isEmpty else {
+                await resolveBotIfNeeded()
+                return
+            }
+            // Cache paint must happen before the first await. Previously the
+            // Mac detail column awaited `resolveBotIfNeeded()` first, so one
+            // remote bot query held already-cached messages off screen.
+            hydrateHistoryFromCache()
             // Paint group sender avatars + nicknames from cache on the first
             // frame, before any await — otherwise this cache read sits behind
             // loadHistory's round-trip and the bubbles flash id-prefix labels
             // for ~1s. (1:1 peers are carried in via pendingPeer, so they're
             // already correct on frame one.)
             hydrateGroupSendersFromCache()
+            // Mac's detail column may not carry the bot object across from its
+            // separate list instance. Refresh it concurrently; cached history
+            // and the rest of the conversation must not queue behind it.
+            let botResolution = Task { @MainActor in await resolveBotIfNeeded() }
             // Refresh peer profile + group senders concurrently with the
             // history load so the names/avatars don't queue up behind it.
             // @MainActor keeps their @State writes on the main actor.
@@ -916,6 +930,7 @@ struct ConversationView: View {
             // Ensure the roster is in before the auto-join below reads it.
             await identity.value
             await convModel.value
+            await botResolution.value
             await loadPendingContinueIfNeeded()
             // Cold-launch path: we arrived here because the user
             // accepted a CallKit incoming voice ring. Now that
@@ -2696,7 +2711,11 @@ extension ConversationView {
         guard let api else { return }
         do {
             let s: ConvModelState = try await api.get("v1/conversations/\(conversation.id)/model")
-            await MainActor.run { self.convModelState = s }
+            await MainActor.run {
+                LocalDatabase.shared.saveConversationModelState(
+                    s, conversationId: conversation.id)
+                if self.convModelState != s { self.convModelState = s }
+            }
         } catch {
             // non-fatal: pill falls back to bot model name
         }

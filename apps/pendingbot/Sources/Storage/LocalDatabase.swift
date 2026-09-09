@@ -338,6 +338,17 @@ final class LocalDatabase {
                 t.add(column: "has_model_pool", .boolean)
             }
         }
+        m.registerMigration("v12_conversation_model_state") { db in
+            try db.create(table: "conversation_model_states") { t in
+                t.column("conversation_id", .text).primaryKey()
+                t.column("current_model_slug", .text)
+                t.column("current_model_provider", .text)
+                t.column("model_revealed", .boolean).notNull()
+                t.column("reveal_mode", .text).notNull()
+                t.column("regen_reroll", .boolean).notNull()
+                t.column("has_pool", .boolean).notNull()
+            }
+        }
         return m
     }
 
@@ -437,7 +448,55 @@ final class LocalDatabase {
         try? dbQueue.write { db in
             _ = try ConversationRow.deleteOne(db, key: id)
             try db.execute(sql: "DELETE FROM messages WHERE conversation_id = ?", arguments: [id])
+            try db.execute(sql: "DELETE FROM conversation_model_states WHERE conversation_id = ?", arguments: [id])
         }
+    }
+
+    // MARK: - Conversation model state
+
+    /// Last server-confirmed blind-box/model state for one conversation.
+    /// This is display cache only: the server remains authoritative and every
+    /// conversation open refreshes it in the background.
+    struct ConversationModelStateRow: Codable, FetchableRecord, PersistableRecord {
+        var conversation_id: String
+        var current_model_slug: String?
+        var current_model_provider: String?
+        var model_revealed: Bool
+        var reveal_mode: String
+        var regen_reroll: Bool
+        var has_pool: Bool
+
+        static let databaseTableName = "conversation_model_states"
+
+        var modelState: ConvModelState {
+            ConvModelState(
+                current_model_slug: current_model_slug,
+                current_model_provider: current_model_provider,
+                model_revealed: model_revealed,
+                reveal_mode: reveal_mode,
+                regen_reroll: regen_reroll,
+                has_pool: has_pool
+            )
+        }
+    }
+
+    func loadConversationModelState(conversationId: String) -> ConvModelState? {
+        try? dbQueue.read { db in
+            try ConversationModelStateRow.fetchOne(db, key: conversationId)?.modelState
+        }
+    }
+
+    func saveConversationModelState(_ state: ConvModelState, conversationId: String) {
+        let row = ConversationModelStateRow(
+            conversation_id: conversationId,
+            current_model_slug: state.current_model_slug,
+            current_model_provider: state.current_model_provider,
+            model_revealed: state.model_revealed,
+            reveal_mode: state.reveal_mode,
+            regen_reroll: state.regen_reroll,
+            has_pool: state.has_pool
+        )
+        try? dbQueue.write { db in try row.save(db) }
     }
 
     // MARK: - Messages
