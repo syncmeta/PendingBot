@@ -2,8 +2,6 @@ import SwiftUI
 import PhotosUI
 #if os(iOS)
 import UIKit
-#elseif os(macOS)
-import AppKit
 #endif
 import Combine
 import OSLog
@@ -11,30 +9,6 @@ import Supabase
 import UniformTypeIdentifiers
 
 private let log = Logger.category("conversation")
-
-#if os(macOS)
-private struct MessagePrivacyCover: ViewModifier {
-    let covered: Bool
-
-    func body(content: Content) -> some View {
-        content
-            .blur(radius: covered ? 24 : 0)
-            .clipped()
-            .disabled(covered)
-            .allowsHitTesting(!covered)
-            .accessibilityHidden(covered)
-            .overlay {
-                if covered {
-                    Theme.Palette.canvas.opacity(0.92)
-                        .overlay {
-                            Label("对话已遮盖", systemImage: "eye.slash.fill")
-                                .foregroundStyle(Theme.Palette.inkMuted)
-                        }
-                }
-            }
-    }
-}
-#endif
 
 /// One conversation. Loads history from Supabase, runs the user-direct
 /// chat turn over Worker SSE (ChatStream), and listens for cross-device /
@@ -54,15 +28,6 @@ private struct ScrollBottomOffsetKey: PreferenceKey {
 }
 
 struct ConversationView: View {
-    #if os(macOS)
-    @AppStorage("mac_message_privacy_manual") private var manualPrivacy = false
-    @AppStorage("mac_message_privacy_background") private var backgroundPrivacy = false
-    @State private var applicationActive = NSApplication.shared.isActive
-
-    private var privacyCovered: Bool {
-        manualPrivacy || (backgroundPrivacy && !applicationActive)
-    }
-    #endif
     @State var conversation: Conversation
     let bot: Bot?
     /// Self-fetched bot record for the `bot == nil` case. The Mac 3-column
@@ -836,9 +801,6 @@ struct ConversationView: View {
                 }
             }
         }
-        #if os(macOS)
-        .modifier(MessagePrivacyCover(covered: privacyCovered))
-        #endif
         .background(Theme.Palette.canvas.ignoresSafeArea())
         #if os(macOS)
         // The main macOS scene hides the title bar, but SwiftUI still reserves
@@ -864,16 +826,7 @@ struct ConversationView: View {
         // macOS has no UIKit inputAccessoryView / keyboard-frame tracking, so
         // the cross-platform ComposerView is hosted in a normal bottom
         // safe-area inset instead. Same bindings the iOS accessory passes.
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            macComposer.modifier(MessagePrivacyCover(covered: privacyCovered))
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
-            applicationActive = false
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            applicationActive = true
-        }
-        .onAppear { applicationActive = NSApplication.shared.isActive }
+        .safeAreaInset(edge: .bottom, spacing: 0) { macComposer }
         #endif
         .photosPicker(
             isPresented: $showPhotoPicker,
@@ -1501,18 +1454,6 @@ struct ConversationView: View {
                 }
             }
             Spacer(minLength: 0)
-            #if os(macOS)
-            Button {
-                manualPrivacy.toggle()
-            } label: {
-                Image(systemName: privacyCovered ? "eye.slash.fill" : "eye")
-                    .foregroundStyle(privacyCovered ? Theme.Palette.accent : Theme.Palette.inkMuted)
-            }
-            .buttonStyle(.plain)
-            .help(manualPrivacy ? "关闭手动隐私遮盖" : "开启手动隐私遮盖")
-            .accessibilityLabel("消息隐私遮盖")
-            .accessibilityValue(privacyCovered ? "已开启" : "已关闭")
-            #endif
             // Voice-call entries are iOS-only (the Call slice doesn't build
             // on macOS). On macOS the conversation works fully minus these.
             #if os(iOS)

@@ -1,5 +1,29 @@
 import SwiftUI
 
+#if os(macOS)
+private struct MacMessagePrivacyCover: ViewModifier {
+    let covered: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .blur(radius: covered ? 24 : 0)
+            .disabled(covered)
+            .allowsHitTesting(!covered)
+            .accessibilityHidden(covered)
+            .overlay {
+                if covered {
+                    Theme.Palette.canvas.opacity(0.92)
+                        .overlay {
+                            Label("消息已遮盖", systemImage: "eye.slash.fill")
+                                .font(Theme.Fonts.system(size: 15, weight: .medium))
+                                .foregroundStyle(Theme.Palette.inkMuted)
+                        }
+                }
+            }
+    }
+}
+#endif
+
 /// 共享三列宽屏壳 — A5。
 ///
 /// 这是 `Mac/MacRootView.swift` 的跨平台化升级:同样的 `NavigationSplitView`
@@ -32,6 +56,16 @@ struct WideRootView: View {
     /// 不传(`nil`),壳退回内部 `@State selectedTab`,行为与接入前完全一致。
     var externalTab: Binding<TopTab>? = nil
     @State private var selectedTab: TopTab = .message
+    #if os(macOS)
+    @Environment(\.scenePhase) private var scenePhase
+    @AppStorage("mac_message_privacy_manual") private var manualPrivacy = false
+    @AppStorage("mac_message_privacy_background") private var backgroundPrivacy = false
+
+    private var privacyCovered: Bool {
+        tabSelection.wrappedValue == .message
+            && (manualPrivacy || (backgroundPrivacy && scenePhase != .active))
+    }
+    #endif
     /// 好友 tab 的选中项 —— 直接持有共享 `FriendsTabView` 的 `Selection`
     /// (`PendingPeer`),壳把同一个 binding 喂给 list 列(写)和 detail 列(读)。
     @State private var friendsSelection: PendingPeer? = nil
@@ -62,6 +96,21 @@ struct WideRootView: View {
             detailColumn
         }
         #if os(macOS)
+        .modifier(MacMessagePrivacyCover(covered: privacyCovered))
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                if tabSelection.wrappedValue == .message {
+                    Button {
+                        manualPrivacy.toggle()
+                    } label: {
+                        Image(systemName: privacyCovered ? "eye.slash.fill" : "eye")
+                    }
+                    .help(manualPrivacy ? "关闭手动隐私遮盖" : "开启手动隐私遮盖")
+                    .accessibilityLabel("消息隐私遮盖")
+                    .accessibilityValue(privacyCovered ? "已开启" : "已关闭")
+                }
+            }
+        }
         // 还原登录窗的透明 + 圆角裁剪(MacLoginWindowStyler 对共享 NSWindow
         // 做的手术),否则登录后主界面继承透明窗 → 不自带材质的空态列直接
         // 透到桌面。登录与主 app 共用同一个 WindowGroup 窗口。
