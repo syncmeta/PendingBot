@@ -25,6 +25,9 @@ private enum NotificationPreviewMode: String, CaseIterable, Identifiable {
 /// 设置 — pushed from the 我 tab. Native settings list. New app-wide
 /// settings go here rather than scattered inline on the 我 page.
 struct SettingsView: View {
+    #if os(macOS)
+    @AppStorage("mac_message_privacy_background") private var backgroundPrivacy = false
+    #endif
     /// Voice-call transport preference, read by CallSession.start() — the
     /// key matches CallSession.transportDefaultsKey.
     /// "auto" | "webrtc" | "turn" | "websocket".
@@ -60,6 +63,15 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            #if os(macOS)
+            Section {
+                Toggle("切换到后台时遮盖对话", isOn: $backgroundPrivacy)
+            } header: {
+                Text("消息隐私")
+            } footer: {
+                Text("遮盖聊天正文和输入区；回到前台自动恢复。手动开启的遮盖不会自动关闭。此设置仅保存在本机，不遮盖侧栏预览或独立弹窗，也不防止系统截图。")
+            }
+            #endif
             Section {
                 Picker("外观", selection: Binding(
                     get: { appearance },
