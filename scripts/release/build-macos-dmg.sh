@@ -79,7 +79,7 @@ else
   : "${ASC_KEY_PATH:?$asc_env 里缺 ASC_KEY_PATH}"
   [ -f "$ASC_KEY_PATH" ] || fail "ASC_KEY_PATH 指的 .p8 不存在: $ASC_KEY_PATH"
   notary_args="--key $ASC_KEY_PATH --key-id $ASC_KEY_ID --issuer $ASC_ISSUER_ID"
-  echo "公证凭据：ASC API key $ASC_KEY_ID（本机，不上云）"
+  echo "公证凭据：ASC API key ${ASC_KEY_ID}（本机，不上云）"
 fi
 
 # 0.3 从 Apple 重拉描述文件并装到本机。
@@ -89,7 +89,7 @@ profile_json=$("$root/scripts/release/asc-macos-profile.py" \
   --bundle-id "$bundle_id" --name "$profile_name") \
   || fail "取描述文件失败（上面有原因）"
 profile_uuid=$(printf '%s' "$profile_json" | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin)["uuid"])')
-echo "描述文件：$profile_name（$profile_uuid），有效期到 $(printf '%s' "$profile_json" | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin)["expiration"])')"
+echo "描述文件：${profile_name}（${profile_uuid}），有效期到 $(printf '%s' "$profile_json" | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin)["expiration"])')"
 
 # 0.4 签名方式：**手工指定描述文件**，不用 Xcode 自动申请。
 #     自动签名走的是「云端托管发布证书」，本机这个账号申请它会被 Apple 挡回来
@@ -154,7 +154,7 @@ echo "✓ 前置断言全过"
 #
 # 这台机器的工作区常年是脏的。不钉一个 ref 建快照，就没法保证「所见 = 所装」。
 # ===========================================================================
-step "1. 干净快照（$ref）"
+step "1. 干净快照（${ref}）"
 snap=$(mktemp -d "/tmp/pendingbot-macos-release.XXXXXX")
 cleanup() {
   git -C "$root" worktree remove --force "$snap/src" 2>/dev/null || true
@@ -170,7 +170,7 @@ src="$snap/src/$app_dir_rel"
 # 版本号必须从**快照**里读，不是从工作区 —— 工作区可能是脏的，读那份会所见≠所装。
 version=$(sed -n 's/^[[:space:]]*MARKETING_VERSION:[[:space:]]*//p' "$src/project.yml" | head -n 1 | tr -d '"')
 [ -n "$version" ] || fail "读不出 MARKETING_VERSION"
-echo "版本号：$version（tag 用的语义化版本；build 号跟它解耦）"
+echo "版本号：${version}（tag 用的语义化版本；build 号跟它解耦）"
 
 # ===========================================================================
 # 第 2 阶段 —— Release archive
@@ -243,11 +243,11 @@ exe="$app/Contents/MacOS/$app_name"
 #    平台标记，不靠「我传了 macOS 所以应该是 macOS」这种推定。
 platforms=$(vtool -show-build "$exe" 2>/dev/null | awk '/platform /{print $2}' | sort -u)
 [ "$platforms" = "MACOS" ] \
-  || fail "产物的 Mach-O 平台是「$platforms」，不是 MACOS（MACCATALYST / IOS 都不行）"
+  || fail "产物的 Mach-O 平台是「${platforms}」，不是 MACOS（MACCATALYST / IOS 都不行）"
 archs=$(lipo -archs "$exe" 2>/dev/null)
 case " $archs " in
   *" arm64 "*) ;;
-  *) fail "产物不含 arm64 切片（拿到的是「$archs」）—— Apple Silicon 上跑不了" ;;
+  *) fail "产物不含 arm64 切片（拿到的是「${archs}」）—— Apple Silicon 上跑不了" ;;
 esac
 echo "① 平台 MACOS，架构：$archs"
 
@@ -307,8 +307,8 @@ echo "⑦ @rpath 依赖都能解析"
 #    七道一道都不查这个。
 got_short=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")
 got_build=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/Info.plist")
-[ "$got_short" = "$version" ] || fail "产物 CFBundleShortVersionString 是「$got_short」，应该是「$version」"
-[ "$got_build" = "$build_number" ] || fail "产物 CFBundleVersion 是「$got_build」，应该是「$build_number」"
+[ "$got_short" = "$version" ] || fail "产物 CFBundleShortVersionString 是「${got_short}」，应该是「${version}」"
+[ "$got_build" = "$build_number" ] || fail "产物 CFBundleVersion 是「${got_build}」，应该是「${build_number}」"
 echo "⑧ 版本号写对了：$got_short ($got_build)"
 
 # ⑨ 产物必须能被**一个 commit 完整复现**。构建期打戳那一侧是宽的（外部人从
@@ -384,7 +384,7 @@ if [ "$ref" = "main" ]; then
   先把 apps/pendingbot/project.yml 里的 MARKETING_VERSION 提一位。"
   fi
   git -C "$root" tag -a "$tag" "$snap_sha" -m "$app_name $version (build $build_number)"
-  echo "打了 tag $tag（本地，没有推 origin）"
+  echo "打了 tag ${tag}（本地，没有推 origin）"
 else
   step "8. 跳过 tag（演练模式）"
   echo "PENDING_RELEASE_REF=$ref 不是 main —— 演练不落任何共享状态（tag / release）。"
@@ -411,7 +411,7 @@ cat <<NOTE
 
   ⚠️ **正文里别写「这个 sha 能复现这个包」** —— 包是从私有仓打的，
   公开仓那份换了坐标、编出来连不上任何后端。产物里的版本戳
-  （$snap_sha）是给我们自己排查用的，外部读者查不到那个 commit。
+  （${snap_sha}）是给我们自己排查用的，外部读者查不到那个 commit。
   这一条要在正文里说明白，不要让读者以为能自己复现。
 
 为什么不由脚本代劳：建 Release 是对外动作，得是人明确要的，

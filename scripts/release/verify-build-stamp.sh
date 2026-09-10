@@ -47,7 +47,7 @@ fi
 
 if [ "$dirty" = "true" ]; then
   echo "产物是从**带未提交改动**的工作区打出来的（BuildStampDirty=true）。" >&2
-  echo "  它标着 $commit，但那个 commit 复现不出这个包。发出去就是谎报。" >&2
+  echo "  它标着 ${commit}，但那个 commit 复现不出这个包。发出去就是谎报。" >&2
   echo "  正常的发版走干净快照，不该出现这种情况 —— 先查为什么快照是脏的。" >&2
   exit 2
 fi
@@ -60,4 +60,4 @@ if [ "$commit" != "$want" ]; then
   exit 2
 fi
 
-echo "⑨ 版本戳 $commit（干净，且与本次快照一致）"
+echo "⑨ 版本戳 ${commit}（干净，且与本次快照一致）"
