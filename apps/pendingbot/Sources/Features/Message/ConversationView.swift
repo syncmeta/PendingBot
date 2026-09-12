@@ -10,6 +10,10 @@ import UniformTypeIdentifiers
 
 private let log = Logger.category("conversation")
 
+extension Notification.Name {
+    static let conversationMaterialized = Notification.Name("PendingBotConversationMaterialized")
+}
+
 /// One conversation. Loads history from Supabase, runs the user-direct
 /// chat turn over Worker SSE (ChatStream), and listens for cross-device /
 /// background-task messages via the Cloudflare realtime hub WebSocket
@@ -1678,6 +1682,7 @@ struct ConversationView: View {
                 self.error = "未知会话类型"
                 return false
             }
+            NotificationCenter.default.post(name: .conversationMaterialized, object: conversation)
             await subscribeRealtime()
             onChange()
             return true

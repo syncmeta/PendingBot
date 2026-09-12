@@ -59,6 +59,10 @@ struct MessageTabView: View {
     @State private var incomingCall = IncomingCallStore.shared
     #endif
     @State private var conversations: [Conversation] = []
+    // Retain acknowledged creations across an older in-flight list response.
+    // Server observation clears entries; the next refresh after 60s expires
+    // unobserved entries so cross-device deletion cannot pin a ghost forever.
+    @State private var recentCreations: [String: (row: Conversation, expires: Date)] = [:]
     @State private var bots: [Bot] = []
     /// Peer profile keyed by user_user conv id. Populated alongside the
     /// conversations fetch — joins the embedded `participants` rows back
@@ -193,6 +197,15 @@ struct MessageTabView: View {
     @ViewBuilder
     private func chrome(_ content: some View) -> some View {
         content
+        .onReceive(NotificationCenter.default.publisher(for: .conversationMaterialized)) { notification in
+            guard let created = notification.object as? Conversation,
+                  !created.id.isEmpty,
+                  created.user_id == AccountStore.shared.current?.id else { return }
+            if !conversations.contains(where: { $0.id == created.id }) {
+                recentCreations[created.id] = (created, Date().addingTimeInterval(60))
+                conversations.insert(created, at: 0)
+            }
+        }
         .task {
             await load()
             // Pull the active-voice-calls snapshot so the row-level phone
@@ -899,7 +912,14 @@ struct MessageTabView: View {
             // future Realtime patch can interleave; keep the visible order
             // (newest first, then ascending id on ties) consistent.
             let convFetched = try await convRows
-            let fresh = convFetched.map(\.asConversation).sorted { l, r in
+            let serverRows = convFetched.map(\.asConversation)
+            let serverIds = Set(serverRows.map(\.id))
+            let now = Date()
+            recentCreations = recentCreations.filter {
+                !serverIds.contains($0.key) && $0.value.expires > now
+                    && $0.value.row.user_id == AccountStore.shared.current?.id
+            }
+            let fresh = (serverRows + recentCreations.values.map(\.row)).sorted { l, r in
                 if l.last_activity_at != r.last_activity_at {
                     return l.last_activity_at > r.last_activity_at
                 }
@@ -1112,6 +1132,7 @@ struct MessageTabView: View {
                 .eq("id", value: conv.id)
                 .execute()
             conversations.removeAll { $0.id == conv.id }
+            recentCreations.removeValue(forKey: conv.id)
             LocalDatabase.shared.deleteConversation(id: conv.id)
             UnreadStore.shared.markRead(conv.id)
             Haptics.success()
