@@ -1,10 +1,7 @@
 #if os(macOS)
 import SwiftUI
 
-/// Mac 端原生菜单栏意图。命令按钮**只广播意图**,不直接改状态 —— 真正
-/// 的响应由 shell / feature 在后续 slice 里订阅 `.appCommand` 通知后接线
-/// (例如朋友面 surface 监听 `.newBot`)。现在还没有 observer 是正常的:
-/// 广播本身已满足"菜单项可用 + 快捷键注册"这一层。
+/// 旧菜单广播意图；新建会话使用 focused scene action，避免多窗口同时响应。
 enum AppCommand {
     case newBot
     case newConversation
@@ -23,13 +20,18 @@ private func post(_ command: AppCommand) {
 /// 把"新建机器人 / 新建会话 / 搜索"挂到 macOS 系统菜单栏,并带上原生快捷键。
 /// 通过 `.commands { AppCommands() }` 挂在 App 的 `WindowGroup` 上。
 struct AppCommands: Commands {
+    @Environment(\.openWindow) private var openWindow
+    @FocusedValue(\.newConversationAction) private var newConversationAction
     var body: some Commands {
-        // 文件菜单 —— 紧跟系统 "New" 项之后插入新建动作。
-        CommandGroup(after: .newItem) {
+        // 替换系统 New，避免默认新窗口与新建会话抢占 ⌘N。
+        CommandGroup(replacing: .newItem) {
             Button("新建机器人") { post(.newBot) }
-                .keyboardShortcut("n", modifiers: .command)
 
-            Button("新建会话") { post(.newConversation) }
+            Button("新建会话") { newConversationAction?() }
+                .keyboardShortcut("n", modifiers: .command)
+                .disabled(newConversationAction == nil)
+
+            Button("新建窗口") { openWindow(id: "main") }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
         }
 
@@ -38,6 +40,17 @@ struct AppCommands: Commands {
             Button("搜索") { post(.search) }
                 .keyboardShortcut("f", modifiers: .command)
         }
+    }
+}
+
+private struct NewConversationActionKey: FocusedValueKey {
+    typealias Value = () -> Void
+}
+
+extension FocusedValues {
+    var newConversationAction: (() -> Void)? {
+        get { self[NewConversationActionKey.self] }
+        set { self[NewConversationActionKey.self] = newValue }
     }
 }
 #endif

@@ -238,7 +238,7 @@ struct PendingBotApp: App {
     }
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup(id: "main") {
             // macOS 走会话 gate(未登录 → MacWelcomeView,已登录 → 跨平台
             // 三列 shell WideRootView),跟 iOS RootView 一致。
             MacRootGate()
@@ -289,7 +289,7 @@ struct PendingBotApp: App {
         // 窗口大小跟内容走:登录页是紧凑小窗,登录后 WideRootView 自己声明
         // 920×620 的主 app 尺寸(且仍可自由缩放)。
         .windowResizability(.contentSize)
-        // A8:原生菜单栏命令(新建机器人 ⌘N / 新建会话 ⇧⌘N / 搜索 ⌘F)。
+        // 新建会话 ⌘N / 新建窗口 ⇧⌘N / 搜索 ⌘F。
         .commands { AppCommands() }
 
         // A8:macOS 系统设置场景。用 SwiftUI 的 `Settings` 场景把 ⌘, 绑到

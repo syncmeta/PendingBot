@@ -47,6 +47,8 @@ struct WideRootView: View {
     var externalTab: Binding<TopTab>? = nil
     @State private var selectedTab: TopTab = .message
     #if os(macOS)
+    @State private var showingNewConversation = false
+    @State private var newConversationGeneration = UUID()
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("mac_message_privacy_manual") private var manualPrivacy = false
     @AppStorage("mac_message_privacy_background") private var backgroundPrivacy = false
@@ -91,6 +93,33 @@ struct WideRootView: View {
         // 做的手术),否则登录后主界面继承透明窗 → 不自带材质的空态列直接
         // 透到桌面。登录与主 app 共用同一个 WindowGroup 窗口。
         .background(MacMainWindowStyler())
+        .focusedSceneValue(\.newConversationAction, {
+            showingNewConversation = true
+        })
+        .sheet(isPresented: $showingNewConversation) {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("新建会话").font(.headline)
+                List {
+                    ForEach(CacheRepository.cachedBots(), id: \.id) { bot in
+                        Button(bot.display_name) {
+                            // 同一机器人也必须得到新草稿，不能复用上一页的 @State。
+                            newConversationGeneration = UUID()
+                            tabSelection.wrappedValue = .message
+                            messagesSelection = .pending(PendingPeer(kind: "bot", peerId: bot.id, displayName: bot.display_name))
+                            showingNewConversation = false
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                if CacheRepository.cachedBots().isEmpty {
+                    Text("还没有可选机器人，请先在朋友页面添加机器人。")
+                }
+                Button("取消") { showingNewConversation = false }
+                    .keyboardShortcut(.cancelAction)
+            }
+            .padding()
+            .frame(width: 380, height: 420)
+        }
         #endif
     }
 
@@ -233,6 +262,9 @@ struct WideRootView: View {
             // 新群,那个写操作得落在壳这份 `@State` 上,不能落在 detail 实例自己
             // 那份没人观察的副本里(2026-08-25 Mac 建群不跳转就是这么来的)。
             MessageTabView().detailColumn(selection: $messagesSelection)
+                #if os(macOS)
+                .id(newConversationGeneration)
+                #endif
         case .friends:
             // 好友 detail = 共享 surface 的 detail 列,纯从 selection(PendingPeer)
             // 解析(同上 separate-@State 注意点:`bot: nil`,ConversationView 自解析)。
