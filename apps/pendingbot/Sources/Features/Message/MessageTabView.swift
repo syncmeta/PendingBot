@@ -34,6 +34,11 @@ enum ChatDest: Hashable {
 /// step; only the row tap target differs (NavigationLink push vs setting
 /// `selected`).
 struct MessageTabView: View {
+    #if os(macOS)
+    @AppStorage("mac_message_privacy_manual") private var manualPrivacy = false
+    @AppStorage("mac_message_privacy_background") private var backgroundPrivacy = false
+    @Environment(\.scenePhase) private var privacyScenePhase
+    #endif
     @Environment(\.api) private var api
     @Environment(\.useSidebarLayout) private var sidebarLayout
     @Environment(\.topTabSelection) private var topTabSelection
@@ -534,6 +539,21 @@ struct MessageTabView: View {
     /// `PlusActionPopover`(自定义 `.popover`)塞进 macOS toolbar 收不到点击,
     /// 「+」点不动。这里换成原生 menu,行为同 iOS 但在 toolbar 里可用。
     @ViewBuilder private var macToolbarActions: some View {
+        #if os(macOS)
+        Button {
+            manualPrivacy.toggle()
+        } label: {
+            Image(systemName: manualPrivacy || (backgroundPrivacy && privacyScenePhase != .active)
+                  ? "eye.slash.fill" : "eye")
+        }
+        .tint(manualPrivacy ? Theme.Palette.accent : nil)
+        .help(manualPrivacy ? "关闭手动隐私遮盖" : "开启手动隐私遮盖")
+        .accessibilityLabel("消息隐私遮盖")
+        .accessibilityValue(manualPrivacy || (backgroundPrivacy && privacyScenePhase != .active)
+                            ? "已开启" : "已关闭")
+        // Keep the reveal control usable while the window content is covered.
+        .disabled(false)
+        #endif
         Button {
             Haptics.tap()
             showingGlobalSearch = true

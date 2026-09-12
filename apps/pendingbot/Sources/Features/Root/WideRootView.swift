@@ -10,16 +10,6 @@ private struct MacMessagePrivacyCover: ViewModifier {
             .disabled(covered)
             .allowsHitTesting(!covered)
             .accessibilityHidden(covered)
-            .overlay {
-                if covered {
-                    Theme.Palette.canvas.opacity(0.92)
-                        .overlay {
-                            Label("消息已遮盖", systemImage: "eye.slash.fill")
-                                .font(Theme.Fonts.system(size: 15, weight: .medium))
-                                .foregroundStyle(Theme.Palette.inkMuted)
-                        }
-                }
-            }
     }
 }
 #endif
@@ -97,20 +87,6 @@ struct WideRootView: View {
         }
         #if os(macOS)
         .modifier(MacMessagePrivacyCover(covered: privacyCovered))
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                if tabSelection.wrappedValue == .message {
-                    Button {
-                        manualPrivacy.toggle()
-                    } label: {
-                        Image(systemName: privacyCovered ? "eye.slash.fill" : "eye")
-                    }
-                    .help(manualPrivacy ? "关闭手动隐私遮盖" : "开启手动隐私遮盖")
-                    .accessibilityLabel("消息隐私遮盖")
-                    .accessibilityValue(privacyCovered ? "已开启" : "已关闭")
-                }
-            }
-        }
         // 还原登录窗的透明 + 圆角裁剪(MacLoginWindowStyler 对共享 NSWindow
         // 做的手术),否则登录后主界面继承透明窗 → 不自带材质的空态列直接
         // 透到桌面。登录与主 app 共用同一个 WindowGroup 窗口。
