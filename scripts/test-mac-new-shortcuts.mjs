@@ -1,0 +1,18 @@
+// Source-wiring regression, not a substitute for macOS keyboard/window QA.
+import { readFileSync } from 'node:fs';
+import assert from 'node:assert/strict';
+const read = path => readFileSync(new URL(`../apps/pendingbot/Sources/${path}`, import.meta.url), 'utf8');
+const commands = read('Features/Root/AppCommands.swift');
+const shell = read('Features/Root/WideRootView.swift');
+const app = read('PendingBotApp.swift');
+assert.match(commands, /CommandGroup\(replacing: \.newItem\)/);
+assert.match(commands, /Button\("新建会话"\)[\s\S]*?\.keyboardShortcut\("n", modifiers: \.command\)/);
+assert.match(commands, /Button\("新建窗口"\) \{ openWindow\(id: "main"\) \}\s*\.keyboardShortcut\("n", modifiers: \[\.command, \.shift\]\)/);
+assert.doesNotMatch(commands, /Button\("新建机器人"\)[^\n]*\n\s*\.keyboardShortcut/);
+assert.match(commands, /@FocusedValue\(\\.newConversationAction\)/);
+assert.match(commands, /\.disabled\(newConversationAction == nil\)/);
+assert.match(shell, /\.focusedSceneValue\(\\.newConversationAction/);
+assert.match(shell, /\.sheet\(isPresented: \$showingNewConversation\)/);
+assert.match(shell, /messagesSelection = \.pending\(PendingPeer/);
+assert.match(app, /WindowGroup\(id: "main"\)/);
+console.log('Mac new-command source wiring: PASS (10 checks; GUI not exercised)');
