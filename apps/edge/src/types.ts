@@ -5,6 +5,7 @@
 import type { Sandbox } from '@cloudflare/sandbox';
 import type { RoomMediaContainerDO } from './durable-objects/room-media';
 import type { AuditMessage } from './queue/audit-types';
+import type { EnvelopeMessage } from './queue/envelope-types';
 
 export interface Env {
   // ── Bindings declared in wrangler.jsonc ────────────────────────
@@ -85,6 +86,10 @@ export interface Env {
   /// is the only producer; the worker's own `queue` handler in
   /// src/index.ts is the consumer. See wrangler.jsonc → queues.
   AUDIT_QUEUE: Queue<AuditMessage>;
+  /// Envelope (来信) run queue. POST /v1/envelope is the producer; the
+  /// worker's own `queue` handler runs runEnvelope (15-min wall budget,
+  /// which waitUntil's 30s post-response window can't give it).
+  ENVELOPE_QUEUE: Queue<EnvelopeMessage>;
 
   // ── Vars (per env in wrangler.jsonc) ───────────────────────────
   ENVIRONMENT: 'dev' | 'production';

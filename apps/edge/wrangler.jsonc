@@ -295,7 +295,8 @@
       // stuck message there means a lost debit worth chasing).
       "queues": {
         "producers": [
-          { "binding": "AUDIT_QUEUE", "queue": "pendingbot-audit" }
+          { "binding": "AUDIT_QUEUE", "queue": "pendingbot-audit" },
+          { "binding": "ENVELOPE_QUEUE", "queue": "pendingbot-envelope" }
         ],
         "consumers": [
           {
@@ -308,6 +309,17 @@
             // delay, so a few extra attempts buys headroom.
             "max_retries": 5,
             "dead_letter_queue": "pendingbot-audit-dlq"
+          },
+          // Envelope (来信) runs. Moved off ctx.waitUntil, whose 30s
+          // post-response window killed every letter after turn 0; a
+          // consumer invocation gets 15 min wall. One run per invocation,
+          // never retried (a redelivery would re-run a half-billed
+          // letter) — a dead invocation is reaped by the envelope cron.
+          {
+            "queue": "pendingbot-envelope",
+            "max_batch_size": 1,
+            "max_batch_timeout": 0,
+            "max_retries": 0
           }
         ]
       }

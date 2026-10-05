@@ -52,6 +52,10 @@ import { boardRoutes } from './routes/board';
 import { handleScheduled } from './cron';
 import { persistAuditMessage, GatewayCostPendingError } from './llm/router';
 import type { AuditMessage } from './queue/audit-types';
+import { ENVELOPE_QUEUE_NAME, type EnvelopeMessage } from './queue/envelope-types';
+import { consumeEnvelopeBatch } from './queue/envelope-consumer';
+
+type QueueMessage = AuditMessage | EnvelopeMessage;
 
 // Re-export the Durable Object class so the runtime can find it via
 // the `class_name` field in wrangler.jsonc → durable_objects.bindings.
@@ -201,7 +205,7 @@ app.route('/health', healthRoutes);
 app.route('/.well-known', wellKnownRoutes);
 
 // Workers entry point: HTTP via Hono, scheduled (cron) via handleScheduled,
-// and the AUDIT_QUEUE consumer via `queue`. Hono's default export is
+// and the AUDIT_QUEUE + ENVELOPE_QUEUE consumers via `queue`. Hono's default export is
 // `{ fetch }`, so we wrap it to add the scheduled + queue hooks.
 const handler = {
   fetch: app.fetch,
@@ -214,8 +218,13 @@ const handler = {
   // retried delivery is safe. ack on success; retry on a thrown error
   // (transient audit_log insert failure) — after wrangler.jsonc's
   // max_retries the message lands in pendingbot-audit-dlq.
-  async queue(batch: MessageBatch<AuditMessage>, env: Env) {
-    for (const msg of batch.messages) {
+  async queue(batch: MessageBatch<QueueMessage>, env: Env) {
+    // ENVELOPE_QUEUE shares this handler; route on the source queue.
+    if (batch.queue === ENVELOPE_QUEUE_NAME) {
+      await consumeEnvelopeBatch(batch as MessageBatch<EnvelopeMessage>, env);
+      return;
+    }
+    for (const msg of (batch as MessageBatch<AuditMessage>).messages) {
       try {
         await persistAuditMessage(env, msg.body);
         msg.ack();
@@ -249,7 +258,7 @@ const handler = {
 // withSentry to skip SDK initialization entirely — a true no-op, so every
 // captureException() downstream is also dormant. See feature-flags.ts and
 // docs/superpowers/specs/2026-06-01-dashboard-stack-design.md.
-export default Sentry.withSentry<Env, AuditMessage>(
+export default Sentry.withSentry<Env, QueueMessage>(
   (env: Env) =>
     sentryEnabled(env) && env.SENTRY_DSN
       ? {

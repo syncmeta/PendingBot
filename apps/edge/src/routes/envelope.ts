@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { requireSession } from '@pendingbot/identity';
 import { serviceClient, userClient } from '../lib/supabase';
-import { runEnvelope, resolveEnvelopeSettings, HARD_CAP_TURNS } from '../lib/envelope-runner';
+import { resolveEnvelopeSettings, HARD_CAP_TURNS } from '../lib/envelope-runner';
 import { gateConversation } from '../billing/usage-gate';
 import { jsonError } from '../lib/http-error';
 import { getModelRole } from '../lib/model-roles';
@@ -132,16 +132,29 @@ envelopeRoutes.post('/trigger', async (c) => {
     return jsonError(c, 500, 'database_error', { detail: runErr?.message ?? 'insert failed' });
   }
 
-  c.executionCtx.waitUntil(
-    runEnvelope({
-      env: c.env,
+  // Hand the run to ENVELOPE_QUEUE, not ctx.waitUntil: the loop runs for
+  // minutes and waitUntil is cancelled 30s after this response is sent
+  // (see src/queue/envelope-types.ts).
+  try {
+    await c.env.ENVELOPE_QUEUE.send({
       envelopeRunId: run.id as string,
       conversationId: parsed.conversationId,
       userId,
       botId: conv.bot_id as string,
       settings,
-    }),
-  );
+    });
+  } catch (err) {
+    console.error('[envelope] enqueue failed', run.id, err);
+    await supa
+      .from('envelope_runs')
+      .update({
+        status: 'error',
+        finished_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', run.id as string);
+    return jsonError(c, 500, 'internal_error', { message: '来信没能开始写，请稍后重试。' });
+  }
 
   return c.json({ envelopeRunId: run.id }, 202);
 });
