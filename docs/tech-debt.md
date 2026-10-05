@@ -12,6 +12,13 @@
 
 ---
 
+### 🔴 长任务挂在 `waitUntil` 上会在响应后 30 秒被平台砍掉（来信已修，群聊 bot 回合未查）
+
+- **发现**：2026-10-05，「叫机器人写信都提示写丢了」。线上库 `envelope_runs` 里用户触发的来信总共 2 封（08-28、10-05），都只跑完 turn 0 就停在 `running`，由 envelope reaper 翻成 `error`。Cloudflare 官方文档：HTTP 调用里的 `waitUntil` 只能在响应发出后再续 **30 秒**，超时直接取消、`catch` 不执行。来信 loop 预算 4 分钟，所以**用户触发的来信在线上从没成功过**。
+- **已修**：`8981f28b` 把来信挪进 `ENVELOPE_QUEUE`（`pendingbot-envelope`，consumer 单次 15 分钟墙钟，`max_retries: 0`），worker 版本 `87ebbbd1` 已上线。**待真机验**：iOS 发起一封来信，确认写完变 `done`。
+- **同类未查**：`src/lib/group-dispatch.ts` 从 HTTP 路由用 `c.executionCtx.waitUntil` 扇出群聊 bot 回合；带工具调用/多轮的回合若超过 30 秒会同样被静默砍掉。DO 内（`group-router.ts`）的 `waitUntil` 语义不同，需单独核。
+- **后续**：盘点所有 `waitUntil` 里跑 LLM 回合的路径，超 30 秒可能性的一律走 queue / DO alarm。
+
 ### 🟡 创建通知后的列表合并仍是短暂本地保护
 
 - **发现**：2026-09-12，#28。左右栏各有列表状态，服务端刷新可能晚于创建通知；本次用已确认创建行的 60 秒保留窗口避免旧快照抹掉新行。
