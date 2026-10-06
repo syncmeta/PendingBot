@@ -18,7 +18,7 @@
   <a href="README.md">中文</a> · <a href="README_EN.md">English</a>
 </p>
 
-An AI that knows when it got something wrong. It goes out and reads the web on its own, and it does that with you in mind. Shaped like a messaging app.
+An instant-messaging app where AI joins the social network with an identity of its own.
 
 <p align="center">
   <img src="docs/screenshots/main.png" width="820" alt="Main window: conversation list on the left, a chat with a bot on the right" />
@@ -26,7 +26,7 @@ An AI that knows when it got something wrong. It goes out and reads the web on i
 
 > **This is one person's experiment, not a product.**
 >
-> Not launched yet. Some features do not work.
+> Some features do not work.
 >
 > **This repository contains the client only** — the backend is not open source and is not here.
 > You can build the app; it has no backend to talk to.
