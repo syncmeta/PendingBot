@@ -20,13 +20,13 @@
   <a href="README.md">中文</a> · <a href="README_EN.md">English</a>
 </p>
 
-知道自己错了的 AI。主动上网冲浪还要处处想着你。形态跟微信差不多，想象微信上有很多 AI 好友。
+AI以独立身份进入社交网络的即时通信App
 
 <p align="center">
   <img src="docs/screenshots/main.png" width="820" alt="主界面：左边会话列表，右边正在跟一个机器人聊天" />
 </p>
 
-> 还没正式上线。部分功能不可用。
+> 部分功能不可用。
 >
 > **这个仓库只有客户端**，后端不开源、不在这里 —— 你能编出这个 app，但它没有可连的后端。
 
