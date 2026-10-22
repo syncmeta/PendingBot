@@ -631,3 +631,10 @@ billing-v2 的自研结算引擎(settleUsage/packs/本地账本)**改为外包**
 - [ ] tech-debt **T4.5 条目改为"服务端 P0 已落、客户端未接"**（现写成"只有文档"，已过时）
 - [ ] tech-debt 新增 **bot 分享 RLS 闭环 bug**（游离缺口，三个账本都没记）
 - [ ] roadmap 标注 T3.2 / T5.3 未做、T4.5 半截
+
+## 2026-10-22 · React / TypeScript 客户端网页 demo
+
+- 独立演示项目：`demos/client-web`，依据仓库 Mac 截图与 SwiftUI 主题、导航、气泡和输入框实现。包含五个导航入口；机组沿用「待建设」。
+- 本地交互：会话/好友/来信/个人设置，发送与停止预设回复、搜索、新建会话、演示好友/群、主题与 localStorage；不接真实服务，不是生产网页版完成声明。
+- 验证：独立 TypeScript + Vite 构建；浏览器桌面与 390px 手机视口的关键交互。完整场景与 pending device QA 见 `demos/client-web/README.md`。
+- 未推送、未部署；原有客户端未提交修改保持原样。主题双份维护与原 workspace Vite 升级风险已记 `docs/tech-debt.md`。

@@ -1950,3 +1950,17 @@ supabase-swift 匿名写的硬失败闸。下面是**看到但按边界不动**�
   - `apps/edge/src/routes/messages.ts` —— 用户消息 `upsert(..., { onConflict: 'client_message_id', ignoreDuplicates: true })` 去重的是**消息行**；其后的 `runChatTurn` 无条件执行，全文件没有任何 in-flight 回合检查。（对应 #1、#3）
 - **修的时候该往哪看**：群聊那套（`durable-objects/group-router.ts` 的窗口 + 防抖 + 每会话一个 DO 串行）是现成的、已经在线上跑的机制，一对一可以照搬，不必新造。#2 最轻（打字时重置计时器），#3 最该优先（它在静默花钱）。
 - **状态**: **已知 · 作者明确暂不处理**（2026-08-25）。不是待办，是**挂账**。要改先拿到作者的新决定。
+
+### 🟢 网页 demo 与 SwiftUI 主题存在双份维护风险
+- **发现**：2026-10-22 · `codex/web-client-demo`。
+- **位置**：`demos/client-web/src/styles.css` / `src/data.ts` 与 `apps/pendingbot/Sources/Components/Theme.swift`。
+- **问题**：独立离线 demo 手动映射客户端主题与示例内容，客户端更新不会自动同步；CSS 无法完全重现原生毛玻璃/SF Symbols。
+- **边界**：仅演示，不进入正式客户端或 admin/edge 构建。未引入生产功能替身。
+- **后续**：若网页转为持续维护产品，应建立共享设计 token 或截图对照流程。当前保留人工视觉 QA 尾巴，具体场景见 demo README。
+- **状态**：记录，未扩大为共享主题重构。
+
+### 🟡 根 workspace 的 Vite 6.4.2 仍需单独升级评估
+- **发现**：2026-10-22 · 制作独立网页 demo 时 npm audit 报告 Vite `<=6.4.3` 的路径访问/launch-editor 公告，涉及 GHSA-fx2h-pf6j-xcff、GHSA-587h-7wmj-h5pm、GHSA-rq7h-c2jc-7f22。
+- **位置**：根 `package.json` 的 `overrides.vite = 6.4.2`、admin 的依赖范围。
+- **处理**：独立 `demos/client-web` 使用 6.4.5；未修改根 workspace 或正式 admin。公告适用条件不等于已确认线上受影响。
+- **状态**：待另行评估并验证正式 workspace 升级。
