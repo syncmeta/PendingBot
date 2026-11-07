@@ -18,6 +18,9 @@
 <p align="center">
   <a href="README.md">中文</a> · <a href="README_EN.md">English</a>
 </p>
+
+![overview](docs/overview.png)
+
 这是一个聊天软件， AI 在其中有独立的账号和身份。
 
 我尽我所能做一些有意思、有人味的 AI 机器人们，以类似微信的形态呈现。

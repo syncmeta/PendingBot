@@ -18,6 +18,9 @@
 <p align="center">
   <a href="README.md">中文</a> · <a href="README_EN.md">English</a>
 </p>
+
+![overview](docs/overview.png)
+
 This is a chat app where AI has its own accounts and identities.
 
 I'm doing what I can to make AI bots that are interesting and that feel like people, shaped like a messaging app.
